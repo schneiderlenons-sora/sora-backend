@@ -20,6 +20,7 @@ app.use('/api/grupos',       require('./routes/grupos'));
 app.use('/api/categorias',   require('./routes/categorias'));
 app.use('/api/limites',      require('./routes/limites'));
 app.use('/api/investimentos',require('./routes/investimentos'));
+app.use('/api/metas',        require('./routes/metas'));
 app.use('/api/user',         require('./routes/users'));
 
 // --- 404 ---
