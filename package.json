@@ -1,0 +1,30 @@
+{
+  "name": "sora-backend",
+  "version": "1.0.0",
+  "description": "Sora — Bot financeiro para WhatsApp",
+  "main": "src/app.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test": "echo \"Sem testes por enquanto\" && exit 0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.1",
+    "@supabase/supabase-js": "^2.105.4",
+    "axios": "^1.16.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "form-data": "^4.0.5",
+    "nanoid": "^3.3.12",
+    "node-cron": "^4.2.1",
+    "yahoo-finance2": "^3.14.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
