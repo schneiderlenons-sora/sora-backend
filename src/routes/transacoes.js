@@ -101,6 +101,36 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
   }
 });
 
+// POST /api/transacoes/bulk — importação em massa (OFX/CSV)
+router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { transacoes } = req.body;
+    if (!Array.isArray(transacoes) || transacoes.length === 0) {
+      return res.status(400).json({ erro: 'Lista de transações vazia.' });
+    }
+    if (transacoes.length > 1000) {
+      return res.status(400).json({ erro: 'Limite de 1000 transações por importação.' });
+    }
+
+    const rows = transacoes.map(t => ({
+      id_curto:      Math.random().toString(36).substring(2, 8).toUpperCase(),
+      grupo_id:      req.grupoId,
+      criado_por:    req.userId,
+      tipo:          t.tipo === 'Recebimento' ? 'Recebimento' : 'Gasto',
+      categoria:     t.categoria || '📦 Outros',
+      valor:         Math.abs(parseFloat(t.valor) || 0),
+      observacao:    (t.observacao || '').toString().slice(0, 200),
+      carteira_nome: t.carteira_nome || 'Dinheiro',
+      pago:          t.pago !== false,
+      data:          t.data,
+    }));
+
+    const { data, error } = await supabase.from('transacoes').insert(rows).select('id');
+    if (error) throw error;
+    res.json({ inserted: data?.length || 0 });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // PUT /api/transacoes/:id — edita
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
