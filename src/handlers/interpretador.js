@@ -82,6 +82,59 @@ function interpretarRapido(message) {
   if ((m = msg.match(/definir\s+fatura\s+dia\s+(\d{1,2})/i)))
     return { acao: 'set_fatura_dia', dia: parseInt(m[1]) };
 
+  // --- DÍVIDAS ---
+  // "minhas dividas" / "listar dividas" / "dividas"
+  if (/^(minhas\s+d[ií]vidas|listar\s+d[ií]vidas|d[ií]vidas)$/i.test(msg))
+    return { acao: 'listar_dividas' };
+
+  // "criar divida [tipo opcional] [nome/credor] [valor] em [N]x dia [D]"
+  // Ex: "criar divida emprestimo nubank 5000 em 10x dia 15"
+  if ((m = msg.match(/(?:criar|nova|adicionar)\s+d[ií]vida\s+(?:(emprestimo|empr[eé]stimo|financiamento|crediario|crediário|consignado|fies|rotativo|cheque\s+especial)\s+)?(.+?)\s+(\d[\d.,]*)(?:\s+em\s+(\d+)\s*x)?(?:\s+dia\s+(\d{1,2}))?$/i))) {
+    const tipo = m[1]
+      ? (/financiamento/i.test(m[1]) ? 'financiamento'
+       : /crediario|crediário/i.test(m[1]) ? 'crediario'
+       : /consignado/i.test(m[1]) ? 'consignado'
+       : /fies/i.test(m[1]) ? 'fies'
+       : /rotativo/i.test(m[1]) ? 'cartao_rotativo'
+       : /cheque/i.test(m[1]) ? 'cheque_especial'
+       : 'emprestimo')
+      : 'emprestimo';
+    const nome = m[2].trim();
+    return {
+      acao: 'criar_divida',
+      titulo: nome, credor: nome, tipo,
+      valor_total: parseValor(m[3]),
+      parcelas_total: m[4] ? parseInt(m[4]) : null,
+      dia_vencimento: m[5] ? parseInt(m[5]) : null,
+    };
+  }
+
+  // "pagar divida nubank 250" / "pagar parcela divida nubank 250"
+  if ((m = msg.match(/pagar\s+(?:parcela\s+)?d[ií]vida\s+(.+?)(?:\s+(\d[\d.,]*))?$/i))) {
+    return { acao: 'pagar_divida', termo: m[1].trim(), valor: m[2] ? parseValor(m[2]) : null, tipo: 'parcela' };
+  }
+
+  // "antecipar divida nubank 500"
+  if ((m = msg.match(/antecipar\s+d[ií]vida\s+(.+?)(?:\s+(\d[\d.,]*))?$/i))) {
+    return { acao: 'pagar_divida', termo: m[1].trim(), valor: m[2] ? parseValor(m[2]) : null, tipo: 'antecipacao' };
+  }
+
+  // "quitar divida nubank" / "quitar divida nubank 1500"
+  if ((m = msg.match(/quitar\s+d[ií]vida\s+(.+?)(?:\s+(\d[\d.,]*))?$/i))) {
+    return { acao: 'quitar_divida', termo: m[1].trim(), valor: m[2] ? parseValor(m[2]) : null };
+  }
+
+  // "cancelar lembrete dividas" (global) / "cancelar lembrete divida nubank"
+  // "parar lembrete(s) divida(s)" / "desativar lembrete divida nubank"
+  if ((m = msg.match(/(?:cancelar|parar|desativar|desligar)\s+lembretes?\s+(?:d[ae]s?\s+)?d[ií]vidas?(?:\s+(.+))?$/i))) {
+    return { acao: 'cancelar_lembrete_divida', termo: m[1]?.trim() || null };
+  }
+
+  // "ativar lembrete divida nubank" / "ativar lembretes dividas"
+  if ((m = msg.match(/(?:ativar|reativar|ligar)\s+lembretes?\s+(?:d[ae]s?\s+)?d[ií]vidas?(?:\s+(.+))?$/i))) {
+    return { acao: 'ativar_lembrete_divida', termo: m[1]?.trim() || null };
+  }
+
   // --- CONTAS BANCÁRIAS ---
   // "deletar conta nubank"
   if ((m = msg.match(/deletar\s+conta\s+(.+)/i)))

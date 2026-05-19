@@ -52,6 +52,17 @@ RECORRÊNCIAS:
 LEMBRETES:
 {"acao":"criar_lembrete","tipo":"pagar","descricao":"conta luz","dia":10,"mes":4,"valor":150}
 
+DÍVIDAS (empréstimos, financiamentos, crediário, etc.):
+{"acao":"criar_divida","titulo":"Empréstimo Nubank","credor":"Nubank","tipo":"emprestimo","valor_total":5000,"parcelas_total":10,"dia_vencimento":15,"taxa_juros":2.5}
+{"acao":"listar_dividas"}
+{"acao":"pagar_divida","termo":"nubank","valor":250,"tipo":"parcela"}
+{"acao":"pagar_divida","termo":"financiamento carro","valor":1200,"tipo":"antecipacao"}
+{"acao":"quitar_divida","termo":"crediario lojas americanas","valor":null}
+{"acao":"cancelar_lembrete_divida","termo":"nubank"}
+{"acao":"cancelar_lembrete_divida","termo":null}
+{"acao":"ativar_lembrete_divida","termo":"nubank"}
+{"acao":"ativar_lembrete_divida","termo":null}
+
 GRUPOS:
 {"acao":"criar_grupo","nome":"Família"}
 {"acao":"convidar_grupo"}
@@ -90,7 +101,8 @@ REGRAS IMPORTANTES:
 4. Se não souber a categoria, use "Outros".
 5. Se não mencionar carteira/banco, use "Dinheiro".
 6. Para valores, extraia apenas o número (ex: "cinquenta reais" → 50).
-7. Para conversa genérica ou dúvidas, use {"acao":"conversa","resposta":"..."} e responda em português, de forma amigável e breve.`;
+7. Para conversa genérica ou dúvidas, use {"acao":"conversa","resposta":"..."} e responda em português, de forma amigável e breve.
+8. Para DÍVIDAS: tipo deve ser um destes: emprestimo, financiamento, crediario, cartao_rotativo, cheque_especial, consignado, fies, outro. Se o usuário não disser o tipo, use "emprestimo". Em "cancelar_lembrete_divida" com termo=null, desativa TODOS os lembretes de dívidas do usuário.`;
 
 // Função principal: interpreta qualquer mensagem
 async function interpretarMensagem(mensagem, contexto = {}) {

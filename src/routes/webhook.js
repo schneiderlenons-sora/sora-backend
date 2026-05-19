@@ -27,6 +27,14 @@ Me mande texto ou áudio — eu entendo automaticamente 😉
 "todo mês 1000 aluguel dia 5"
 
 ━━━━━━━━━━
+💳 *Dívidas*
+"criar divida emprestimo nubank 5000 em 10x dia 15"
+"minhas dividas" → lista tudo
+"pagar divida nubank 250"
+"quitar divida nubank"
+"cancelar lembrete divida nubank" (ou só "cancelar lembrete dividas" pra parar todos)
+
+━━━━━━━━━━
 📊 "resumo" → relatório do mês
 🎯 "limite 2000" → meta de gastos
 🔔 "limite mercado 500" → limite por categoria
@@ -206,6 +214,16 @@ router.post('/', async (req, res) => {
       case 'listar_membros':
       case 'remover_membro':
         require('../handlers/grupos')(data, ctx);
+        break;
+
+      // Dívidas
+      case 'criar_divida':
+      case 'listar_dividas':
+      case 'pagar_divida':
+      case 'quitar_divida':
+      case 'cancelar_lembrete_divida':
+      case 'ativar_lembrete_divida':
+        require('../handlers/dividas')(data, ctx);
         break;
 
       // Investimentos (Black)

@@ -8,7 +8,7 @@ const norm = p => p?.replace(/\D/g, '');
 
 async function getUser(phone) {
   const { data } = await supabase.from('users')
-    .select('id, grupo_ativo').eq('phone', norm(phone)).maybeSingle();
+    .select('id, grupo_ativo, lembretes_dividas').eq('phone', norm(phone)).maybeSingle();
   return data;
 }
 
@@ -62,6 +62,7 @@ router.get('/:phone', auth, async (req, res) => {
         parcelas_mes_valor,
         parcelas_mes_count: ativas.filter(d => d.dia_vencimento).length,
         proxima_parcela: proxima,
+        lembretes_dividas: user.lembretes_dividas !== false,
       },
     });
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -113,7 +114,7 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const allowed = ['titulo','credor','tipo','valor_total','valor_parcela','parcelas_total','parcelas_pagas',
-                     'taxa_juros','indexador','dia_vencimento','data_inicio','status','observacao'];
+                     'taxa_juros','indexador','dia_vencimento','data_inicio','status','observacao','lembretes_ativos'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     patch.updated_at = new Date().toISOString();
@@ -209,6 +210,34 @@ router.post('/:id/quitar', auth, exigirPermissao('admin', 'escrita'), async (req
     }).eq('id', req.params.id).select().single();
 
     res.json({ divida: atualizada, quitada: true });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// PATCH /api/dividas/:id/lembrete — liga/desliga lembrete de UMA dívida
+// ─────────────────────────────────────────────────────────────────
+router.patch('/:id/lembrete', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { ativo } = req.body;
+    const { data, error } = await supabase.from('dividas')
+      .update({ lembretes_ativos: !!ativo, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// PATCH /api/dividas/lembretes/:phone — liga/desliga TODOS lembretes do usuário
+// ─────────────────────────────────────────────────────────────────
+router.patch('/lembretes/:phone', auth, async (req, res) => {
+  try {
+    const { ativo } = req.body;
+    const { data, error } = await supabase.from('users')
+      .update({ lembretes_dividas: !!ativo })
+      .eq('phone', norm(req.params.phone)).select('phone, lembretes_dividas').single();
+    if (error) throw error;
+    res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

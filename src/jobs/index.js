@@ -149,6 +149,75 @@ cron.schedule('0 * * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1E — Todo dia às 09:00: lembretes de dívidas
+// Avisa 3 dias antes, no dia, e quando atrasado
+// ─────────────────────────────────────────────────────────────────
+cron.schedule('0 9 * * *', async () => {
+  console.log('🔔 Processando lembretes de dívidas...');
+  const hoje = new Date();
+  const hojeStr = hoje.toISOString().slice(0, 10);
+  const diaHoje = hoje.getDate();
+
+  // Busca todas as dívidas ativas com lembrete ligado e dia_vencimento definido
+  const { data: dividas } = await supabase
+    .from('dividas')
+    .select('id, grupo_id, titulo, credor, valor_parcela, parcelas_total, parcelas_pagas, dia_vencimento, ultimo_lembrete_em')
+    .in('status', ['ativa', 'em_atraso'])
+    .eq('lembretes_ativos', true)
+    .not('dia_vencimento', 'is', null);
+
+  for (const d of dividas || []) {
+    // Não envia duas vezes no mesmo dia
+    if (d.ultimo_lembrete_em === hojeStr) continue;
+
+    // Calcula próximo vencimento
+    const venc = new Date(hoje.getFullYear(), hoje.getMonth(), d.dia_vencimento);
+    if (d.dia_vencimento < diaHoje) venc.setMonth(venc.getMonth() + 1);
+    const diffDias = Math.round((venc - new Date(hoje.getFullYear(), hoje.getMonth(), diaHoje)) / 86400000);
+
+    // Janelas: 3 dias antes, no dia, ou atrasada (>=1 dia depois do venc do mês passado)
+    let mensagem = null;
+    if (diffDias === 3) {
+      mensagem = `🔔 *Lembrete de dívida*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : ''}\n📅 Vence em *3 dias* (dia ${d.dia_vencimento})\n\nPara pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*\nPra parar de receber: *cancelar lembrete divida ${d.titulo}*`;
+    } else if (diffDias === 0) {
+      mensagem = `🚨 *VENCE HOJE*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : 'sem valor de parcela'}\n\nNão esqueça! Para pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*`;
+    } else {
+      // Atrasada: vencimento foi no mês anterior (diffDias > 25 significa que rolou pro proximo mes)
+      // Detecta atraso: se o vencimento ESTE mes já passou e nao houve pagamento desde entao
+      const vencEsteMes = new Date(hoje.getFullYear(), hoje.getMonth(), d.dia_vencimento);
+      const diasAtraso = Math.round((new Date(hoje.getFullYear(), hoje.getMonth(), diaHoje) - vencEsteMes) / 86400000);
+      if (diasAtraso > 0 && diasAtraso <= 30) {
+        // Confere se houve pagamento DESDE o vencimento
+        const { data: pagto } = await supabase.from('divida_pagamentos')
+          .select('id').eq('divida_id', d.id)
+          .gte('data_pagamento', vencEsteMes.toISOString().slice(0, 10))
+          .limit(1);
+        if (!pagto?.length) {
+          // Avisa só uma vez por semana
+          if (diasAtraso === 1 || diasAtraso === 7 || diasAtraso === 15 || diasAtraso === 30) {
+            mensagem = `⚠️ *DÍVIDA EM ATRASO*\n\n📌 *${d.titulo}*\n📅 Vencimento era dia ${d.dia_vencimento} (${diasAtraso} dia${diasAtraso > 1 ? 's' : ''} atrás)\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : ''}\n\nO atraso costuma vir com juros — quanto antes melhor.`;
+            // Marca status em_atraso
+            await supabase.from('dividas').update({ status: 'em_atraso' }).eq('id', d.id);
+          }
+        }
+      }
+    }
+
+    if (!mensagem) continue;
+
+    // Busca o telefone do dono e checa se ele tem lembretes_dividas ligado
+    const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', d.grupo_id).single();
+    if (!grupo) continue;
+    const { data: user } = await supabase.from('users').select('phone, lembretes_dividas').eq('id', grupo.dono_id).single();
+    if (!user?.phone || user.lembretes_dividas === false) continue;
+
+    await enviarTexto(user.phone, mensagem);
+    await supabase.from('dividas').update({ ultimo_lembrete_em: hojeStr }).eq('id', d.id);
+  }
+  console.log('✅ Lembretes de dívidas processados.');
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 2 — Todo dia 1º às 00:01: reseta alertas de limite
 // ─────────────────────────────────────────────────────────────────
 cron.schedule('1 0 1 * *', async () => {
@@ -271,6 +340,7 @@ cron.schedule('59 23 * * *', async () => {
 
 console.log('⏰ Cron jobs registrados:');
 console.log('   • A cada hora  — recorrências, lembretes, parcelas, fatura');
+console.log('   • Todo dia 09h — lembretes de dívidas (3d antes / dia / atraso)');
 console.log('   • Todo dia 1º  — reset de alertas de limite');
 console.log('   • Todo dia 03h — atualização Yahoo Finance');
 console.log('   • Todo dia 23h59 — snapshot de patrimônio');
