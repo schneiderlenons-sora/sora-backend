@@ -2,9 +2,18 @@ const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarMenu } = require('../services/zapi');
-const { interpretarMensagem }     = require('../services/ia');
+const { interpretarMensagem, classificarIntencao } = require('../services/ia');
 const { transcreverAudio }        = require('../services/whisper');
 const { interpretarRapido }       = require('../handlers/interpretador');
+
+// Verifica acesso ao Grow
+function temAcessoGrow(user) {
+  if (!user) return false;
+  if (user.plano === 'black') return true;
+  if (['grow_basico','grow_premium'].includes(user.plano_grow)) return true;
+  if (user.plano_grow === 'trial' && user.grow_trial_fim && new Date(user.grow_trial_fim) > new Date()) return true;
+  return false;
+}
 
 // Textos fixos
 const HELP_TEXT = `━━━━━━━━━━
@@ -140,9 +149,27 @@ router.post('/', async (req, res) => {
     // ── 3. Interpreta a mensagem ──────────────────────────────────
     let data = interpretarRapido(mensagem); // tenta regex primeiro (grátis)
 
+    // Se regex nao identificou, tenta classificar Finance vs Grow (usuarios com acesso ao Grow)
+    if (!data && temAcessoGrow(user)) {
+      const intencao = await classificarIntencao(mensagem);
+      console.log(`🧭 [${phone}] intencao classificada: ${intencao}`);
+      if (intencao === 'grow') {
+        const ctx = { phone, grupoId: user.grupo_ativo, user, mensagem };
+        await require('../handlers/grow')(mensagem, ctx);
+        return;
+      }
+    }
+
     if (!data) {
       console.log(`🤖 Chamando IA para: "${mensagem}"`);
       data = await interpretarMensagem(mensagem); // IA como fallback
+    }
+
+    // Se a IA retornou uma acao do Grow, roteia direto
+    if (data?.acao && /^(grow_|habito_|tarefa_|humor_|compra_)/i.test(data.acao) && temAcessoGrow(user)) {
+      const ctx = { phone, grupoId: user.grupo_ativo, user, mensagem };
+      await require('../handlers/grow')(mensagem, ctx);
+      return;
     }
 
     console.log(`📩 [${phone}] "${mensagem}" → ação: ${data?.acao}`);

@@ -165,4 +165,27 @@ async function analisarGastos(resumoSemana) {
   }
 }
 
-module.exports = { interpretarMensagem, gerarDicas, analisarGastos };
+// Classifica a intencao em "finance" ou "grow" para rotear no webhook
+async function classificarIntencao(mensagem) {
+  try {
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 5,
+      system: `Classifique a mensagem em apenas UMA palavra: "finance" ou "grow".
+
+FINANCE: dinheiro, gastos, despesas, receitas, salario, saldo, transferencias, contas bancarias, investimentos, cartoes, parcelas, limites, metas financeiras, dividas, emprestimos, financiamento, crediario, pix.
+
+GROW: treino, exercicio, academia, corrida, dieta, peso, agua, habito, tarefa, projeto, humor, ansiedade, estresse, gratidao, sono, estudos, leitura, faculdade, filhos, escola, lista de compras (itens domesticos como leite, arroz), remedio, consulta medica, rotina, meditacao.
+
+Em caso de duvida ou conversa generica, responda "finance".
+Responda APENAS com a palavra "finance" ou "grow".`,
+      messages: [{ role: 'user', content: mensagem }],
+    });
+    const r = response.content[0].text.trim().toLowerCase();
+    return r.includes('grow') ? 'grow' : 'finance';
+  } catch {
+    return 'finance';
+  }
+}
+
+module.exports = { interpretarMensagem, gerarDicas, analisarGastos, classificarIntencao };
