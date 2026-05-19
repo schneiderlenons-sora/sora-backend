@@ -23,6 +23,7 @@ app.use('/api/investimentos',require('./routes/investimentos'));
 app.use('/api/metas',        require('./routes/metas'));
 app.use('/api/dividas',      require('./routes/dividas'));
 app.use('/api/grow',         require('./routes/grow'));
+app.use('/api/saude',        require('./routes/saude'));
 app.use('/api/user',         require('./routes/users'));
 
 // --- 404 ---
