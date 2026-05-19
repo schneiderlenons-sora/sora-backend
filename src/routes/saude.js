@@ -7,6 +7,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
+const nutricao = require('../services/nutricao');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -305,6 +306,72 @@ router.post('/refeicoes', auth, requireGrow, async (req, res) => {
 router.delete('/refeicoes/:id', auth, requireGrow, async (req, res) => {
   try { await supabase.from('refeicoes').delete().eq('id', req.params.id); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// ═════════════════════════════════════════════════════════════════
+// NUTRIÇÃO — Calculadora, Parser, Diagnóstico, Banco de alimentos
+// ═════════════════════════════════════════════════════════════════
+router.get('/nutricao/alimentos', auth, requireGrow, async (req, res) => {
+  try {
+    const { q } = req.query;
+    res.json(nutricao.buscarAlimentos(q));
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/nutricao/analisar', auth, requireGrow, async (req, res) => {
+  try {
+    const { texto } = req.body;
+    if (!texto?.trim()) return res.status(400).json({ erro: 'texto obrigatório' });
+    const itens = await nutricao.analisarRefeicao(texto);
+    res.json({ itens });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/nutricao/calcular', auth, requireGrow, async (req, res) => {
+  try {
+    const u = req._user;
+    const { peso_kg, altura_cm, idade, sexo, nivel_atividade, objetivo, tipo_dieta, salvar } = req.body;
+    const metas = nutricao.calcularMetas({ peso_kg, altura_cm, idade, sexo, nivel_atividade, objetivo, tipo_dieta });
+
+    // Se pediu pra salvar, faz upsert em metas_nutricao
+    let saved = null;
+    if (salvar !== false) {
+      const payload = { ...metas, grupo_id: u.grupo_ativo, user_id: u.id, updated_at: new Date().toISOString(), calculada_em: new Date().toISOString() };
+      const { data: existing } = await supabase.from('metas_nutricao').select('id').eq('user_id', u.id).maybeSingle();
+      const r = existing
+        ? await supabase.from('metas_nutricao').update(payload).eq('id', existing.id).select().single()
+        : await supabase.from('metas_nutricao').insert(payload).select().single();
+      if (r.error) throw r.error;
+      saved = r.data;
+    }
+
+    res.json({ ...metas, saved });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.get('/nutricao/diagnostico/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const u = req._user;
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    const [{ data: meta }, { data: refeicoesHoje }] = await Promise.all([
+      supabase.from('metas_nutricao').select('*').eq('user_id', u.id).maybeSingle(),
+      supabase.from('refeicoes').select('id').eq('user_id', u.id).eq('data', hoje),
+    ]);
+    const refIds = (refeicoesHoje || []).map(r => r.id);
+    let macrosHoje = { calorias: 0, proteinas_g: 0, carboidratos_g: 0, gorduras_g: 0 };
+    if (refIds.length) {
+      const { data: itens } = await supabase.from('refeicao_itens')
+        .select('calorias, proteinas_g, carboidratos_g, gorduras_g').in('refeicao_id', refIds);
+      (itens || []).forEach(i => {
+        macrosHoje.calorias       += parseFloat(i.calorias) || 0;
+        macrosHoje.proteinas_g    += parseFloat(i.proteinas_g) || 0;
+        macrosHoje.carboidratos_g += parseFloat(i.carboidratos_g) || 0;
+        macrosHoje.gorduras_g     += parseFloat(i.gorduras_g) || 0;
+      });
+    }
+    res.json({ macros_hoje: macrosHoje, meta, diagnostico: nutricao.gerarDiagnostico(macrosHoje, meta) });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 // ═════════════════════════════════════════════════════════════════
