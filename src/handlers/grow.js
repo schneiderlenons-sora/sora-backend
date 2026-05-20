@@ -1,5 +1,6 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
+const handleSaude = require('./saude');
 
 const HUMORES = {
   'otimo': 5, 'ótimo': 5, 'feliz': 5, 'maravilhoso': 5, 'incrivel': 5, 'incrível': 5,
@@ -28,6 +29,11 @@ async function calcularStreak(habitoId) {
 module.exports = async function handleGrow(mensagem, ctx) {
   const { phone, grupoId, user } = ctx;
   const msg = (mensagem || '').toLowerCase().trim();
+
+  // Tenta primeiro o handler de Saúde (medicamentos, peso, água, treino, consultas).
+  // Se reconheceu o comando, retorna. Senão, segue pra outros padrões do Grow.
+  const tratouSaude = await handleSaude(mensagem, ctx);
+  if (tratouSaude) return;
 
   // ── LISTAR (hábitos / tarefas / compras) ────────────────────────────
   if (/^(meus\s+habitos|habitos|meus\s+hábitos|hábitos)$/i.test(msg)) {

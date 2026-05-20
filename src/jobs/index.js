@@ -149,6 +149,103 @@ cron.schedule('0 * * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1F — A cada 15 min: lembretes de MEDICAMENTOS
+// Verifica horários cadastrados e envia WhatsApp.
+// Dedup em memória (lembretesMedHoje) — reseta à meia-noite.
+// ─────────────────────────────────────────────────────────────────
+const lembretesMedHoje = new Set();
+let diaResetMed = new Date().toDateString();
+
+cron.schedule('*/15 * * * *', async () => {
+  const agora = new Date();
+  if (agora.toDateString() !== diaResetMed) {
+    lembretesMedHoje.clear();
+    diaResetMed = agora.toDateString();
+  }
+  const diaSemana = agora.getDay() === 0 ? 7 : agora.getDay(); // 1=seg ... 7=dom
+  const minutosAgora = agora.getHours() * 60 + agora.getMinutes();
+
+  const { data: meds } = await supabase
+    .from('medicamentos')
+    .select('id, grupo_id, user_id, nome, dosagem, horarios, dias_semana, estoque_atual, estoque_alerta, lembrete_ativo')
+    .eq('ativo', true)
+    .eq('lembrete_ativo', true);
+
+  for (const med of meds || []) {
+    if (!med.dias_semana?.includes(diaSemana)) continue;
+    if (!med.horarios?.length) continue;
+
+    for (const h of med.horarios) {
+      const [hh, mm] = String(h).split(':').map(Number);
+      const minHorario = hh * 60 + mm;
+      const diff = minutosAgora - minHorario;
+      // Janela: 0 a 14 min depois do horário (a cada 15 min, cobre tudo)
+      if (diff < 0 || diff >= 15) continue;
+
+      const key = `${med.id}|${h}|${agora.toDateString()}`;
+      if (lembretesMedHoje.has(key)) continue;
+
+      const { data: user } = await supabase.from('users').select('phone').eq('id', med.user_id).single();
+      if (!user?.phone) continue;
+
+      const estoqueAviso = med.estoque_atual != null && med.estoque_atual <= (med.estoque_alerta || 5)
+        ? `\n⚠️ Estoque baixo: ${med.estoque_atual} restantes`
+        : '';
+      await enviarTexto(user.phone,
+        `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''}\n` +
+        `Quando tomar, responda *tomei ${med.nome}* pra eu marcar.${estoqueAviso}`);
+      lembretesMedHoje.add(key);
+      console.log(`💊 Lembrete med enviado: ${med.nome} → ${user.phone}`);
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// JOB 1G — Todo dia às 09:00: lembretes de CONSULTAS (24h antes)
+// E retornos médicos próximos (7 dias)
+// ─────────────────────────────────────────────────────────────────
+cron.schedule('0 9 * * *', async () => {
+  console.log('🩺 Processando lembretes de consultas...');
+  const hoje = new Date();
+  const amanha = new Date(hoje); amanha.setDate(amanha.getDate() + 1);
+  const amanhaStr = amanha.toISOString().slice(0, 10);
+  const em7d = new Date(hoje); em7d.setDate(em7d.getDate() + 7);
+  const em7dStr = em7d.toISOString().slice(0, 10);
+
+  // Consultas de amanhã com lembrete ativo
+  const { data: consultas } = await supabase
+    .from('consultas').select('id, grupo_id, user_id, profissional, especialidade, data, hora, local')
+    .eq('status', 'agendada').eq('lembrete_ativo', true).eq('data', amanhaStr);
+
+  for (const c of consultas || []) {
+    const { data: user } = await supabase.from('users').select('phone').eq('id', c.user_id).single();
+    if (!user?.phone) continue;
+    const partes = [
+      `📅 *Lembrete: consulta amanhã*`,
+      ``,
+      `🩺 ${c.especialidade || c.profissional || 'Consulta'}`,
+    ];
+    if (c.profissional && c.especialidade) partes.push(`👨‍⚕️ ${c.profissional}`);
+    if (c.hora) partes.push(`⏰ ${c.hora.slice(0,5)}`);
+    if (c.local) partes.push(`📍 ${c.local}`);
+    await enviarTexto(user.phone, partes.join('\n'));
+  }
+
+  // Retornos médicos pra próximos 7 dias (avisa só uma vez quando faltar exatamente 7d)
+  const { data: retornos } = await supabase
+    .from('consultas').select('id, user_id, especialidade, profissional, retorno_data')
+    .not('retorno_data', 'is', null).eq('retorno_data', em7dStr);
+
+  for (const r of retornos || []) {
+    const { data: user } = await supabase.from('users').select('phone').eq('id', r.user_id).single();
+    if (!user?.phone) continue;
+    await enviarTexto(user.phone,
+      `📆 *Retorno em 7 dias*\n\nSeu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana.\nQuer agendar pelo painel?`);
+  }
+  console.log('✅ Lembretes de consultas processados.');
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 1E — Todo dia às 09:00: lembretes de dívidas
 // Avisa 3 dias antes, no dia, e quando atrasado
 // ─────────────────────────────────────────────────────────────────
@@ -340,6 +437,8 @@ cron.schedule('59 23 * * *', async () => {
 
 console.log('⏰ Cron jobs registrados:');
 console.log('   • A cada hora  — recorrências, lembretes, parcelas, fatura');
+console.log('   • A cada 15min — lembretes de medicamentos');
+console.log('   • Todo dia 09h — lembretes de consultas (24h antes + retorno 7d)');
 console.log('   • Todo dia 09h — lembretes de dívidas (3d antes / dia / atraso)');
 console.log('   • Todo dia 1º  — reset de alertas de limite');
 console.log('   • Todo dia 03h — atualização Yahoo Finance');
