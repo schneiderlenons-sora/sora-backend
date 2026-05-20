@@ -84,9 +84,13 @@ router.post('/trocar-painel/:phone', auth, async (req, res) => {
 // ─── HABITOS ─────────────────────────────────────────────────────────
 router.get('/habitos/:phone', auth, requireGrow, async (req, res) => {
   try {
-    const inicio = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
-    const { data: habitos } = await supabase.from('habitos')
-      .select('*').eq('grupo_id', req.userRow.grupo_ativo).eq('ativo', true).order('created_at');
+    const dias = parseInt(req.query.dias) || 120;
+    const incluirArquivados = req.query.incluir_arquivados === 'true';
+    const inicio = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+    let qh = supabase.from('habitos').select('*').eq('grupo_id', req.userRow.grupo_ativo);
+    if (!incluirArquivados) qh = qh.eq('ativo', true);
+    qh = qh.order('ordem', { ascending: true }).order('created_at', { ascending: true });
+    const { data: habitos } = await qh;
     const { data: registros } = await supabase.from('registros_habito')
       .select('habito_id, data, concluido')
       .eq('grupo_id', req.userRow.grupo_ativo).gte('data', inicio);
@@ -96,7 +100,7 @@ router.get('/habitos/:phone', auth, requireGrow, async (req, res) => {
 
 router.post('/habitos', auth, requireGrow, async (req, res) => {
   try {
-    const { nome, descricao, icone, cor, frequencia, dias_semana, horario_lembrete } = req.body;
+    const { nome, descricao, icone, cor, frequencia, dias_semana, horario_lembrete, motivo, tipo, ordem } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
     const { data } = await supabase.from('habitos').insert({
       grupo_id: req.userRow.grupo_ativo,
@@ -104,6 +108,9 @@ router.post('/habitos', auth, requireGrow, async (req, res) => {
       frequencia: frequencia || 'diario',
       dias_semana: dias_semana || [1,2,3,4,5,6,7],
       horario_lembrete: horario_lembrete || null,
+      motivo: motivo || null,
+      tipo: tipo || 'construir',
+      ordem: ordem ?? 0,
     }).select().single();
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -111,11 +118,22 @@ router.post('/habitos', auth, requireGrow, async (req, res) => {
 
 router.put('/habitos/:id', auth, requireGrow, async (req, res) => {
   try {
-    const allowed = ['nome','descricao','icone','cor','frequencia','dias_semana','horario_lembrete','ativo'];
+    const allowed = ['nome','descricao','icone','cor','frequencia','dias_semana','horario_lembrete','ativo','motivo','tipo','ordem'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     const { data } = await supabase.from('habitos').update(patch).eq('id', req.params.id).select().single();
     res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.post('/habitos/reordenar', auth, requireGrow, async (req, res) => {
+  try {
+    const { ordens } = req.body;
+    if (!Array.isArray(ordens)) return res.status(400).json({ erro: 'ordens deve ser array de {id, ordem}' });
+    await Promise.all(ordens.map((o) =>
+      supabase.from('habitos').update({ ordem: o.ordem }).eq('id', o.id).eq('grupo_id', req.userRow.grupo_ativo)
+    ));
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
