@@ -24,6 +24,7 @@ app.use('/api/metas',        require('./routes/metas'));
 app.use('/api/dividas',      require('./routes/dividas'));
 app.use('/api/grow',         require('./routes/grow'));
 app.use('/api/saude',        require('./routes/saude'));
+app.use('/api/estudos',      require('./routes/estudos'));
 app.use('/api/user',         require('./routes/users'));
 
 // --- 404 ---
