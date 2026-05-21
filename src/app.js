@@ -13,7 +13,9 @@ app.get('/health', (req, res) => {
 });
 
 // --- Rotas (vamos adicionar uma a uma) ---
-app.use('/webhook', require('./routes/webhook'));
+app.use('/webhook',          require('./routes/webhook'));
+app.use('/webhook/negocios', require('./routes/webhook-negocios'));
+app.use('/api/negocios',     require('./routes/negocios'));
 app.use('/api/transacoes',   require('./routes/transacoes'));
 app.use('/api/wallets',      require('./routes/wallets'));
 app.use('/api/grupos',       require('./routes/grupos'));

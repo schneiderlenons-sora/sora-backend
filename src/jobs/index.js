@@ -435,6 +435,35 @@ cron.schedule('59 23 * * *', async () => {
   console.log('✅ Snapshots salvos.');
 });
 
+// ─────────────────────────────────────────────────────────────────
+// JOB — Snapshot de DRE diário (00h05) para usuários com integrações ativas
+// ─────────────────────────────────────────────────────────────────
+const { gerarDre } = require('../handlers/negocios');
+cron.schedule('5 0 * * *', async () => {
+  console.log('📊 Gerando snapshots de DRE...');
+  const periodoAtual    = new Date().toISOString().slice(0, 7) + '-01';
+  const dAnterior = new Date(); dAnterior.setMonth(dAnterior.getMonth() - 1);
+  const periodoAnterior = dAnterior.toISOString().slice(0, 7) + '-01';
+
+  const { data: integ } = await supabase
+    .from('integracoes').select('user_id, grupo_id').eq('status', 'ativa');
+
+  const usersUnicos = Array.from(new Map((integ || []).map(i => [i.user_id, i])).values());
+  let ok = 0;
+  for (const u of usersUnicos) {
+    try {
+      await supabase.from('dre_snapshots').delete().eq('user_id', u.user_id).eq('periodo', periodoAtual);
+      await gerarDre(u.user_id, u.grupo_id, periodoAtual);
+      await supabase.from('dre_snapshots').delete().eq('user_id', u.user_id).eq('periodo', periodoAnterior);
+      await gerarDre(u.user_id, u.grupo_id, periodoAnterior);
+      ok++;
+    } catch (e) {
+      console.error('[dre] erro user', u.user_id, e.message);
+    }
+  }
+  console.log(`✅ DRE snapshots: ${ok} usuários processados.`);
+});
+
 console.log('⏰ Cron jobs registrados:');
 console.log('   • A cada hora  — recorrências, lembretes, parcelas, fatura');
 console.log('   • A cada 15min — lembretes de medicamentos');
@@ -443,3 +472,4 @@ console.log('   • Todo dia 09h — lembretes de dívidas (3d antes / dia / atr
 console.log('   • Todo dia 1º  — reset de alertas de limite');
 console.log('   • Todo dia 03h — atualização Yahoo Finance');
 console.log('   • Todo dia 23h59 — snapshot de patrimônio');
+console.log('   • Todo dia 00h05 — snapshot de DRE Negócios');
