@@ -325,6 +325,120 @@ router.get('/dre-detalhado/:phone', auth, async (req, res) => {
   }
 });
 
+// GET /api/negocios/forecast/:phone
+// Projeção de receita/lucro para os próximos 3 meses baseado nos últimos 6.
+// Algoritmo: EMA (exponential moving average) + ajuste de tendência linear.
+router.get('/forecast/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req.params.phone);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+
+    // Pega últimos 6 meses de snapshots
+    const meses = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      d.setDate(1);
+      meses.push(d.toISOString().slice(0, 10));
+    }
+
+    const { data: snaps } = await supabase
+      .from('dre_snapshots')
+      .select('periodo, receita_bruta, lucro_liquido, custos_total, total_vendas')
+      .eq('user_id', user.id)
+      .in('periodo', meses);
+
+    // Garante todos 6 meses (mês sem dado vira zero)
+    const mapa = Object.fromEntries((snaps || []).map(s => [s.periodo, s]));
+    const historico = meses.map(m => ({
+      periodo: m,
+      receita_bruta: mapa[m]?.receita_bruta || 0,
+      lucro_liquido: mapa[m]?.lucro_liquido || 0,
+      custos_total:  mapa[m]?.custos_total  || 0,
+      total_vendas:  mapa[m]?.total_vendas  || 0,
+      tipo: 'historico',
+    }));
+
+    // Quantos meses têm dados? Se < 2, forecast não faz sentido
+    const comDados = historico.filter(h => h.receita_bruta > 0).length;
+    if (comDados < 2) {
+      return res.json({
+        historico,
+        projecao: [],
+        confianca: 'baixa',
+        motivo: 'É necessário ao menos 2 meses de dados pra fazer previsões.',
+      });
+    }
+
+    // EMA com alpha = 0.4 (mais peso aos meses recentes)
+    const alpha = 0.4;
+    const ema = (campo) => {
+      const vals = historico.map(h => h[campo]);
+      let acc = vals[0];
+      for (let i = 1; i < vals.length; i++) {
+        acc = alpha * vals[i] + (1 - alpha) * acc;
+      }
+      return acc;
+    };
+
+    // Tendência linear simples (regressão pelos mínimos quadrados)
+    const tendencia = (campo) => {
+      const xs = historico.map((_, i) => i);
+      const ys = historico.map(h => h[campo]);
+      const n = xs.length;
+      const sumX = xs.reduce((a, b) => a + b, 0);
+      const sumY = ys.reduce((a, b) => a + b, 0);
+      const sumXY = xs.reduce((s, x, i) => s + x * ys[i], 0);
+      const sumX2 = xs.reduce((s, x) => s + x * x, 0);
+      const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX) || 0;
+      return slope;
+    };
+
+    const receitaEma   = ema('receita_bruta');
+    const lucroEma     = ema('lucro_liquido');
+    const custosEma    = ema('custos_total');
+    const vendasEma    = ema('total_vendas');
+    const receitaSlope = tendencia('receita_bruta');
+    const lucroSlope   = tendencia('lucro_liquido');
+
+    const projecao = [];
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date();
+      d.setMonth(d.getMonth() + i);
+      d.setDate(1);
+      // Combina EMA com slope (tendência aplicada gradualmente)
+      const receita = Math.max(0, Math.round(receitaEma + receitaSlope * i));
+      const lucro   = Math.round(lucroEma + lucroSlope * i);
+      projecao.push({
+        periodo:        d.toISOString().slice(0, 10),
+        receita_bruta:  receita,
+        lucro_liquido:  lucro,
+        custos_total:   Math.max(0, Math.round(custosEma)),
+        total_vendas:   Math.max(0, Math.round(vendasEma)),
+        tipo: 'projecao',
+      });
+    }
+
+    const confianca = comDados >= 5 ? 'alta' : comDados >= 3 ? 'media' : 'baixa';
+
+    res.json({
+      historico,
+      projecao,
+      confianca,
+      meta: {
+        receita_media_6m:    Math.round(historico.reduce((s, h) => s + h.receita_bruta, 0) / 6),
+        lucro_medio_6m:      Math.round(historico.reduce((s, h) => s + h.lucro_liquido, 0) / 6),
+        tendencia_receita:   receitaSlope > 0 ? 'crescimento' : receitaSlope < 0 ? 'queda' : 'estavel',
+        tendencia_lucro:     lucroSlope > 0 ? 'crescimento' : lucroSlope < 0 ? 'queda' : 'estavel',
+        meses_com_dados:     comDados,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 // POST /api/negocios/dre/recalcular — { phone, periodo: 'YYYY-MM' }
 router.post('/dre/recalcular', auth, async (req, res) => {
   try {
@@ -530,6 +644,87 @@ router.post('/insights/:id/dispensar', auth, async (req, res) => {
   }
 });
 
+// GET /api/negocios/wrapped/:phone?periodo=YYYY-MM
+// Retorna pacote de dados curado pros slides do Wrapped
+router.get('/wrapped/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req.params.phone);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+
+    const mesParam = req.query.periodo || new Date().toISOString().slice(0, 7);
+    const inicio = `${mesParam}-01`;
+    const fimDate = new Date(inicio); fimDate.setMonth(fimDate.getMonth() + 1);
+    const fim = fimDate.toISOString().slice(0, 10);
+
+    // Snapshot DRE
+    let { data: snap } = await supabase
+      .from('dre_snapshots').select('*').eq('user_id', user.id).eq('periodo', inicio).maybeSingle();
+    if (!snap) snap = await gerarDre(user.id, user.grupo_ativo, inicio);
+
+    // Mês anterior pra comparação
+    const dAnt = new Date(inicio); dAnt.setMonth(dAnt.getMonth() - 1);
+    const periodoAnt = dAnt.toISOString().slice(0, 10);
+    const { data: snapAnt } = await supabase
+      .from('dre_snapshots').select('*').eq('user_id', user.id).eq('periodo', periodoAnt).maybeSingle();
+
+    // Melhor dia do mês (maior receita)
+    const { data: eventos } = await supabase
+      .from('eventos_financeiros')
+      .select('data_evento, valor_bruto, tipo, plataforma, comprador_nome, comprador_email')
+      .eq('user_id', user.id)
+      .gte('data_evento', inicio).lt('data_evento', fim)
+      .in('tipo', ['venda', 'assinatura_renovacao']);
+
+    const porDia = {};
+    const compradoresUnicos = new Set();
+    for (const e of eventos || []) {
+      const dia = e.data_evento.slice(0, 10);
+      porDia[dia] = (porDia[dia] || 0) + e.valor_bruto;
+      if (e.comprador_email) compradoresUnicos.add(e.comprador_email);
+    }
+    const dias = Object.entries(porDia).sort((a, b) => b[1] - a[1]);
+    const melhorDia = dias[0]
+      ? { data: dias[0][0], valor: dias[0][1] }
+      : null;
+
+    // Hora pico (qual hora do dia mais vendeu)
+    const porHora = Array(24).fill(0);
+    for (const e of eventos || []) {
+      const h = new Date(e.data_evento).getHours();
+      porHora[h]++;
+    }
+    const horaPico = porHora.indexOf(Math.max(...porHora));
+
+    // Delta vs anterior
+    const deltaLucro = snapAnt?.lucro_liquido
+      ? ((snap.lucro_liquido - snapAnt.lucro_liquido) / Math.abs(snapAnt.lucro_liquido)) * 100
+      : null;
+    const deltaVendas = snapAnt?.total_vendas
+      ? ((snap.total_vendas - snapAnt.total_vendas) / snapAnt.total_vendas) * 100
+      : null;
+
+    res.json({
+      periodo: inicio,
+      receita_bruta:  snap.receita_bruta,
+      lucro_liquido:  snap.lucro_liquido,
+      margem_pct:     snap.margem_pct,
+      total_vendas:   snap.total_vendas,
+      ticket_medio:   snap.ticket_medio,
+      mrr:            snap.mrr,
+      compradores_unicos: compradoresUnicos.size,
+      delta_lucro_pct:    deltaLucro,
+      delta_vendas_pct:   deltaVendas,
+      produto_top:        (snap.por_produto    || [])[0] || null,
+      plataforma_top:     (snap.por_plataforma || [])[0] || null,
+      melhor_dia:         melhorDia,
+      hora_pico:          horaPico,
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 // POST /api/negocios/insights/gerar — { phone } — força regeneração agora
 router.post('/insights/gerar', auth, async (req, res) => {
   try {
@@ -553,7 +748,60 @@ router.get('/conciliacao/sugerir/:phone', auth, async (req, res) => {
     const user = await getUser(req.params.phone);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const sugestoes = await sugerirConciliacao(user.id, user.grupo_ativo);
-    res.json(sugestoes);
+
+    // Hidrata cada par com dados pra UI (nomes, valores, datas)
+    const hidratado = [];
+    for (const s of sugestoes) {
+      const [{ data: ev }, { data: tr }] = await Promise.all([
+        supabase.from('eventos_financeiros')
+          .select('id, plataforma, produto_nome, comprador_nome, valor_liquido, data_evento')
+          .eq('id', s.evento_id).maybeSingle(),
+        supabase.from('transacoes')
+          .select('id, descricao, observacao, valor, data, carteira_nome')
+          .eq('id', s.transacao_id).maybeSingle(),
+      ]);
+      if (ev && tr) hidratado.push({ ...s, evento: ev, transacao: tr });
+    }
+    res.json(hidratado);
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// GET /api/negocios/conciliacao/conciliadas/:phone — já conciliados
+router.get('/conciliacao/conciliadas/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req.params.phone);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+
+    const { data, error } = await supabase
+      .from('conciliacao_negocio')
+      .select(`
+        id, match_tipo, confianca, conciliado_em,
+        evento:eventos_financeiros (id, plataforma, produto_nome, comprador_nome, valor_liquido, data_evento),
+        transacao:transacoes (id, descricao, observacao, valor, data, carteira_nome)
+      `)
+      .eq('user_id', user.id)
+      .order('conciliado_em', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// DELETE /api/negocios/conciliacao/:id — desfaz conciliação
+router.delete('/conciliacao/:id', auth, async (req, res) => {
+  try {
+    const { data: row } = await supabase
+      .from('conciliacao_negocio').select('evento_id').eq('id', req.params.id).maybeSingle();
+    if (!row) return res.status(404).json({ erro: 'Conciliação não encontrada.' });
+    await supabase.from('conciliacao_negocio').delete().eq('id', req.params.id);
+    await supabase.from('eventos_financeiros')
+      .update({ conciliado: false, transacao_id: null })
+      .eq('id', row.evento_id);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ erro: e.message });
   }

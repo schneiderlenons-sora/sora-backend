@@ -90,9 +90,175 @@ function normalizarHotmart(payload) {
   };
 }
 
+/**
+ * KIWIFY — webhook v1 (https://docs.kiwify.com.br/webhooks)
+ * Eventos: order_approved, order_refunded, order_chargeback, subscription_canceled
+ */
+function normalizarKiwify(payload) {
+  const event = payload?.webhook_event_type || payload?.order_status;
+  if (!event) return null;
+
+  const MAP = {
+    order_approved:        'venda',
+    order_refunded:        'reembolso',
+    order_chargedback:     'chargeback',
+    order_chargeback:      'chargeback',
+    subscription_canceled: 'assinatura_cancelamento',
+    subscription_renewed:  'assinatura_renovacao',
+  };
+  const tipo = MAP[event];
+  if (!tipo) return null;
+
+  const order   = payload?.order || payload;
+  const product = payload?.product || order?.product || {};
+  const customer = payload?.customer || order?.customer || {};
+  const sub     = payload?.subscription;
+
+  const refExterna = String(order?.order_id || order?.id || payload?.id || '');
+  if (!refExterna) return null;
+
+  const valorBruto      = r$(order?.total_price || order?.price || 0);
+  const taxaPlataforma  = r$(order?.commissions?.kiwify_fee || order?.kiwify_commission || 0);
+  const comissaoAfil    = r$(order?.commissions?.affiliate_fee || 0);
+
+  const valorLiquido = (tipo === 'reembolso' || tipo === 'chargeback')
+    ? -valorBruto
+    : (valorBruto - taxaPlataforma - comissaoAfil);
+
+  return {
+    ref_externa:        refExterna,
+    tipo,
+    produto_id_externo: product?.product_id ? String(product.product_id) : null,
+    produto_nome:       product?.product_name || product?.name || 'Produto Kiwify',
+    oferta:             order?.offer_code || null,
+    valor_bruto:        valorBruto,
+    taxa_plataforma:    taxaPlataforma,
+    taxa_gateway:       0,
+    imposto:            0,
+    valor_liquido:      valorLiquido,
+    moeda:              order?.currency || 'BRL',
+    comprador_nome:     customer?.full_name || customer?.first_name || null,
+    comprador_email:    customer?.email || null,
+    comprador_doc:      customer?.CPF || customer?.CNPJ || null,
+    afiliado_nome:      order?.affiliate_name || null,
+    comissao_afiliado:  comissaoAfil,
+    recorrencia:        sub ? 'mensal' : 'avulsa',
+    assinatura_id:      sub?.id || null,
+    status:             tipo === 'reembolso' || tipo === 'chargeback' ? 'estornado'
+                      : tipo === 'assinatura_cancelamento' ? 'cancelado'
+                      : 'aprovado',
+    data_evento:        new Date(order?.approved_date || order?.created_at || Date.now()).toISOString(),
+    metadata:           { event, payment_method: order?.payment_method },
+  };
+}
+
+/**
+ * EDUZZ — webhook v2 (https://api.eduzz.com/documentacao/api-eduzz/notificacoes-webhook)
+ * Status: 3=aprovado, 9=cancelado, 10=reembolso, 11=chargeback
+ */
+function normalizarEduzz(payload) {
+  const status = payload?.trans_status || payload?.status;
+  const MAP = { 3: 'venda', 9: 'assinatura_cancelamento', 10: 'reembolso', 11: 'chargeback' };
+  const tipo = MAP[status];
+  if (!tipo) return null;
+
+  const refExterna = String(payload?.trans_cod || payload?.id || '');
+  if (!refExterna) return null;
+
+  const valorBruto = r$(payload?.trans_value || payload?.value || 0);
+  const taxaPlat   = r$(payload?.trans_eduzz_amount || 0);
+  const comissao   = r$(payload?.trans_affiliate_amount || 0);
+  const valorLiq   = (tipo === 'reembolso' || tipo === 'chargeback')
+    ? -valorBruto
+    : (valorBruto - taxaPlat - comissao);
+
+  return {
+    ref_externa:        refExterna,
+    tipo,
+    produto_id_externo: payload?.product_cod ? String(payload.product_cod) : null,
+    produto_nome:       payload?.product_name || 'Produto Eduzz',
+    valor_bruto:        valorBruto,
+    taxa_plataforma:    taxaPlat,
+    taxa_gateway:       0,
+    imposto:            0,
+    valor_liquido:      valorLiq,
+    moeda:              'BRL',
+    comprador_nome:     payload?.cli_name || null,
+    comprador_email:    payload?.cli_email || null,
+    comprador_doc:      payload?.cli_document || null,
+    afiliado_nome:      payload?.affiliate_name || null,
+    comissao_afiliado:  comissao,
+    recorrencia:        payload?.recurrence ? 'mensal' : 'avulsa',
+    assinatura_id:      payload?.subscription_id || null,
+    status:             tipo === 'reembolso' || tipo === 'chargeback' ? 'estornado'
+                      : tipo === 'assinatura_cancelamento' ? 'cancelado'
+                      : 'aprovado',
+    data_evento:        new Date(payload?.trans_createdate || payload?.created_at || Date.now()).toISOString(),
+    metadata:           { status },
+  };
+}
+
+/**
+ * STRIPE — webhook events (charge.succeeded, charge.refunded, etc.)
+ * Stripe trabalha em centavos por padrão (amount, application_fee_amount).
+ */
+function normalizarStripe(payload) {
+  const event = payload?.type;
+  if (!event) return null;
+
+  const MAP = {
+    'charge.succeeded':            'venda',
+    'payment_intent.succeeded':    'venda',
+    'invoice.payment_succeeded':   'assinatura_renovacao',
+    'charge.refunded':             'reembolso',
+    'charge.dispute.created':      'chargeback',
+    'customer.subscription.deleted': 'assinatura_cancelamento',
+  };
+  const tipo = MAP[event];
+  if (!tipo) return null;
+
+  const obj = payload?.data?.object || {};
+  const refExterna = String(obj.id || payload.id || '');
+  if (!refExterna) return null;
+
+  // Stripe já vem em centavos
+  const valorBruto      = obj.amount || obj.amount_paid || obj.amount_received || 0;
+  const taxaGateway     = obj.application_fee_amount || obj.balance_transaction?.fee || 0;
+
+  const valorLiquido = (tipo === 'reembolso' || tipo === 'chargeback')
+    ? -valorBruto
+    : (valorBruto - taxaGateway);
+
+  return {
+    ref_externa:        refExterna,
+    tipo,
+    produto_id_externo: obj.metadata?.product_id || null,
+    produto_nome:       obj.description || obj.metadata?.product_name || 'Pagamento Stripe',
+    valor_bruto:        valorBruto,
+    taxa_plataforma:    0,
+    taxa_gateway:       taxaGateway,
+    imposto:            0,
+    valor_liquido:      valorLiquido,
+    moeda:              (obj.currency || 'brl').toUpperCase(),
+    comprador_nome:     obj.billing_details?.name || obj.customer_name || null,
+    comprador_email:    obj.billing_details?.email || obj.customer_email || obj.receipt_email || null,
+    afiliado_nome:      null,
+    comissao_afiliado:  0,
+    recorrencia:        obj.subscription ? 'mensal' : 'avulsa',
+    assinatura_id:      obj.subscription || null,
+    status:             tipo === 'reembolso' || tipo === 'chargeback' ? 'estornado'
+                      : tipo === 'assinatura_cancelamento' ? 'cancelado'
+                      : 'aprovado',
+    data_evento:        new Date((obj.created || payload.created || Date.now() / 1000) * 1000).toISOString(),
+    metadata:           { event, payment_method: obj.payment_method_details?.type },
+  };
+}
+
 const ADAPTERS = {
   hotmart: normalizarHotmart,
-  // futuro: stripe, kiwify, mercadopago...
+  kiwify:  normalizarKiwify,
+  eduzz:   normalizarEduzz,
+  stripe:  normalizarStripe,
 };
 
 // ─────────────────────────────────────────────────────────────────
