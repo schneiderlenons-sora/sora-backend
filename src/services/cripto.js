@@ -11,16 +11,22 @@ const ALG = 'aes-256-gcm';
 const PREFIX = 'enc:v1:';
 
 function getKey() {
-  const hex = process.env.NEGOCIOS_ENC_KEY;
+  const raw = process.env.NEGOCIOS_ENC_KEY;
+  const hex = raw?.trim(); // remove whitespace/newlines do Fly.io
+
   if (!hex || hex.length < 64) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('NEGOCIOS_ENC_KEY não configurada. Configure 64 chars hex antes de usar integrações em produção.');
-    }
-    // Dev: avisa mas não bloqueia
-    console.warn('[cripto] NEGOCIOS_ENC_KEY ausente — credenciais salvas em TEXTO PLANO. Configure para produção.');
+    console.warn('[cripto] NEGOCIOS_ENC_KEY ausente ou curta — credenciais em TEXTO PLANO.');
     return null;
   }
-  return Buffer.from(hex, 'hex');
+
+  const buf = Buffer.from(hex, 'hex');
+  if (buf.length !== 32) {
+    // hex inválido (chars não-hex geram buffer menor)
+    console.warn(`[cripto] NEGOCIOS_ENC_KEY gerou buffer de ${buf.length} bytes (esperado 32) — salvando em TEXTO PLANO.`);
+    return null;
+  }
+
+  return buf;
 }
 
 /**
