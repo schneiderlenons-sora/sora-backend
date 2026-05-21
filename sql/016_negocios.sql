@@ -81,7 +81,7 @@ create table if not exists public.eventos_financeiros (
 create index if not exists idx_eventos_user on public.eventos_financeiros(user_id);
 create index if not exists idx_eventos_grupo on public.eventos_financeiros(grupo_id);
 create index if not exists idx_eventos_data on public.eventos_financeiros(data_evento desc);
-create index if not exists idx_eventos_periodo on public.eventos_financeiros(user_id, date_trunc('month', data_evento));
+create index if not exists idx_eventos_periodo on public.eventos_financeiros(user_id, data_evento);
 create index if not exists idx_eventos_produto on public.eventos_financeiros(produto_nome);
 create index if not exists idx_eventos_tipo on public.eventos_financeiros(tipo);
 

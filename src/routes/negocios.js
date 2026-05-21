@@ -5,6 +5,7 @@ const auth     = require('../middlewares/auth');
 const { gerarDre, sugerirConciliacao } = require('../handlers/negocios');
 const { encrypt, decrypt } = require('../services/cripto');
 const { importarHistoricoHotmart } = require('../services/hotmart-import');
+const { gerarInsights } = require('./../handlers/insights-negocio');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -189,6 +190,135 @@ router.get('/dre/:phone', auth, async (req, res) => {
       ...snap,
       delta_vs_anterior: Number(delta_vs_anterior.toFixed(2)),
       spark: dias,
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// GET /api/negocios/dre-detalhado/:phone?periodo=YYYY-MM
+// Quebra cada linha do DRE por plataforma + lista custos por categoria
+router.get('/dre-detalhado/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req.params.phone);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+
+    const mesParam = req.query.periodo || new Date().toISOString().slice(0, 7);
+    const inicio = `${mesParam}-01`;
+    const fimDate = new Date(inicio);
+    fimDate.setMonth(fimDate.getMonth() + 1);
+    const fim = fimDate.toISOString().slice(0, 10);
+
+    // 1. Eventos do período
+    const { data: eventos } = await supabase
+      .from('eventos_financeiros').select('*')
+      .eq('user_id', user.id)
+      .gte('data_evento', inicio).lt('data_evento', fim);
+
+    // 2. Custos do período
+    const { data: custos } = await supabase
+      .from('custos_negocio').select('*')
+      .eq('user_id', user.id)
+      .gte('data', inicio).lt('data', fim);
+
+    // 3. Config tributária
+    const { data: cfg } = await supabase
+      .from('config_negocio').select('*').eq('user_id', user.id).maybeSingle();
+    const aliquota = cfg?.aliquota_simples ?? 6.0;
+    const reservarImposto = cfg?.reservar_imposto ?? true;
+
+    // Helpers de agregação por plataforma
+    const novo = () => ({ total: 0, por_plataforma: {} });
+    const acc  = (bag, plataforma, valor) => {
+      bag.total += valor;
+      bag.por_plataforma[plataforma] = (bag.por_plataforma[plataforma] || 0) + valor;
+    };
+    const fmtBreakdown = (bag) => ({
+      total: bag.total,
+      por_plataforma: Object.entries(bag.por_plataforma)
+        .map(([plataforma, valor]) => ({ plataforma, valor }))
+        .sort((a, b) => b.valor - a.valor),
+    });
+
+    const receitaBruta    = novo();
+    const taxasPlataforma = novo();
+    const taxasGateway    = novo();
+    const reembolsos      = novo();
+    const chargebacks     = novo();
+    const comissoes       = novo();
+    const impostoRetido   = novo();
+
+    for (const e of eventos || []) {
+      if (e.tipo === 'venda' || e.tipo === 'assinatura_renovacao') {
+        acc(receitaBruta,    e.plataforma, e.valor_bruto);
+        acc(taxasPlataforma, e.plataforma, e.taxa_plataforma);
+        acc(taxasGateway,    e.plataforma, e.taxa_gateway);
+        acc(impostoRetido,   e.plataforma, e.imposto);
+        acc(comissoes,       e.plataforma, e.comissao_afiliado || 0);
+      } else if (e.tipo === 'reembolso') {
+        acc(reembolsos,  e.plataforma, e.valor_bruto);
+      } else if (e.tipo === 'chargeback') {
+        acc(chargebacks, e.plataforma, e.valor_bruto);
+      }
+    }
+
+    // Receita líquida = bruta - taxas - reembolsos - chargebacks - comissões
+    const receitaLiquida = novo();
+    for (const plat of Object.keys(receitaBruta.por_plataforma)) {
+      const v = (receitaBruta.por_plataforma[plat] || 0)
+              - (taxasPlataforma.por_plataforma[plat] || 0)
+              - (taxasGateway.por_plataforma[plat] || 0)
+              - (reembolsos.por_plataforma[plat] || 0)
+              - (chargebacks.por_plataforma[plat] || 0)
+              - (comissoes.por_plataforma[plat] || 0);
+      acc(receitaLiquida, plat, v);
+    }
+
+    // Imposto reserva (sobre receita_apos_taxas)
+    const receitaAposTaxas = receitaBruta.total - taxasPlataforma.total - taxasGateway.total
+                           - reembolsos.total - chargebacks.total - comissoes.total;
+    const impostoReserva = reservarImposto ? Math.round(receitaAposTaxas * (aliquota / 100)) : 0;
+    const impostoTotal   = impostoRetido.total + impostoReserva;
+
+    // Custos por categoria
+    const custosPorCat = {};
+    for (const c of custos || []) {
+      custosPorCat[c.categoria] = custosPorCat[c.categoria] || { total: 0, itens: [] };
+      custosPorCat[c.categoria].total += c.valor;
+      custosPorCat[c.categoria].itens.push({
+        id: c.id, descricao: c.descricao, valor: c.valor, data: c.data, fornecedor: c.fornecedor
+      });
+    }
+    const custosTotal = Object.values(custosPorCat).reduce((s, v) => s + v.total, 0);
+
+    const lucroLiquido = (receitaLiquida.total - impostoReserva) - custosTotal;
+
+    res.json({
+      periodo: inicio,
+      receita_bruta:    fmtBreakdown(receitaBruta),
+      taxas_plataforma: fmtBreakdown(taxasPlataforma),
+      taxas_gateway:    fmtBreakdown(taxasGateway),
+      reembolsos:       fmtBreakdown(reembolsos),
+      chargebacks:      fmtBreakdown(chargebacks),
+      comissoes:        fmtBreakdown(comissoes),
+      impostos: {
+        total: impostoTotal,
+        retido_origem: impostoRetido.total,
+        reserva_simples: impostoReserva,
+        aliquota_aplicada: aliquota,
+      },
+      receita_liquida:  fmtBreakdown(receitaLiquida),
+      custos: {
+        total: custosTotal,
+        por_categoria: Object.entries(custosPorCat)
+          .map(([categoria, v]) => ({ categoria, total: v.total, itens: v.itens }))
+          .sort((a, b) => b.total - a.total),
+      },
+      lucro_liquido: lucroLiquido,
+      margem_pct: receitaBruta.total > 0
+        ? Number((lucroLiquido / receitaBruta.total * 100).toFixed(2))
+        : 0,
     });
   } catch (e) {
     res.status(500).json({ erro: e.message });
@@ -395,6 +525,20 @@ router.post('/insights/:id/dispensar', auth, async (req, res) => {
   try {
     await supabase.from('insights_negocio').update({ dispensado: true }).eq('id', req.params.id);
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// POST /api/negocios/insights/gerar — { phone } — força regeneração agora
+router.post('/insights/gerar', auth, async (req, res) => {
+  try {
+    const user = await getUser(req.body.phone);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+
+    const insights = await gerarInsights(user.id, user.grupo_ativo);
+    res.json({ ok: true, gerados: insights.length, insights });
   } catch (e) {
     res.status(500).json({ erro: e.message });
   }

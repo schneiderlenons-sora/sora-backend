@@ -439,8 +439,9 @@ cron.schedule('59 23 * * *', async () => {
 // JOB — Snapshot de DRE diário (00h05) para usuários com integrações ativas
 // ─────────────────────────────────────────────────────────────────
 const { gerarDre } = require('../handlers/negocios');
+const { gerarInsights } = require('../handlers/insights-negocio');
 cron.schedule('5 0 * * *', async () => {
-  console.log('📊 Gerando snapshots de DRE...');
+  console.log('📊 Gerando snapshots de DRE + insights...');
   const periodoAtual    = new Date().toISOString().slice(0, 7) + '-01';
   const dAnterior = new Date(); dAnterior.setMonth(dAnterior.getMonth() - 1);
   const periodoAnterior = dAnterior.toISOString().slice(0, 7) + '-01';
@@ -449,19 +450,21 @@ cron.schedule('5 0 * * *', async () => {
     .from('integracoes').select('user_id, grupo_id').eq('status', 'ativa');
 
   const usersUnicos = Array.from(new Map((integ || []).map(i => [i.user_id, i])).values());
-  let ok = 0;
+  let okSnap = 0, okIns = 0;
   for (const u of usersUnicos) {
     try {
       await supabase.from('dre_snapshots').delete().eq('user_id', u.user_id).eq('periodo', periodoAtual);
       await gerarDre(u.user_id, u.grupo_id, periodoAtual);
       await supabase.from('dre_snapshots').delete().eq('user_id', u.user_id).eq('periodo', periodoAnterior);
       await gerarDre(u.user_id, u.grupo_id, periodoAnterior);
-      ok++;
+      okSnap++;
+      const ins = await gerarInsights(u.user_id, u.grupo_id);
+      okIns += ins.length;
     } catch (e) {
-      console.error('[dre] erro user', u.user_id, e.message);
+      console.error('[dre/insights] erro user', u.user_id, e.message);
     }
   }
-  console.log(`✅ DRE snapshots: ${ok} usuários processados.`);
+  console.log(`✅ DRE: ${okSnap} users · Insights: ${okIns} gerados.`);
 });
 
 console.log('⏰ Cron jobs registrados:');
