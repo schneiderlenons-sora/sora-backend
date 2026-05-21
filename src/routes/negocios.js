@@ -3,6 +3,8 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { gerarDre, sugerirConciliacao } = require('../handlers/negocios');
+const { encrypt, decrypt } = require('../services/cripto');
+const { importarHistoricoHotmart } = require('../services/hotmart-import');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -50,8 +52,6 @@ router.post('/integracoes', auth, async (req, res) => {
     if (!['hotmart','kiwify','eduzz','stripe','mercadopago','asaas','pagseguro','shopify','woocommerce'].includes(plataforma))
       return res.status(400).json({ erro: 'Plataforma inválida.' });
 
-    // TODO: criptografar credenciais com chave de servidor (libsodium).
-    // Por ora salvamos como jsonb e dependemos da política RLS + service key.
     const { data, error } = await supabase
       .from('integracoes')
       .insert({
@@ -59,7 +59,7 @@ router.post('/integracoes', auth, async (req, res) => {
         grupo_id: user.grupo_ativo,
         plataforma,
         apelido: apelido || null,
-        credenciais: credenciais || {},
+        credenciais: encrypt(credenciais || {}),
         webhook_secret: gerarSecret(),
         status: 'ativa',
         proximo_sync: new Date(Date.now() + 60_000).toISOString(),
@@ -79,6 +79,52 @@ router.delete('/integracoes/:id', auth, async (req, res) => {
     const { error } = await supabase.from('integracoes').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// POST /api/negocios/integracoes/:id/importar-historico
+// Importa os últimos 90 dias via API REST da plataforma.
+// Roda em background — responde imediatamente com { ok: true, job: 'iniciado' }.
+router.post('/integracoes/:id/importar-historico', auth, async (req, res) => {
+  try {
+    const { data: integ, error } = await supabase
+      .from('integracoes').select('*').eq('id', req.params.id).maybeSingle();
+    if (error || !integ) return res.status(404).json({ erro: 'Integração não encontrada.' });
+    if (integ.status !== 'ativa') return res.status(409).json({ erro: 'Integração não está ativa.' });
+
+    // Marca como sincronizando
+    await supabase.from('integracoes')
+      .update({ sincronizando: true }).eq('id', integ.id);
+
+    // Responde imediatamente — importação roda em background
+    res.json({ ok: true, job: 'iniciado' });
+
+    // Background: descriptografa credenciais e importa
+    const integDecrypted = { ...integ, credenciais: decrypt(integ.credenciais) };
+
+    ;(async () => {
+      try {
+        if (integ.plataforma === 'hotmart') {
+          const { importados, ignorados, erros } = await importarHistoricoHotmart(integDecrypted);
+          await supabase.from('integracoes').update({
+            sincronizando:  false,
+            ultimo_sync:    new Date().toISOString(),
+            ultimo_erro:    erros > 0 ? `${erros} erros na importação histórica` : null,
+            total_eventos:  (integ.total_eventos || 0) + importados,
+          }).eq('id', integ.id);
+          console.log(`[import] ${integ.plataforma} ${integ.id}: +${importados} eventos`);
+        }
+      } catch (e) {
+        console.error('[import] erro background:', e.message);
+        await supabase.from('integracoes').update({
+          sincronizando: false,
+          ultimo_erro:   e.message?.slice(0, 500),
+          status:        'erro',
+        }).eq('id', integ.id);
+      }
+    })();
   } catch (e) {
     res.status(500).json({ erro: e.message });
   }

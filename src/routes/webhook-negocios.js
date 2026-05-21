@@ -14,6 +14,7 @@ const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const { ingerirEvento } = require('../handlers/negocios');
+const { decrypt } = require('../services/cripto');
 
 // POST /webhook/negocios/:plataforma/:integracao_id?secret=xxx
 router.post('/:plataforma/:integracao_id', async (req, res) => {
@@ -43,8 +44,9 @@ router.post('/:plataforma/:integracao_id', async (req, res) => {
       return res.status(409).json({ erro: 'Integração pausada/revogada' });
     }
 
-    // 2. Delega ao adapter via handler
-    const resultado = await ingerirEvento(integ, req.body);
+    // 2. Delega ao adapter via handler (descriptografa credenciais antes de passar)
+    const integDecrypted = { ...integ, credenciais: decrypt(integ.credenciais) };
+    const resultado = await ingerirEvento(integDecrypted, req.body);
 
     if (resultado.ignorado) {
       console.log(`[webhook ${plataforma}] ignorado: ${resultado.motivo}`);
