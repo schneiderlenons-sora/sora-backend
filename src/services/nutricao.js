@@ -131,23 +131,92 @@ Se a frase do usuário não contém comida (ex: "oi", "teste"), retorne {"itens"
   }));
 }
 
-// Parser híbrido: tenta local primeiro pra itens conhecidos, IA pro resto
-async function analisarRefeicao(texto) {
-  // Sempre passa pela IA — ela é boa em quebrar a frase, identificar quantidades
-  // e nomear os itens. Depois sobreescrevemos com dados do banco local quando bater.
-  const itensIA = await analisarRefeicaoIA(texto);
-  if (!itensIA.length) return [];
+// Fallback local: quebra o texto por vírgulas/"e"/"com"/"+" e tenta match no banco TACO.
+// Detecta quantidade tipo "2 conchas", "1 fatia", "100g", "1 unidade".
+function analisarLocalFallback(texto) {
+  const fragmentos = (texto || '')
+    .split(/,| e | com |\+|\bmais\b/i)
+    .map(s => s.trim())
+    .filter(Boolean);
 
-  return itensIA.map(item => {
-    const local = lookupLocal(item.nome);
-    if (local && item.quantidade_g) {
-      // Recalcula com base no banco local (mais preciso)
-      return { ...macrosParaQuantidade(local, item.quantidade_g), porcao_descr: item.porcao_descr || local.porcao?.descricao };
+  const itens = [];
+  for (const frag of fragmentos) {
+    // Match local pelo fragmento inteiro primeiro (ex: "arroz branco")
+    let alimento = lookupLocal(frag);
+    let porcaoStr = null;
+    let gramas = null;
+
+    // Tenta extrair quantidade explícita em gramas (ex: "150g de arroz")
+    const mG = frag.match(/(\d+(?:[.,]\d+)?)\s*g(?:r(?:amas?)?)?\b/i);
+    if (mG) {
+      gramas = parseFloat(mG[1].replace(',', '.'));
+      porcaoStr = `${gramas}g`;
     }
-    // Sem match no banco local — mantém valores que vieram da IA, mas filtra entradas vazias
-    if (!item.nome || (!item.quantidade_g && !item.calorias)) return null;
-    return item;
-  }).filter(Boolean);
+
+    // Tenta extrair quantidade em unidades padrão (ex: "2 conchas", "1 fatia")
+    const mUnid = frag.match(/(\d+(?:[.,]\d+)?)\s*(concha|fatia|copo|x[íi]cara|colher|unidade|filé|file|bife|ovo|p[ãa]o)s?\b/i);
+    if (mUnid && !gramas) {
+      const qtd = parseFloat(mUnid[1].replace(',', '.'));
+      porcaoStr = `${qtd} ${mUnid[2]}${qtd > 1 ? 's' : ''}`;
+      // Busca o alimento removendo a parte da quantidade
+      const semQtd = frag.replace(mUnid[0], '').trim();
+      alimento = lookupLocal(semQtd) || lookupLocal(frag);
+      // Multiplica a porção padrão do alimento pela quantidade
+      if (alimento?.porcao?.g) gramas = alimento.porcao.g * qtd;
+    }
+
+    // Se ainda sem alimento, tenta lookup palavra a palavra (pega a primeira que bater)
+    if (!alimento) {
+      for (const palavra of frag.split(/\s+/)) {
+        if (palavra.length < 3) continue;
+        alimento = lookupLocal(palavra);
+        if (alimento) break;
+      }
+    }
+
+    // Se achou alimento mas sem gramas, usa a porção padrão
+    if (alimento && !gramas) {
+      gramas = alimento.porcao?.g || 100;
+      porcaoStr = porcaoStr || alimento.porcao?.descricao;
+    }
+
+    if (alimento && gramas) {
+      itens.push({ ...macrosParaQuantidade(alimento, gramas), porcao_descr: porcaoStr || alimento.porcao?.descricao });
+    }
+  }
+  return itens;
+}
+
+// Parser híbrido: tenta IA primeiro; se falhar OU retornar vazio, cai pro banco local.
+async function analisarRefeicao(texto) {
+  let itensIA = [];
+  let erroIA = null;
+  try {
+    itensIA = await analisarRefeicaoIA(texto);
+  } catch (err) {
+    erroIA = err;
+    console.error('[nutricao] IA falhou, tentando fallback local:', err.message);
+  }
+
+  // Sucesso da IA: enriquece com banco local quando casar
+  if (itensIA.length) {
+    return itensIA.map(item => {
+      const local = lookupLocal(item.nome);
+      if (local && item.quantidade_g) {
+        return { ...macrosParaQuantidade(local, item.quantidade_g), porcao_descr: item.porcao_descr || local.porcao?.descricao };
+      }
+      if (!item.nome || (!item.quantidade_g && !item.calorias)) return null;
+      return item;
+    }).filter(Boolean);
+  }
+
+  // IA não trouxe itens (ou falhou) — tenta parser local puro
+  const itensLocal = analisarLocalFallback(texto);
+  if (itensLocal.length) return itensLocal;
+
+  // Nem IA nem local conseguiram — propaga o erro real da IA se houver
+  if (erroIA) throw erroIA;
+  return [];
 }
 
 // ── CALCULADORA TMB / TDEE / MACROS ──────────────────────────────
