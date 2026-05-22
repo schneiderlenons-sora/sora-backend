@@ -57,8 +57,11 @@ function macrosParaQuantidade(alimento, gramas) {
 
 // ── PARSER DE REFEIÇÃO via IA ───────────────────────────────────
 async function analisarRefeicaoIA(texto) {
-  try {
-    const sysPrompt = `Você é nutricionista. Analise a refeição em português brasileiro e retorne APENAS um JSON válido (sem texto antes ou depois).
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error('ANTHROPIC_API_KEY não configurada no servidor.');
+  }
+
+  const sysPrompt = `Você é nutricionista. Analise a refeição em português brasileiro e retorne APENAS um JSON válido (sem texto antes ou depois).
 
 Formato exato:
 {
@@ -83,30 +86,49 @@ PORÇÕES PADRÃO (quando o usuário não especificar quantidade exata):
 - 1 fatia de queijo = 20-30g | 1 unidade média de fruta = 100-150g
 - "punhado", "porção" pequena = 30-50g
 
-Use valores TACO/USDA. Seja conservador em estimativas. Calorias = (4*proteinas) + (4*carbo) + (9*gorduras).`;
+Use valores TACO/USDA. Seja conservador em estimativas. Calorias = (4*proteinas) + (4*carbo) + (9*gorduras).
+Se a frase do usuário não contém comida (ex: "oi", "teste"), retorne {"itens": []}.`;
 
-    const resp = await client.messages.create({
-      model: 'claude-haiku-4-5',
+  let resp;
+  try {
+    resp = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 1200,
       system: sysPrompt,
       messages: [{ role: 'user', content: texto }],
     });
-    const raw = resp.content[0].text.trim().replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(raw);
-    return (parsed.itens || []).map(i => ({
-      nome:           i.nome,
-      quantidade_g:   parseFloat(i.quantidade_g) || null,
-      porcao_descr:   i.porcao_descr || null,
-      calorias:       parseFloat(i.calorias) || 0,
-      proteinas_g:    parseFloat(i.proteinas_g) || 0,
-      carboidratos_g: parseFloat(i.carboidratos_g) || 0,
-      gorduras_g:     parseFloat(i.gorduras_g) || 0,
-      fonte:          'ia',
-    }));
   } catch (err) {
-    console.error('[nutricao] parser IA falhou:', err.message);
-    return [];
+    console.error('[nutricao] chamada Claude falhou:', err.status, err.message, err.error);
+    throw new Error(`IA indisponível: ${err.message}`);
   }
+
+  const raw = (resp.content?.[0]?.text || '').trim().replace(/```json|```/g, '').trim();
+
+  // Extrai o primeiro bloco JSON da resposta (caso a IA inclua texto extra)
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.error('[nutricao] resposta sem JSON válido:', raw.slice(0, 300));
+    throw new Error('IA retornou formato inesperado.');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    console.error('[nutricao] JSON.parse falhou:', err.message, 'raw:', raw.slice(0, 300));
+    throw new Error('Não consegui ler a resposta da IA.');
+  }
+
+  return (parsed.itens || []).map(i => ({
+    nome:           i.nome,
+    quantidade_g:   parseFloat(i.quantidade_g) || null,
+    porcao_descr:   i.porcao_descr || null,
+    calorias:       parseFloat(i.calorias) || 0,
+    proteinas_g:    parseFloat(i.proteinas_g) || 0,
+    carboidratos_g: parseFloat(i.carboidratos_g) || 0,
+    gorduras_g:     parseFloat(i.gorduras_g) || 0,
+    fonte:          'ia',
+  }));
 }
 
 // Parser híbrido: tenta local primeiro pra itens conhecidos, IA pro resto
@@ -122,8 +144,10 @@ async function analisarRefeicao(texto) {
       // Recalcula com base no banco local (mais preciso)
       return { ...macrosParaQuantidade(local, item.quantidade_g), porcao_descr: item.porcao_descr || local.porcao?.descricao };
     }
+    // Sem match no banco local — mantém valores que vieram da IA, mas filtra entradas vazias
+    if (!item.nome || (!item.quantidade_g && !item.calorias)) return null;
     return item;
-  });
+  }).filter(Boolean);
 }
 
 // ── CALCULADORA TMB / TDEE / MACROS ──────────────────────────────

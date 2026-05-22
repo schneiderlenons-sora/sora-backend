@@ -324,7 +324,10 @@ router.post('/nutricao/analisar', auth, requireGrow, async (req, res) => {
     if (!texto?.trim()) return res.status(400).json({ erro: 'texto obrigatório' });
     const itens = await nutricao.analisarRefeicao(texto);
     res.json({ itens });
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) {
+    console.error('[saude] nutricao/analisar falhou:', e);
+    res.status(500).json({ erro: e.message || 'Falha ao analisar refeição.' });
+  }
 });
 
 router.post('/nutricao/calcular', auth, requireGrow, async (req, res) => {

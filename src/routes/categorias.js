@@ -15,20 +15,24 @@ router.get('/:phone', auth, async (req, res) => {
   try {
     const grupoId = await getGrupoId(req.params.phone);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
-    const { data } = await supabase.from('categorias')
+    const { tipo } = req.query;
+    let q = supabase.from('categorias')
       .select('*, parent:parent_id(id,nome)').eq('grupo_id', grupoId)
       .eq('ativa', true).order('nome');
+    if (tipo === 'despesa' || tipo === 'receita') q = q.eq('tipo', tipo);
+    const { data } = await q;
     res.json(data || []);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { phone, nome, parent_id, icone, cor } = req.body;
+    const { phone, nome, parent_id, icone, cor, tipo } = req.body;
     const grupoId = await getGrupoId(phone);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+    const tipoNorm = tipo === 'receita' ? 'receita' : 'despesa';
     const { data } = await supabase.from('categorias')
-      .insert({ grupo_id: grupoId, nome, parent_id: parent_id || null, icone: icone || '📦', cor: cor || '#808080' })
+      .insert({ grupo_id: grupoId, nome, parent_id: parent_id || null, icone: icone || '📦', cor: cor || '#808080', tipo: tipoNorm })
       .select().single();
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -36,9 +40,11 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 
 router.put('/:id', auth, async (req, res) => {
   try {
-    const { nome, icone, cor, arquivada } = req.body;
+    const { nome, icone, cor, arquivada, tipo } = req.body;
+    const patch = { nome, icone, cor, arquivada };
+    if (tipo === 'despesa' || tipo === 'receita') patch.tipo = tipo;
     const { data } = await supabase.from('categorias')
-      .update({ nome, icone, cor, arquivada }).eq('id', req.params.id).select().single();
+      .update(patch).eq('id', req.params.id).select().single();
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
