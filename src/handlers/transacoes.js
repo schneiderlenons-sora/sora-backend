@@ -1,6 +1,7 @@
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarMenu } = require('../services/zapi');
 const { analisarGastos } = require('../services/ia');
+const { criarPendente } = require('../services/pendentes');
 
 const EMOJIS = {
   'Mercado':'🛒','Transporte':'🚗','Lazer e Entretenimento':'🍺',
@@ -65,6 +66,18 @@ async function buscarWalletPadrao(userId) {
   return u?.wallets?.nome || null;
 }
 
+// Lista as contas ATIVAS do grupo (pra perguntar de qual saiu a transação)
+async function listarContasAtivas(grupoId) {
+  if (!grupoId) return [];
+  const { data } = await supabase
+    .from('wallets')
+    .select('id, nome, tipo')
+    .eq('grupo_id', grupoId)
+    .or('arquivada.is.null,arquivada.eq.false')
+    .order('created_at', { ascending: true });
+  return data || [];
+}
+
 // ── HANDLER PRINCIPAL ─────────────────────────────────────────────
 module.exports = async function handleTransacoes(data, ctx) {
   const { phone, grupoId, user } = ctx;
@@ -72,17 +85,47 @@ module.exports = async function handleTransacoes(data, ctx) {
   // ── SALVAR ──────────────────────────────────────────────────────
   if (data.acao === 'salvar') {
     const valor = parseFloat(data.valor);
-    // Prioridade: 1) carteira mencionada na mensagem
-    //             2) wallet padrão do usuário (definida no painel)
-    //             3) 'Dinheiro' (fallback global)
-    let carteiraNome = data.carteira_nome;
-    if (!carteiraNome) {
-      carteiraNome = (await buscarWalletPadrao(user?.id)) || 'Dinheiro';
-    }
     const idCurto = gerarId();
 
-    // Salva a transação
-    await supabase.from('transacoes').insert({
+    // Estratégia de escolha de carteira:
+    //   1) Se a mensagem cita banco → usa esse
+    //   2) Se user tem wallet_padrao → usa esse
+    //   3) Se user só tem 1 conta cadastrada → usa essa (e marca como padrão!)
+    //   4) Se user não tem contas → cria 'Dinheiro' automaticamente
+    //   5) Múltiplas contas, sem padrão → PERGUNTA via menu interativo
+    let carteiraNome   = data.carteira_nome;
+    let precisaPerguntar = false;
+    let contasAtivas   = [];
+
+    if (!carteiraNome) {
+      // Caso 2
+      carteiraNome = await buscarWalletPadrao(user?.id);
+
+      if (!carteiraNome) {
+        contasAtivas = await listarContasAtivas(grupoId);
+
+        if (contasAtivas.length === 1) {
+          // Caso 3: auto-elege a única conta como principal
+          carteiraNome = contasAtivas[0].nome;
+          if (user?.id) {
+            await supabase.from('users')
+              .update({ wallet_padrao_id: contasAtivas[0].id })
+              .eq('id', user.id);
+          }
+        } else if (contasAtivas.length === 0) {
+          // Caso 4: sem contas — registra em "Dinheiro" e orienta criar
+          carteiraNome = 'Dinheiro';
+        } else {
+          // Caso 5: múltiplas, sem padrão — vai PERGUNTAR depois de salvar
+          precisaPerguntar = true;
+          // Salva temporariamente em "Dinheiro" — será movido após escolha
+          carteiraNome = 'Dinheiro';
+        }
+      }
+    }
+
+    // Salva a transação (mesmo se precisaPerguntar, registramos pra ter id)
+    const { data: txCriada } = await supabase.from('transacoes').insert({
       id_curto:     idCurto,
       grupo_id:     grupoId,
       tipo:         data.tipo,
@@ -92,9 +135,9 @@ module.exports = async function handleTransacoes(data, ctx) {
       carteira_nome: carteiraNome,
       pago:         true,
       data:         new Date().toISOString()
-    });
+    }).select().single();
 
-    // Atualiza saldo da carteira
+    // Atualiza saldo da carteira (mesmo a temporária)
     const mult = data.tipo === 'Gasto' ? -1 : 1;
     const { data: wallet } = await supabase
       .from('wallets')
@@ -108,7 +151,6 @@ module.exports = async function handleTransacoes(data, ctx) {
         .update({ saldo: wallet.saldo + (valor * mult) })
         .eq('id', wallet.id);
     } else if (carteiraNome === 'Dinheiro') {
-      // Cria carteira Dinheiro automaticamente se não existir
       await supabase.from('wallets').upsert({
         grupo_id: grupoId, nome: 'Dinheiro', tipo: 'Dinheiro',
         saldo: valor * mult
@@ -122,7 +164,60 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     const emoji = EMOJIS[data.categoria] || '🔖';
     const tipo  = data.tipo === 'Gasto' ? '🟥 Despesa' : '🟩 Receita';
-    const msg   =
+
+    // ── CASO 4: sem contas — orienta criar ────────────────────────
+    if (carteiraNome === 'Dinheiro' && !precisaPerguntar && contasAtivas.length === 0) {
+      const msg =
+        `✅ Anotei R$ ${valor.toFixed(2)} em ${data.categoria || 'Outros'}.\n\n` +
+        `⚠️ Você ainda não tem contas cadastradas, então registrei em *Dinheiro*.\n\n` +
+        `🏦 *Crie sua primeira conta* pra eu organizar direito. Responde com o nome + saldo:\n` +
+        `Ex: \`nubank 1000\` → cria Nubank com R$ 1.000\n` +
+        `Ou crie pelo painel: forsora.com/contas-bancarias`;
+      await enviarTexto(phone, msg);
+      // Cria pendente pra próxima mensagem (se for "nubank 1000", o handler cria a conta)
+      if (user?.id) {
+        await criarPendente({
+          userId: user.id,
+          tipoPergunta: 'criar_conta',
+          contexto: { transacao_id: txCriada?.id, id_curto: idCurto },
+          transacaoId: txCriada?.id,
+        });
+      }
+      return;
+    }
+
+    // ── CASO 5: múltiplas contas, sem padrão — PERGUNTA ─────────
+    if (precisaPerguntar && contasAtivas.length > 1) {
+      const opcoesTexto = contasAtivas
+        .map((c, i) => `${i + 1}️⃣ ${c.nome}`)
+        .join('\n');
+
+      const msg =
+        `✅ Anotei R$ ${valor.toFixed(2)} em ${data.categoria || 'Outros'}.\n\n` +
+        `❓ *De qual conta saiu?*\n${opcoesTexto}\n\n` +
+        `Responde com o número ou o nome.`;
+      await enviarTexto(phone, msg);
+
+      // Salva pendente pra próxima mensagem resolver
+      if (user?.id) {
+        await criarPendente({
+          userId: user.id,
+          tipoPergunta: 'escolher_conta',
+          contexto: {
+            transacao_id: txCriada?.id,
+            id_curto: idCurto,
+            valor,
+            opcoes: contasAtivas.map((c) => ({ id: c.id, nome: c.nome })),
+            carteira_temp: carteiraNome, // 'Dinheiro' — pra reverter saldo
+          },
+          transacaoId: txCriada?.id,
+        });
+      }
+      return;
+    }
+
+    // ── CASO PADRÃO: tudo normal ──────────────────────────────────
+    const msg =
       `✅ *Transação registrada!*\n\n` +
       `🔑 ID: \`${idCurto}\`\n` +
       `${emoji} Categoria: ${data.categoria}\n` +

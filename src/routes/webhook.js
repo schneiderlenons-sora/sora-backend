@@ -5,6 +5,8 @@ const { enviarTexto, enviarMenu } = require('../services/zapi');
 const { interpretarMensagem, classificarIntencao } = require('../services/ia');
 const { transcreverAudio }        = require('../services/whisper');
 const { interpretarRapido }       = require('../handlers/interpretador');
+const { buscarPendente }          = require('../services/pendentes');
+const { resolverPendente }        = require('../handlers/pendentes');
 
 // Verifica acesso ao Grow
 function temAcessoGrow(user) {
@@ -145,6 +147,17 @@ router.post('/', async (req, res) => {
       return;
     }
     const grupoId = user.grupo_ativo;
+
+    // ── 2.5. Verifica se há pendente aguardando resposta ──────────
+    // Se a última interação foi uma pergunta da Sora (ex.: "de qual conta?"),
+    // tenta resolver com a mensagem atual antes de interpretar como nova ação.
+    const pendente = await buscarPendente(user.id);
+    if (pendente) {
+      const resolvido = await resolverPendente(pendente, mensagem, {
+        phone, grupoId, user,
+      });
+      if (resolvido) return; // consumiu a mensagem
+    }
 
     // ── 3. Interpreta a mensagem ──────────────────────────────────
     let data = interpretarRapido(mensagem); // tenta regex primeiro (grátis)
