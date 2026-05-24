@@ -91,6 +91,14 @@ OUTROS:
 {"acao":"apagar"}
 {"acao":"apagar","idCurto":"ABC123"}
 
+CORRIGIR ÚLTIMA TRANSAÇÃO (quando o usuário diz que errou a conta):
+{"acao":"corrigir_ultima_carteira","carteira_nome":"Nubank"}
+Exemplos que disparam:
+- "não, foi do nubank"
+- "corrige a última pra inter"
+- "esse último foi no cartão do itau"
+- "a última foi crédito do nubank"
+
 CONVERSA GENÉRICA (quando não é nenhuma ação acima):
 {"acao":"conversa","resposta":"sua resposta aqui"}
 
@@ -99,7 +107,9 @@ REGRAS IMPORTANTES:
 2. Detecte o banco pelo nome: Nubank, Inter, Itaú, Bradesco, Santander, C6 Bank, Mercado Pago, Picpay, Caixa, Banco do Brasil.
 3. Se mencionar "crédito" junto ao banco, adicione " Crédito" ao nome: "Nubank Crédito".
 4. Se não souber a categoria, use "Outros".
-5. Se não mencionar carteira/banco, use "Dinheiro".
+5. Carteira padrão (quando o usuário NÃO menciona banco):
+   - Se o contexto trouxer "wallet_padrao_nome", use ESSE valor.
+   - Senão, use "Dinheiro".
 6. Para valores, extraia apenas o número (ex: "cinquenta reais" → 50).
 7. Para conversa genérica ou dúvidas, use {"acao":"conversa","resposta":"..."} e responda em português, de forma amigável e breve.
 8. Para DÍVIDAS: tipo deve ser um destes: emprestimo, financiamento, crediario, cartao_rotativo, cheque_especial, consignado, fies, outro. Se o usuário não disser o tipo, use "emprestimo". Em "cancelar_lembrete_divida" com termo=null, desativa TODOS os lembretes de dívidas do usuário.`;

@@ -162,7 +162,19 @@ router.post('/', async (req, res) => {
 
     if (!data) {
       console.log(`🤖 Chamando IA para: "${mensagem}"`);
-      data = await interpretarMensagem(mensagem); // IA como fallback
+      // Passa wallet_padrao_nome no contexto pra IA usar como default
+      let walletPadraoNome = null;
+      if (user?.wallet_padrao_id) {
+        try {
+          const { data: wp } = await supabase
+            .from('wallets').select('nome').eq('id', user.wallet_padrao_id).single();
+          walletPadraoNome = wp?.nome || null;
+        } catch {}
+      }
+      const ctxIA = walletPadraoNome
+        ? { resumo: `wallet_padrao_nome: ${walletPadraoNome}` }
+        : {};
+      data = await interpretarMensagem(mensagem, ctxIA);
     }
 
     // Se a IA retornou uma acao do Grow, roteia direto

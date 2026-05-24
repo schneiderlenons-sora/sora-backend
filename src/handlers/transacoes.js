@@ -54,15 +54,32 @@ async function verificarLimite(grupoId, categoria, valorNovo, phone) {
   }
 }
 
+// Busca a wallet padrão do user (se definida)
+async function buscarWalletPadrao(userId) {
+  if (!userId) return null;
+  const { data: u } = await supabase
+    .from('users')
+    .select('wallet_padrao_id, wallets!users_wallet_padrao_id_fkey(id, nome)')
+    .eq('id', userId)
+    .single();
+  return u?.wallets?.nome || null;
+}
+
 // ── HANDLER PRINCIPAL ─────────────────────────────────────────────
 module.exports = async function handleTransacoes(data, ctx) {
   const { phone, grupoId, user } = ctx;
 
   // ── SALVAR ──────────────────────────────────────────────────────
   if (data.acao === 'salvar') {
-    const valor        = parseFloat(data.valor);
-    const carteiraNome = data.carteira_nome || 'Dinheiro';
-    const idCurto      = gerarId();
+    const valor = parseFloat(data.valor);
+    // Prioridade: 1) carteira mencionada na mensagem
+    //             2) wallet padrão do usuário (definida no painel)
+    //             3) 'Dinheiro' (fallback global)
+    let carteiraNome = data.carteira_nome;
+    if (!carteiraNome) {
+      carteiraNome = (await buscarWalletPadrao(user?.id)) || 'Dinheiro';
+    }
+    const idCurto = gerarId();
 
     // Salva a transação
     await supabase.from('transacoes').insert({
@@ -115,6 +132,81 @@ module.exports = async function handleTransacoes(data, ctx) {
       `❌ Para desfazer: *excluir transação ${idCurto}*`;
 
     await enviarMenu(phone, msg);
+    return;
+  }
+
+  // ── CORRIGIR ÚLTIMA CARTEIRA ────────────────────────────────────
+  // Usado quando o usuário fala "não, foi do nubank" depois de criar
+  // uma transação na conta padrão. Move a última transação (criada
+  // pelo user nas últimas 24h) pra carteira correta e reajusta saldos.
+  if (data.acao === 'corrigir_ultima_carteira') {
+    const novaCarteira = data.carteira_nome;
+    if (!novaCarteira) {
+      await enviarTexto(phone, '❌ Não entendi pra qual conta corrigir. Tenta: "última foi do nubank"');
+      return;
+    }
+
+    // Última transação do user (criada nas últimas 24h)
+    const limite24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: rows } = await supabase
+      .from('transacoes')
+      .select('*')
+      .eq('grupo_id', grupoId)
+      .gte('created_at', limite24h)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const tx = rows?.[0];
+
+    if (!tx) {
+      await enviarTexto(phone, '❌ Não achei nenhuma transação recente pra corrigir.');
+      return;
+    }
+
+    // Se já está na carteira certa, só responde
+    if ((tx.carteira_nome || '').toLowerCase() === novaCarteira.toLowerCase()) {
+      await enviarTexto(phone, `ℹ️ Essa transação já está em *${tx.carteira_nome}*.`);
+      return;
+    }
+
+    const mult = tx.tipo === 'Gasto' ? -1 : 1;
+
+    // Reverte saldo da carteira antiga
+    const { data: walletAntiga } = await supabase
+      .from('wallets').select('id, saldo')
+      .eq('grupo_id', grupoId).ilike('nome', tx.carteira_nome).single();
+    if (walletAntiga) {
+      await supabase.from('wallets')
+        .update({ saldo: walletAntiga.saldo - (tx.valor * mult) })
+        .eq('id', walletAntiga.id);
+    }
+
+    // Aplica saldo na carteira nova
+    const { data: walletNova } = await supabase
+      .from('wallets').select('id, saldo')
+      .eq('grupo_id', grupoId).ilike('nome', novaCarteira).single();
+    if (walletNova) {
+      await supabase.from('wallets')
+        .update({ saldo: walletNova.saldo + (tx.valor * mult) })
+        .eq('id', walletNova.id);
+    } else {
+      // Carteira não existe — cria automaticamente
+      await supabase.from('wallets').upsert({
+        grupo_id: grupoId,
+        nome:     novaCarteira,
+        tipo:     novaCarteira.toLowerCase().includes('crédito') ? 'Crédito' : 'Corrente',
+        saldo:    tx.valor * mult,
+      }, { onConflict: 'grupo_id,nome' });
+    }
+
+    // Atualiza a transação
+    await supabase.from('transacoes')
+      .update({ carteira_nome: novaCarteira })
+      .eq('id', tx.id);
+
+    await enviarTexto(phone,
+      `✅ Atualizei! Última transação (*${tx.id_curto}*) agora está em *${novaCarteira}*.\n` +
+      `💸 R$ ${tx.valor.toFixed(2)} — ${tx.observacao || tx.categoria}`
+    );
     return;
   }
 
