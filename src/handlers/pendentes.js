@@ -17,6 +17,22 @@ const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
 const { criarPendente, removerPendente } = require('../services/pendentes');
 
+const TIPOS_CONTA = ['Corrente', 'Poupança', 'Vale Alimentação', 'Dinheiro'];
+const BANDEIRAS   = ['Visa', 'Mastercard', 'Elo', 'Amex', 'Hipercard'];
+
+// Próximo campo a perguntar pra criar_cartao
+function proximoCampoCartao(faltam, atual) {
+  const idx = faltam.indexOf(atual);
+  return faltam[idx + 1] || null;
+}
+
+const PERGUNTAS_CARTAO = {
+  limite:         '💰 Qual o *limite total* do cartão?',
+  dia_fechamento: '📅 Em qual *dia fecha a fatura*? (1 a 28)',
+  dia_vencimento: '📅 E qual *dia vence*? (1 a 28)',
+  bandeira:       '💳 Qual a *bandeira*?\n1️⃣ Visa  2️⃣ Mastercard  3️⃣ Elo  4️⃣ Amex  5️⃣ Hipercard\nOu responda *pular* se não quiser informar.',
+};
+
 // Move uma transação de uma carteira pra outra, reajustando saldos.
 async function moverCarteira(txId, novaCarteiraNome, grupoId) {
   const { data: tx } = await supabase
@@ -139,6 +155,110 @@ async function resolverPendente(pendente, mensagem, ctx) {
     }
     // Resposta não interpretada — deixa pendente expirar e segue normal
     return false;
+  }
+
+  // ─── TIPO: TIPO_CONTA (mudar tipo após criar conta corrente default) ─
+  if (pendente.tipo_pergunta === 'tipo_conta') {
+    let novoTipo = null;
+    if (/^poup/i.test(lower))                     novoTipo = 'Poupança';
+    else if (/^(va|vale|alelo|sodexo|ticket|refei)/i.test(lower)) novoTipo = 'Vale Alimentação';
+    else if (/^(dinheiro|carteira|cash)/i.test(lower)) novoTipo = 'Dinheiro';
+    else if (/^corrente/i.test(lower))            novoTipo = 'Corrente';
+
+    if (!novoTipo) return false; // não é resposta — deixa seguir
+
+    const walletId = pendente.contexto?.wallet_id;
+    const walletNome = pendente.contexto?.wallet_nome;
+    if (walletId) {
+      await supabase.from('wallets').update({ tipo: novoTipo }).eq('id', walletId);
+    }
+    await removerPendente(pendente.id);
+    await enviarTexto(phone,
+      `✓ Atualizei *${walletNome}* pra *${novoTipo}*.`
+    );
+    return true;
+  }
+
+  // ─── TIPO: CRIAR_CARTAO (wizard sequencial de cartão) ──────────
+  if (pendente.tipo_pergunta === 'criar_cartao') {
+    const { wallet_id, wallet_nome, faltam, campo_atual } = pendente.contexto || {};
+    if (!wallet_id || !campo_atual) return false;
+
+    let valorCampo = null;
+
+    // Parse da resposta conforme o campo
+    if (campo_atual === 'limite') {
+      const num = parseFloat(msg.replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.'));
+      if (isNaN(num) || num <= 0) {
+        await enviarTexto(phone, `❌ Não entendi o valor. Tenta de novo (ex: 5000):`);
+        return true; // consome a mensagem mas mantém a pendente
+      }
+      valorCampo = num;
+    } else if (campo_atual === 'dia_fechamento' || campo_atual === 'dia_vencimento') {
+      const dia = parseInt(msg.replace(/[^\d]/g, ''), 10);
+      if (isNaN(dia) || dia < 1 || dia > 28) {
+        await enviarTexto(phone, `❌ Dia inválido. Use um número de 1 a 28:`);
+        return true;
+      }
+      valorCampo = dia;
+    } else if (campo_atual === 'bandeira') {
+      if (/^(pular|pula|skip|n)/i.test(lower)) {
+        valorCampo = null; // pular bandeira
+      } else {
+        const num = parseInt(lower, 10);
+        if (!isNaN(num) && num >= 1 && num <= BANDEIRAS.length) {
+          valorCampo = BANDEIRAS[num - 1];
+        } else {
+          const match = BANDEIRAS.find((b) => b.toLowerCase() === lower);
+          if (match) valorCampo = match;
+          else {
+            await enviarTexto(phone, `❌ Bandeira não reconhecida. Responde 1-5 ou nome (visa/mastercard/elo/amex/hipercard), ou *pular*.`);
+            return true;
+          }
+        }
+      }
+    }
+
+    // Aplica a atualização no banco
+    if (valorCampo !== null) {
+      await supabase.from('wallets').update({ [campo_atual]: valorCampo }).eq('id', wallet_id);
+    }
+
+    // Próximo campo ou fim
+    const proximo = proximoCampoCartao(faltam, campo_atual);
+
+    if (proximo) {
+      // Atualiza a pendente
+      await supabase.from('transacoes_pendentes')
+        .update({ contexto: { ...pendente.contexto, campo_atual: proximo } })
+        .eq('id', pendente.id);
+
+      await enviarTexto(phone, PERGUNTAS_CARTAO[proximo]);
+      return true;
+    }
+
+    // Fim do wizard — busca dados completos e confirma
+    const { data: cartao } = await supabase.from('wallets')
+      .select('nome, limite, dia_fechamento, dia_vencimento, bandeira')
+      .eq('id', wallet_id).single();
+
+    await removerPendente(pendente.id);
+
+    if (!cartao) {
+      await enviarTexto(phone, `✅ Cartão *${wallet_nome}* configurado!`);
+      return true;
+    }
+
+    const linhas = [`💳 *Cartão configurado!*`, ''];
+    linhas.push(`🏦 ${cartao.nome}`);
+    if (cartao.bandeira)      linhas.push(`💳 Bandeira: ${cartao.bandeira}`);
+    if (cartao.limite)        linhas.push(`💰 Limite: R$ ${cartao.limite.toFixed(2)}`);
+    if (cartao.dia_fechamento && cartao.dia_vencimento) {
+      linhas.push(`📅 Fecha dia ${cartao.dia_fechamento} · Vence dia ${cartao.dia_vencimento}`);
+    }
+
+    await enviarTexto(phone, linhas.join('\n'));
+    return true;
   }
 
   // ─── TIPO 3: CRIAR_CONTA ───────────────────────────────────────

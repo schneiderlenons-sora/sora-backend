@@ -22,12 +22,23 @@ TRANSAÇÕES:
 {"acao":"salvar","tipo":"Recebimento","valor":2000,"categoria":"Recebimento","observacao":"salário","carteira_nome":"Dinheiro"}
 
 CONTAS BANCÁRIAS:
-{"acao":"set_wallet","nome":"Nubank","valor":1000}
+{"acao":"set_wallet","nome":"Nubank","valor":1000,"tipo":"Corrente"}
+{"acao":"set_wallet","nome":"Itaú","valor":5000,"tipo":"Poupança"}
+{"acao":"set_wallet","nome":"Alelo","valor":800,"tipo":"Vale Alimentação"}
+{"acao":"set_wallet","nome":"Carteira","valor":200,"tipo":"Dinheiro"}
 {"acao":"adicionar_saldo","nome":"Inter","valor":200}
 {"acao":"alterar_saldo","nome":"Nubank","valor":2000}
 {"acao":"ver_saldos"}
 {"acao":"deletar_conta","nome":"Nubank"}
 {"acao":"transferir","origem":"Nubank","destino":"Inter","valor":200}
+
+CARTÕES DE CRÉDITO (ação separada de conta bancária):
+{"acao":"set_cartao","nome":"Nubank","limite":5000,"dia_fechamento":5,"dia_vencimento":15,"bandeira":"Mastercard"}
+{"acao":"set_cartao","nome":"Itaú","limite":3000,"dia_fechamento":null,"dia_vencimento":null,"bandeira":null}
+- Use quando o usuário mencionar "cartão", "cartão de crédito" ou "crédito" como tipo de produto (não para gastos no cartão — isso é "salvar" com carteira_nome="X Crédito").
+- Campos podem ser null se o usuário não informou — a Sora vai perguntar depois.
+- Bandeira válidas: Visa, Mastercard, Elo, Amex, Hipercard.
+- Tipos de compra a IA NUNCA pede últimos 4 dígitos.
 
 LIMITES:
 {"acao":"set_limite","categoria":"Mercado","valor":500}
@@ -105,14 +116,26 @@ CONVERSA GENÉRICA (quando não é nenhuma ação acima):
 REGRAS IMPORTANTES:
 1. Retorne SOMENTE o JSON, nada mais.
 2. Detecte o banco pelo nome: Nubank, Inter, Itaú, Bradesco, Santander, C6 Bank, Mercado Pago, Picpay, Caixa, Banco do Brasil.
-3. Se mencionar "crédito" junto ao banco, adicione " Crédito" ao nome: "Nubank Crédito".
+3. Se mencionar "crédito" junto ao banco em um GASTO (ex: "comprei 50 nubank crédito"), adicione " Crédito" ao carteira_nome: "Nubank Crédito".
 4. Se não souber a categoria, use "Outros".
 5. Carteira padrão (quando o usuário NÃO menciona banco):
    - Se o contexto trouxer "wallet_padrao_nome", use ESSE valor.
    - Senão, use "Dinheiro".
 6. Para valores, extraia apenas o número (ex: "cinquenta reais" → 50).
 7. Para conversa genérica ou dúvidas, use {"acao":"conversa","resposta":"..."} e responda em português, de forma amigável e breve.
-8. Para DÍVIDAS: tipo deve ser um destes: emprestimo, financiamento, crediario, cartao_rotativo, cheque_especial, consignado, fies, outro. Se o usuário não disser o tipo, use "emprestimo". Em "cancelar_lembrete_divida" com termo=null, desativa TODOS os lembretes de dívidas do usuário.`;
+8. Para DÍVIDAS: tipo deve ser um destes: emprestimo, financiamento, crediario, cartao_rotativo, cheque_especial, consignado, fies, outro. Se o usuário não disser o tipo, use "emprestimo". Em "cancelar_lembrete_divida" com termo=null, desativa TODOS os lembretes de dívidas do usuário.
+9. CONTAS bancárias — campo "tipo" (set_wallet):
+   - "Corrente" = padrão (default se não disser nada)
+   - "Poupança" = palavras "poupança", "poup", "save"
+   - "Vale Alimentação" = "vale alimentação", "VA", "alelo", "sodexo", "ticket", "refeição"
+   - "Dinheiro" = "carteira", "dinheiro", "espécie", "cash"
+10. CARTÕES de crédito (set_cartao) — extraia da mensagem:
+    - "limite" / "limite total" → campo limite (número)
+    - "fecha dia X" / "fechamento X" → dia_fechamento (1-28)
+    - "vence dia X" / "vencimento X" → dia_vencimento (1-28)
+    - bandeira mencionada (visa/master/elo/amex/hipercard) → bandeira capitalizada
+    - Campos não mencionados ficam null — a Sora pergunta depois.
+    - NUNCA pergunte "últimos 4 dígitos" — não é necessário.`;
 
 // Função principal: interpreta qualquer mensagem
 async function interpretarMensagem(mensagem, contexto = {}) {

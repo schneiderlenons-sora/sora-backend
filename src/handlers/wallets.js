@@ -1,5 +1,10 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
+const { criarPendente } = require('../services/pendentes');
+
+// Tipos válidos de conta
+const TIPOS_CONTA = ['Corrente', 'Poupança', 'Vale Alimentação', 'Dinheiro'];
+const BANDEIRAS = ['Visa', 'Mastercard', 'Elo', 'Amex', 'Hipercard'];
 
 // Nomes oficiais dos bancos
 const BANCOS = {
@@ -54,14 +59,125 @@ module.exports = async function handleWallets(data, ctx) {
     }
 
     const ehCredito = nomeFinal.includes('Crédito');
-    await supabase.from('wallets').upsert({
+    // Tipo vindo da IA (Corrente/Poupança/Vale Alimentação/Dinheiro) ou
+    // default conforme o nome.
+    let tipo = data.tipo;
+    if (!tipo || !TIPOS_CONTA.includes(tipo)) {
+      if (ehCredito) tipo = 'Crédito';
+      else if (/dinheiro|carteira/i.test(nomeFinal)) tipo = 'Dinheiro';
+      else tipo = 'Corrente';
+    }
+
+    const { data: walletCriada } = await supabase.from('wallets').upsert({
       grupo_id: grupoId,
       nome:     nomeFinal,
-      tipo:     ehCredito ? 'Crédito' : 'Corrente',
+      tipo,
       saldo:    parseFloat(data.valor)
-    }, { onConflict: 'grupo_id,nome' });
+    }, { onConflict: 'grupo_id,nome' }).select().single();
 
-    await enviarTexto(phone, `🏦 Conta *${nomeFinal}* configurada com saldo de R$ ${parseFloat(data.valor).toFixed(2)}.`);
+    const emojiTipo = tipo === 'Poupança' ? '🐷'
+                    : tipo === 'Vale Alimentação' ? '🍔'
+                    : tipo === 'Dinheiro' ? '💵'
+                    : tipo === 'Crédito' ? '💳'
+                    : '🏦';
+
+    await enviarTexto(phone,
+      `${emojiTipo} Conta *${nomeFinal}* (${tipo}) criada com saldo de R$ ${parseFloat(data.valor).toFixed(2)}.`
+    );
+
+    // Se foi criada como Corrente (default) e o usuário não especificou,
+    // oferece chance de mudar o tipo na próxima mensagem.
+    const tipoVeioDoUsuario = !!data.tipo && TIPOS_CONTA.includes(data.tipo);
+    if (!tipoVeioDoUsuario && tipo === 'Corrente' && user?.id && walletCriada) {
+      await enviarTexto(phone,
+        `💡 É conta corrente mesmo? Se for *poupança*, *vale alimentação* ou *dinheiro*, é só responder com o tipo.`
+      );
+      await criarPendente({
+        userId: user.id,
+        tipoPergunta: 'tipo_conta',
+        contexto: { wallet_id: walletCriada.id, wallet_nome: nomeFinal },
+      });
+    }
+
+    return;
+  }
+
+  // ── CRIAR / DEFINIR CARTÃO DE CRÉDITO ───────────────────────────
+  if (data.acao === 'set_cartao') {
+    const nomeFinal = normalizarBanco(data.nome);
+    if (!nomeFinal) {
+      await enviarTexto(phone,
+        `⚠️ *"${data.nome}"* não é um banco reconhecido.\nUse: Nubank, Inter, Itaú, Bradesco, Santander, C6 Bank, Mercado Pago, Picpay, Caixa, Banco do Brasil.`);
+      return;
+    }
+    const nomeCartao = nomeFinal.includes('Crédito') ? nomeFinal : `${nomeFinal} Crédito`;
+
+    // Verifica limite do plano
+    const { count } = await supabase.from('wallets')
+      .select('*', { count: 'exact', head: true }).eq('grupo_id', grupoId);
+    const jaExiste = await supabase.from('wallets')
+      .select('id').eq('grupo_id', grupoId).ilike('nome', nomeCartao).single();
+    if (!jaExiste.data && count >= limitePorPlano(user.plano)) {
+      await enviarTexto(phone, `⚠️ Limite de ${limitePorPlano(user.plano)} contas atingido.`);
+      return;
+    }
+
+    // Cria com dados parciais (saldo = 0 pra cartão, limite vem como metadata)
+    const { data: walletCartao } = await supabase.from('wallets').upsert({
+      grupo_id: grupoId,
+      nome:     nomeCartao,
+      tipo:     'Crédito',
+      saldo:    0,
+      limite:        data.limite || null,
+      dia_fechamento: data.dia_fechamento || null,
+      dia_vencimento: data.dia_vencimento || null,
+      bandeira:      data.bandeira && BANDEIRAS.includes(data.bandeira) ? data.bandeira : null,
+    }, { onConflict: 'grupo_id,nome' }).select().single();
+
+    // Verifica quais campos faltam pra iniciar o wizard
+    const faltam = [];
+    if (!data.limite)         faltam.push('limite');
+    if (!data.dia_fechamento) faltam.push('dia_fechamento');
+    if (!data.dia_vencimento) faltam.push('dia_vencimento');
+    if (!data.bandeira)       faltam.push('bandeira');
+
+    if (faltam.length === 0) {
+      await enviarTexto(phone,
+        `💳 *Cartão criado!*\n\n` +
+        `🏦 ${nomeCartao}\n` +
+        `💳 Bandeira: ${data.bandeira}\n` +
+        `💰 Limite: R$ ${data.limite.toFixed(2)}\n` +
+        `📅 Fecha dia ${data.dia_fechamento} · Vence dia ${data.dia_vencimento}`
+      );
+      return;
+    }
+
+    // Inicia wizard pra preencher o que falta
+    const proximoCampo = faltam[0];
+    const perguntas = {
+      limite:         '💰 Qual o *limite total* do cartão?',
+      dia_fechamento: '📅 Em qual *dia fecha a fatura*? (1 a 28)',
+      dia_vencimento: '📅 E qual *dia vence*? (1 a 28)',
+      bandeira:       '💳 Qual a *bandeira*?\n1️⃣ Visa  2️⃣ Mastercard  3️⃣ Elo  4️⃣ Amex  5️⃣ Hipercard\nOu responda *pular* se não quiser informar.',
+    };
+
+    await enviarTexto(phone,
+      `💳 *${nomeCartao}* registrado!\n\n` +
+      `Pra eu gerenciar a fatura direito, preciso de mais alguns dados.\n\n${perguntas[proximoCampo]}`
+    );
+
+    if (user?.id && walletCartao) {
+      await criarPendente({
+        userId: user.id,
+        tipoPergunta: 'criar_cartao',
+        contexto: {
+          wallet_id: walletCartao.id,
+          wallet_nome: nomeCartao,
+          faltam,           // ordem dos campos a preencher
+          campo_atual: proximoCampo,
+        },
+      });
+    }
     return;
   }
 
