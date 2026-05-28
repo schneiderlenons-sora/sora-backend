@@ -5,7 +5,8 @@ const norm = p => p?.replace(/\D/g, '');
 
 function exigirPermissao(...papeisPermitidos) {
   return async (req, res, next) => {
-    const phone = norm(req.params.phone || req.body.phone || req.query.phone);
+   try {
+    const phone = norm(req.params.phone || req.body?.phone || req.query?.phone);
     if (!phone) return res.status(400).json({ erro: 'Phone não informado para checagem de permissão.' });
 
     const { data: user } = await supabase.from('users')
@@ -38,6 +39,10 @@ function exigirPermissao(...papeisPermitidos) {
     req.userId    = user.id;
     req.grupoId   = user.grupo_ativo;
     next();
+   } catch (err) {
+    console.error('[permissao] erro:', err.message);
+    return res.status(500).json({ erro: 'Erro ao verificar permissão.' });
+   }
   };
 }
 
