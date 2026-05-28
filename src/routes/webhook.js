@@ -254,8 +254,9 @@ router.post('/', async (req, res) => {
         require('../handlers/transacoes')(data, ctx);
         break;
 
-      // Contas bancárias
+      // Contas bancárias + cartões de crédito
       case 'set_wallet':
+      case 'set_cartao':
       case 'adicionar_saldo':
       case 'alterar_saldo':
       case 'ver_saldos':

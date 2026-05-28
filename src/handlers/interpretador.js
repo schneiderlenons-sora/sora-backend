@@ -177,9 +177,16 @@ function interpretarRapido(message) {
       carteira_nome: m[3] ? m[3].trim() : null
     };
 
-  // --- CRIAR CONTA BANCÁRIA: "nubank 1000" ---
-  if ((m = msg.match(/^(nubank|inter|ita[uú]|bradesco|santander|caixa|c6\s*bank|mercado\s*pago|picpay|banco\s*do\s*brasil|safra)(\s+cr[eé]dito)?\s+(\d[\d.,]*)$/i)))
-    return { acao: 'set_wallet', nome: m[1].trim() + (m[2] ? ' Crédito' : ''), valor: parseValor(m[3]) };
+  // --- CRIAR CONTA BANCÁRIA / CARTÃO: "nubank 1000" ou "nubank crédito 5000" ---
+  if ((m = msg.match(/^(nubank|inter|ita[uú]|bradesco|santander|caixa|c6\s*bank|mercado\s*pago|picpay|banco\s*do\s*brasil|safra)(\s+cr[eé]dito)?\s+(\d[\d.,]*)$/i))) {
+    // Com "crédito" → cartão (set_cartao dispara o wizard de fechamento/vencimento/bandeira)
+    if (m[2]) {
+      return { acao: 'set_cartao', nome: m[1].trim(), limite: parseValor(m[3]),
+               dia_fechamento: null, dia_vencimento: null, bandeira: null };
+    }
+    // Sem "crédito" → conta bancária comum (saldo)
+    return { acao: 'set_wallet', nome: m[1].trim(), valor: parseValor(m[3]) };
+  }
 
   // --- LIMITES ---
   if ((m = msg.match(/^limite\s+(?:geral\s+)?(\d[\d.,]*)$/i)))
