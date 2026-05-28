@@ -90,6 +90,14 @@ router.post('/', async (req, res) => {
 
   let mensagem = text?.message || listResponseMessage?.title;
 
+  // Ignora mensagens de teste injetadas pela Z-API em contas trial
+  if (mensagem && (
+    mensagem.includes('MENSAGEM DE TESTE') ||
+    mensagem.includes('CONTA EM TRIAL') ||
+    mensagem.includes('FAVOR DESCONSIDERAR') ||
+    mensagem.includes('Corpo da mensagem enviada')
+  )) return;
+
   // --- ÁUDIO ---
   if (audio?.audioUrl) {
     try {
@@ -128,7 +136,8 @@ router.post('/', async (req, res) => {
       );
       const nome = respNome?.acao === 'conversa' ? respNome.resposta : null;
 
-      if (!nome || nome === 'PEDIR') {
+      // Comparação case-insensitive — GPT pode retornar "Pedir", "pedir" ou "PEDIR"
+      if (!nome || nome.trim().toUpperCase() === 'PEDIR') {
         await enviarTexto(phone, '👋 Olá! Qual é o seu nome para começarmos?');
         return;
       }
