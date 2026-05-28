@@ -145,7 +145,7 @@ async function interpretarMensagem(mensagem, contexto = {}) {
       : mensagem;
 
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-haiku-4-5',
       max_tokens: 500,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }]
@@ -167,7 +167,7 @@ async function interpretarMensagem(mensagem, contexto = {}) {
 async function gerarDicas(resumoGastos) {
   try {
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-haiku-4-5',
       max_tokens: 800,
       messages: [{
         role: 'user',
@@ -185,7 +185,7 @@ async function gerarDicas(resumoGastos) {
 async function analisarGastos(resumoSemana) {
   try {
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-haiku-4-5',
       max_tokens: 300,
       messages: [{
         role: 'user',
@@ -202,7 +202,7 @@ async function analisarGastos(resumoSemana) {
 async function classificarIntencao(mensagem) {
   try {
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-haiku-4-5',
       max_tokens: 5,
       system: `Classifique a mensagem em apenas UMA palavra: "finance" ou "grow".
 
