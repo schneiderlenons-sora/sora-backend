@@ -86,6 +86,9 @@ router.post('/', async (req, res) => {
   phone = norm(phone);
   res.sendStatus(200); // responde imediatamente ao Z-API
 
+  // Log temporário para diagnóstico de formato de número
+  console.log(`📱 [webhook] phone="${phone}" fromMe=${fromMe} msg="${text?.message || ''}"`);
+
   if (fromMe) return; // ignora mensagens enviadas pelo próprio bot
 
   let mensagem = text?.message || listResponseMessage?.title;
