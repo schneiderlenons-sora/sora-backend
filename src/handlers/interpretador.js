@@ -162,7 +162,7 @@ function interpretarRapido(message) {
       acao: 'salvar', tipo: 'Gasto',
       valor: parseValor(m[2]),
       categoria: detectarCategoria(descricao),
-      observacao: message,
+      observacao: descricao,   // só a descrição (ex: "padaria"), não a frase inteira
       carteira_nome: carteira || null
     };
   }
@@ -173,8 +173,8 @@ function interpretarRapido(message) {
       acao: 'salvar', tipo: 'Recebimento',
       valor: parseValor(m[2]),
       categoria: 'Recebimento',
-      observacao: message,
-      carteira_nome: m[3] ? m[3].trim() : null
+      observacao: m[3] ? m[3].trim() : '',   // descrição curta, não a frase inteira
+      carteira_nome: null
     };
 
   // --- CRIAR CONTA BANCÁRIA / CARTÃO: "nubank 1000" ou "nubank crédito 5000" ---

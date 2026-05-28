@@ -55,7 +55,9 @@ router.get('/:phone', auth, async (req, res) => {
       const r = await q2;
       data = r.data; count = r.count;
     }
-    res.json({ transacoes: data || [], total: count || 0 });
+    // Alias wallet_nome → o frontend lê esse campo; no banco a coluna é carteira_nome
+    const transacoes = (data || []).map(t => ({ ...t, wallet_nome: t.carteira_nome }));
+    res.json({ transacoes, total: count || 0 });
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
