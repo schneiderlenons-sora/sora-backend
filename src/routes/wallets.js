@@ -5,10 +5,24 @@ const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const norm     = p => p?.replace(/\D/g, '');
 
+// Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
+function variantesPhone(phone) {
+  const p = norm(phone) || '';
+  const variantes = [p];
+  if (p.length === 13 && p.startsWith('55'))
+    variantes.push(p.slice(0, 4) + p.slice(5));
+  if (p.length === 12 && p.startsWith('55'))
+    variantes.push(p.slice(0, 4) + '9' + p.slice(4));
+  return variantes;
+}
+
 async function getGrupoId(phone) {
-  const { data } = await supabase.from('users')
-    .select('grupo_ativo').eq('phone', norm(phone)).single();
-  return data?.grupo_ativo || null;
+  for (const variante of variantesPhone(phone)) {
+    const { data } = await supabase.from('users')
+      .select('grupo_ativo').eq('phone', variante).maybeSingle();
+    if (data?.grupo_ativo) return data.grupo_ativo;
+  }
+  return null;
 }
 
 // GET /api/wallets/:phone
