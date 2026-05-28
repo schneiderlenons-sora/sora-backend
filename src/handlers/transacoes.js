@@ -67,15 +67,25 @@ async function buscarWalletPadrao(userId) {
 }
 
 // Lista as contas ATIVAS do grupo (pra perguntar de qual saiu a transação)
+// Não filtra por `arquivada` na query (coluna pode não existir no schema) —
+// filtra em JS de forma defensiva.
 async function listarContasAtivas(grupoId) {
   if (!grupoId) return [];
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('wallets')
-    .select('id, nome, tipo')
+    .select('id, nome, tipo, arquivada')
     .eq('grupo_id', grupoId)
-    .or('arquivada.is.null,arquivada.eq.false')
     .order('created_at', { ascending: true });
-  return data || [];
+  if (error) {
+    // Fallback: schema sem coluna arquivada → busca sem ela
+    const { data: d2 } = await supabase
+      .from('wallets')
+      .select('id, nome, tipo')
+      .eq('grupo_id', grupoId)
+      .order('created_at', { ascending: true });
+    return d2 || [];
+  }
+  return (data || []).filter(w => !w.arquivada);
 }
 
 // ── HANDLER PRINCIPAL ─────────────────────────────────────────────

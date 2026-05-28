@@ -153,6 +153,8 @@ function interpretarRapido(message) {
     return { acao: 'transferir', valor: parseValor(m[1]), origem: m[2].trim(), destino: m[3].trim() };
 
   // --- GASTOS ---
+  // carteira_nome fica NULL quando o usuário não cita banco — assim o handler
+  // roda a lógica inteligente (wallet padrão / conta única / perguntar qual).
   if ((m = msg.match(/(gastei|paguei|comprei)\s+(\d[\d.,]*)\s+(?:em\s+|no\s+|na\s+|de\s+)?(.+?)(?:\s+(?:no|na|pelo|pela|com)\s+(.+))?$/i))) {
     const descricao  = m[3].trim();
     const carteira   = m[4] ? m[4].trim() : null;
@@ -161,7 +163,7 @@ function interpretarRapido(message) {
       valor: parseValor(m[2]),
       categoria: detectarCategoria(descricao),
       observacao: message,
-      carteira_nome: carteira || 'Dinheiro'
+      carteira_nome: carteira || null
     };
   }
 
@@ -172,7 +174,7 @@ function interpretarRapido(message) {
       valor: parseValor(m[2]),
       categoria: 'Recebimento',
       observacao: message,
-      carteira_nome: m[3] ? m[3].trim() : 'Dinheiro'
+      carteira_nome: m[3] ? m[3].trim() : null
     };
 
   // --- CRIAR CONTA BANCÁRIA: "nubank 1000" ---

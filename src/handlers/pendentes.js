@@ -280,7 +280,6 @@ async function resolverPendente(pendente, mensagem, ctx) {
       nome,
       tipo: tipoConta,
       saldo,
-      arquivada: false,
     }).select().single();
 
     if (!novaWallet) {
