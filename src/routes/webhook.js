@@ -64,6 +64,22 @@ ${HELP_TEXT}
 // Normaliza telefone (remove tudo que não é dígito)
 const norm = (p) => p ? p.replace(/\D/g, '') : p;
 
+// Retorna variantes do número para busca:
+// Z-API envia sem o 9º dígito (12 dígitos) mas usuários podem cadastrar
+// com ele (13 dígitos). Tenta os dois formatos.
+function variantesPhone(phone) {
+  const variantes = [phone];
+  // 55 + DDD(2) + 9 + número(8) = 13 → remove o 9 → 12
+  if (phone.length === 13 && phone.startsWith('55')) {
+    variantes.push(phone.slice(0, 4) + phone.slice(5)); // remove posição 4 (o '9')
+  }
+  // 55 + DDD(2) + número(8) = 12 → adiciona 9 → 13
+  if (phone.length === 12 && phone.startsWith('55')) {
+    variantes.push(phone.slice(0, 4) + '9' + phone.slice(4));
+  }
+  return variantes;
+}
+
 // Busca ou cria usuário + grupo
 async function obterContexto(phone) {
   const { data: user } = await supabase
@@ -126,9 +142,13 @@ router.post('/', async (req, res) => {
   if (!mensagem || !phone) return;
 
   try {
-    // ── 1. Busca usuário ──────────────────────────────────────────
-    let { data: user } = await supabase
-      .from('users').select('*').eq('phone', phone).single();
+    // ── 1. Busca usuário (tenta com e sem o 9º dígito brasileiro) ──
+    let user = null;
+    for (const variante of variantesPhone(phone)) {
+      const { data } = await supabase
+        .from('users').select('*').eq('phone', variante).maybeSingle();
+      if (data) { user = data; break; }
+    }
 
     // Novo usuário: pede o nome
     if (!user) {
