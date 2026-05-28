@@ -1,6 +1,6 @@
-const Anthropic = require('@anthropic-ai/sdk');
+const OpenAI = require('openai');
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Categorias disponíveis no sistema
 const CATEGORIAS = [
@@ -144,14 +144,16 @@ async function interpretarMensagem(mensagem, contexto = {}) {
       ? `Contexto do usuário:\n${contexto.resumo}\n\nMensagem: ${mensagem}`
       : mensagem;
 
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5',
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
       max_tokens: 500,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userContent }]
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userContent },
+      ],
     });
 
-    const texto = response.content[0].text.trim();
+    const texto = response.choices[0].message.content.trim();
 
     // Remove possíveis ```json ``` que o modelo possa adicionar
     const limpo = texto.replace(/```json|```/g, '').trim();
@@ -166,15 +168,15 @@ async function interpretarMensagem(mensagem, contexto = {}) {
 // Gera dicas financeiras personalizadas (plano Black)
 async function gerarDicas(resumoGastos) {
   try {
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5',
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
       max_tokens: 800,
       messages: [{
         role: 'user',
         content: `Você é especialista em finanças pessoais. Com base nesses gastos dos últimos 30 dias, dê 3 dicas práticas e específicas para economizar. Seja direto e use emojis.\n\n${resumoGastos}`
-      }]
+      }],
     });
-    return response.content[0].text;
+    return response.choices[0].message.content;
   } catch (err) {
     console.error('❌ Erro ao gerar dicas:', err.message);
     return 'Não consegui gerar dicas no momento. Tente novamente mais tarde.';
@@ -184,15 +186,15 @@ async function gerarDicas(resumoGastos) {
 // Analisa gastos da semana (plano básico)
 async function analisarGastos(resumoSemana) {
   try {
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5',
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
       max_tokens: 300,
       messages: [{
         role: 'user',
         content: `Você é um conselheiro financeiro bem-humorado. Analise esses gastos da última semana e dê um comentário curto e engraçado com uma dica prática. Use no máximo 3 linhas.\n\nGastos: ${resumoSemana}`
-      }]
+      }],
     });
-    return response.content[0].text;
+    return response.choices[0].message.content;
   } catch (err) {
     return 'Não consegui analisar agora. Tente mais tarde!';
   }
@@ -201,10 +203,13 @@ async function analisarGastos(resumoSemana) {
 // Classifica a intencao em "finance" ou "grow" para rotear no webhook
 async function classificarIntencao(mensagem) {
   try {
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5',
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
       max_tokens: 5,
-      system: `Classifique a mensagem em apenas UMA palavra: "finance" ou "grow".
+      messages: [
+        {
+          role: 'system',
+          content: `Classifique a mensagem em apenas UMA palavra: "finance" ou "grow".
 
 FINANCE: dinheiro, gastos, despesas, receitas, salario, saldo, transferencias, contas bancarias, investimentos, cartoes, parcelas, limites, metas financeiras, dividas, emprestimos, financiamento, crediario, pix.
 
@@ -212,9 +217,11 @@ GROW: treino, exercicio, academia, corrida, dieta, peso, agua, habito, tarefa, p
 
 Em caso de duvida ou conversa generica, responda "finance".
 Responda APENAS com a palavra "finance" ou "grow".`,
-      messages: [{ role: 'user', content: mensagem }],
+        },
+        { role: 'user', content: mensagem },
+      ],
     });
-    const r = response.content[0].text.trim().toLowerCase();
+    const r = response.choices[0].message.content.trim().toLowerCase();
     return r.includes('grow') ? 'grow' : 'finance';
   } catch {
     return 'finance';

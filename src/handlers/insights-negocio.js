@@ -8,7 +8,7 @@
  * "Seu CAC subiu 31%. Isso pode comer sua margem em junho."
  */
 const supabase = require('../db/supabase');
-const Anthropic = require('@anthropic-ai/sdk');
+const OpenAI = require('openai');
 
 const fmt = (centavos) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((centavos || 0) / 100);
@@ -36,7 +36,7 @@ async function gerarInsights(userId, grupoId) {
   // 2. Config (pra checar se IA está ligada)
   const { data: cfg } = await supabase
     .from('config_negocio').select('*').eq('user_id', userId).maybeSingle();
-  const usarClaude = cfg?.ai_insights_ativo !== false && !!process.env.ANTHROPIC_API_KEY;
+  const usarClaude = cfg?.ai_insights_ativo !== false && !!process.env.OPENAI_API_KEY;
 
   const insights = [];
 
@@ -193,7 +193,7 @@ async function jaTemNarrativoHoje(userId) {
 }
 
 async function gerarNarrativoComClaude(snapAtual, snapAnt) {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const contexto = {
     mes_atual: {
@@ -230,13 +230,13 @@ Retorne APENAS JSON válido neste formato:
 Dados (valores em centavos):
 ${JSON.stringify(contexto, null, 2)}`;
 
-  const msg = await client.messages.create({
-    model: 'claude-haiku-4-5',
+  const msg = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
     max_tokens: 400,
     messages: [{ role: 'user', content: prompt }],
   });
 
-  const txt = msg.content?.[0]?.text || '';
+  const txt = msg.choices?.[0]?.message?.content || '';
   // Extrai JSON do output (Claude às vezes envolve em ```)
   const match = txt.match(/\{[\s\S]*\}/);
   if (!match) return null;

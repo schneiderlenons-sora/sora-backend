@@ -5,10 +5,10 @@
 // - Calculadora TMB / TDEE / macros
 // - Diagnóstico nutricional do dia
 // ─────────────────────────────────────────────────────────────────
-const Anthropic = require('@anthropic-ai/sdk');
+const OpenAI = require('openai');
 const ALIMENTOS = require('../data/alimentos.json');
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Normaliza string (lower + sem acento)
 function norm(s) {
@@ -91,18 +91,20 @@ Se a frase do usuário não contém comida (ex: "oi", "teste"), retorne {"itens"
 
   let resp;
   try {
-    resp = await client.messages.create({
-      model: 'claude-haiku-4-5',
+    resp = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
       max_tokens: 1200,
-      system: sysPrompt,
-      messages: [{ role: 'user', content: texto }],
+      messages: [
+        { role: 'system', content: sysPrompt },
+        { role: 'user', content: texto },
+      ],
     });
   } catch (err) {
     console.error('[nutricao] chamada Claude falhou:', err.status, err.message, err.error);
     throw new Error(`IA indisponível: ${err.message}`);
   }
 
-  const raw = (resp.content?.[0]?.text || '').trim().replace(/```json|```/g, '').trim();
+  const raw = (resp.choices?.[0]?.message?.content || '').trim().replace(/```json|```/g, '').trim();
 
   // Extrai o primeiro bloco JSON da resposta (caso a IA inclua texto extra)
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
