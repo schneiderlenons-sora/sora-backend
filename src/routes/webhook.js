@@ -235,7 +235,8 @@ router.post('/', async (req, res) => {
     }
 
     // Se a IA retornou uma acao do Grow, roteia direto
-    if (data?.acao && /^(grow_|habito_|tarefa_|humor_|compra_)/i.test(data.acao) && temAcessoGrow(user)) {
+    // 'compra_parcelada' é do cartão (Finance), não confundir com compra_ do Grow
+    if (data?.acao && /^(grow_|habito_|tarefa_|humor_|compra_(?!parcelada))/i.test(data.acao) && temAcessoGrow(user)) {
       const ctx = { phone, grupoId: user.grupo_ativo, user, mensagem };
       await require('../handlers/grow')(mensagem, ctx);
       return;
