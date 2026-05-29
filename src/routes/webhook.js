@@ -4,6 +4,7 @@ const supabase = require('../db/supabase');
 const { enviarTexto, enviarMenu } = require('../services/zapi');
 const { interpretarMensagem, classificarIntencao } = require('../services/ia');
 const { transcreverAudio }        = require('../services/whisper');
+const { lerNotaFiscal }           = require('../services/ocr');
 const { interpretarRapido }       = require('../handlers/interpretador');
 const { buscarPendente }          = require('../services/pendentes');
 const { resolverPendente }        = require('../handlers/pendentes');
@@ -125,16 +126,11 @@ router.post('/', async (req, res) => {
     }
   }
 
-  // --- IMAGEM (nota fiscal) ---
-  if (image?.url) {
-    const { data: user } = await supabase.from('users').select('plano').eq('phone', phone).single();
-    if (!user || !['premium','black'].includes(user.plano)) {
-      await enviarTexto(phone, '🚫 Leitura de notas fiscais é exclusiva dos planos Premium e Black.');
-      return;
-    }
-    // OCR será tratado no handler de imagem (próxima etapa)
-    mensagem = '__imagem__';
-  }
+  // --- IMAGEM (nota fiscal / comprovante) ---
+  // Só guarda a URL aqui; o OCR roda depois de carregar o usuário (pra
+  // checar plano e ter o contexto do grupo).
+  const imageUrl = image?.url || image?.imageUrl || null;
+  if (imageUrl) mensagem = '__imagem__'; // placeholder pra passar a validação abaixo
 
   if (!mensagem || !phone) return;
 
@@ -188,8 +184,27 @@ router.post('/', async (req, res) => {
       if (resolvido) return; // consumiu a mensagem
     }
 
+    // ── 2.7. IMAGEM (nota fiscal / comprovante) ───────────────────
+    let data = null;
+    if (imageUrl) {
+      if (!['premium', 'black'].includes(user.plano)) {
+        await enviarTexto(phone, '🚫 Leitura de notas fiscais e comprovantes é exclusiva dos planos Premium e Black.');
+        return;
+      }
+      await enviarTexto(phone, '🔍 Analisando a imagem...');
+      const ocr = await lerNotaFiscal(imageUrl);
+      if (!ocr || ocr.acao === 'erro_ocr' || !ocr.valor) {
+        await enviarTexto(phone, '📷 Não consegui ler os dados dessa imagem. Tente uma foto mais nítida da nota/comprovante, ou registre por texto (ex: "gastei 50 no mercado").');
+        return;
+      }
+      data = ocr; // { acao: 'salvar', tipo, valor, categoria, observacao }
+      // Usa o nome do estabelecimento como contexto pra refinar categoria
+      // (ex: nota da "Shein" → subcategoria Shein no handler de transações)
+      if (ocr.observacao) mensagem = ocr.observacao;
+    }
+
     // ── 3. Interpreta a mensagem ──────────────────────────────────
-    let data = interpretarRapido(mensagem); // tenta regex primeiro (grátis)
+    if (!data) data = interpretarRapido(mensagem); // tenta regex primeiro (grátis)
 
     // Se regex nao identificou, tenta classificar Finance vs Grow (usuarios com acesso ao Grow)
     if (!data && temAcessoGrow(user)) {
