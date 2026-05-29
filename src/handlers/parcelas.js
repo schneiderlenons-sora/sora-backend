@@ -72,62 +72,50 @@ module.exports = async function handleParcelas(data, ctx) {
     return;
   }
 
-  // ── PAGAR PARCELA (instrução de transferência) ──────────────────
-  if (data.acao === 'pagar_parcela') {
-    const { data: parcela } = await supabase.from('parcelas')
-      .select('*').eq('grupo_id', grupoId)
-      .ilike('descricao', `%${data.descricao}%`)
-      .eq('ativa', true).single();
-
-    if (!parcela) {
-      await enviarTexto(phone, `❌ Parcela *"${data.descricao}"* não encontrada.`);
-      return;
-    }
-    if (parcela.parcelas_pagas >= parcela.total_parcelas) {
-      await enviarTexto(phone, `✅ Todas as parcelas de *"${parcela.descricao}"* já foram pagas!`);
+  // ── ANTECIPAR PARCELA(S) ────────────────────────────────────────
+  // Marca como paga(s) a(s) parcela(s) em aberto (transações não-pagas)
+  // cujo nome casa com o termo. "antecipar parcela X" = a próxima;
+  // "quitar parcelas X" = todas.
+  if (data.acao === 'antecipar_parcela') {
+    const termo = (data.termo || '').trim();
+    if (!termo) {
+      await enviarTexto(phone, '❓ Qual compra? Ex: "antecipar parcela do fone" ou "quitar parcelas da tv".');
       return;
     }
 
-    const num = parcela.parcelas_pagas + 1;
-    await enviarTexto(phone,
-      `💳 Para pagar a parcela *${num}/${parcela.total_parcelas}* de R$ ${parcela.valor_parcela.toFixed(2)} da compra *"${parcela.descricao}"*:\n\n` +
-      `1️⃣ Transfira R$ ${parcela.valor_parcela.toFixed(2)} para o cartão:\n` +
-      `"transferir ${parcela.valor_parcela.toFixed(2)} do [sua conta] para ${parcela.carteira}"\n\n` +
-      `2️⃣ Depois confirme:\n` +
-      `"parcela paga ${parcela.descricao}"`
-    );
-    return;
-  }
+    const { data: parcelas } = await supabase.from('transacoes')
+      .select('*')
+      .eq('grupo_id', grupoId)
+      .eq('tipo', 'Gasto')
+      .eq('pago', false)
+      .ilike('observacao', `%${termo}%`)
+      .order('data', { ascending: true });
 
-  // ── CONFIRMAR PAGAMENTO ─────────────────────────────────────────
-  if (data.acao === 'confirmar_pagamento_parcela') {
-    const { data: parcela } = await supabase.from('parcelas')
-      .select('*').eq('grupo_id', grupoId)
-      .ilike('descricao', `%${data.descricao}%`)
-      .eq('ativa', true).single();
-
-    if (!parcela) {
-      await enviarTexto(phone, `❌ Parcela *"${data.descricao}"* não encontrada.`);
+    if (!parcelas?.length) {
+      await enviarTexto(phone, `❌ Não encontrei parcelas em aberto de *"${termo}"*.\nVeja suas faturas no painel: forsora.com/cartao-de-credito`);
       return;
     }
 
-    const novasPagas = parcela.parcelas_pagas + 1;
-    const quitada   = novasPagas >= parcela.total_parcelas;
+    const alvo = data.todas ? parcelas : [parcelas[0]];
+    await supabase.from('transacoes')
+      .update({ pago: true })
+      .in('id', alvo.map(t => t.id));
 
-    await supabase.from('parcelas').update({
-      parcelas_pagas:          novasPagas,
-      ativa:                   !quitada,
-      data_proxima_vencimento: quitada ? null : new Date(Date.now() + 30*24*60*60*1000).toISOString()
-    }).eq('id', parcela.id);
+    const totalPago = alvo.reduce((s, t) => s + (t.valor || 0), 0);
+    const restantes = parcelas.length - alvo.length;
 
-    if (quitada) {
-      await enviarTexto(phone, `🎉 Parabéns! Você quitou todas as parcelas de *"${parcela.descricao}"*! 🎉`);
-    } else {
-      const prox = new Date(Date.now() + 30*24*60*60*1000);
+    if (data.todas) {
       await enviarTexto(phone,
-        `✅ Parcela *${novasPagas}/${parcela.total_parcelas}* de *"${parcela.descricao}"* confirmada!\n` +
-        `📅 Próxima vence em ${prox.toLocaleDateString('pt-BR')}.`
+        `🎉 Quitei *${alvo.length}* parcela(s) de *"${termo}"* — total R$ ${totalPago.toFixed(2)}.\nLimite liberado no cartão!`
+      );
+    } else {
+      await enviarTexto(phone,
+        `✅ Antecipei *1* parcela de *"${termo}"* (R$ ${totalPago.toFixed(2)}).\n` +
+        (restantes > 0
+          ? `Faltam *${restantes}* parcela(s) em aberto. Mande "quitar parcelas ${termo}" pra adiantar todas.`
+          : `Era a última — compra quitada! 🎉`)
       );
     }
+    return;
   }
 };

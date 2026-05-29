@@ -282,8 +282,7 @@ router.post('/', async (req, res) => {
 
       // Parcelas e fatura
       case 'compra_parcelada':
-      case 'pagar_parcela':
-      case 'confirmar_pagamento_parcela':
+      case 'antecipar_parcela':
       case 'set_fatura_dia':
         require('../handlers/parcelas')(data, ctx);
         break;

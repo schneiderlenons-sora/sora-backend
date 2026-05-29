@@ -73,11 +73,12 @@ function interpretarRapido(message) {
     };
   }
 
-  if ((m = msg.match(/pagar\s+parcela\s+d[ao]\s+(.+)/i)))
-    return { acao: 'pagar_parcela', descricao: m[1].trim() };
-
-  if ((m = msg.match(/parcela\s+paga\s+(.+)/i)))
-    return { acao: 'confirmar_pagamento_parcela', descricao: m[1].trim() };
+  // Antecipar/pagar parcela: "antecipar parcela do fone", "pagar parcela fone",
+  // "quitar parcelas da tv" (quitar/todas = marca todas as parcelas em aberto).
+  if ((m = msg.match(/(antecipar|pagar|quitar)\s+(?:as\s+|a\s+)?parcelas?\s+(?:d[aeo]s?\s+)?(.+)/i))) {
+    const todas = /\b(quitar|todas)\b/i.test(msg);
+    return { acao: 'antecipar_parcela', termo: m[2].trim(), todas };
+  }
 
   if ((m = msg.match(/definir\s+fatura\s+dia\s+(\d{1,2})/i)))
     return { acao: 'set_fatura_dia', dia: parseInt(m[1]) };
