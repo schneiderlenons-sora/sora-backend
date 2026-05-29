@@ -27,47 +27,88 @@ function limpaCat(s) {
 // IMPORTANTE: gasto em subcategoria conta pro limite da categoria-pai
 // (ex: gasto em "Shein" conta pro limite de "Vestuário").
 // A transação JÁ está salva quando isso roda, então a soma já a inclui.
-async function verificarLimite(grupoId, phone) {
+async function verificarLimite(grupoId, phone, user) {
   const mesRef = new Date().toISOString().slice(0, 7);
 
-  const { data: limites } = await supabase
-    .from('category_limits').select('*')
-    .eq('grupo_id', grupoId).eq('mes_referencia', mesRef);
-  if (!limites?.length) return;
-
-  const { data: cats } = await supabase
-    .from('categorias').select('id, nome, parent_id').eq('grupo_id', grupoId);
-
+  // Gastos do mês do grupo — usado pelos dois tipos de limite
   const { data: gastos } = await supabase
     .from('transacoes').select('valor, categoria')
     .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
     .gte('data', `${mesRef}-01`).lte('data', `${mesRef}-31`);
 
-  for (const limite of limites) {
-    if (limite.ativo === false || !limite.limite_mensal || limite.alerta_enviado) continue;
+  // ── Limites POR CATEGORIA (subcategoria conta pro pai) ──────────
+  const { data: limites } = await supabase
+    .from('category_limits').select('*')
+    .eq('grupo_id', grupoId).eq('mes_referencia', mesRef);
 
-    // Nomes que contam pro limite: a categoria + suas subcategorias
-    const alvo = limpaCat(limite.categoria);
-    const nomes = new Set([alvo]);
-    const cat = (cats || []).find(c => limpaCat(c.nome) === alvo);
-    if (cat) {
-      (cats || []).filter(c => c.parent_id === cat.id).forEach(c => nomes.add(limpaCat(c.nome)));
-    }
+  if (limites?.length) {
+    const { data: cats } = await supabase
+      .from('categorias').select('id, nome, parent_id').eq('grupo_id', grupoId);
 
-    const total = (gastos || [])
-      .filter(g => nomes.has(limpaCat(g.categoria)))
-      .reduce((s, g) => s + (g.valor || 0), 0);
+    for (const limite of limites) {
+      if (limite.ativo === false || !limite.limite_mensal || limite.alerta_enviado) continue;
 
-    const pct = (total / limite.limite_mensal) * 100;
-    if (pct >= (limite.percentual_alerta || 80)) {
-      await enviarTexto(phone,
-        `⚠️ *Atenção!* Você atingiu *${pct.toFixed(0)}%* do limite de *${limite.categoria}*.\n` +
-        `Limite: R$ ${limite.limite_mensal.toFixed(2)} | Gasto atual: R$ ${total.toFixed(2)}`
-      );
-      await supabase.from('category_limits')
-        .update({ alerta_enviado: true }).eq('id', limite.id);
+      const alvo = limpaCat(limite.categoria);
+      const nomes = new Set([alvo]);
+      const cat = (cats || []).find(c => limpaCat(c.nome) === alvo);
+      if (cat) {
+        (cats || []).filter(c => c.parent_id === cat.id).forEach(c => nomes.add(limpaCat(c.nome)));
+      }
+
+      const total = (gastos || [])
+        .filter(g => nomes.has(limpaCat(g.categoria)))
+        .reduce((s, g) => s + (g.valor || 0), 0);
+
+      const pct = (total / limite.limite_mensal) * 100;
+      if (pct >= (limite.percentual_alerta || 80)) {
+        await enviarTexto(phone,
+          `⚠️ *Atenção!* Você atingiu *${pct.toFixed(0)}%* do limite de *${limite.categoria}*.\n` +
+          `Limite: R$ ${limite.limite_mensal.toFixed(2)} | Gasto atual: R$ ${total.toFixed(2)}`
+        );
+        await supabase.from('category_limits')
+          .update({ alerta_enviado: true }).eq('id', limite.id);
+      }
     }
   }
+
+  // ── Limite GERAL (meta_mensal no users) ─────────────────────────
+  await verificarLimiteGeral(grupoId, phone, user, mesRef, gastos || []);
+}
+
+// Alerta quando o gasto TOTAL do mês atinge o % da meta mensal.
+// Usa meta_mensal_alerta_enviado (= mesRef) pra não repetir no mês.
+async function verificarLimiteGeral(grupoId, phone, user, mesRef, gastos) {
+  // user pode vir desatualizado — busca os campos frescos pelo grupo
+  let u = user;
+  if (!u || u.meta_mensal === undefined) {
+    const { data } = await supabase.from('users')
+      .select('meta_mensal, meta_mensal_ativo, meta_mensal_alerta_ativo, meta_mensal_alerta_pct, meta_mensal_alerta_enviado, phone')
+      .eq('grupo_ativo', grupoId).limit(1).maybeSingle();
+    u = data;
+  }
+  if (!u) return;
+
+  const meta = u.meta_mensal || 0;
+  const ativo = u.meta_mensal_ativo ?? true;
+  const alertaAtivo = u.meta_mensal_alerta_ativo ?? true;
+  const pctAlerta = u.meta_mensal_alerta_pct ?? 80;
+  if (!meta || !ativo || !alertaAtivo) return;
+  if (u.meta_mensal_alerta_enviado === mesRef) return; // já avisou este mês
+
+  const total = (gastos || []).reduce((s, g) => s + (g.valor || 0), 0);
+  const pct = (total / meta) * 100;
+  if (pct < pctAlerta) return;
+
+  await enviarTexto(phone,
+    `🚨 *Limite geral!* Você atingiu *${pct.toFixed(0)}%* da sua meta de gastos do mês.\n` +
+    `Meta: R$ ${meta.toFixed(2)} | Gasto total: R$ ${total.toFixed(2)}`
+  );
+  // Marca como avisado neste mês (defensivo: coluna pode não existir ainda)
+  try {
+    await supabase.from('users')
+      .update({ meta_mensal_alerta_enviado: mesRef })
+      .eq('phone', u.phone || phone.replace(/\D/g, ''));
+  } catch (e) { console.warn('[limite geral] flag alerta:', e.message); }
 }
 
 // Busca a wallet padrão do user (se definida)
@@ -245,9 +286,9 @@ module.exports = async function handleTransacoes(data, ctx) {
       }, { onConflict: 'grupo_id,nome' });
     }
 
-    // Verifica limites por categoria (subcategoria conta pro limite do pai)
+    // Verifica limites — por categoria (subcategoria conta pro pai) + geral
     if (data.tipo === 'Gasto') {
-      await verificarLimite(grupoId, phone);
+      await verificarLimite(grupoId, phone, user);
     }
 
     const emoji = EMOJIS[data.categoria] || '🔖';
