@@ -207,6 +207,20 @@ function interpretarRapido(message) {
       valor: m[6] ? parseValor(m[6]) : 0
     };
 
+  // --- OFX / IMPORTAR EXTRATO → orienta usar o painel ---
+  // Importação de OFX/CSV só existe no painel web; se o usuário pedir
+  // pelo WhatsApp, orienta sem gastar IA.
+  if (/\b(ofx|importar?\s+(extrato|ofx|csv|planilha)|extrato\s+(banc|ofx)|sincroniz\w*\s+extrato)\b/i.test(msg)) {
+    return {
+      acao: 'conversa',
+      resposta:
+        '📄 A importação de extrato (OFX/CSV) é feita pelo painel web, que mostra um preview pra você revisar antes de importar:\n\n' +
+        '👉 forsora.com/transacoes → botão *Importar*\n\n' +
+        'No app do seu banco: abra o extrato → *Exportar/Compartilhar* → escolha *OFX*.\n\n' +
+        '💡 Aqui no WhatsApp você pode mandar *foto da nota/comprovante* que eu registro na hora!',
+    };
+  }
+
   // --- COMANDOS SIMPLES ---
   if (/\bpainel\b/i.test(msg))         return { acao: 'painel' };
   if (/\bsaldo\b/i.test(msg))          return { acao: 'ver_saldos' };
