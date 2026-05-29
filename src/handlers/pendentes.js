@@ -125,6 +125,49 @@ async function resolverPendente(pendente, mensagem, ctx) {
     return true;
   }
 
+  // ─── PAGAR PARCELA: ESCOLHER CONTA ─────────────────────────────
+  if (pendente.tipo_pergunta === 'pagar_parcela_conta') {
+    const opcoes = pendente.contexto?.opcoes || [];
+    const ids    = pendente.contexto?.ids || [];
+    const termo  = pendente.contexto?.termo || 'compra';
+    let escolhida = null;
+
+    const num = parseInt(msg, 10);
+    if (!isNaN(num) && num >= 1 && num <= opcoes.length) {
+      escolhida = opcoes[num - 1];
+    } else {
+      escolhida = opcoes.find((o) =>
+        o.nome.toLowerCase() === lower ||
+        o.nome.toLowerCase().includes(lower) ||
+        lower.includes(o.nome.toLowerCase())
+      );
+    }
+    if (!escolhida) return false; // não bate com conta — deixa seguir
+
+    // Soma só as ainda em aberto e marca como pagas
+    const { data: parcelas } = await supabase.from('transacoes')
+      .select('id, valor, pago').eq('grupo_id', grupoId).in('id', ids);
+    const emAberto = (parcelas || []).filter(p => p.pago === false);
+    const total = emAberto.reduce((s, p) => s + (p.valor || 0), 0);
+
+    if (emAberto.length) {
+      await supabase.from('transacoes').update({ pago: true }).in('id', emAberto.map(p => p.id));
+      // Debita o saldo da conta escolhida
+      const { data: conta } = await supabase.from('wallets')
+        .select('id, saldo').eq('id', escolhida.id).maybeSingle();
+      if (conta) {
+        await supabase.from('wallets')
+          .update({ saldo: (conta.saldo || 0) - total }).eq('id', conta.id);
+      }
+    }
+    await removerPendente(pendente.id);
+    await enviarTexto(phone,
+      `✅ Antecipei *${emAberto.length}* parcela(s) de *"${termo}"*.\n` +
+      `💸 R$ ${total.toFixed(2)} debitado de *${escolhida.nome}* · limite do cartão liberado.`
+    );
+    return true;
+  }
+
   // ─── TIPO 2: MARCAR_PRINCIPAL ──────────────────────────────────
   if (pendente.tipo_pergunta === 'marcar_principal') {
     const positivo = /^(s(im)?|y|yes|claro|marca|pode|positivo|aham|uhum|ok)$/i.test(lower);

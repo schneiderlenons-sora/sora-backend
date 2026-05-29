@@ -1,5 +1,6 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
+const { criarPendente } = require('../services/pendentes');
 
 const gerarId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
@@ -97,24 +98,45 @@ module.exports = async function handleParcelas(data, ctx) {
     }
 
     const alvo = data.todas ? parcelas : [parcelas[0]];
-    await supabase.from('transacoes')
-      .update({ pago: true })
-      .in('id', alvo.map(t => t.id));
-
     const totalPago = alvo.reduce((s, t) => s + (t.valor || 0), 0);
-    const restantes = parcelas.length - alvo.length;
 
-    if (data.todas) {
+    // Pagar fatura debita de uma conta — pergunta de qual (igual ao painel).
+    const { data: contas } = await supabase.from('wallets')
+      .select('id, nome, saldo, tipo, arquivada')
+      .eq('grupo_id', grupoId)
+      .neq('tipo', 'Crédito')
+      .order('created_at', { ascending: true });
+    const contasAtivas = (contas || []).filter(c => !c.arquivada);
+
+    if (contasAtivas.length === 0) {
+      // Sem conta pra debitar — só quita as parcelas (libera limite)
+      await supabase.from('transacoes').update({ pago: true }).in('id', alvo.map(t => t.id));
       await enviarTexto(phone,
-        `🎉 Quitei *${alvo.length}* parcela(s) de *"${termo}"* — total R$ ${totalPago.toFixed(2)}.\nLimite liberado no cartão!`
+        `✅ Quitei *${alvo.length}* parcela(s) de *"${termo}"* (R$ ${totalPago.toFixed(2)}) e liberei o limite.\n` +
+        `⚠️ Você não tem conta bancária cadastrada, então não debitei de nenhuma.`
       );
-    } else {
-      await enviarTexto(phone,
-        `✅ Antecipei *1* parcela de *"${termo}"* (R$ ${totalPago.toFixed(2)}).\n` +
-        (restantes > 0
-          ? `Faltam *${restantes}* parcela(s) em aberto. Mande "quitar parcelas ${termo}" pra adiantar todas.`
-          : `Era a última — compra quitada! 🎉`)
-      );
+      return;
+    }
+
+    const opcoesTexto = contasAtivas
+      .map((c, i) => `${i + 1}️⃣ ${c.nome} (R$ ${(c.saldo || 0).toFixed(2)})`)
+      .join('\n');
+    await enviarTexto(phone,
+      `💳 Vou antecipar *${alvo.length}* parcela(s) de *"${termo}"* — total R$ ${totalPago.toFixed(2)}.\n\n` +
+      `❓ *De qual conta pago?*\n${opcoesTexto}\n\nResponde com o número ou o nome.`
+    );
+
+    if (user?.id) {
+      await criarPendente({
+        userId: user.id,
+        tipoPergunta: 'pagar_parcela_conta',
+        contexto: {
+          ids: alvo.map(t => t.id),
+          termo,
+          total: totalPago,
+          opcoes: contasAtivas.map(c => ({ id: c.id, nome: c.nome })),
+        },
+      });
     }
     return;
   }
