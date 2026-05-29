@@ -1,6 +1,8 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
 
+const gerarId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+
 module.exports = async function handleParcelas(data, ctx) {
   const { phone, grupoId, user } = ctx;
 
@@ -36,41 +38,36 @@ module.exports = async function handleParcelas(data, ctx) {
       await enviarTexto(phone, `❌ Cartão *${carteiraNome}* não encontrado.\nCrie primeiro com: "${carteiraNome.toLowerCase()} 0"`);
       return;
     }
-    if (wallet.saldo < valorTotal) {
-      await enviarTexto(phone, `⚠️ Limite insuficiente em *${wallet.nome}*.\nDisponível: R$ ${wallet.saldo.toFixed(2)} | Necessário: R$ ${valorTotal.toFixed(2)}`);
-      return;
+    // Gera N transações futuras (uma por fatura/mês). Cada parcela é um Gasto
+    // não-pago no cartão, com data no mês da respectiva fatura. Assim o painel
+    // (que lê transações) reflete o limite comprometido, mostra faturas futuras
+    // e permite antecipar. A 1ª parcela cai no próximo mês (próxima fatura).
+    const hoje = new Date();
+    const linhas = [];
+    for (let i = 1; i <= numParcelas; i++) {
+      const d = new Date(hoje.getFullYear(), hoje.getMonth() + i, Math.min(hoje.getDate(), 28));
+      linhas.push({
+        id_curto:      gerarId(),
+        grupo_id:      grupoId,
+        tipo:          'Gasto',
+        categoria:     categoria || 'Outros',
+        valor:         valorParcela,
+        observacao:    `${descricao} (${i}/${numParcelas})`,
+        carteira_nome: wallet.nome,
+        pago:          false,
+        data:          d.toISOString(),
+      });
     }
+    await supabase.from('transacoes').insert(linhas);
 
-    // Debita do limite do cartão
-    await supabase.from('wallets')
-      .update({ saldo: wallet.saldo - valorTotal })
-      .eq('id', wallet.id);
-
-    // Data da primeira parcela (+30 dias)
-    const primeiroVenc = new Date();
-    primeiroVenc.setDate(primeiroVenc.getDate() + 30);
-
-    // Registra as parcelas
-    await supabase.from('parcelas').insert({
-      grupo_id:               grupoId,
-      descricao,
-      valor_total:            valorTotal,
-      valor_parcela:          valorParcela,
-      total_parcelas:         numParcelas,
-      parcelas_pagas:         0,
-      data_proxima_vencimento: primeiroVenc.toISOString(),
-      categoria:              categoria || 'Outros',
-      carteira:               wallet.nome,
-      ativa:                  true
-    });
-
+    const primeiraData = new Date(hoje.getFullYear(), hoje.getMonth() + 1, Math.min(hoje.getDate(), 28));
     await enviarTexto(phone,
       `✅ *Compra parcelada registrada!*\n\n` +
       `📦 ${descricao}\n` +
       `💳 Cartão: ${wallet.nome}\n` +
       `💵 Total: R$ ${valorTotal.toFixed(2)} em ${numParcelas}x de R$ ${valorParcela.toFixed(2)}\n` +
-      `📅 1ª parcela: ${primeiroVenc.toLocaleDateString('pt-BR')}\n\n` +
-      `⚠️ Para pagar cada parcela use:\n"pagar parcela da ${descricao}"`
+      `📅 1ª parcela na fatura de ${primeiraData.toLocaleDateString('pt-BR', { month: 'long' })}\n\n` +
+      `As ${numParcelas} parcelas já aparecem nas faturas do painel. Você pode antecipar por lá.`
     );
     return;
   }
