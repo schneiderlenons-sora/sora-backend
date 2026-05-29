@@ -215,11 +215,15 @@ function interpretarRapido(message) {
   if (/\b(ajuda|help|menu)\b/i.test(msg)) return { acao: 'ajuda' };
   if (/\bdividendos\b|\bproventos\b/i.test(msg)) return { acao: 'ver_dividendos' };
 
-  if (/\b(excluir|apagar|deletar)\b/i.test(msg)) {
-    if (/\b(ultima|última)\b/i.test(msg)) return { acao: 'apagar' };
-    // Pega o ÚLTIMO trecho de 6 alfanuméricos — o id costuma estar no fim
-    // da frase. Evita capturar "Exclui" (de "Excluir") como id.
-    const ids = msg.match(/[a-z0-9]{6}/gi);
+  // Normaliza sem acento — o \b do regex não casa antes de "última" (ú não
+  // é word char ASCII), então testamos no texto sem acento.
+  const semAcento = msg.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/(excluir|apagar|deletar|desfazer)/i.test(semAcento)) {
+    // "última"/"último"/"desfazer último lançamento" → apaga a última
+    if (/(ultim|desfaz)/i.test(semAcento)) return { acao: 'apagar' };
+    // Pega o ÚLTIMO trecho de 6 alfanuméricos — o id fica no fim da frase.
+    // Evita capturar "exclui" (de "excluir") como id.
+    const ids = semAcento.match(/[a-z0-9]{6}/gi);
     const idCurto = ids && ids.length ? ids[ids.length - 1].toUpperCase() : null;
     return { acao: 'apagar', idCurto };
   }
