@@ -133,13 +133,21 @@ router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res)
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// PUT /api/transacoes/:id — edita
+// PUT /api/transacoes/:id — edita (update PARCIAL: só os campos enviados)
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { tipo, categoria, valor, observacao, carteira_nome, data } = req.body;
+    const { tipo, categoria, valor, observacao, carteira_nome, data, pago } = req.body;
+    const patch = {};
+    if (tipo !== undefined)          patch.tipo = tipo;
+    if (categoria !== undefined)     patch.categoria = categoria;
+    if (valor !== undefined)         patch.valor = parseFloat(valor);
+    if (observacao !== undefined)    patch.observacao = observacao;
+    if (carteira_nome !== undefined) patch.carteira_nome = carteira_nome;
+    if (data !== undefined)          patch.data = data;
+    if (pago !== undefined)          patch.pago = pago;
+
     const { data: tx, error } = await supabase.from('transacoes')
-      .update({ tipo, categoria, valor: parseFloat(valor), observacao, carteira_nome, data })
-      .eq('id', req.params.id).select().single();
+      .update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(tx);
   } catch (err) { res.status(500).json({ erro: err.message }); }
