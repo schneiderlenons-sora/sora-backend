@@ -17,40 +17,55 @@ function gerarId() {
   return Math.random().toString(36).substring(2,8).toUpperCase();
 }
 
-// Verifica e dispara alerta de limite de categoria
-async function verificarLimite(grupoId, categoria, valorNovo, phone) {
-  const mesRef = new Date().toISOString().slice(0,7);
+// Limpa nome de categoria pra comparação: sem emoji, sem acento, lowercase
+function limpaCat(s) {
+  return (s || '').replace(/\p{Emoji}/gu, '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
 
-  // Soma gastos do mês nessa categoria
+// Verifica e dispara alerta de limite (geral e por categoria).
+// IMPORTANTE: gasto em subcategoria conta pro limite da categoria-pai
+// (ex: gasto em "Shein" conta pro limite de "Vestuário").
+// A transação JÁ está salva quando isso roda, então a soma já a inclui.
+async function verificarLimite(grupoId, phone) {
+  const mesRef = new Date().toISOString().slice(0, 7);
+
+  const { data: limites } = await supabase
+    .from('category_limits').select('*')
+    .eq('grupo_id', grupoId).eq('mes_referencia', mesRef);
+  if (!limites?.length) return;
+
+  const { data: cats } = await supabase
+    .from('categorias').select('id, nome, parent_id').eq('grupo_id', grupoId);
+
   const { data: gastos } = await supabase
-    .from('transacoes')
-    .select('valor')
-    .eq('grupo_id', grupoId)
-    .eq('tipo', 'Gasto')
-    .eq('categoria', categoria)
-    .gte('data', `${mesRef}-01`);
+    .from('transacoes').select('valor, categoria')
+    .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
+    .gte('data', `${mesRef}-01`).lte('data', `${mesRef}-31`);
 
-  const totalAtual = (gastos || []).reduce((s, g) => s + g.valor, 0);
-  const novoTotal  = totalAtual + valorNovo;
+  for (const limite of limites) {
+    if (limite.ativo === false || !limite.limite_mensal || limite.alerta_enviado) continue;
 
-  const { data: limite } = await supabase
-    .from('category_limits')
-    .select('*')
-    .eq('grupo_id', grupoId)
-    .eq('categoria', categoria)
-    .eq('mes_referencia', mesRef)
-    .single();
+    // Nomes que contam pro limite: a categoria + suas subcategorias
+    const alvo = limpaCat(limite.categoria);
+    const nomes = new Set([alvo]);
+    const cat = (cats || []).find(c => limpaCat(c.nome) === alvo);
+    if (cat) {
+      (cats || []).filter(c => c.parent_id === cat.id).forEach(c => nomes.add(limpaCat(c.nome)));
+    }
 
-  if (limite && limite.limite_mensal > 0) {
-    const pct = (novoTotal / limite.limite_mensal) * 100;
-    if (pct >= limite.percentual_alerta && !limite.alerta_enviado) {
+    const total = (gastos || [])
+      .filter(g => nomes.has(limpaCat(g.categoria)))
+      .reduce((s, g) => s + (g.valor || 0), 0);
+
+    const pct = (total / limite.limite_mensal) * 100;
+    if (pct >= (limite.percentual_alerta || 80)) {
       await enviarTexto(phone,
-        `⚠️ *Atenção!* Você atingiu *${pct.toFixed(0)}%* do limite de *${categoria}*.\n` +
-        `Limite: R$ ${limite.limite_mensal.toFixed(2)} | Gasto atual: R$ ${novoTotal.toFixed(2)}`
+        `⚠️ *Atenção!* Você atingiu *${pct.toFixed(0)}%* do limite de *${limite.categoria}*.\n` +
+        `Limite: R$ ${limite.limite_mensal.toFixed(2)} | Gasto atual: R$ ${total.toFixed(2)}`
       );
       await supabase.from('category_limits')
-        .update({ alerta_enviado: true })
-        .eq('id', limite.id);
+        .update({ alerta_enviado: true }).eq('id', limite.id);
     }
   }
 }
@@ -162,6 +177,15 @@ module.exports = async function handleTransacoes(data, ctx) {
       // Caso 1: conta citada no texto (ex: "...na shein nubank" → Nubank)
       carteiraNome = await detectarContaNoTexto(grupoId, ctx.mensagem);
 
+      // Conta veio embutida no texto → remove o nome dela da observação
+      // pra não ficar "shein nubank" na descrição (vira só "shein").
+      if (carteiraNome && data.observacao) {
+        const esc = carteiraNome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        data.observacao = data.observacao
+          .replace(new RegExp(`\\b${esc}\\b`, 'gi'), '')
+          .replace(/\s+/g, ' ').trim();
+      }
+
       // Caso 2: wallet padrão do usuário
       if (!carteiraNome) carteiraNome = await buscarWalletPadrao(user?.id);
 
@@ -221,9 +245,9 @@ module.exports = async function handleTransacoes(data, ctx) {
       }, { onConflict: 'grupo_id,nome' });
     }
 
-    // Verifica limite se for gasto
+    // Verifica limites por categoria (subcategoria conta pro limite do pai)
     if (data.tipo === 'Gasto') {
-      await verificarLimite(grupoId, data.categoria, valor, phone);
+      await verificarLimite(grupoId, phone);
     }
 
     const emoji = EMOJIS[data.categoria] || '🔖';
