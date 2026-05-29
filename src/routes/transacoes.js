@@ -6,6 +6,15 @@ const { exigirPermissao } = require('../middlewares/permissao');
 
 const norm = p => p?.replace(/\D/g, '');
 
+// Primeiro dia do mês seguinte (YYYY-MM-01) — usado como limite exclusivo.
+// Evita usar `${mes}-31` que é data inválida em meses de 30/28/29 dias
+// (Postgres rejeita e a query falha → fatura aparece vazia).
+function proximoMesPrimeiroDia(mes) {
+  const [a, m] = mes.split('-').map(Number);
+  const d = new Date(a, m, 1); // m (1-based) vira mês 0-based seguinte
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
 async function getUser(phone) {
   const { data } = await supabase.from('users')
     .select('id, grupo_ativo').eq('phone', norm(phone)).maybeSingle();
@@ -28,7 +37,7 @@ router.get('/:phone', auth, async (req, res) => {
       .order('data', { ascending: false })
       .range(Number(offset), Number(offset) + Number(limit) - 1);
 
-    if (mes)       query = query.gte('data', `${mes}-01`).lte('data', `${mes}-31`);
+    if (mes)       query = query.gte("data", `${mes}-01`).lt("data", proximoMesPrimeiroDia(mes));
     if (tipo)      query = query.eq('tipo', tipo);
     if (categoria) query = query.eq('categoria', categoria);
 
@@ -48,7 +57,7 @@ router.get('/:phone', auth, async (req, res) => {
         .eq('grupo_id', grupoId)
         .order('data', { ascending: false })
         .range(Number(offset), Number(offset) + Number(limit) - 1);
-      if (mes)       q2 = q2.gte('data', `${mes}-01`).lte('data', `${mes}-31`);
+      if (mes)       q2 = q2.gte("data", `${mes}-01`).lt("data", proximoMesPrimeiroDia(mes));
       if (tipo)      q2 = q2.eq('tipo', tipo);
       if (categoria) q2 = q2.eq('categoria', categoria);
       if (criado_por_me === 'true') q2 = q2.eq('criado_por', user.id);
@@ -153,6 +162,42 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// POST /api/transacoes/antecipar-cartao — paga parcelas do cartão debitando
+// de uma conta bancária. Pagar fatura é uma transferência (conta → cartão):
+// marca as parcelas como pagas (libera limite) e debita o saldo da conta,
+// sem criar gasto novo (não duplica nos relatórios).
+router.post('/antecipar-cartao', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { ids, conta_nome } = req.body;
+    const grupoId = req.grupoId;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ erro: 'Nenhuma parcela informada.' });
+    }
+    if (!conta_nome) return res.status(400).json({ erro: 'Conta de pagamento não informada.' });
+
+    // Soma só das parcelas em aberto (evita debitar o que já estava pago)
+    const { data: parcelas } = await supabase.from('transacoes')
+      .select('id, valor, pago').eq('grupo_id', grupoId).in('id', ids);
+    const emAberto = (parcelas || []).filter(p => p.pago === false);
+    if (emAberto.length === 0) return res.json({ ok: true, debitado: 0 });
+    const total = emAberto.reduce((s, p) => s + (p.valor || 0), 0);
+
+    // Marca como pagas
+    await supabase.from('transacoes').update({ pago: true })
+      .in('id', emAberto.map(p => p.id));
+
+    // Debita o saldo da conta escolhida
+    const { data: conta } = await supabase.from('wallets')
+      .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', conta_nome).maybeSingle();
+    if (conta) {
+      await supabase.from('wallets')
+        .update({ saldo: (conta.saldo || 0) - total }).eq('id', conta.id);
+    }
+
+    res.json({ ok: true, debitado: total, conta: conta_nome });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // DELETE /api/transacoes/:id
 router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
@@ -184,7 +229,7 @@ router.get('/:phone/resumo', auth, async (req, res) => {
     let q = supabase.from('transacoes')
       .select('tipo, categoria, valor, criado_por')
       .eq('grupo_id', user.grupo_ativo)
-      .gte('data', `${mes}-01`).lte('data', `${mes}-31`);
+      .gte("data", `${mes}-01`).lt("data", proximoMesPrimeiroDia(mes));
     if (req.query.criado_por_me === 'true') q = q.eq('criado_por', user.id);
     const { data: rows } = await q;
 

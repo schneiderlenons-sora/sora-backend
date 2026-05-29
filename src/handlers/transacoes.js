@@ -29,12 +29,16 @@ function limpaCat(s) {
 // A transação JÁ está salva quando isso roda, então a soma já a inclui.
 async function verificarLimite(grupoId, phone, user) {
   const mesRef = new Date().toISOString().slice(0, 7);
+  // Primeiro dia do mês seguinte (limite exclusivo) — evita `${mes}-31`
+  // inválido em meses de 30/28 dias.
+  const [_a, _m] = mesRef.split('-').map(Number);
+  const fimMes = `${new Date(_a, _m, 1).getFullYear()}-${String(new Date(_a, _m, 1).getMonth() + 1).padStart(2, '0')}-01`;
 
   // Gastos do mês do grupo — usado pelos dois tipos de limite
   const { data: gastos } = await supabase
     .from('transacoes').select('valor, categoria')
     .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
-    .gte('data', `${mesRef}-01`).lte('data', `${mesRef}-31`);
+    .gte('data', `${mesRef}-01`).lt('data', fimMes);
 
   // ── Limites POR CATEGORIA (subcategoria conta pro pai) ──────────
   const { data: limites } = await supabase
