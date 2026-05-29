@@ -66,6 +66,52 @@ async function buscarWalletPadrao(userId) {
   return u?.wallets?.nome || null;
 }
 
+// Normaliza texto pra match: lowercase, sem acento
+function normTxt(s) {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+
+// Testa se `trecho` aparece como palavra inteira em `texto`
+function temPalavra(texto, trecho) {
+  const esc = trecho.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|\\s)${esc}(\\s|$)`).test(texto);
+}
+
+// Refina a categoria usando as categorias/subcategorias REAIS do grupo.
+// Ex: usuário tem subcategoria "Shein" → "gastei 290 na shein" vira Shein.
+// Prioriza subcategorias e nomes mais longos (mais específicos).
+async function refinarCategoria(grupoId, texto) {
+  const t = normTxt(texto);
+  if (!t) return null;
+  const { data: cats } = await supabase.from('categorias')
+    .select('nome, parent_id').eq('grupo_id', grupoId);
+  if (!cats?.length) return null;
+  const ordenadas = [...cats].sort((a, b) => {
+    const espec = (b.parent_id ? 1 : 0) - (a.parent_id ? 1 : 0);
+    return espec !== 0 ? espec : b.nome.length - a.nome.length;
+  });
+  for (const c of ordenadas) {
+    const nome = normTxt(c.nome);
+    if (!nome || nome === 'outros') continue;
+    if (temPalavra(t, nome)) return c.nome;
+  }
+  return null;
+}
+
+// Detecta se o usuário citou uma conta existente no texto da mensagem.
+// Ex: "gastei 290 na shein nubank" → conta "Nubank" (mais longo primeiro
+// pra "Nubank Crédito" ganhar de "Nubank" quando aplicável).
+async function detectarContaNoTexto(grupoId, texto) {
+  const t = normTxt(texto);
+  if (!t) return null;
+  const contas = await listarContasAtivas(grupoId);
+  const ord = [...contas].sort((a, b) => b.nome.length - a.nome.length);
+  for (const c of ord) {
+    if (temPalavra(t, normTxt(c.nome))) return c.nome;
+  }
+  return null;
+}
+
 // Lista as contas ATIVAS do grupo (pra perguntar de qual saiu a transação)
 // Não filtra por `arquivada` na query (coluna pode não existir no schema) —
 // filtra em JS de forma defensiva.
@@ -97,6 +143,11 @@ module.exports = async function handleTransacoes(data, ctx) {
     const valor = parseFloat(data.valor);
     const idCurto = gerarId();
 
+    // Refina categoria pelas categorias/subcategorias reais do grupo
+    // (ex: subcategoria "Shein"). Só sobrescreve se achar algo melhor que Outros.
+    const catRefinada = await refinarCategoria(grupoId, ctx.mensagem || data.observacao);
+    if (catRefinada) data.categoria = catRefinada;
+
     // Estratégia de escolha de carteira:
     //   1) Se a mensagem cita banco → usa esse
     //   2) Se user tem wallet_padrao → usa esse
@@ -108,8 +159,11 @@ module.exports = async function handleTransacoes(data, ctx) {
     let contasAtivas   = [];
 
     if (!carteiraNome) {
-      // Caso 2
-      carteiraNome = await buscarWalletPadrao(user?.id);
+      // Caso 1: conta citada no texto (ex: "...na shein nubank" → Nubank)
+      carteiraNome = await detectarContaNoTexto(grupoId, ctx.mensagem);
+
+      // Caso 2: wallet padrão do usuário
+      if (!carteiraNome) carteiraNome = await buscarWalletPadrao(user?.id);
 
       if (!carteiraNome) {
         contasAtivas = await listarContasAtivas(grupoId);

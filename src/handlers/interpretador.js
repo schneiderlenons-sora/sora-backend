@@ -217,8 +217,11 @@ function interpretarRapido(message) {
 
   if (/\b(excluir|apagar|deletar)\b/i.test(msg)) {
     if (/\b(ultima|última)\b/i.test(msg)) return { acao: 'apagar' };
-    const id = msg.match(/([A-Z0-9]{6})/i);
-    return { acao: 'apagar', idCurto: id ? id[1].toUpperCase() : null };
+    // Pega o ÚLTIMO trecho de 6 alfanuméricos — o id costuma estar no fim
+    // da frase. Evita capturar "Exclui" (de "Excluir") como id.
+    const ids = msg.match(/[a-z0-9]{6}/gi);
+    const idCurto = ids && ids.length ? ids[ids.length - 1].toUpperCase() : null;
+    return { acao: 'apagar', idCurto };
   }
 
   if (/\bgastos?\b/i.test(msg)) {
