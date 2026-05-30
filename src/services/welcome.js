@@ -58,6 +58,19 @@ async function enviarBoasVindas({ user_id, phone, nome, force = false }) {
     return { enviado: false, motivo: 'phone não informado' };
   }
 
+  // Persiste o número (e nome) no perfil — fonte confiável (service role),
+  // independente do timing da sessão no cliente. É aqui que o WhatsApp fica
+  // de fato vinculado ao cadastro.
+  if (user_id) {
+    try {
+      const patch = { phone };   // já chega normalizado do route
+      if (nome) patch.name = nome;
+      await supabase.from('users').update(patch).eq('id', user_id);
+    } catch (e) {
+      console.warn('[welcome] erro ao salvar phone:', e.message);
+    }
+  }
+
   // Verifica se já enviou
   let primeiroAcesso = true;
   if (user_id && !force) {

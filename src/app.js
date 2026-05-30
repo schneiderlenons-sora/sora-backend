@@ -24,6 +24,7 @@ app.use('/api/limites',      require('./routes/limites'));
 app.use('/api/investimentos',require('./routes/investimentos'));
 app.use('/api/metas',        require('./routes/metas'));
 app.use('/api/dividas',      require('./routes/dividas'));
+app.use('/api/recorrencias', require('./routes/recorrencias'));
 app.use('/api/grow',         require('./routes/grow'));
 app.use('/api/saude',        require('./routes/saude'));
 app.use('/api/estudos',      require('./routes/estudos'));
