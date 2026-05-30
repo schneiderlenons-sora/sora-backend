@@ -27,9 +27,11 @@ begin
     'Usuário'
   );
 
-  -- 1. Cria registro em public.users (sem grupo_ativo — FK circular)
+  -- 1. Cria registro em public.users (sem grupo_ativo — FK circular).
+  --    phone = NULL (não '') — senão o 2º user sem WhatsApp colide no
+  --    unique users_phone_key. Ver migration 028.
   insert into public.users (id, name, email, phone, plano)
-  values (new.id, v_name, coalesce(new.email, ''), '', 'inativo')
+  values (new.id, v_name, coalesce(new.email, ''), null, 'inativo')
   on conflict (id) do nothing;
 
   -- 2. Cria grupo padrão com o user como dono
