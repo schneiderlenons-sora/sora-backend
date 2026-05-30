@@ -14,8 +14,10 @@ const supabase = require('../db/supabase');
  * @param {string} tipoPergunta      'escolher_conta' | 'marcar_principal' | 'criar_conta'
  * @param {object} contexto          dados extras (ex.: { transacao_id, valor, opcoes_contas })
  * @param {string} [transacaoId]     opcional — referência à tx em questão
+ * @param {number} [expiresInMin]    opcional — sobrescreve o TTL padrão (10min).
+ *                                   Ex.: oferta de pagar fatura dura dias.
  */
-async function criarPendente({ userId, tipoPergunta, contexto, transacaoId }) {
+async function criarPendente({ userId, tipoPergunta, contexto, transacaoId, expiresInMin }) {
   if (!userId || !tipoPergunta) return null;
 
   // Limpa pendentes antigas do mesmo user (só 1 ativa por vez)
@@ -24,14 +26,19 @@ async function criarPendente({ userId, tipoPergunta, contexto, transacaoId }) {
     .delete()
     .eq('user_id', userId);
 
+  const registro = {
+    user_id:       userId,
+    transacao_id:  transacaoId || null,
+    tipo_pergunta: tipoPergunta,
+    contexto:      contexto || {},
+  };
+  if (expiresInMin) {
+    registro.expires_at = new Date(Date.now() + expiresInMin * 60000).toISOString();
+  }
+
   const { data, error } = await supabase
     .from('transacoes_pendentes')
-    .insert({
-      user_id:       userId,
-      transacao_id:  transacaoId || null,
-      tipo_pergunta: tipoPergunta,
-      contexto:      contexto || {},
-    })
+    .insert(registro)
     .select()
     .single();
 

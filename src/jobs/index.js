@@ -1,6 +1,7 @@
 const cron      = require('node-cron');
 const supabase  = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
+const { criarPendente } = require('../services/pendentes');
 const yahooFinance    = require('yahoo-finance2').default;
 
 // Gera ID curto de 6 caracteres
@@ -12,6 +13,101 @@ async function phoneDono(grupoId) {
   if (!grupo) return null;
   const { data: user } = await supabase.from('users').select('phone').eq('id', grupo.dono_id).single();
   return user?.phone || null;
+}
+
+// Busca o dono do grupo (id + phone) — preciso do id pra criar pendentes.
+async function donoDoGrupo(grupoId) {
+  const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', grupoId).single();
+  if (!grupo) return null;
+  const { data: user } = await supabase.from('users').select('id, phone').eq('id', grupo.dono_id).single();
+  return user || null;
+}
+
+// Envia o aviso de fatura (fechamento ou vencimento) e, se houver contas
+// bancárias, cria um pendente pra Sora pagar quando o user responder o número.
+async function avisarFatura({ titulo, venc, total, emAberto, contasAtivas, dono, nomeCartao }) {
+  const vencLinha = venc ? `\n📅 Vence dia ${venc}` : '';
+  if (!contasAtivas.length) {
+    await enviarTexto(dono.phone,
+      `${titulo}\n💵 Total: R$ ${total.toFixed(2)}${vencLinha}\n\n` +
+      `Você ainda não tem conta bancária cadastrada pra eu debitar — quando cadastrar, eu pago pra você.`);
+    return;
+  }
+  const opcoesTexto = contasAtivas
+    .map((x, i) => `${i + 1}️⃣ ${x.nome} (R$ ${(x.saldo || 0).toFixed(2)})`).join('\n');
+  await enviarTexto(dono.phone,
+    `${titulo}\n💵 Total: R$ ${total.toFixed(2)}${vencLinha}\n\n` +
+    `❓ *Quer que eu pague? De qual conta?*\n${opcoesTexto}\n\n` +
+    `Responde com o número ou o nome — ou ignore se for pagar por fora.`);
+  await criarPendente({
+    userId: dono.id,
+    tipoPergunta: 'pagar_parcela_conta',
+    contexto: {
+      ids: emAberto.map(t => t.id),
+      termo: nomeCartao || 'fatura',
+      total,
+      modo: 'fatura',
+      opcoes: contasAtivas.map(x => ({ id: x.id, nome: x.nome })),
+    },
+    expiresInMin: 3 * 24 * 60, // 3 dias — oferta de pagar fatura não expira em 10min
+  });
+}
+
+// Processa fechamento e vencimento das faturas dos cartões de crédito.
+// Por cartão (wallets.dia_fechamento / dia_vencimento), lê as transações
+// não-pagas até hoje (fatura em aberto) e avisa/oferece pagamento.
+async function processarFaturas(hoje, diaHoje, fimHoje) {
+  const hojeStr = hoje.toISOString().slice(0, 10);
+
+  const { data: cartoes } = await supabase.from('wallets')
+    .select('id, nome, grupo_id, dia_fechamento, dia_vencimento, ultimo_aviso_fechamento, ultimo_aviso_vencimento')
+    .eq('tipo', 'Crédito')
+    .or(`dia_fechamento.eq.${diaHoje},dia_vencimento.eq.${diaHoje}`);
+
+  for (const c of cartoes || []) {
+    const fecha = c.dia_fechamento === diaHoje && c.ultimo_aviso_fechamento !== hojeStr;
+    const vence = c.dia_vencimento === diaHoje && c.ultimo_aviso_vencimento !== hojeStr;
+    if (!fecha && !vence) continue;
+
+    // Fatura em aberto = gastos não-pagos do cartão até hoje (parcelas futuras
+    // ficam de fora, pois têm data nos meses seguintes).
+    const { data: txs } = await supabase.from('transacoes')
+      .select('id, valor')
+      .eq('grupo_id', c.grupo_id)
+      .eq('tipo', 'Gasto')
+      .eq('pago', false)
+      .ilike('carteira_nome', c.nome)
+      .lte('data', fimHoje.toISOString());
+
+    const emAberto = txs || [];
+    const total = emAberto.reduce((s, t) => s + (t.valor || 0), 0);
+    if (total <= 0) continue;
+
+    const dono = await donoDoGrupo(c.grupo_id);
+    if (!dono?.phone) continue;
+
+    const { data: contas } = await supabase.from('wallets')
+      .select('id, nome, saldo, arquivada')
+      .eq('grupo_id', c.grupo_id)
+      .neq('tipo', 'Crédito')
+      .order('created_at', { ascending: true });
+    const contasAtivas = (contas || []).filter(x => !x.arquivada);
+
+    // Fechamento tem prioridade se cair no mesmo dia do vencimento.
+    if (fecha) {
+      await avisarFatura({
+        titulo: `💳 *Fatura do ${c.nome} fechou*`,
+        venc: c.dia_vencimento, total, emAberto, contasAtivas, dono, nomeCartao: c.nome,
+      });
+      await supabase.from('wallets').update({ ultimo_aviso_fechamento: hojeStr }).eq('id', c.id);
+    } else if (vence) {
+      await avisarFatura({
+        titulo: `⏰ *Fatura do ${c.nome} vence hoje*`,
+        venc: c.dia_vencimento, total, emAberto, contasAtivas, dono, nomeCartao: c.nome,
+      });
+      await supabase.from('wallets').update({ ultimo_aviso_vencimento: hojeStr }).eq('id', c.id);
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -115,36 +211,13 @@ cron.schedule('0 * * * *', async () => {
     }
   }
 
-  // ── 1D. FATURA DO CARTÃO ────────────────────────────────────────
-  const { data: users } = await supabase
-    .from('users')
-    .select('phone, dia_fechamento_fatura, ultimo_fechamento, grupo_ativo')
-    .eq('dia_fechamento_fatura', diaHoje)
-    .not('grupo_ativo', 'is', null);
-
-  for (const u of users || []) {
-    const ultimoFech = u.ultimo_fechamento ? new Date(u.ultimo_fechamento) : null;
-    // Evita enviar mais de uma vez no mesmo dia
-    if (ultimoFech && ultimoFech.toDateString() === hoje.toDateString()) continue;
-
-    const inicio = ultimoFech || new Date(hoje.getFullYear(), hoje.getMonth() - 1, diaHoje);
-    const { data: parcsFatura } = await supabase.from('parcelas')
-      .select('valor_parcela')
-      .eq('grupo_id', u.grupo_ativo)
-      .eq('ativa', true)
-      .gte('data_proxima_vencimento', inicio.toISOString())
-      .lte('data_proxima_vencimento', fimHoje.toISOString());
-
-    const totalFatura = (parcsFatura || []).reduce((s, p) => s + p.valor_parcela, 0);
-    if (totalFatura > 0 && u.phone) {
-      await enviarTexto(u.phone,
-        `💳 *FATURA DO CARTÃO*\n` +
-        `Período: ${inicio.toLocaleDateString('pt-BR')} a ${hoje.toLocaleDateString('pt-BR')}\n` +
-        `💵 Total: R$ ${totalFatura.toFixed(2)}\n\n` +
-        `Para pagar: "transferir ${totalFatura.toFixed(2)} do [sua conta] para [cartão]"`
-      );
-      await supabase.from('users').update({ ultimo_fechamento: hoje.toISOString() }).eq('phone', u.phone);
-    }
+  // ── 1D. FATURA DOS CARTÕES (fechamento + vencimento) ────────────
+  // Por cartão: avisa quando fecha e quando vence, oferecendo pagar
+  // (debita a conta escolhida e libera o limite). Ver processarFaturas.
+  try {
+    await processarFaturas(hoje, diaHoje, fimHoje);
+  } catch (e) {
+    console.warn('[jobs] processarFaturas falhou:', e.message);
   }
 });
 

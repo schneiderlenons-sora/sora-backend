@@ -161,9 +161,11 @@ async function resolverPendente(pendente, mensagem, ctx) {
       }
     }
     await removerPendente(pendente.id);
-    await enviarTexto(phone,
-      `✅ Antecipei *${emAberto.length}* parcela(s) de *"${termo}"*.\n` +
-      `💸 R$ ${total.toFixed(2)} debitado de *${escolhida.nome}* · limite do cartão liberado.`
+    const ehFatura = pendente.contexto?.modo === 'fatura';
+    await enviarTexto(phone, ehFatura
+      ? `✅ *Fatura paga!*\n💸 R$ ${total.toFixed(2)} debitado de *${escolhida.nome}* · limite do cartão liberado.`
+      : `✅ Antecipei *${emAberto.length}* parcela(s) de *"${termo}"*.\n` +
+        `💸 R$ ${total.toFixed(2)} debitado de *${escolhida.nome}* · limite do cartão liberado.`
     );
     return true;
   }
