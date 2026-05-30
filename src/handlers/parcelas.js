@@ -42,18 +42,21 @@ module.exports = async function handleParcelas(data, ctx) {
     // Gera N transações futuras (uma por fatura/mês). Cada parcela é um Gasto
     // não-pago no cartão, com data no mês da respectiva fatura. Assim o painel
     // (que lê transações) reflete o limite comprometido, mostra faturas futuras
-    // e permite antecipar. A 1ª parcela cai no próximo mês (próxima fatura).
+    // e permite antecipar. A 1ª parcela cai na FATURA ATUAL (mês corrente) —
+    // a compra de hoje entra na fatura aberta. As seguintes nos meses seguintes.
     const hoje = new Date();
     const linhas = [];
-    for (let i = 1; i <= numParcelas; i++) {
-      const d = new Date(hoje.getFullYear(), hoje.getMonth() + i, Math.min(hoje.getDate(), 28));
+    for (let i = 0; i < numParcelas; i++) {
+      const d = i === 0
+        ? hoje  // 1ª parcela na data de hoje (fatura atual)
+        : new Date(hoje.getFullYear(), hoje.getMonth() + i, Math.min(hoje.getDate(), 28));
       linhas.push({
         id_curto:      gerarId(),
         grupo_id:      grupoId,
         tipo:          'Gasto',
         categoria:     categoria || 'Outros',
         valor:         valorParcela,
-        observacao:    `${descricao} (${i}/${numParcelas})`,
+        observacao:    `${descricao} (${i + 1}/${numParcelas})`,
         carteira_nome: wallet.nome,
         pago:          false,
         data:          d.toISOString(),
@@ -61,13 +64,14 @@ module.exports = async function handleParcelas(data, ctx) {
     }
     await supabase.from('transacoes').insert(linhas);
 
-    const primeiraData = new Date(hoje.getFullYear(), hoje.getMonth() + 1, Math.min(hoje.getDate(), 28));
+    const ultimaData = new Date(hoje.getFullYear(), hoje.getMonth() + (numParcelas - 1), Math.min(hoje.getDate(), 28));
     await enviarTexto(phone,
       `✅ *Compra parcelada registrada!*\n\n` +
       `📦 ${descricao}\n` +
       `💳 Cartão: ${wallet.nome}\n` +
+      `🏷️ Categoria: ${categoria || 'Outros'}\n` +
       `💵 Total: R$ ${valorTotal.toFixed(2)} em ${numParcelas}x de R$ ${valorParcela.toFixed(2)}\n` +
-      `📅 1ª parcela na fatura de ${primeiraData.toLocaleDateString('pt-BR', { month: 'long' })}\n\n` +
+      `📅 1ª parcela na fatura atual · última em ${ultimaData.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}\n\n` +
       `As ${numParcelas} parcelas já aparecem nas faturas do painel. Você pode antecipar por lá.`
     );
     return;
