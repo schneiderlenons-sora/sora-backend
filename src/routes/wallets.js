@@ -39,12 +39,22 @@ router.get('/:phone', auth, async (req, res) => {
 // POST /api/wallets
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { phone, nome, tipo, saldo, limite } = req.body;
+    const { phone, nome, tipo, saldo, limite,
+            dia_fechamento, dia_vencimento, bandeira, ultimos4 } = req.body;
     const grupoId = await getGrupoId(phone);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
-    const { data } = await supabase.from('wallets')
-      .upsert({ grupo_id: grupoId, nome, tipo, saldo, limite }, { onConflict: 'grupo_id,nome' })
+
+    const row = { grupo_id: grupoId, nome, tipo, saldo, limite };
+    // Campos de cartão de crédito (migration 023) — só inclui quando enviados
+    if (dia_fechamento !== undefined) row.dia_fechamento = dia_fechamento || null;
+    if (dia_vencimento !== undefined) row.dia_vencimento = dia_vencimento || null;
+    if (bandeira       !== undefined) row.bandeira       = bandeira || null;
+    if (ultimos4       !== undefined) row.ultimos4       = ultimos4 || null;
+
+    const { data, error } = await supabase.from('wallets')
+      .upsert(row, { onConflict: 'grupo_id,nome' })
       .select().single();
+    if (error) throw error;
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
