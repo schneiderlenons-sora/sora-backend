@@ -120,7 +120,7 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     patch.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase.from('dividas')
-      .update(patch).eq('id', req.params.id).select().single();
+      .update(patch).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
     if (error) throw error;
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -131,7 +131,7 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
 // ─────────────────────────────────────────────────────────────────
 router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { error } = await supabase.from('dividas').delete().eq('id', req.params.id);
+    const { error } = await supabase.from('dividas').delete().eq('id', req.params.id).eq('grupo_id', req.grupoId);
     if (error) throw error;
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }

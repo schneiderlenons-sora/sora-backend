@@ -105,7 +105,7 @@ router.put('/:id', auth, exigirPlano('black'), exigirPermissao('admin', 'escrita
     const update = {};
     campos.forEach(c => { if (req.body[c] !== undefined) update[c] = req.body[c]; });
     const { data } = await supabase.from('investimentos')
-      .update(update).eq('id', req.params.id).select().single();
+      .update(update).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -113,7 +113,7 @@ router.put('/:id', auth, exigirPlano('black'), exigirPermissao('admin', 'escrita
 // DELETE /api/investimentos/:id
 router.delete('/:id', auth, exigirPlano('black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    await supabase.from('investimentos').delete().eq('id', req.params.id);
+    await supabase.from('investimentos').delete().eq('id', req.params.id).eq('grupo_id', req.grupoId);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

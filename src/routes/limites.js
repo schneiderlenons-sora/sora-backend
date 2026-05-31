@@ -62,7 +62,8 @@ router.post('/categoria', auth, exigirPermissao('admin', 'escrita'), async (req,
 
 router.delete('/:id', auth, async (req, res) => {
   try {
-    await supabase.from('category_limits').delete().eq('id', req.params.id);
+    await supabase.from('category_limits').delete()
+      .eq('id', req.params.id).eq('grupo_id', req.authUser?.grupoAtivo || '__nenhum__');
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

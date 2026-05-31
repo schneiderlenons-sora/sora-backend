@@ -37,6 +37,15 @@ async function auth(req, res, next) {
     }
     if (req.query && req.query.phone !== undefined) req.query.phone = phoneDoUsuario;
 
+    // body.phone também é forçado ao do usuário (blinda os POST/PUT que
+    // resolvem grupo por body.phone). Exceções: rotas onde o telefone é DADO
+    // legítimo de outra pessoa — vincular WhatsApp e convite de grupo.
+    const url = req.originalUrl || '';
+    const phoneEhDado = url.includes('/user/welcome') || url.includes('/grupos/convidar');
+    if (!phoneEhDado && req.body && req.body.phone !== undefined) {
+      req.body.phone = phoneDoUsuario;
+    }
+
     next();
   } catch (e) {
     console.error('[auth] erro:', e.message);

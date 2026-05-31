@@ -1,11 +1,24 @@
 require('dotenv').config();
 require('./jobs');
-const express = require('express');
-const cors    = require('cors');
+const express   = require('express');
+const cors      = require('cors');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
+app.set('trust proxy', 1); // Render fica atrás de proxy — pra o rate limit ler o IP real
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+// Rate limiting nas rotas de API — proteção contra abuso/brute force.
+// 300 req / minuto por IP (folgado pro uso normal, corta scripts abusivos).
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erro: 'Muitas requisições. Tente novamente em instantes.' },
+});
+app.use('/api', apiLimiter);
 
 // --- Rota de saúde (testa se o servidor está rodando) ---
 app.get('/health', (req, res) => {
