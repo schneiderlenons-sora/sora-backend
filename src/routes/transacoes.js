@@ -123,22 +123,41 @@ router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res)
       return res.status(400).json({ erro: 'Limite de 1000 transações por importação.' });
     }
 
-    const rows = transacoes.map(t => ({
-      id_curto:      Math.random().toString(36).substring(2, 8).toUpperCase(),
-      grupo_id:      req.grupoId,
-      criado_por:    req.userId,
-      tipo:          t.tipo === 'Recebimento' ? 'Recebimento' : 'Gasto',
-      categoria:     t.categoria || '📦 Outros',
-      valor:         Math.abs(parseFloat(t.valor) || 0),
-      observacao:    (t.observacao || '').toString().slice(0, 200),
-      carteira_nome: t.carteira_nome || 'Dinheiro',
-      pago:          t.pago !== false,
-      data:          t.data,
-    }));
+    // Dedup por FITID (id único da transação no OFX): descarta o que já existe
+    // no grupo. Rede de segurança contra reimportar o mesmo extrato.
+    const fitidsEnviados = transacoes.map(t => t.fitid).filter(Boolean);
+    let jaExistem = new Set();
+    if (fitidsEnviados.length) {
+      const { data: existentes } = await supabase.from('transacoes')
+        .select('fitid').eq('grupo_id', req.grupoId).in('fitid', fitidsEnviados);
+      jaExistem = new Set((existentes || []).map(e => e.fitid));
+    }
 
+    const rows = transacoes
+      .filter(t => !t.fitid || !jaExistem.has(t.fitid))
+      .map(t => ({
+        id_curto:      Math.random().toString(36).substring(2, 8).toUpperCase(),
+        grupo_id:      req.grupoId,
+        criado_por:    req.userId,
+        tipo:          t.tipo === 'Recebimento' ? 'Recebimento' : 'Gasto',
+        categoria:     t.categoria || '📦 Outros',
+        valor:         Math.abs(parseFloat(t.valor) || 0),
+        observacao:    (t.observacao || '').toString().slice(0, 200),
+        carteira_nome: t.carteira_nome || 'Dinheiro',
+        pago:          t.pago !== false,
+        data:          t.data,
+        fitid:         t.fitid || null,
+      }));
+
+    const duplicados = transacoes.length - rows.length;
+    if (rows.length === 0) return res.json({ inserted: 0, duplicados });
+
+    // Não mexe no saldo: o extrato do banco já reflete essas transações; o
+    // saldo da conta é informado/ajustado separadamente pelo usuário.
     const { data, error } = await supabase.from('transacoes').insert(rows).select('id');
     if (error) throw error;
-    res.json({ inserted: data?.length || 0 });
+
+    res.json({ inserted: data?.length || 0, duplicados });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
