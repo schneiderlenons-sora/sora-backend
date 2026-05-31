@@ -39,9 +39,9 @@ router.get('/:phone', auth, async (req, res) => {
 // POST /api/wallets
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { phone, nome, tipo, saldo, limite,
+    const { nome, tipo, saldo, limite,
             dia_fechamento, dia_vencimento, bandeira, ultimos4 } = req.body;
-    const grupoId = await getGrupoId(phone);
+    const grupoId = req.grupoId; // grupo do usuário autenticado (exigirPermissao)
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
     const row = { grupo_id: grupoId, nome, tipo, saldo, limite };
@@ -59,10 +59,11 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// DELETE /api/wallets/:id
+// DELETE /api/wallets/:id — só do próprio grupo (anti-IDOR)
 router.delete('/:id', auth, async (req, res) => {
   try {
-    await supabase.from('wallets').delete().eq('id', req.params.id);
+    await supabase.from('wallets').delete()
+      .eq('id', req.params.id).eq('grupo_id', req.authUser?.grupoAtivo || '__nenhum__');
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

@@ -27,8 +27,8 @@ router.get('/:phone', auth, async (req, res) => {
 
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { phone, nome, parent_id, icone, cor, tipo } = req.body;
-    const grupoId = await getGrupoId(phone);
+    const { nome, parent_id, icone, cor, tipo } = req.body;
+    const grupoId = req.grupoId; // grupo do usuário autenticado (exigirPermissao)
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     const tipoNorm = tipo === 'receita' ? 'receita' : 'despesa';
     const { data } = await supabase.from('categorias')
@@ -44,14 +44,15 @@ router.put('/:id', auth, async (req, res) => {
     const patch = { nome, icone, cor, arquivada };
     if (tipo === 'despesa' || tipo === 'receita') patch.tipo = tipo;
     const { data } = await supabase.from('categorias')
-      .update(patch).eq('id', req.params.id).select().single();
+      .update(patch).eq('id', req.params.id).eq('grupo_id', req.authUser?.grupoAtivo || '__nenhum__').select().single();
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 router.delete('/:id', auth, async (req, res) => {
   try {
-    await supabase.from('categorias').update({ ativa: false }).eq('id', req.params.id);
+    await supabase.from('categorias').update({ ativa: false })
+      .eq('id', req.params.id).eq('grupo_id', req.authUser?.grupoAtivo || '__nenhum__');
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

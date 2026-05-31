@@ -155,8 +155,9 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (data !== undefined)          patch.data = data;
     if (pago !== undefined)          patch.pago = pago;
 
+    // Só edita transação do próprio grupo (anti-IDOR)
     const { data: tx, error } = await supabase.from('transacoes')
-      .update(patch).eq('id', req.params.id).select().single();
+      .update(patch).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
     if (error) throw error;
     res.json(tx);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -201,10 +202,12 @@ router.post('/antecipar-cartao', auth, exigirPermissao('admin', 'escrita'), asyn
 // DELETE /api/transacoes/:id
 router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
+    // Só a transação do próprio grupo (anti-IDOR)
     const { data: tx } = await supabase.from('transacoes')
-      .select('*').eq('id', req.params.id).maybeSingle();
+      .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+    if (!tx) return res.status(404).json({ erro: 'Transação não encontrada' });
 
-    if (tx?.pago) {
+    if (tx.pago) {
       const mult = tx.tipo === 'Gasto' ? 1 : -1;
       const { data: wallet } = await supabase.from('wallets')
         .select('id, saldo').eq('grupo_id', tx.grupo_id).ilike('nome', tx.carteira_nome).maybeSingle();
@@ -214,7 +217,7 @@ router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res
       }
     }
 
-    await supabase.from('transacoes').delete().eq('id', req.params.id);
+    await supabase.from('transacoes').delete().eq('id', req.params.id).eq('grupo_id', req.grupoId);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

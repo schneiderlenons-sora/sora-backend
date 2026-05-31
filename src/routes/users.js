@@ -40,9 +40,11 @@ router.post('/update-plan', auth, async (req, res) => {
 // =====================================================================
 router.post('/welcome', auth, async (req, res) => {
   try {
-    const { user_id, phone, nome, force } = req.body;
+    const { phone, nome, force } = req.body;
+    // Vincula sempre ao usuário AUTENTICADO (nunca a um user_id do body).
+    const user_id = req.authUser?.id;
     if (!user_id || !phone) {
-      return res.status(400).json({ erro: 'user_id e phone obrigatórios' });
+      return res.status(400).json({ erro: 'phone obrigatório' });
     }
 
     const resultado = await enviarBoasVindas({

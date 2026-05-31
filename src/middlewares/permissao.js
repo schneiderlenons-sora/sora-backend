@@ -6,24 +6,21 @@ const norm = p => p?.replace(/\D/g, '');
 function exigirPermissao(...papeisPermitidos) {
   return async (req, res, next) => {
    try {
-    const phone = norm(req.params.phone || req.body?.phone || req.query?.phone);
-    if (!phone) return res.status(400).json({ erro: 'Phone não informado para checagem de permissão.' });
-
-    const { data: user } = await supabase.from('users')
-      .select('id, grupo_ativo').eq('phone', phone).maybeSingle();
-    if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!user.grupo_ativo) return res.status(403).json({ erro: 'Você não tem um grupo ativo.' });
+    // Usa o usuário autenticado (do middleware auth), nunca o phone do request.
+    const authUser = req.authUser;
+    if (!authUser?.id) return res.status(401).json({ erro: 'Não autenticado.' });
+    if (!authUser.grupoAtivo) return res.status(403).json({ erro: 'Você não tem um grupo ativo.' });
 
     const { data: membro } = await supabase.from('grupo_membros')
       .select('papel')
-      .eq('grupo_id', user.grupo_ativo).eq('user_id', user.id).maybeSingle();
+      .eq('grupo_id', authUser.grupoAtivo).eq('user_id', authUser.id).maybeSingle();
 
     // Fallback: se ainda não há grupo_membros mas o user é dono do grupo, assume admin
     let papel = membro?.papel;
     if (!papel) {
       const { data: grupo } = await supabase.from('grupos')
-        .select('dono_id').eq('id', user.grupo_ativo).maybeSingle();
-      if (grupo?.dono_id === user.id) papel = 'admin';
+        .select('dono_id').eq('id', authUser.grupoAtivo).maybeSingle();
+      if (grupo?.dono_id === authUser.id) papel = 'admin';
     }
     if (!papel) return res.status(403).json({ erro: 'Você não é membro deste grupo.' });
 
@@ -36,8 +33,8 @@ function exigirPermissao(...papeisPermitidos) {
     }
 
     req.userPapel = papel;
-    req.userId    = user.id;
-    req.grupoId   = user.grupo_ativo;
+    req.userId    = authUser.id;
+    req.grupoId   = authUser.grupoAtivo;
     next();
    } catch (err) {
     console.error('[permissao] erro:', err.message);
