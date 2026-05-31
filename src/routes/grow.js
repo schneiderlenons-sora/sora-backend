@@ -56,8 +56,9 @@ router.post('/ativar-trial/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req.params.phone);
     if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
-    if (!['premium','black'].includes(user.plano))
-      return res.status(403).json({ erro: 'Trial disponivel apenas para Premium e Black' });
+    // Premium e Black JÁ incluem o Sora Grow — o trial de 7 dias é do Básico.
+    if (['premium','black'].includes(user.plano))
+      return res.status(400).json({ erro: 'Seu plano ja inclui o Sora Grow.' });
     if (user.plano_grow !== 'sem_acesso')
       return res.status(400).json({ erro: 'Trial ja utilizado ou voce ja tem acesso' });
     const inicio = new Date();
