@@ -19,46 +19,82 @@ function temAcessoGrow(user) {
 }
 
 // Textos fixos
-const HELP_TEXT = `━━━━━━━━━━
-💸 *Lançamentos rápidos*
-Me mande texto ou áudio — eu entendo automaticamente 😉
+const HELP_TEXT = `╔══════════════════════╗
+║  💬 *Sora — Ajuda*       ║
+╚══════════════════════╝
 
-💰 *Receita:* "recebi 2000 de salário"
-💸 *Gasto:*   "gastei 50 no mercado"
+_Fala comigo em texto ou áudio — entendo linguagem natural_ 😉
 
-━━━━━━━━━━
-🏦 *Contas*
-"nubank 1000" → cria conta
-"saldo" → ver todos os saldos
-"transferir 200 do nubank pro inter"
+━━━━━━━━━━━━━━━━
+💸 *LANÇAMENTOS*
+• "gastei 50 no mercado"
+• "gastei 200 no nubank crédito"
+• "recebi 3500 de salário"
+• "gastei 80 em farmácia categoria saúde"
+↩️ "apagar último" — remove o último lançamento
 
-💳 *Parcelado*
-"comprei fone no nubank crédito em 3x de 150"
+━━━━━━━━━━━━━━━━
+🏦 *CONTAS & CARTÕES*
+• "nubank 1000" → cria conta corrente
+• "cartão nubank limite 5000 fecha 5 vence 15"
+• "saldo" → ver todos os saldos
+• "ajustar nubank 850" → corrigir saldo
+• "transferir 200 do nubank pro inter"
 
-🔁 *Conta fixa*
-"todo mês 1000 aluguel dia 5"
+━━━━━━━━━━━━━━━━
+💳 *PARCELADO & FATURA*
+• "comprei fone em 3x de 150 no nubank crédito"
+• "antecipar parcela do fone"
+• "fatura nubank" → ver fatura do mês
 
-━━━━━━━━━━
-💳 *Dívidas*
-"criar divida emprestimo nubank 5000 em 10x dia 15"
-"minhas dividas" → lista tudo
-"pagar divida nubank 250"
-"quitar divida nubank"
-"cancelar lembrete divida nubank" (ou só "cancelar lembrete dividas" pra parar todos)
+━━━━━━━━━━━━━━━━
+🔁 *CONTAS FIXAS & LEMBRETES*
+• "todo mês 1000 aluguel dia 5"
+• "lembrete pagar internet dia 10"
+• "cancelar recorrência aluguel"
 
-━━━━━━━━━━
-📊 "resumo" → relatório do mês
-🎯 "limite 2000" → meta de gastos
-🔔 "limite mercado 500" → limite por categoria
-🧠 "analisar" → análise da semana
+━━━━━━━━━━━━━━━━
+📊 *RELATÓRIOS & LIMITES*
+• "resumo" → relatório do mês
+• "analisar" → análise inteligente dos gastos
+• "limite 2000" → meta total de gastos
+• "limite mercado 500" → limite por categoria
+
+━━━━━━━━━━━━━━━━
+💰 *DÍVIDAS*
+• "criar divida empréstimo nubank 5000 em 10x dia 15"
+• "minhas dívidas"
+• "pagar divida nubank 250"
+• "quitar divida nubank"
+
+━━━━━━━━━━━━━━━━
+👥 *GRUPOS (compartilhado)*
+• "criar grupo família"
+• "convidar grupo 11999998888"
+• "meus grupos" / "trocar grupo"
+
+━━━━━━━━━━━━━━━━
+🌱 *SORA GROW*
+Rotinas, hábitos, saúde, estudos e mais.
+• "grow hábitos" → ver seus hábitos
+• "grow tarefas" → lista de tarefas
+• "grow humor 4" → registrar humor do dia
+• "grow" → menu do Sora Grow
+
+━━━━━━━━━━━━━━━━
 🌐 "painel" → abrir painel web
-━━━━━━━━━━`;
+❓ "ajuda" → este menu
+━━━━━━━━━━━━━━━━`;
 
-const WELCOME_TEXT = (nome) => `👋 *Olá ${nome}! Bem-vindo(a) ao Sora!* 💰
+const WELCOME_TEXT = (nome) => `👋 *Olá, ${nome}! Bem-vindo(a) à Sora!* 🌿
 
-Sou sua assistente financeira no WhatsApp. Vou te ajudar a organizar tudo — gastos, receitas, contas e investimentos.
+Sou sua assistente financeira no WhatsApp. Fala comigo em texto ou áudio — sem comandos difíceis.
 
-${HELP_TEXT}
+✅ "gastei 50 no mercado"
+✅ "recebi 3500 de salário"
+✅ "fatura nubank" / "resumo" / "saldo"
+
+Digite *ajuda* a qualquer momento pra ver o menu completo.
 
 🚀 Me manda seu primeiro lançamento!`;
 
