@@ -294,7 +294,7 @@ router.post('/', async (req, res) => {
         break;
 
       case 'painel':
-        await enviarTexto(phone, `🌐 Acesse seu painel:\n\n${process.env.PAINEL_URL}?phone=${phone}`);
+        await enviarTexto(phone, `🌐 *Acesse seu painel:*\n\nhttps://www.forsora.com/dashboard`);
         break;
 
       // Transações

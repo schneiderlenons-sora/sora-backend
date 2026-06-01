@@ -543,7 +543,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
       `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
       `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}\n\n` +
-      `🌐 ${process.env.PAINEL_URL}?phone=${phone}`
+      `🌐 https://www.forsora.com/dashboard`
     );
     return;
   }

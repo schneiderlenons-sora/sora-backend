@@ -188,6 +188,6 @@ module.exports = async function handleGrow(mensagem, ctx) {
     `🛒 *comprar leite* — adiciona na lista\n` +
     `💭 *me sinto bem hoje* — registra humor\n` +
     `📊 *habitos* / *tarefas* / *lista de compras* — listar\n\n` +
-    `🌐 Painel completo: ${process.env.PAINEL_URL || 'forsora.com'}/grow/dashboard`
+    `🌐 Painel completo: https://www.forsora.com/grow/dashboard`
   );
 };
