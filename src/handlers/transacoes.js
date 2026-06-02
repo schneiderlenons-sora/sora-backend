@@ -3,14 +3,72 @@ const { enviarTexto, enviarMenu } = require('../services/zapi');
 const { analisarGastos } = require('../services/ia');
 const { criarPendente } = require('../services/pendentes');
 
-const EMOJIS = {
-  'Mercado':'🛒','Transporte':'🚗','Lazer e Entretenimento':'🍺',
-  'Saúde':'💊','Aluguel':'🏠','Educação':'📚','Casa':'🏠',
-  'Salário':'💰','Alimentação':'🧃','Recebimento':'💰',
-  'Transferências':'🔄','Internet':'🛜','Pet':'🐶','Padaria':'🥖',
-  'Assinaturas':'📺','Vestuário':'👕','Impostos':'📉',
-  'Viagem':'✈️','Doações':'🏷️','Outros':'📦'
+// Mapa de emoji por categoria/subcategoria (chave normalizada: sem emoji, sem acento, lowercase)
+const EMOJIS_MAP = {
+  // Categorias principais
+  'mercado':'🛒', 'supermercado':'🛒',
+  'transporte':'🚗',
+  'alimentacao':'🍽️', 'alimentação':'🍽️', 'restaurante':'🍽️',
+  'lazer e entretenimento':'🎬', 'lazer':'🎬',
+  'saude':'💊', 'saúde':'💊',
+  'aluguel':'🏠', 'moradia':'🏠',
+  'educacao':'📚', 'educação':'📚',
+  'casa':'🏠',
+  'salario':'💰', 'salário':'💰',
+  'recebimento':'💰',
+  'transferencias':'🔄', 'transferências':'🔄',
+  'internet':'🛜',
+  'pet':'🐶',
+  'padaria':'🥖',
+  'assinaturas':'📺',
+  'vestuario':'👕', 'vestuário':'👕',
+  'impostos':'📉',
+  'viagem':'✈️',
+  'doacoes':'🏷️', 'doações':'🏷️',
+  'outros':'📦',
+  'escola':'🎒',
+  'encomendas':'📦',
+  // Subcategorias de transporte
+  'uber':'🚗', '99':'🚗', 'cabify':'🚗',
+  // Subcategorias de alimentação / delivery
+  'ifood':'🍔', 'i food':'🍔',
+  'rappi':'🛵',
+  // Subcategorias de streaming / assinaturas
+  'netflix':'🎬', 'spotify':'🎵', 'disney+':'🎬', 'disney plus':'🎬',
+  'prime video':'📺', 'hbo max':'📺', 'hbo':'📺',
+  'globo play':'📺', 'globoplay':'📺',
+  'youtube premium':'▶️', 'youtube':'▶️',
+  'deezer':'🎵', 'apple music':'🎵',
+  // Subcategorias de vestuário/moda
+  'nike':'👟', 'adidas':'👟', 'puma':'👟', 'new balance':'👟',
+  'shein':'👗', 'zara':'👗', 'riachuelo':'👗', 'renner':'👗', 'cea':'👗',
+  'reserva':'👔',
+  // Subcategorias de encomendas / marketplaces
+  'amazon':'📦', 'shopee':'📦', 'mercado livre':'📦',
+  'aliexpress':'📦', 'tiktok shop':'📦', 'magalu':'📦',
+  // Subcategorias de saúde
+  'farmacia':'💊', 'farmácia':'💊', 'drogaria':'💊',
+  // Subcategorias de educação
+  'udemy':'💻', 'coursera':'💻', 'duolingo':'📱', 'alura':'💻',
+  // Pagamentos
+  'pix':'💸', 'ted':'💸', 'boleto':'💸',
 };
+
+// Retorna o emoji mais adequado para um nome de categoria/subcategoria.
+// Normaliza o nome (remove emoji, acento, lowercase) e tenta match exato,
+// depois substring — garante que "🚗 Transporte" e "Transporte" retornam 🚗.
+function emojiDaCat(nome) {
+  const limpo = (nome || '').replace(/\p{Emoji}/gu, '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (!limpo) return '📌';
+  // Match exato
+  if (EMOJIS_MAP[limpo]) return EMOJIS_MAP[limpo];
+  // Match parcial (ex: "Lazer e Entretenimento" contém "lazer")
+  for (const [key, emoji] of Object.entries(EMOJIS_MAP)) {
+    if (limpo.includes(key) || key.includes(limpo)) return emoji;
+  }
+  return '📌';
+}
 
 // Gera ID curto de 6 caracteres
 function gerarId() {
@@ -295,7 +353,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       await verificarLimite(grupoId, phone, user);
     }
 
-    const emoji = EMOJIS[data.categoria] || '🔖';
+    const emoji = emojiDaCat(data.categoria);
     const tipo  = data.tipo === 'Gasto' ? '🟥 Despesa' : '🟩 Receita';
 
     // ── CASO 4: sem contas — orienta criar ────────────────────────
@@ -496,7 +554,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     const lista = rows.map(r => {
       total += r.valor;
       const dt = new Date(r.data).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
-      const emoji = EMOJIS[r.categoria] || '📅';
+      const emoji = emojiDaCat(r.categoria);
       return `${emoji} ${dt} - R$ ${r.valor.toFixed(2)} (${r.categoria})`;
     }).join('\n');
 
@@ -529,7 +587,7 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     const catOrdenadas = Object.entries(cats)
       .sort((a,b) => b[1]-a[1])
-      .map(([cat, val]) => `${EMOJIS[cat]||'🔹'} *${cat}:* R$ ${val.toFixed(2)}`)
+      .map(([cat, val]) => `${emojiDaCat(cat)} *${cat}:* R$ ${val.toFixed(2)}`)
       .join('\n') || 'Sem gastos ainda.';
 
     const saldo = receitas - gastos;
