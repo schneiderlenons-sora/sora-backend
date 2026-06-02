@@ -587,7 +587,10 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     const catOrdenadas = Object.entries(cats)
       .sort((a,b) => b[1]-a[1])
-      .map(([cat, val]) => `${emojiDaCat(cat)} *${cat}:* R$ ${val.toFixed(2)}`)
+      .map(([cat, val]) => {
+        const nome = cat.replace(/\p{Emoji}/gu, '').trim();
+        return `${emojiDaCat(cat)} *${nome}:* R$ ${val.toFixed(2)}`;
+      })
       .join('\n') || 'Sem gastos ainda.';
 
     const saldo = receitas - gastos;
