@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
+const { enviarTexto } = require('../services/zapi');
 const norm = p => p?.replace(/\D/g, '');
 
 async function getUser(phone) {
@@ -363,6 +364,35 @@ router.post('/lista-compras/limpar', auth, requireGrow, async (req, res) => {
     const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
     await supabase.from('itens_lista_compras').delete().eq('lista_id', listaId).eq('comprado', true);
     res.json({ ok: true });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// Envia a lista de compras (itens pendentes, agrupados por categoria) pro WhatsApp
+router.post('/lista-compras/enviar', auth, requireGrow, async (req, res) => {
+  try {
+    const phone = req.authUser?.phone;
+    if (!phone) return res.status(400).json({ erro: 'Nenhum WhatsApp vinculado à sua conta.' });
+    const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
+    const { data: itens } = await supabase.from('itens_lista_compras')
+      .select('nome, quantidade, categoria, comprado').eq('lista_id', listaId);
+    const pendentes = (itens || []).filter(i => !i.comprado);
+    if (!pendentes.length) {
+      await enviarTexto(phone, '🛒 Sua lista de compras está vazia — não há nada pendente. 🎉');
+      return res.json({ ok: true, enviados: 0 });
+    }
+    // Agrupa por categoria
+    const grupos = {};
+    for (const i of pendentes) {
+      const c = i.categoria || '📦 Outros';
+      (grupos[c] = grupos[c] || []).push(i);
+    }
+    const blocos = Object.entries(grupos).map(([cat, lista]) => {
+      const linhas = lista.map(i => `⬜ ${i.nome}${i.quantidade && i.quantidade !== '1' ? ` (${i.quantidade})` : ''}`);
+      return `*${cat}*\n${linhas.join('\n')}`;
+    });
+    const msg = `🛒 *Lista de compras*\n\n${blocos.join('\n\n')}\n\n_${pendentes.length} item${pendentes.length === 1 ? '' : 's'} pra comprar_`;
+    await enviarTexto(phone, msg);
+    res.json({ ok: true, enviados: pendentes.length });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
