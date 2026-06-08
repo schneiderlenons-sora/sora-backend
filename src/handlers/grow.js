@@ -11,6 +11,15 @@ const HUMORES = {
   'pessimo': 1, 'péssimo': 1, 'horrivel': 1, 'horrível': 1, 'deprimido': 1, 'deprimida': 1,
 };
 
+async function getOrCreateLista(grupoId) {
+  const { data: existing } = await supabase.from('listas_compras')
+    .select('id').eq('grupo_id', grupoId).eq('ativa', true).maybeSingle();
+  if (existing) return existing.id;
+  const { data: nova } = await supabase.from('listas_compras')
+    .insert({ grupo_id: grupoId }).select('id').single();
+  return nova.id;
+}
+
 async function calcularStreak(habitoId) {
   const { data } = await supabase.from('registros_habito')
     .select('data, concluido').eq('habito_id', habitoId).eq('concluido', true)
@@ -159,6 +168,53 @@ module.exports = async function handleGrow(mensagem, ctx) {
     }).select().single();
     const priLabel = { urgente: ' 🔴 URGENTE', alta: ' 🟠 Alta prioridade', media: '', baixa: ' 🟢' };
     await enviarTexto(phone, `📋 *Tarefa criada*${priLabel[prioridade]}\n\n${t.titulo}\n\nVer todas: *tarefas*`);
+    return;
+  }
+
+  // ── DESPENSA: listar status ─────────────────────────────────────────
+  if (/^(minha\s+despensa|despensa|o\s+que\s+(t[aá]|est[aá])\s+acabando|que\s+falta\s+em\s+casa)$/i.test(msg)) {
+    const { data: itens } = await supabase.from('despensa_itens')
+      .select('nome, status').eq('grupo_id', grupoId);
+    if (!itens?.length) {
+      await enviarTexto(phone, '🧺 Sua despensa está vazia. Cadastre o que costuma ter em casa no painel, ou diga *acabou o café* que eu já começo a montar.');
+      return;
+    }
+    const ic = { tem: '✅', acabando: '🟡', acabou: '🔴' };
+    const ordem = { acabou: 0, acabando: 1, tem: 2 };
+    const linhas = itens
+      .sort((a, b) => (ordem[a.status] ?? 3) - (ordem[b.status] ?? 3))
+      .map(i => `${ic[i.status] || '•'} ${i.nome}`);
+    const faltando = itens.filter(i => i.status !== 'tem').length;
+    await enviarTexto(phone, `🧺 *Sua despensa*\n\n${linhas.join('\n')}\n\n${faltando ? `🛒 ${faltando} item(ns) na lista de compras` : 'Tudo abastecido! 🎉'}`);
+    return;
+  }
+
+  // ── DESPENSA: marcar acabou / acabando ──────────────────────────────
+  if ((m = msg.match(/^(?:acabou|acabando|t[aá]\s+acabando|est[aá]\s+acabando)\s+(?:o|a|os|as)\s+(.+)$/i))
+    || (m = msg.match(/^(?:acabou|acabando)\s+(.+)$/i))) {
+    const termo = m[1].trim();
+    const novoStatus = /acabando/i.test(msg) ? 'acabando' : 'acabou';
+    let { data: achados } = await supabase.from('despensa_itens')
+      .select('id, nome').eq('grupo_id', grupoId).ilike('nome', `%${termo}%`);
+    let item;
+    if (achados?.length) {
+      item = achados[0];
+      await supabase.from('despensa_itens')
+        .update({ status: novoStatus, updated_at: new Date().toISOString() }).eq('id', item.id);
+    } else {
+      const { data: novo } = await supabase.from('despensa_itens')
+        .insert({ grupo_id: grupoId, nome: termo, status: novoStatus }).select().single();
+      item = novo;
+    }
+    // Garante na lista de compras (linkado, sem duplicar)
+    const listaId = await getOrCreateLista(grupoId);
+    const { data: jaTem } = await supabase.from('itens_lista_compras')
+      .select('id').eq('lista_id', listaId).eq('despensa_item_id', item.id).eq('comprado', false).maybeSingle();
+    if (!jaTem) {
+      await supabase.from('itens_lista_compras')
+        .insert({ lista_id: listaId, nome: item.nome, despensa_item_id: item.id });
+    }
+    await enviarTexto(phone, `🛒 *${item.nome}* ${novoStatus === 'acabando' ? 'tá acabando' : 'acabou'} — já coloquei na lista de compras!\n\nVer lista: *lista de compras*`);
     return;
   }
 

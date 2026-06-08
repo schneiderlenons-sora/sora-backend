@@ -341,6 +341,12 @@ router.patch('/lista-compras/item/:id', auth, requireGrow, async (req, res) => {
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     const { data } = await supabase.from('itens_lista_compras').update(patch).eq('id', req.params.id).select().single();
+    // Loop: comprou um item que veio da despensa → repõe (volta status 'tem')
+    if (data && data.despensa_item_id && patch.comprado === true) {
+      await supabase.from('despensa_itens')
+        .update({ status: 'tem', updated_at: new Date().toISOString() })
+        .eq('id', data.despensa_item_id);
+    }
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -356,6 +362,78 @@ router.post('/lista-compras/limpar', auth, requireGrow, async (req, res) => {
   try {
     const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
     await supabase.from('itens_lista_compras').delete().eq('lista_id', listaId).eq('comprado', true);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// ─── DESPENSA ────────────────────────────────────────────────────────
+// Mantém a lista de compras em sincronia: item "acabou"/"acabando" entra na
+// lista (linkado); item que volta pra "tem" sai da lista (se ainda pendente).
+async function sincronizarDespensaLista(grupoId, item) {
+  const listaId = await getOrCreateLista(grupoId);
+  const { data: pendente } = await supabase.from('itens_lista_compras')
+    .select('id').eq('lista_id', listaId).eq('despensa_item_id', item.id)
+    .eq('comprado', false).maybeSingle();
+
+  if (item.status === 'acabou' || item.status === 'acabando') {
+    if (!pendente) {
+      await supabase.from('itens_lista_compras').insert({
+        lista_id: listaId, nome: item.nome,
+        quantidade: item.quantidade_ideal || '1', unidade: item.unidade || null,
+        categoria: item.categoria || null, despensa_item_id: item.id,
+      });
+    }
+  } else if (pendente) {
+    // status 'tem' → foi reposto, remove da lista o item ainda não comprado
+    await supabase.from('itens_lista_compras').delete().eq('id', pendente.id);
+  }
+}
+
+router.get('/despensa/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const { data } = await supabase.from('despensa_itens')
+      .select('*').eq('grupo_id', req.userRow.grupo_ativo)
+      .order('created_at', { ascending: false });
+    res.json({ itens: data || [] });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.post('/despensa', auth, requireGrow, async (req, res) => {
+  try {
+    const { nome, categoria, status, quantidade_ideal, unidade } = req.body;
+    if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
+    const st = ['tem','acabando','acabou'].includes(status) ? status : 'tem';
+    const { data, error } = await supabase.from('despensa_itens').insert({
+      grupo_id: req.userRow.grupo_ativo, nome: nome.trim(),
+      categoria: categoria || null, status: st,
+      quantidade_ideal: quantidade_ideal || null, unidade: unidade || null,
+    }).select().single();
+    if (error) return res.status(500).json({ erro: error.message });
+    if (st !== 'tem') await sincronizarDespensaLista(req.userRow.grupo_ativo, data);
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.put('/despensa/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const allowed = ['nome','categoria','status','quantidade_ideal','unidade'];
+    const patch = { updated_at: new Date().toISOString() };
+    for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+    if (patch.status && !['tem','acabando','acabou'].includes(patch.status))
+      return res.status(400).json({ erro: 'status invalido' });
+    const { data, error } = await supabase.from('despensa_itens')
+      .update(patch).eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
+      .select().single();
+    if (error || !data) return res.status(404).json({ erro: 'Item nao encontrado' });
+    if ('status' in patch) await sincronizarDespensaLista(req.userRow.grupo_ativo, data);
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.delete('/despensa/:id', auth, requireGrow, async (req, res) => {
+  try {
+    await supabase.from('despensa_itens').delete()
+      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
