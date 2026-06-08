@@ -468,4 +468,68 @@ router.delete('/despensa/:id', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// ─── MANUTENÇÕES ─────────────────────────────────────────────────────
+router.get('/manutencoes/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const { data } = await supabase.from('manutencoes')
+      .select('*').eq('grupo_id', req.userRow.grupo_ativo)
+      .order('created_at', { ascending: false });
+    res.json({ itens: data || [] });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.post('/manutencoes', auth, requireGrow, async (req, res) => {
+  try {
+    const { nome, icone, frequencia_dias, ultima_data, observacao, lembrete_ativo } = req.body;
+    if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
+    const freq = parseInt(frequencia_dias);
+    const { data, error } = await supabase.from('manutencoes').insert({
+      grupo_id: req.userRow.grupo_ativo, nome: nome.trim(),
+      icone: icone || '🔧',
+      frequencia_dias: freq > 0 ? freq : 90,
+      ultima_data: ultima_data || null,
+      observacao: observacao || null,
+      lembrete_ativo: !!lembrete_ativo,
+    }).select().single();
+    if (error) return res.status(500).json({ erro: error.message });
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.put('/manutencoes/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const allowed = ['nome','icone','frequencia_dias','ultima_data','observacao','lembrete_ativo'];
+    const patch = {};
+    for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+    if ('frequencia_dias' in patch) patch.frequencia_dias = parseInt(patch.frequencia_dias) || 90;
+    if ('lembrete_ativo' in patch) patch.lembrete_ultimo = null; // reabilita o aviso
+    const { data, error } = await supabase.from('manutencoes')
+      .update(patch).eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
+      .select().single();
+    if (error || !data) return res.status(404).json({ erro: 'Manutencao nao encontrada' });
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// Marca como feita hoje → recalcula a próxima e zera o dedup do lembrete
+router.post('/manutencoes/:id/feito', auth, requireGrow, async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase.from('manutencoes')
+      .update({ ultima_data: req.body.data || hoje, lembrete_ultimo: null })
+      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
+      .select().single();
+    if (error || !data) return res.status(404).json({ erro: 'Manutencao nao encontrada' });
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.delete('/manutencoes/:id', auth, requireGrow, async (req, res) => {
+  try {
+    await supabase.from('manutencoes').delete()
+      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 module.exports = router;

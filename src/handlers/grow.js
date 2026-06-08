@@ -94,8 +94,51 @@ module.exports = async function handleGrow(mensagem, ctx) {
     return;
   }
 
-  // ── CRIAR HABITO ────────────────────────────────────────────────────
   let m;
+
+  // ── MANUTENÇÕES: listar ─────────────────────────────────────────────
+  if (/^(minhas\s+manuten[çc][õo]es|manuten[çc][õo]es|manuten[çc][aã]o)$/i.test(msg)) {
+    const { data: mans } = await supabase.from('manutencoes')
+      .select('nome, icone, frequencia_dias, ultima_data').eq('grupo_id', grupoId);
+    if (!mans?.length) {
+      await enviarTexto(phone, '🔧 Nenhuma manutenção cadastrada. Adicione no painel: *Casa → Manutenções*.');
+      return;
+    }
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const linhas = mans.map(mn => {
+      let dias = 0;
+      if (mn.ultima_data) {
+        const prox = new Date(mn.ultima_data + 'T12:00:00');
+        prox.setDate(prox.getDate() + (mn.frequencia_dias || 90));
+        prox.setHours(0, 0, 0, 0);
+        dias = Math.round((prox - hoje) / 86400000);
+      }
+      const ic = !mn.ultima_data ? '🆕' : dias < 0 ? '🔴' : dias <= 7 ? '🟡' : '🟢';
+      const txt = !mn.ultima_data ? 'nunca feita' : dias < 0 ? `atrasada ${-dias}d` : dias === 0 ? 'vence hoje' : `em ${dias}d`;
+      return `${ic} ${mn.icone || '🔧'} ${mn.nome} — ${txt}`;
+    });
+    await enviarTexto(phone, `🔧 *Manutenções da casa*\n\n${linhas.join('\n')}\n\nPra marcar feita: *fiz a manutenção [nome]*`);
+    return;
+  }
+
+  // ── MANUTENÇÕES: marcar feita (antes do "fiz X" de hábitos) ──────────
+  if ((m = msg.match(/^(?:fiz|fa[çc]o|completei|realizei)\s+(?:a\s+)?manuten[çc][aã]o\s+(?:d[eoa]s?\s+)?(.+)$/i))) {
+    const termo = m[1].trim();
+    const { data: achados } = await supabase.from('manutencoes')
+      .select('id, nome, icone, frequencia_dias').eq('grupo_id', grupoId).ilike('nome', `%${termo}%`);
+    if (!achados?.length) {
+      await enviarTexto(phone, `❌ Não encontrei manutenção com *"${termo}"*. Cadastre no painel: *Casa → Manutenções*.`);
+      return;
+    }
+    const man = achados[0];
+    const hojeStr = new Date().toISOString().slice(0, 10);
+    await supabase.from('manutencoes').update({ ultima_data: hojeStr, lembrete_ultimo: null }).eq('id', man.id);
+    const prox = new Date(); prox.setDate(prox.getDate() + (man.frequencia_dias || 90));
+    await enviarTexto(phone, `✅ *${man.icone || '🔧'} ${man.nome}* marcada como feita hoje!\n\n📅 Próxima: ${prox.toLocaleDateString('pt-BR')}`);
+    return;
+  }
+
+  // ── CRIAR HABITO ────────────────────────────────────────────────────
   if ((m = msg.match(/^(?:novo|criar|adicionar)\s+h[aá]bito\s+(.+)$/i))) {
     const nome = m[1].trim();
     const { data: h } = await supabase.from('habitos').insert({

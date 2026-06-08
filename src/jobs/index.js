@@ -340,6 +340,51 @@ cron.schedule('*/15 * * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1I — Todo dia às 09:00: lembretes de MANUTENÇÕES da casa (opt-in)
+// Avisa quando a manutenção vence (próxima = última + frequência). Re-cutuca
+// no máximo 1x por semana enquanto continuar pendente. Dedup persistido.
+// ─────────────────────────────────────────────────────────────────
+cron.schedule('0 9 * * *', async () => {
+  console.log('🔧 Processando lembretes de manutenções...');
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const hojeStr = hoje.toISOString().slice(0, 10);
+
+  const { data: mans } = await supabase.from('manutencoes')
+    .select('id, grupo_id, nome, icone, frequencia_dias, ultima_data, lembrete_ultimo')
+    .eq('lembrete_ativo', true);
+
+  for (const m of mans || []) {
+    let proxima;
+    if (m.ultima_data) {
+      proxima = new Date(m.ultima_data + 'T12:00:00');
+      proxima.setDate(proxima.getDate() + (m.frequencia_dias || 90));
+    } else {
+      proxima = new Date(hoje); // nunca feita → já está na hora
+    }
+    proxima.setHours(0, 0, 0, 0);
+    if (proxima > hoje) continue; // ainda não venceu
+
+    // re-cutuca no máximo 1x por semana
+    if (m.lembrete_ultimo) {
+      const ult = new Date(m.lembrete_ultimo + 'T12:00:00');
+      if (Math.round((hoje - ult) / 86400000) < 7) continue;
+    }
+
+    const phone = await phoneDono(m.grupo_id);
+    if (!phone) continue;
+
+    const diasAtraso = Math.round((hoje - proxima) / 86400000);
+    const quando = diasAtraso <= 0 ? 'hoje' : `há ${diasAtraso} dia${diasAtraso === 1 ? '' : 's'}`;
+    await enviarTexto(phone,
+      `🔧 *Manutenção: ${m.icone || ''} ${m.nome}*\n\n` +
+      `${m.ultima_data ? `Tá na hora — venceu ${quando}.` : 'Você ainda não registrou essa manutenção.'}\n\n` +
+      `Quando fizer, responda *fiz a manutenção ${m.nome}* que eu marco e reprogramo a próxima.`);
+    await supabase.from('manutencoes').update({ lembrete_ultimo: hojeStr }).eq('id', m.id);
+    console.log(`🔧 Lembrete manutenção → ${phone}: ${m.nome}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 1G — Todo dia às 09:00: lembretes de CONSULTAS (24h antes)
 // E retornos médicos próximos (7 dias)
 // ─────────────────────────────────────────────────────────────────
