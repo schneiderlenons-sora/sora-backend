@@ -6,7 +6,7 @@ const norm = p => p?.replace(/\D/g, '');
 
 async function getUser(phone) {
   const { data } = await supabase.from('users')
-    .select('id, grupo_ativo, plano, plano_grow, grow_trial_inicio, grow_trial_fim, painel_ativo, habito_lembrete_ativo, habito_lembrete_horario')
+    .select('id, grupo_ativo, plano, plano_grow, grow_trial_inicio, grow_trial_fim, painel_ativo')
     .eq('phone', norm(phone)).maybeSingle();
   return data;
 }
@@ -95,14 +95,15 @@ router.get('/habitos/:phone', auth, requireGrow, async (req, res) => {
     const { data: registros } = await supabase.from('registros_habito')
       .select('habito_id, data, concluido')
       .eq('grupo_id', req.userRow.grupo_ativo).gte('data', inicio);
-    res.json({
-      habitos: habitos || [],
-      registros: registros || [],
-      lembrete: {
-        ativo: !!req.userRow.habito_lembrete_ativo,
-        horario: req.userRow.habito_lembrete_horario || null,
-      },
-    });
+    // Lembrete buscado à parte e tolerante: se a migration 031 ainda não
+    // rodou, as colunas não existem → data vem null e devolvemos o default
+    // sem derrubar a listagem de hábitos.
+    let lembrete = { ativo: false, horario: null };
+    const { data: u } = await supabase.from('users')
+      .select('habito_lembrete_ativo, habito_lembrete_horario')
+      .eq('id', req.userRow.id).maybeSingle();
+    if (u) lembrete = { ativo: !!u.habito_lembrete_ativo, horario: u.habito_lembrete_horario || null };
+    res.json({ habitos: habitos || [], registros: registros || [], lembrete });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -117,12 +118,15 @@ router.post('/habitos/lembrete', auth, requireGrow, async (req, res) => {
     }
     // Ao reativar/atualizar, zera o dedup pra poder enviar hoje ainda.
     patch.habito_lembrete_ultimo = null;
-    await supabase.from('users').update(patch).eq('id', req.userRow.id);
+    const { error } = await supabase.from('users').update(patch).eq('id', req.userRow.id);
+    if (error) {
+      return res.status(503).json({ erro: 'Lembrete indisponível: rode a migration 031 no Supabase.' });
+    }
     res.json({
       ok: true,
       lembrete: {
         ativo: patch.habito_lembrete_ativo,
-        horario: patch.habito_lembrete_horario !== undefined ? patch.habito_lembrete_horario : (req.userRow.habito_lembrete_horario || null),
+        horario: patch.habito_lembrete_horario !== undefined ? patch.habito_lembrete_horario : null,
       },
     });
   } catch (err) { res.status(500).json({ erro: err.message }); }
