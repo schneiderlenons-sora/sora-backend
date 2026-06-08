@@ -6,7 +6,7 @@ const norm = p => p?.replace(/\D/g, '');
 
 async function getUser(phone) {
   const { data } = await supabase.from('users')
-    .select('id, grupo_ativo, plano, plano_grow, grow_trial_inicio, grow_trial_fim, painel_ativo')
+    .select('id, grupo_ativo, plano, plano_grow, grow_trial_inicio, grow_trial_fim, painel_ativo, habito_lembrete_ativo, habito_lembrete_horario')
     .eq('phone', norm(phone)).maybeSingle();
   return data;
 }
@@ -95,7 +95,36 @@ router.get('/habitos/:phone', auth, requireGrow, async (req, res) => {
     const { data: registros } = await supabase.from('registros_habito')
       .select('habito_id, data, concluido')
       .eq('grupo_id', req.userRow.grupo_ativo).gte('data', inicio);
-    res.json({ habitos: habitos || [], registros: registros || [] });
+    res.json({
+      habitos: habitos || [],
+      registros: registros || [],
+      lembrete: {
+        ativo: !!req.userRow.habito_lembrete_ativo,
+        horario: req.userRow.habito_lembrete_horario || null,
+      },
+    });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// Liga/desliga o lembrete diário de hábitos (opt-in) + horário (HH:MM, fuso SP).
+// Registrada ANTES de PUT /habitos/:id pra não cair na rota de :id.
+router.post('/habitos/lembrete', auth, requireGrow, async (req, res) => {
+  try {
+    const { ativo, horario } = req.body;
+    const patch = { habito_lembrete_ativo: !!ativo };
+    if (horario !== undefined) {
+      patch.habito_lembrete_horario = horario && /^\d{1,2}:\d{2}$/.test(horario) ? horario : null;
+    }
+    // Ao reativar/atualizar, zera o dedup pra poder enviar hoje ainda.
+    patch.habito_lembrete_ultimo = null;
+    await supabase.from('users').update(patch).eq('id', req.userRow.id);
+    res.json({
+      ok: true,
+      lembrete: {
+        ativo: patch.habito_lembrete_ativo,
+        horario: patch.habito_lembrete_horario !== undefined ? patch.habito_lembrete_horario : (req.userRow.habito_lembrete_horario || null),
+      },
+    });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

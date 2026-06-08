@@ -274,6 +274,72 @@ cron.schedule('*/15 * * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1H — A cada 15 min: lembrete DIÁRIO de HÁBITOS (opt-in)
+// Só lembra quem ativou no painel, no horário escolhido (fuso SP), e só
+// se ainda houver hábitos pendentes hoje. Dedup persistido (à prova de
+// restart) via users.habito_lembrete_ultimo.
+// ─────────────────────────────────────────────────────────────────
+
+// Hora/data/dia-da-semana atuais no fuso de São Paulo (o servidor pode
+// estar em UTC; o horário escolhido pelo usuário é local).
+function agoraSP() {
+  const partes = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const get = (t) => partes.find((x) => x.type === t)?.value;
+  const wd = { Sun: 7, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  let hh = parseInt(get('hour'), 10);
+  if (hh === 24) hh = 0; // alguns ambientes retornam '24' à meia-noite
+  const mm = parseInt(get('minute'), 10);
+  return {
+    diaSemana: wd[get('weekday')],
+    dataStr: `${get('year')}-${get('month')}-${get('day')}`,
+    minutos: hh * 60 + mm,
+  };
+}
+
+cron.schedule('*/15 * * * *', async () => {
+  const sp = agoraSP();
+
+  const { data: usuarios } = await supabase.from('users')
+    .select('id, phone, grupo_ativo, habito_lembrete_horario, habito_lembrete_ultimo')
+    .eq('habito_lembrete_ativo', true)
+    .not('habito_lembrete_horario', 'is', null);
+
+  for (const u of usuarios || []) {
+    if (!u.phone || !u.grupo_ativo) continue;
+    if (u.habito_lembrete_ultimo === sp.dataStr) continue; // já processado hoje
+
+    const [hh, mm] = String(u.habito_lembrete_horario).split(':').map(Number);
+    if (isNaN(hh)) continue;
+    if (sp.minutos < hh * 60 + mm) continue; // ainda não chegou o horário
+
+    // Marca como processado ANTES de enviar — evita duplicar se reiniciar.
+    await supabase.from('users').update({ habito_lembrete_ultimo: sp.dataStr }).eq('id', u.id);
+
+    const { data: habitos } = await supabase.from('habitos')
+      .select('id, dias_semana').eq('grupo_id', u.grupo_ativo).eq('ativo', true);
+    const doDia = (habitos || []).filter(h => (h.dias_semana || [1,2,3,4,5,6,7]).includes(sp.diaSemana));
+    if (!doDia.length) continue; // nada programado pra hoje
+
+    const { data: regs } = await supabase.from('registros_habito')
+      .select('habito_id, concluido').eq('grupo_id', u.grupo_ativo).eq('data', sp.dataStr);
+    const feitos = new Set((regs || []).filter(r => r.concluido).map(r => r.habito_id));
+    const pendentes = doDia.filter(h => !feitos.has(h.id)).length;
+    if (pendentes === 0) continue; // tudo feito — não precisa lembrar
+
+    await enviarTexto(u.phone,
+      `🎯 *Lembrete de hábitos*\n\n` +
+      `Você ainda tem *${pendentes}* hábito${pendentes === 1 ? '' : 's'} pra marcar hoje. Bora fechar o dia? 💪\n\n` +
+      `Responda *fiz todos* que eu marco todos de uma vez — ou abra o painel:\n` +
+      `🌐 https://www.forsora.com/grow/habitos`);
+    console.log(`🎯 Lembrete de hábitos → ${u.phone} (${pendentes} pendentes)`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 1G — Todo dia às 09:00: lembretes de CONSULTAS (24h antes)
 // E retornos médicos próximos (7 dias)
 // ─────────────────────────────────────────────────────────────────

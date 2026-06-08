@@ -96,6 +96,27 @@ module.exports = async function handleGrow(mensagem, ctx) {
     return;
   }
 
+  // ── MARCAR TODOS OS HABITOS DE HOJE ─────────────────────────────────
+  // Vem ANTES do "fiz [nome]" pra "fiz todos" não cair na busca por nome.
+  if (/^(?:fiz|completei|conclu[ií]|terminei|marquei|fechei)\s+(?:todos?|tudo)(?:\s+(?:os\s+)?h[aá]bitos?)?(?:\s+(?:de\s+)?hoje)?$/i.test(msg)) {
+    const diaSemana = (() => { const j = new Date().getDay(); return j === 0 ? 7 : j; })();
+    const { data: habitos } = await supabase.from('habitos')
+      .select('id, nome, icone, dias_semana').eq('grupo_id', grupoId).eq('ativo', true);
+    const doDia = (habitos || []).filter(h => (h.dias_semana || [1,2,3,4,5,6,7]).includes(diaSemana));
+    if (!doDia.length) {
+      await enviarTexto(phone, '🌱 Voce nao tem habitos pra hoje. Crie no painel ou diga: *novo habito beber agua*');
+      return;
+    }
+    const hoje = new Date().toISOString().slice(0, 10);
+    await supabase.from('registros_habito').upsert(
+      doDia.map(h => ({ habito_id: h.id, grupo_id: grupoId, data: hoje, concluido: true })),
+      { onConflict: 'habito_id,data' }
+    );
+    const lista = doDia.map(h => `✅ ${h.icone} ${h.nome}`).join('\n');
+    await enviarTexto(phone, `🎉 *${doDia.length} habito${doDia.length === 1 ? '' : 's'} de hoje marcado${doDia.length === 1 ? '' : 's'}!*\n\n${lista}\n\nMandou bem! 💪`);
+    return;
+  }
+
   // ── MARCAR HABITO COMO FEITO ────────────────────────────────────────
   if ((m = msg.match(/^(?:fiz|completei|conclu[ií]|terminei|marquei)\s+(.+)$/i))) {
     const termo = m[1].trim();
