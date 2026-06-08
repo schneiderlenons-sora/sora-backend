@@ -532,4 +532,119 @@ router.delete('/manutencoes/:id', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// ─── RECEITAS ────────────────────────────────────────────────────────
+// Cada receita carrega seus ingredientes embutidos. "Cozinhar" cruza os
+// ingredientes com a despensa e manda o que falta pra lista de compras.
+async function ingredientesDe(receitaIds) {
+  if (!receitaIds.length) return [];
+  const { data } = await supabase.from('receita_ingredientes')
+    .select('*').in('receita_id', receitaIds).order('ordem');
+  return data || [];
+}
+
+router.get('/receitas/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const { data: receitas } = await supabase.from('receitas')
+      .select('*').eq('grupo_id', req.userRow.grupo_ativo)
+      .order('created_at', { ascending: false });
+    const ings = await ingredientesDe((receitas || []).map(r => r.id));
+    const itens = (receitas || []).map(r => ({
+      ...r, ingredientes: ings.filter(i => i.receita_id === r.id),
+    }));
+    res.json({ itens });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.post('/receitas', auth, requireGrow, async (req, res) => {
+  try {
+    const { nome, icone, porcoes, tempo_min, modo_preparo, ingredientes } = req.body;
+    if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
+    const { data: receita, error } = await supabase.from('receitas').insert({
+      grupo_id: req.userRow.grupo_ativo, nome: nome.trim(), icone: icone || '🍳',
+      porcoes: porcoes ? parseInt(porcoes) : null,
+      tempo_min: tempo_min ? parseInt(tempo_min) : null,
+      modo_preparo: modo_preparo || null,
+    }).select().single();
+    if (error) return res.status(500).json({ erro: error.message });
+    const ings = Array.isArray(ingredientes) ? ingredientes.filter(i => i?.nome?.trim()) : [];
+    if (ings.length) {
+      await supabase.from('receita_ingredientes').insert(ings.map((i, idx) => ({
+        receita_id: receita.id, nome: i.nome.trim(),
+        quantidade: i.quantidade || null, categoria: i.categoria || null, ordem: idx,
+      })));
+    }
+    res.json({ ...receita, ingredientes: await ingredientesDe([receita.id]) });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.put('/receitas/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const allowed = ['nome', 'icone', 'porcoes', 'tempo_min', 'modo_preparo'];
+    const patch = { updated_at: new Date().toISOString() };
+    for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+    if ('porcoes' in patch)   patch.porcoes   = patch.porcoes ? parseInt(patch.porcoes) : null;
+    if ('tempo_min' in patch) patch.tempo_min = patch.tempo_min ? parseInt(patch.tempo_min) : null;
+    const { data: receita, error } = await supabase.from('receitas')
+      .update(patch).eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
+      .select().single();
+    if (error || !receita) return res.status(404).json({ erro: 'Receita nao encontrada' });
+    // Substitui ingredientes inteiros quando vierem no body
+    if (Array.isArray(req.body.ingredientes)) {
+      await supabase.from('receita_ingredientes').delete().eq('receita_id', receita.id);
+      const ings = req.body.ingredientes.filter(i => i?.nome?.trim());
+      if (ings.length) {
+        await supabase.from('receita_ingredientes').insert(ings.map((i, idx) => ({
+          receita_id: receita.id, nome: i.nome.trim(),
+          quantidade: i.quantidade || null, categoria: i.categoria || null, ordem: idx,
+        })));
+      }
+    }
+    res.json({ ...receita, ingredientes: await ingredientesDe([receita.id]) });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.delete('/receitas/:id', auth, requireGrow, async (req, res) => {
+  try {
+    await supabase.from('receitas').delete()
+      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// Cozinhar: o que falta (não está 'tem' na despensa) vai pra lista de compras
+router.post('/receitas/:id/cozinhar', auth, requireGrow, async (req, res) => {
+  try {
+    const grupoId = req.userRow.grupo_ativo;
+    const { data: receita } = await supabase.from('receitas')
+      .select('id, nome').eq('id', req.params.id).eq('grupo_id', grupoId).maybeSingle();
+    if (!receita) return res.status(404).json({ erro: 'Receita nao encontrada' });
+    const ings = await ingredientesDe([receita.id]);
+    if (!ings.length) return res.json({ ok: true, receita: receita.nome, adicionados: [], jaTem: [] });
+
+    const { data: despensa } = await supabase.from('despensa_itens')
+      .select('id, nome, status').eq('grupo_id', grupoId);
+    const acha = nome => (despensa || []).find(d => {
+      const a = d.nome.toLowerCase(), b = nome.toLowerCase();
+      return a.includes(b) || b.includes(a);
+    });
+
+    const listaId = await getOrCreateLista(grupoId);
+    const adicionados = [], jaTem = [];
+    for (const ing of ings) {
+      const match = acha(ing.nome);
+      if (match && match.status === 'tem') { jaTem.push(ing.nome); continue; }
+      const { data: dup } = await supabase.from('itens_lista_compras')
+        .select('id').eq('lista_id', listaId).ilike('nome', ing.nome).eq('comprado', false).maybeSingle();
+      if (!dup) {
+        await supabase.from('itens_lista_compras').insert({
+          lista_id: listaId, nome: ing.nome, quantidade: ing.quantidade || '1',
+          categoria: ing.categoria || null, despensa_item_id: match ? match.id : null,
+        });
+      }
+      adicionados.push(ing.nome);
+    }
+    res.json({ ok: true, receita: receita.nome, adicionados, jaTem });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 module.exports = router;

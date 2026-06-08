@@ -261,6 +261,126 @@ module.exports = async function handleGrow(mensagem, ctx) {
     return;
   }
 
+  // ── RECEITAS: o que dá pra cozinhar com o que tem em casa ───────────
+  if (/^(?:o\s+que\s+(?:eu\s+)?(?:posso|d[aá]\s+(?:pra?|para))\s+cozinhar|o\s+que\s+(?:eu\s+)?fa[çc]o\s+(?:pra?|para)\s+(?:comer|jantar|almo[çc]ar)|sugest[ãa]o\s+de\s+receita)/i.test(msg)) {
+    const { data: receitas } = await supabase.from('receitas')
+      .select('id, nome, icone').eq('grupo_id', grupoId);
+    if (!receitas?.length) {
+      await enviarTexto(phone, '🍳 Você ainda não cadastrou receitas. Crie no painel: *Casa → Receitas*.');
+      return;
+    }
+    const { data: ings } = await supabase.from('receita_ingredientes')
+      .select('receita_id, nome').in('receita_id', receitas.map(r => r.id));
+    const { data: despensa } = await supabase.from('despensa_itens')
+      .select('nome, status').eq('grupo_id', grupoId);
+    const tem = (despensa || []).filter(d => d.status === 'tem').map(d => d.nome.toLowerCase());
+    const temIng = nome => tem.some(t => t.includes(nome.toLowerCase()) || nome.toLowerCase().includes(t));
+    const ranking = receitas.map(r => {
+      const lista = (ings || []).filter(i => i.receita_id === r.id);
+      const ok = lista.filter(i => temIng(i.nome)).length;
+      return { r, ok, total: lista.length, falta: lista.length - lista.filter(i => temIng(i.nome)).length };
+    }).filter(x => x.total > 0).sort((a, b) => a.falta - b.falta);
+    if (!ranking.length) {
+      await enviarTexto(phone, '🍳 Suas receitas estão sem ingredientes cadastrados. Adicione no painel: *Casa → Receitas*.');
+      return;
+    }
+    const prontas = ranking.filter(x => x.falta === 0);
+    const quase = ranking.filter(x => x.falta > 0 && x.falta <= 2);
+    let txt = '🍳 *O que dá pra cozinhar*\n';
+    if (prontas.length) txt += `\n✅ *Dá pra fazer agora:*\n${prontas.map(x => `${x.r.icone || '🍳'} ${x.r.nome}`).join('\n')}`;
+    if (quase.length) txt += `\n\n🛒 *Quase lá (falta pouco):*\n${quase.map(x => `${x.r.icone || '🍳'} ${x.r.nome} — falta ${x.falta} item${x.falta === 1 ? '' : 's'}`).join('\n')}`;
+    if (!prontas.length && !quase.length) txt += '\nNenhuma receita pronta com o que tem na despensa. Dá uma olhada na sua lista de compras! 🛒';
+    txt += '\n\nPra cozinhar e mandar o que falta pra lista: *cozinhar [receita]*';
+    await enviarTexto(phone, txt);
+    return;
+  }
+
+  // ── RECEITAS: listar ────────────────────────────────────────────────
+  if (/^(minhas\s+receitas|receitas)$/i.test(msg)) {
+    const { data: receitas } = await supabase.from('receitas')
+      .select('id, nome, icone, tempo_min, porcoes').eq('grupo_id', grupoId)
+      .order('created_at', { ascending: false });
+    if (!receitas?.length) {
+      await enviarTexto(phone, '🍳 Você ainda não tem receitas. Cadastre no painel: *Casa → Receitas*.');
+      return;
+    }
+    const linhas = receitas.map(r => {
+      const meta = [r.tempo_min ? `${r.tempo_min}min` : null, r.porcoes ? `${r.porcoes} porç.` : null].filter(Boolean).join(' · ');
+      return `${r.icone || '🍳'} ${r.nome}${meta ? ` — ${meta}` : ''}`;
+    });
+    await enviarTexto(phone, `🍳 *Suas receitas* (${receitas.length})\n\n${linhas.join('\n')}\n\nVer ingredientes: *receita [nome]*\nCozinhar: *cozinhar [nome]*`);
+    return;
+  }
+
+  // ── RECEITAS: cozinhar (manda o que falta pra lista de compras) ─────
+  if ((m = msg.match(/^(?:vou\s+cozinhar|cozinhar|fazer\s+(?:a\s+)?receita|preparar)\s+(.+)$/i))) {
+    const termo = m[1].trim();
+    const { data: achadas } = await supabase.from('receitas')
+      .select('id, nome, icone').eq('grupo_id', grupoId).ilike('nome', `%${termo}%`);
+    if (!achadas?.length) {
+      await enviarTexto(phone, `❌ Não encontrei receita com *"${termo}"*. Veja as suas: *receitas*`);
+      return;
+    }
+    const rec = achadas[0];
+    const { data: ings } = await supabase.from('receita_ingredientes')
+      .select('id, nome, quantidade, categoria').eq('receita_id', rec.id).order('ordem');
+    if (!ings?.length) {
+      await enviarTexto(phone, `🍳 *${rec.icone || '🍳'} ${rec.nome}* ainda não tem ingredientes cadastrados. Adicione no painel: *Casa → Receitas*.`);
+      return;
+    }
+    const { data: despensa } = await supabase.from('despensa_itens')
+      .select('id, nome, status').eq('grupo_id', grupoId);
+    const acha = nome => (despensa || []).find(d => {
+      const a = d.nome.toLowerCase(), b = nome.toLowerCase();
+      return a.includes(b) || b.includes(a);
+    });
+    const listaId = await getOrCreateLista(grupoId);
+    const adicionados = [], jaTem = [];
+    for (const ing of ings) {
+      const match = acha(ing.nome);
+      if (match && match.status === 'tem') { jaTem.push(ing.nome); continue; }
+      const { data: dup } = await supabase.from('itens_lista_compras')
+        .select('id').eq('lista_id', listaId).ilike('nome', ing.nome).eq('comprado', false).maybeSingle();
+      if (!dup) {
+        await supabase.from('itens_lista_compras').insert({
+          lista_id: listaId, nome: ing.nome, quantidade: ing.quantidade || '1',
+          categoria: ing.categoria || null, despensa_item_id: match ? match.id : null,
+        });
+      }
+      adicionados.push(ing.nome);
+    }
+    let txt = `🍳 *Bora cozinhar ${rec.nome}!*\n`;
+    if (jaTem.length) txt += `\n✅ Você já tem: ${jaTem.join(', ')}`;
+    if (adicionados.length) txt += `\n🛒 Adicionei à lista: ${adicionados.join(', ')}`;
+    else txt += '\n\n🎉 Você tem tudo que precisa! Mãos à obra.';
+    if (adicionados.length) txt += '\n\nVer lista: *lista de compras*';
+    await enviarTexto(phone, txt);
+    return;
+  }
+
+  // ── RECEITAS: ver uma receita (ingredientes + preparo) ──────────────
+  if ((m = msg.match(/^(?:receita|como\s+(?:eu\s+)?(?:fa[çc]o|faz|se\s+faz)(?:\s+(?:o|a|os|as))?|ingredientes\s+(?:d[eoa]s?\s+)?)\s*(.+)$/i))) {
+    const termo = m[1].trim();
+    const { data: achadas } = await supabase.from('receitas')
+      .select('id, nome, icone, tempo_min, porcoes, modo_preparo').eq('grupo_id', grupoId).ilike('nome', `%${termo}%`);
+    if (!achadas?.length) {
+      await enviarTexto(phone, `❌ Não encontrei receita com *"${termo}"*. Veja as suas: *receitas*`);
+      return;
+    }
+    const rec = achadas[0];
+    const { data: ings } = await supabase.from('receita_ingredientes')
+      .select('nome, quantidade').eq('receita_id', rec.id).order('ordem');
+    const meta = [rec.tempo_min ? `⏱️ ${rec.tempo_min}min` : null, rec.porcoes ? `🍽️ ${rec.porcoes} porç.` : null].filter(Boolean).join('  ');
+    const listaIng = (ings || []).length
+      ? (ings || []).map(i => `• ${i.nome}${i.quantidade ? ` — ${i.quantidade}` : ''}`).join('\n')
+      : '_sem ingredientes cadastrados_';
+    let txt = `${rec.icone || '🍳'} *${rec.nome}*${meta ? `\n${meta}` : ''}\n\n🧺 *Ingredientes:*\n${listaIng}`;
+    if (rec.modo_preparo) txt += `\n\n👩‍🍳 *Preparo:*\n${rec.modo_preparo}`;
+    txt += '\n\nPra cozinhar e mandar o que falta pra lista: *cozinhar ' + rec.nome.toLowerCase() + '*';
+    await enviarTexto(phone, txt);
+    return;
+  }
+
   // ── REGISTRAR HUMOR ─────────────────────────────────────────────────
   if ((m = msg.match(/(?:me\s+sinto|estou|to|tô|hoje\s+estou|hoje\s+to)\s+(.+)/i))) {
     const palavra = m[1].trim().toLowerCase().split(/[\s.,!]/)[0];
