@@ -647,4 +647,62 @@ router.post('/receitas/:id/cozinhar', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// ─── AGENDA / COMPROMISSOS ───────────────────────────────────────────
+const CATS_COMP = ['pessoal', 'trabalho', 'familia', 'saude', 'financas', 'estudos', 'outro'];
+
+router.get('/compromissos/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    let q = supabase.from('compromissos')
+      .select('*').eq('grupo_id', req.userRow.grupo_ativo);
+    if (req.query.de)  q = q.gte('data', req.query.de);
+    if (req.query.ate) q = q.lte('data', req.query.ate);
+    const { data } = await q.order('data', { ascending: true }).order('hora', { ascending: true, nullsFirst: true });
+    res.json({ itens: data || [] });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.post('/compromissos', auth, requireGrow, async (req, res) => {
+  try {
+    const { titulo, descricao, data, hora, local, categoria, cor, lembrete_ativo, lembrete_antecedencia } = req.body;
+    if (!titulo?.trim()) return res.status(400).json({ erro: 'Titulo obrigatorio' });
+    if (!data)           return res.status(400).json({ erro: 'Data obrigatoria' });
+    const { data: novo, error } = await supabase.from('compromissos').insert({
+      grupo_id: req.userRow.grupo_ativo, titulo: titulo.trim(),
+      descricao: descricao || null, data, hora: hora || null, local: local || null,
+      categoria: CATS_COMP.includes(categoria) ? categoria : 'pessoal',
+      cor: cor || '#7c3aed',
+      lembrete_ativo: !!lembrete_ativo,
+      lembrete_antecedencia: Number.isInteger(lembrete_antecedencia) ? lembrete_antecedencia : 60,
+    }).select().single();
+    if (error) return res.status(500).json({ erro: error.message });
+    res.json(novo);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.put('/compromissos/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const allowed = ['titulo', 'descricao', 'data', 'hora', 'local', 'categoria', 'cor', 'lembrete_ativo', 'lembrete_antecedencia'];
+    const patch = { updated_at: new Date().toISOString() };
+    for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+    if ('categoria' in patch && !CATS_COMP.includes(patch.categoria)) patch.categoria = 'pessoal';
+    // Mexeu em data/hora/lembrete → reabilita o disparo do aviso
+    if ('data' in patch || 'hora' in patch || 'lembrete_ativo' in patch || 'lembrete_antecedencia' in patch) {
+      patch.lembrete_enviado = false;
+    }
+    const { data, error } = await supabase.from('compromissos')
+      .update(patch).eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
+      .select().single();
+    if (error || !data) return res.status(404).json({ erro: 'Compromisso nao encontrado' });
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.delete('/compromissos/:id', auth, requireGrow, async (req, res) => {
+  try {
+    await supabase.from('compromissos').delete()
+      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 module.exports = router;

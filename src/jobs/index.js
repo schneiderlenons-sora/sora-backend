@@ -385,6 +385,56 @@ cron.schedule('0 9 * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1J — A cada 15 min: lembretes de COMPROMISSOS da agenda (opt-in)
+// Dispara no momento certo respeitando a antecedência (na hora / 10min /
+// 1h / 1 dia antes). Eventos "dia todo" (sem hora) usam 09:00 como base.
+// Dedup persistido via compromissos.lembrete_enviado.
+// ─────────────────────────────────────────────────────────────────
+function diasEpoch(dataStr) {
+  const [y, mo, d] = dataStr.split('-').map(Number);
+  return Math.floor(Date.UTC(y, mo - 1, d) / 86400000);
+}
+
+cron.schedule('*/15 * * * *', async () => {
+  const sp = agoraSP();
+  const hojeEpoch = diasEpoch(sp.dataStr);
+  const nowMin = hojeEpoch * 1440 + sp.minutos;
+
+  // Só os de hoje/ontem/amanhã com lembrete pendente (janela suficiente p/ "1 dia antes")
+  const ontem   = new Date(); ontem.setDate(ontem.getDate() - 1);
+  const amanha2 = new Date(); amanha2.setDate(amanha2.getDate() + 2);
+  const { data: comps } = await supabase.from('compromissos')
+    .select('id, grupo_id, titulo, hora, local, data, lembrete_antecedencia')
+    .eq('lembrete_ativo', true).eq('lembrete_enviado', false)
+    .gte('data', ontem.toISOString().slice(0, 10))
+    .lte('data', amanha2.toISOString().slice(0, 10));
+
+  for (const c of comps || []) {
+    const [hh, mm] = c.hora ? String(c.hora).split(':').map(Number) : [9, 0];
+    const eventMin = diasEpoch(c.data) * 1440 + (hh * 60 + (mm || 0));
+    const triggerMin = eventMin - (Number.isInteger(c.lembrete_antecedencia) ? c.lembrete_antecedencia : 60);
+
+    // Evento já passou (>1h) → marca enviado pra parar de checar
+    if (nowMin >= eventMin + 60) {
+      await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
+      continue;
+    }
+    if (nowMin < triggerMin) continue; // ainda não chegou a hora de avisar
+
+    const phone = await phoneDono(c.grupo_id);
+    if (!phone) continue;
+
+    await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
+    const quando = c.hora ? `hoje às ${c.hora}` : 'hoje';
+    await enviarTexto(phone,
+      `📅 *Lembrete de compromisso*\n\n` +
+      `*${c.titulo}*\n🕐 ${quando}${c.local ? `\n📍 ${c.local}` : ''}\n\n` +
+      `Ver agenda: 🌐 https://www.forsora.com/grow/agenda`);
+    console.log(`📅 Lembrete compromisso → ${phone}: ${c.titulo}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 1G — Todo dia às 09:00: lembretes de CONSULTAS (24h antes)
 // E retornos médicos próximos (7 dias)
 // ─────────────────────────────────────────────────────────────────

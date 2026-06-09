@@ -381,6 +381,41 @@ module.exports = async function handleGrow(mensagem, ctx) {
     return;
   }
 
+  // ── AGENDA: hoje / próximos dias ────────────────────────────────────
+  if (/^(minha\s+agenda|agenda(\s+(hoje|semana|da\s+semana|esta\s+semana))?|meus\s+compromissos|compromissos)$/i.test(msg)) {
+    const soHoje = /hoje/i.test(msg);
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const ate = new Date(hoje); ate.setDate(ate.getDate() + (soHoje ? 0 : 7));
+    const deStr = hoje.toISOString().slice(0, 10);
+    const ateStr = ate.toISOString().slice(0, 10);
+    const { data: comps } = await supabase.from('compromissos')
+      .select('titulo, data, hora, local').eq('grupo_id', grupoId)
+      .gte('data', deStr).lte('data', ateStr)
+      .order('data', { ascending: true }).order('hora', { ascending: true, nullsFirst: true });
+    if (!comps?.length) {
+      await enviarTexto(phone, soHoje
+        ? '📅 Você não tem compromissos hoje. Aproveita! 😎'
+        : '📅 Nenhum compromisso nos próximos 7 dias. Pra adicionar, use o painel: *Grow → Agenda*.');
+      return;
+    }
+    const fmtDia = (s) => {
+      const d = new Date(s + 'T12:00:00');
+      const diff = Math.round((d - hoje) / 86400000);
+      if (diff === 0) return 'Hoje';
+      if (diff === 1) return 'Amanhã';
+      return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' }).replace('.', '');
+    };
+    const grupos = {};
+    for (const c of comps) (grupos[c.data] = grupos[c.data] || []).push(c);
+    const blocos = Object.entries(grupos).map(([dia, lista]) => {
+      const linhas = lista.map(c => `🕐 ${c.hora || 'dia todo'} — ${c.titulo}${c.local ? ` 📍 ${c.local}` : ''}`);
+      return `*${fmtDia(dia)}*\n${linhas.join('\n')}`;
+    });
+    const titulo = soHoje ? '📅 *Sua agenda de hoje*' : '📅 *Próximos compromissos*';
+    await enviarTexto(phone, `${titulo}\n\n${blocos.join('\n\n')}\n\nGerenciar: 🌐 forsora.com/grow/agenda`);
+    return;
+  }
+
   // ── REGISTRAR HUMOR ─────────────────────────────────────────────────
   if ((m = msg.match(/(?:me\s+sinto|estou|to|tô|hoje\s+estou|hoje\s+to)\s+(.+)/i))) {
     const palavra = m[1].trim().toLowerCase().split(/[\s.,!]/)[0];
