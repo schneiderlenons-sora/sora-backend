@@ -42,6 +42,7 @@ module.exports = async function handleInvestimentos(data, ctx) {
       `💵 Aportado: R$ ${inv.valor_aportado.toFixed(2)}\n` +
       `📊 Valor atual: R$ ${inv.valor_atual.toFixed(2)}`
     );
+    await oferecerDesconto({ user, phone, grupoId, valor: inv.valor_aportado, categoria: 'Investimentos', observacao: `Aporte: ${inv.nome}` });
     return;
   }
 

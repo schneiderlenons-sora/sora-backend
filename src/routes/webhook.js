@@ -369,6 +369,11 @@ router.post('/', async (req, res) => {
         require('../handlers/dividas')(data, ctx);
         break;
 
+      // Metas financeiras (poupança)
+      case 'aporte_meta':
+        require('../handlers/metas')(data, ctx);
+        break;
+
       // Investimentos (Black)
       case 'criar_investimento':
       case 'listar_investimentos':

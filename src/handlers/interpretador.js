@@ -191,6 +191,10 @@ function interpretarRapido(message) {
       carteira_nome: null
     };
 
+  // --- APORTE EM META (poupança): "guardar 500 na meta viagem" ---
+  if ((m = msg.match(/^(?:guardar|aplicar|aportar|colocar|poupar|separar|depositar|juntar)\s+(\d[\d.,]*)\s+(?:n[ao]\s+|pra\s+|para\s+(?:a\s+|o\s+)?|em\s+|d[ao]\s+)?meta\s+(.+)$/i)))
+    return { acao: 'aporte_meta', valor: parseValor(m[1]), termo: m[2].trim() };
+
   // --- CRIAR CONTA BANCÁRIA / CARTÃO: "nubank 1000" ou "nubank crédito 5000" ---
   if ((m = msg.match(/^(nubank|inter|ita[uú]|bradesco|santander|caixa|c6\s*bank|mercado\s*pago|picpay|banco\s*do\s*brasil|safra)(\s+cr[eé]dito)?\s+(\d[\d.,]*)$/i))) {
     // Com "crédito" → cartão (set_cartao dispara o wizard de fechamento/vencimento/bandeira)
