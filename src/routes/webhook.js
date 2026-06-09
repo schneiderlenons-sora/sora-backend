@@ -154,7 +154,17 @@ router.post('/', async (req, res) => {
   // --- ÁUDIO ---
   if (audio?.audioUrl) {
     try {
-      mensagem = await transcreverAudio(audio.audioUrl, phone);
+      // Dica de vocabulário: nomes das contas do usuário → transcrição mais
+      // precisa ("Nubank Crédito" em vez de "no banco de crédito").
+      let vocab = '';
+      try {
+        const { data: u } = await supabase.from('users').select('grupo_ativo').eq('phone', phone).maybeSingle();
+        if (u?.grupo_ativo) {
+          const { data: ws } = await supabase.from('wallets').select('nome').eq('grupo_id', u.grupo_ativo);
+          vocab = (ws || []).map(w => w.nome).filter(Boolean).join(', ');
+        }
+      } catch {}
+      mensagem = await transcreverAudio(audio.audioUrl, phone, vocab);
       console.log(`🎤 Áudio transcrito [${phone}]: "${mensagem}"`);
     } catch {
       await enviarTexto(phone, '🎤 Não consegui entender o áudio. Pode repetir?');

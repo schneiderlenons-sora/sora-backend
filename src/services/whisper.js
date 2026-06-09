@@ -2,7 +2,17 @@ const axios    = require('axios');
 const fs       = require('fs');
 const FormData = require('form-data');
 
-async function transcreverAudio(audioUrl, phone) {
+// Vocabulário base que enviesa a transcrição (nomes inventados como "Nubank"
+// e marcas que o Whisper erra sem contexto). O `prompt` do Whisper não vira
+// texto — só guia a grafia. As contas do usuário entram via `vocab`.
+const VOCAB_BASE =
+  'Transcrição de finanças no Brasil. Bancos e apps: Nubank, Inter, Itaú, ' +
+  'Bradesco, Santander, Caixa, C6 Bank, PicPay, Mercado Pago, Banco do Brasil, ' +
+  'Will Bank, Neon, BTG. Marcas: Shopee, Shein, iFood, Uber, 99, Amazon, ' +
+  'Mercado Livre, AliExpress, Netflix, Spotify, Magalu. ' +
+  'Termos: gastei, paguei, recebi, crédito, débito, reais, parcelado.';
+
+async function transcreverAudio(audioUrl, phone, vocab = '') {
   let fileName = null;
   try {
     // Baixa o áudio
@@ -15,6 +25,9 @@ async function transcreverAudio(audioUrl, phone) {
     form.append('file', fs.createReadStream(fileName));
     form.append('model', 'whisper-1');
     form.append('language', 'pt'); // força português → mais preciso
+    // Dica de vocabulário: base + contas do usuário ("Nubank Crédito" etc.)
+    const prompt = vocab ? `${VOCAB_BASE} Minhas contas: ${vocab}.` : VOCAB_BASE;
+    form.append('prompt', prompt);
 
     const transcricao = await axios.post(
       'https://api.openai.com/v1/audio/transcriptions',

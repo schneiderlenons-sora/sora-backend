@@ -1,6 +1,8 @@
 // Detecta categoria pelo texto da mensagem
 function detectarCategoria(msg) {
   const m = msg.toLowerCase();
+  // Marketplaces ANTES de "mercado" — senão "mercado livre" cairia em supermercado.
+  if (m.match(/(shopee|shein|aliexpress|amazon|mercado\s*livre|mercadolivre|magalu|magazine\s*luiza|americanas|submarino|temu|tiktok\s*shop)/i)) return 'Encomendas';
   if (m.includes('mercado') || m.includes('supermercado')) return 'Mercado';
   if (m.match(/(uber|99|gasolina|combustivel|posto|onibus|metro)/i)) return 'Transporte';
   if (m.match(/(pizza|lanche|restaurante|janta|almoço|ifood|delivery)/i)) return 'Alimentação';
@@ -26,7 +28,10 @@ function parseValor(str) {
 
 // Tenta interpretar a mensagem sem chamar a IA (mais rápido e grátis)
 function interpretarRapido(message) {
-  const msg = message.toLowerCase().trim();
+  // Remove a unidade de moeda logo após o número ("10 reais" → "10"), pra
+  // não virar descrição. Ajuda especialmente áudios ("gastei 10 reais na...").
+  const msg = message.toLowerCase().trim()
+    .replace(/(\d)\s+(?:reais|real|conto|contos|pila|pilas|mango|mangos|pau|paus|prata|pratas|din[\s-]?din|dinheiro)\b/gi, '$1');
 
   // --- GRUPOS ---
   let m;
@@ -157,8 +162,16 @@ function interpretarRapido(message) {
   // carteira_nome fica NULL quando o usuário não cita banco — assim o handler
   // roda a lógica inteligente (wallet padrão / conta única / perguntar qual).
   if ((m = msg.match(/(gastei|paguei|comprei)\s+(\d[\d.,]*)\s+(?:em\s+|no\s+|na\s+|de\s+)?(.+?)(?:\s+(?:no|na|pelo|pela|com)\s+(.+))?$/i))) {
-    const descricao  = m[3].trim();
-    const carteira   = m[4] ? m[4].trim() : null;
+    let descricao  = m[3].trim();
+    let carteira   = m[4] ? m[4].trim() : null;
+    // "loja, banco" — vírgula separa descrição do banco quando o usuário não
+    // disse "no/na/com" (comum em áudio: "gastei 10 na Shopee, Nubank Crédito").
+    if (!carteira && descricao.includes(',')) {
+      const partes = descricao.split(',');
+      descricao = partes[0].trim();
+      carteira  = partes.slice(1).join(',').trim() || null;
+    }
+    descricao = descricao.replace(/[,;]+$/, '').trim();
     return {
       acao: 'salvar', tipo: 'Gasto',
       valor: parseValor(m[2]),
