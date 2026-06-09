@@ -1,11 +1,50 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
 const { criarPendente } = require('../services/pendentes');
+const { oferecerDesconto } = require('../services/descontoConta');
 
 const gerarId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
 module.exports = async function handleParcelas(data, ctx) {
   const { phone, grupoId, user } = ctx;
+
+  // ── PAGAR FATURA DO CARTÃO (manual): "pagar fatura nubank" ──────
+  if (data.acao === 'pagar_fatura') {
+    const termo = (data.termo || '').trim();
+    const { data: cartoes } = await supabase.from('wallets')
+      .select('id, nome').eq('grupo_id', grupoId).eq('tipo', 'Crédito').ilike('nome', `%${termo}%`);
+    if (!cartoes?.length) {
+      await enviarTexto(phone, `❌ Não encontrei cartão com *"${termo}"*. Veja os seus: 🌐 forsora.com/cartao-de-credito`);
+      return;
+    }
+    if (cartoes.length > 1) {
+      const lista = cartoes.map(c => `• ${c.nome}`).join('\n');
+      await enviarTexto(phone, `🤔 Mais de um cartão com *"${termo}"*:\n${lista}\n\nSeja mais específico.`);
+      return;
+    }
+    const cartao = cartoes[0];
+
+    // Fatura do mês = soma dos gastos do cartão no mês atual
+    const hoje = new Date();
+    const ini = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`;
+    const prox = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1).toISOString().slice(0, 10);
+    const { data: txs } = await supabase.from('transacoes')
+      .select('valor').eq('grupo_id', grupoId).eq('tipo', 'Gasto')
+      .ilike('carteira_nome', cartao.nome).gte('data', ini).lt('data', prox);
+    const fatura = (txs || []).reduce((s, t) => s + (t.valor || 0), 0);
+
+    if (fatura <= 0) {
+      await enviarTexto(phone, `🎉 A fatura do *${cartao.nome}* está zerada este mês. Nada a pagar!`);
+      return;
+    }
+
+    await oferecerDesconto({
+      user, phone, grupoId, valor: fatura,
+      categoria: 'Fatura cartão', observacao: `Fatura ${cartao.nome}`,
+      intro: `💳 *Fatura ${cartao.nome}: R$ ${fatura.toFixed(2)}*\nDe qual conta você quer pagar?`,
+    });
+    return;
+  }
 
   // ── DEFINIR DIA DE FECHAMENTO DA FATURA ─────────────────────────
   if (data.acao === 'set_fatura_dia') {

@@ -88,6 +88,10 @@ function interpretarRapido(message) {
   if ((m = msg.match(/definir\s+fatura\s+dia\s+(\d{1,2})/i)))
     return { acao: 'set_fatura_dia', dia: parseInt(m[1]) };
 
+  // "pagar fatura nubank" / "quitar a fatura do nubank"
+  if ((m = msg.match(/^(?:pagar|quitar)\s+(?:a\s+|minha\s+)?fatura\s+(?:d[oae]\s+)?(.+)$/i)))
+    return { acao: 'pagar_fatura', termo: m[1].trim() };
+
   // --- DÍVIDAS ---
   // "minhas dividas" / "listar dividas" / "dividas"
   if (/^(minhas\s+d[ií]vidas|listar\s+d[ií]vidas|d[ií]vidas)$/i.test(msg))

@@ -331,6 +331,7 @@ router.post('/', async (req, res) => {
       case 'compra_parcelada':
       case 'antecipar_parcela':
       case 'set_fatura_dia':
+      case 'pagar_fatura':
         require('../handlers/parcelas')(data, ctx);
         break;
 

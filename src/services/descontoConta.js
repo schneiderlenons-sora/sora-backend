@@ -12,7 +12,7 @@ const { criarPendente } = require('./pendentes');
 
 const fmt = (v) => `R$ ${Number(v || 0).toFixed(2)}`;
 
-async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observacao }) {
+async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observacao, intro }) {
   if (!user?.id || !grupoId || !valor) return;
 
   const { data: contas } = await supabase.from('wallets')
@@ -29,10 +29,10 @@ async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observ
     expiresInMin: 15,
   });
 
+  const cabecalho = intro || '💳 Quer *descontar de uma conta*?';
   const lista = opcoes.map((o, i) => `${i + 1}. ${o.nome} — ${fmt(o.saldo)}`).join('\n');
   await enviarTexto(phone,
-    `💳 Quer *descontar de uma conta*?\n\n${lista}\n\n` +
-    `Responda o *número* da conta, ou *não* pra deixar só o registro.`);
+    `${cabecalho}\n\n${lista}\n\nResponda o *número* da conta, ou *não*.`);
 }
 
 module.exports = { oferecerDesconto };
