@@ -1,5 +1,6 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
+const { oferecerDesconto } = require('../services/descontoConta');
 
 const fmt = v => `R$ ${(parseFloat(v) || 0).toFixed(2).replace('.', ',')}`;
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
@@ -179,6 +180,8 @@ module.exports = async function handleDividas(data, ctx) {
       if (saldo != null) partes.push(`💰 Saldo devedor: ${fmt(saldo)}`);
       await enviarTexto(phone, partes.join('\n'));
     }
+    // Pergunta se quer descontar de uma conta (cria a transação de saída)
+    await oferecerDesconto({ user, phone, grupoId, valor: v, categoria: 'Dívidas', observacao: `Pagamento: ${divida.titulo}` });
     return;
   }
 
@@ -219,6 +222,7 @@ module.exports = async function handleDividas(data, ctx) {
       `✅ ${divida.titulo} — ${fmt(valorQuitacao)}\n` +
       `Você está livre dessa! 🙌`
     );
+    await oferecerDesconto({ user, phone, grupoId, valor: valorQuitacao, categoria: 'Dívidas', observacao: `Quitação: ${divida.titulo}` });
     return;
   }
 

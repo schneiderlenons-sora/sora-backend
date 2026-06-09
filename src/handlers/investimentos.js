@@ -1,6 +1,7 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
 const { gerarDicas }  = require('../services/ia');
+const { oferecerDesconto } = require('../services/descontoConta');
 
 // Verifica plano Black
 async function checarBlack(phone) {
@@ -11,7 +12,7 @@ async function checarBlack(phone) {
 const BLOQUEADO = '🚫 Esta funcionalidade é exclusiva do plano *Black*.\nAcesse o painel para fazer upgrade.';
 
 module.exports = async function handleInvestimentos(data, ctx) {
-  const { phone, grupoId } = ctx;
+  const { phone, grupoId, user } = ctx;
 
   // Todas as ações deste handler exigem plano Black
   if (!(await checarBlack(phone))) {
@@ -116,6 +117,7 @@ module.exports = async function handleInvestimentos(data, ctx) {
     }
 
     await enviarTexto(phone, `💰 Aporte de R$ ${valor.toFixed(2)} registrado com sucesso!`);
+    await oferecerDesconto({ user, phone, grupoId, valor, categoria: 'Investimentos', observacao: `Aporte: ${data.descricao || 'investimento'}` });
     return;
   }
 

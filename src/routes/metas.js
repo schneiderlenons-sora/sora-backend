@@ -3,6 +3,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
+const { debitarConta } = require('../services/contaDebito');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -102,7 +103,7 @@ router.post('/:id/aporte', auth, exigirPermissao('admin', 'escrita'), async (req
     if (!v || v <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
 
     const { data: meta } = await supabase.from('metas')
-      .select('valor_atual, valor_objetivo').eq('id', req.params.id).maybeSingle();
+      .select('titulo, valor_atual, valor_objetivo').eq('id', req.params.id).maybeSingle();
     if (!meta) return res.status(404).json({ erro: 'Meta não encontrada.' });
 
     const novoValor = parseFloat(meta.valor_atual || 0) + v;
@@ -120,7 +121,19 @@ router.post('/:id/aporte', auth, exigirPermissao('admin', 'escrita'), async (req
     const { data: atualizada } = await supabase.from('metas')
       .update({ valor_atual: novoValor, status: novoStatus, updated_at: new Date().toISOString() })
       .eq('id', req.params.id).select().single();
-    res.json(atualizada);
+
+    // Opcional: desconta de uma conta e registra a saída nas transações.
+    let debito = null;
+    if (req.body.wallet_id) {
+      try {
+        debito = await debitarConta({
+          grupoId: req.grupoId, walletId: req.body.wallet_id, valor: v,
+          categoria: 'Metas', observacao: `Aporte: ${meta.titulo || 'meta'}`,
+          userId: req.userId, data,
+        });
+      } catch (e) { debito = { erro: e.message }; }
+    }
+    res.json({ ...atualizada, debito });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

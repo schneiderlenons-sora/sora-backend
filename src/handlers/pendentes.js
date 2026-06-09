@@ -170,6 +170,43 @@ async function resolverPendente(pendente, mensagem, ctx) {
     return true;
   }
 
+  // ─── DESCONTAR_DESTINO: descontar aporte/pagamento de uma conta ─
+  if (pendente.tipo_pergunta === 'descontar_destino') {
+    const opcoes = pendente.contexto?.opcoes || [];
+    const { valor, categoria, observacao } = pendente.contexto || {};
+
+    // Negativa → deixa só o registro
+    if (/^(n|n[ãa]o|nao quero|deixa|depois|tanto faz|nem)$/i.test(lower)) {
+      await removerPendente(pendente.id);
+      await enviarTexto(phone, '👍 Beleza, deixei só o registro — não descontei de nenhuma conta.');
+      return true;
+    }
+
+    // Escolha por número ou nome
+    let escolhida = null;
+    const num = parseInt(msg, 10);
+    if (!isNaN(num) && num >= 1 && num <= opcoes.length) escolhida = opcoes[num - 1];
+    else escolhida = opcoes.find((o) =>
+      o.nome.toLowerCase() === lower ||
+      o.nome.toLowerCase().includes(lower) ||
+      lower.includes(o.nome.toLowerCase()));
+    if (!escolhida) return false; // não bate com conta — deixa seguir
+
+    try {
+      const { debitarConta } = require('../services/contaDebito');
+      await debitarConta({ grupoId, walletId: escolhida.id, valor, categoria, observacao, userId: user?.id });
+    } catch (e) {
+      await removerPendente(pendente.id);
+      await enviarTexto(phone, `⚠️ Não consegui descontar de *${escolhida.nome}*: ${e.message}`);
+      return true;
+    }
+    await removerPendente(pendente.id);
+    await enviarTexto(phone,
+      `✅ Descontei *R$ ${Number(valor || 0).toFixed(2)}* de *${escolhida.nome}*.\n` +
+      `Já aparece nas suas transações 📊`);
+    return true;
+  }
+
   // ─── TIPO 2: MARCAR_PRINCIPAL ──────────────────────────────────
   if (pendente.tipo_pergunta === 'marcar_principal') {
     const positivo = /^(s(im)?|y|yes|claro|marca|pode|positivo|aham|uhum|ok)$/i.test(lower);

@@ -3,6 +3,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
+const { debitarConta } = require('../services/contaDebito');
 const norm     = p => p?.replace(/\D/g, '');
 
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
@@ -56,6 +57,29 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       .select().single();
     if (error) throw error;
     res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// POST /api/wallets/fatura/pagar — paga a fatura do cartão debitando de uma conta
+// (cria a transação de saída na conta escolhida e desconta o saldo).
+router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { cartao_id, wallet_id, valor } = req.body;
+    const grupoId = req.grupoId;
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+    if (!wallet_id) return res.status(400).json({ erro: 'Escolha a conta de onde sai o pagamento.' });
+    const v = parseFloat(valor);
+    if (!v || v <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
+
+    const { data: cartao } = await supabase.from('wallets')
+      .select('nome').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
+
+    const debito = await debitarConta({
+      grupoId, walletId: wallet_id, valor: v,
+      categoria: 'Fatura cartão', observacao: `Fatura ${cartao?.nome || 'cartão'}`,
+      userId: req.userId,
+    });
+    res.json({ ok: true, debito });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

@@ -8,6 +8,7 @@ const {
   buscarCotacaoAcao, buscarDividendos, buscarTickers,
   buscarCotacaoCripto, listarCriptos,
 } = require('../services/cotacoes');
+const { debitarConta } = require('../services/contaDebito');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -146,10 +147,12 @@ router.post('/aportes', auth, exigirPlano('black'), exigirPermissao('admin', 'es
     }).select().single();
 
     // Atualiza o investimento vinculado
+    let nomeInv = null;
     if (investimento_id) {
       const { data: inv } = await supabase.from('investimentos')
-        .select('valor_aportado, valor_atual').eq('id', investimento_id).single();
+        .select('nome, valor_aportado, valor_atual').eq('id', investimento_id).single();
       if (inv) {
+        nomeInv = inv.nome;
         await supabase.from('investimentos').update({
           valor_aportado: inv.valor_aportado + parseFloat(valor),
           valor_atual:    inv.valor_atual    + parseFloat(valor)
@@ -157,7 +160,19 @@ router.post('/aportes', auth, exigirPlano('black'), exigirPermissao('admin', 'es
       }
     }
 
-    res.json(aporte);
+    // Opcional: desconta de uma conta e registra a saída nas transações.
+    let debito = null;
+    if (req.body.wallet_id) {
+      try {
+        debito = await debitarConta({
+          grupoId, walletId: req.body.wallet_id, valor: parseFloat(valor),
+          categoria: 'Investimentos', observacao: `Aporte: ${nomeInv || descricao || 'investimento'}`,
+          userId: req.userId,
+        });
+      } catch (e) { debito = { erro: e.message }; }
+    }
+
+    res.json({ ...aporte, debito });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

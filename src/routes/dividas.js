@@ -3,6 +3,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
+const { debitarConta } = require('../services/contaDebito');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -174,7 +175,19 @@ router.post('/:id/pagar', auth, exigirPermissao('admin', 'escrita'), async (req,
       updated_at:     new Date().toISOString(),
     }).eq('id', req.params.id).select().single();
 
-    res.json({ divida: atualizada, quitada: novoStatus === 'quitada' });
+    // Opcional: desconta de uma conta e registra a saída nas transações.
+    let debito = null;
+    if (req.body.wallet_id) {
+      try {
+        debito = await debitarConta({
+          grupoId: req.grupoId, walletId: req.body.wallet_id, valor: v,
+          categoria: 'Dívidas', observacao: `Pagamento: ${divida.titulo}`,
+          userId: req.userId, data: data_pagamento,
+        });
+      } catch (e) { debito = { erro: e.message }; }
+    }
+
+    res.json({ divida: atualizada, quitada: novoStatus === 'quitada', debito });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -209,7 +222,19 @@ router.post('/:id/quitar', auth, exigirPermissao('admin', 'escrita'), async (req
       updated_at:     new Date().toISOString(),
     }).eq('id', req.params.id).select().single();
 
-    res.json({ divida: atualizada, quitada: true });
+    // Opcional: desconta de uma conta e registra a saída nas transações.
+    let debito = null;
+    if (req.body.wallet_id) {
+      try {
+        debito = await debitarConta({
+          grupoId: req.grupoId, walletId: req.body.wallet_id, valor: valorQuitacao,
+          categoria: 'Dívidas', observacao: `Quitação: ${divida.titulo}`,
+          userId: req.userId, data: data_pagamento,
+        });
+      } catch (e) { debito = { erro: e.message }; }
+    }
+
+    res.json({ divida: atualizada, quitada: true, debito });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
