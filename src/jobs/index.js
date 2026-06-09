@@ -435,6 +435,51 @@ cron.schedule('*/15 * * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1K — A cada 15 min: BRIEFING MATINAL da agenda (opt-in)
+// No horário escolhido, manda uma mensagem com TUDO de hoje, agregado de
+// todos os módulos (compromissos, consultas, contas/faturas, manutenções).
+// Só envia se houver algo hoje. Dedup persistido via agenda_briefing_ultimo.
+// ─────────────────────────────────────────────────────────────────
+const { montarFeed } = require('../services/agendaFeed');
+const EMOJI_AGENDA = { compromisso: '📌', consulta: '🩺', recorrencia: '💰', divida: '💳', fatura: '💳', fechamento: '🧾', manutencao: '🔧' };
+
+cron.schedule('*/15 * * * *', async () => {
+  const sp = agoraSP();
+
+  const { data: usuarios } = await supabase.from('users')
+    .select('id, phone, grupo_ativo, agenda_briefing_horario, agenda_briefing_ultimo')
+    .eq('agenda_briefing_ativo', true)
+    .not('agenda_briefing_horario', 'is', null);
+
+  for (const u of usuarios || []) {
+    if (!u.phone || !u.grupo_ativo) continue;
+    if (u.agenda_briefing_ultimo === sp.dataStr) continue; // já enviou hoje
+
+    const [hh, mm] = String(u.agenda_briefing_horario).split(':').map(Number);
+    if (isNaN(hh)) continue;
+    if (sp.minutos < hh * 60 + mm) continue; // ainda não chegou o horário
+
+    // Marca ANTES de enviar — evita duplicar em restart
+    await supabase.from('users').update({ agenda_briefing_ultimo: sp.dataStr }).eq('id', u.id);
+
+    const eventos = await montarFeed(u.grupo_ativo, sp.dataStr, sp.dataStr);
+    if (!eventos.length) continue; // nada hoje — não enche o saco
+
+    eventos.sort((a, b) => (a.hora || '99:99').localeCompare(b.hora || '99:99'));
+    const linhas = eventos.map(e => {
+      const h = e.hora ? `*${e.hora}*` : '•';
+      const val = e.valor != null ? ` (R$ ${Number(e.valor).toFixed(2)})` : '';
+      return `${EMOJI_AGENDA[e.source] || '•'} ${h} ${e.titulo}${val}`;
+    });
+    const dataFmt = new Date(sp.dataStr + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+    await enviarTexto(u.phone,
+      `☀️ *Bom dia!*\nSua agenda de hoje (${dataFmt}):\n\n${linhas.join('\n')}\n\n` +
+      `Tenha um ótimo dia! 💜`);
+    console.log(`☀️ Briefing → ${u.phone} (${eventos.length} itens)`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 1G — Todo dia às 09:00: lembretes de CONSULTAS (24h antes)
 // E retornos médicos próximos (7 dias)
 // ─────────────────────────────────────────────────────────────────

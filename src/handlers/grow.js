@@ -36,6 +36,65 @@ async function calcularStreak(habitoId) {
   return streak;
 }
 
+// ─── Parser PT de data/hora pra criar compromisso por linguagem natural ──
+const isoD = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); };
+
+function proximoDiaSemana(alvo) { // alvo: 0=dom .. 6=sab
+  const hoje = new Date(); hoje.setHours(12, 0, 0, 0);
+  const delta = (alvo - hoje.getDay() + 7) % 7; // hoje se cair hoje
+  const d = new Date(hoje); d.setDate(d.getDate() + delta); return d;
+}
+
+function parseDataPt(t) {
+  const txt = ' ' + t.toLowerCase() + ' ';
+  let m;
+  if (/\bdepois de amanh[ãa]\b/.test(txt)) { const d = new Date(); d.setDate(d.getDate() + 2); return { iso: isoD(d), matched: (txt.match(/depois de amanh[ãa]/) || [])[0] }; }
+  if (/\bamanh[ãa]\b/.test(txt))           { const d = new Date(); d.setDate(d.getDate() + 1); return { iso: isoD(d), matched: (txt.match(/amanh[ãa]/) || [])[0] }; }
+  if (/\bhoje\b/.test(txt))                { return { iso: isoD(new Date()), matched: 'hoje' }; }
+  // dd/mm(/yyyy)
+  if (m = txt.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/)) {
+    const dd = +m[1], mo = +m[2];
+    const yy = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : new Date().getFullYear();
+    return { iso: isoD(new Date(yy, mo - 1, dd, 12)), matched: m[0] };
+  }
+  // "dia 20"
+  if (m = txt.match(/\bdia\s+(\d{1,2})\b/)) {
+    const dd = +m[1], now = new Date();
+    let d = new Date(now.getFullYear(), now.getMonth(), dd, 12);
+    if (d < new Date(now.getFullYear(), now.getMonth(), now.getDate())) d = new Date(now.getFullYear(), now.getMonth() + 1, dd, 12);
+    return { iso: isoD(d), matched: m[0] };
+  }
+  // dias da semana (0=dom..6=sab)
+  const dias = ['domingo', 'segunda', 'ter[çc]a', 'quarta', 'quinta', 'sexta', 's[áa]bado'];
+  const abbr = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+  for (let i = 0; i < 7; i++) {
+    const re = new RegExp(`\\b(${dias[i]}(?:-feira)?|${abbr[i]})\\b`);
+    const mm = txt.match(re);
+    if (mm) {
+      let d = proximoDiaSemana(i);
+      if (/\b(que vem|que vem|pr[óo]xim[ao])\b/.test(txt) && isoD(d) === isoD(new Date())) d.setDate(d.getDate() + 7);
+      return { iso: isoD(d), matched: mm[0] };
+    }
+  }
+  return null;
+}
+
+function parseHoraPt(t) {
+  const txt = t.toLowerCase();
+  let m, hh = null, mm = 0, matched = null;
+  if (/\bmeio[\s-]?dia\b/.test(txt))   return { hora: '12:00', matched: (txt.match(/meio[\s-]?dia/) || [])[0] };
+  if (/\bmeia[\s-]?noite\b/.test(txt)) return { hora: '00:00', matched: (txt.match(/meia[\s-]?noite/) || [])[0] };
+  if (m = txt.match(/\b(\d{1,2})[:h](\d{2})\b/))      { hh = +m[1]; mm = +m[2]; matched = m[0]; }
+  else if (m = txt.match(/\b(\d{1,2})\s*h\b/))        { hh = +m[1]; matched = m[0]; }
+  else if (m = txt.match(/\b(\d{1,2})\s*horas?\b/))   { hh = +m[1]; matched = m[0]; }
+  else if (m = txt.match(/\b[àa]s\s+(\d{1,2})\b/))    { hh = +m[1]; matched = m[0]; }
+  if (hh == null) return null;
+  if (/\bda\s+(tarde|noite)\b/.test(txt) && hh < 12) hh += 12;
+  if (/\bda\s+manh[ãa]\b/.test(txt) && hh === 12) hh = 0;
+  if (hh > 23 || mm > 59) return null;
+  return { hora: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, matched };
+}
+
 module.exports = async function handleGrow(mensagem, ctx) {
   const { phone, grupoId, user } = ctx;
   const msg = (mensagem || '').toLowerCase().trim();
@@ -413,6 +472,41 @@ module.exports = async function handleGrow(mensagem, ctx) {
     });
     const titulo = soHoje ? '📅 *Sua agenda de hoje*' : '📅 *Próximos compromissos*';
     await enviarTexto(phone, `${titulo}\n\n${blocos.join('\n\n')}\n\nGerenciar: 🌐 forsora.com/grow/agenda`);
+    return;
+  }
+
+  // ── AGENDA: criar compromisso por linguagem natural ─────────────────
+  // "marca dentista terça 15h" · "agendar reunião amanhã 9h" · "marcar aniversário dia 20"
+  if ((m = msg.match(/^(?:marca[r]?|marque|agenda[r]?|agende|novo\s+compromisso|criar\s+compromisso|adiciona[r]?\s+compromisso)\s+(.+)$/i))) {
+    const resto = m[1].trim();
+    const dt = parseDataPt(resto);
+    const hr = parseHoraPt(dt?.matched ? resto.replace(dt.matched, ' ') : resto);
+    if (!dt && !hr) {
+      await enviarTexto(phone, '📅 Pra marcar, me diz *o quê* e *quando*.\n\nEx.: *marca dentista terça 15h* ou *agendar reunião amanhã 9h*');
+      return;
+    }
+    const dataISO = dt ? dt.iso : isoD(new Date());
+    let titulo = resto;
+    if (dt?.matched) titulo = titulo.replace(dt.matched, ' ');
+    if (hr?.matched) titulo = titulo.replace(hr.matched, ' ');
+    titulo = titulo.replace(/\bda\s+(manh[ãa]|tarde|noite)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    titulo = titulo.replace(/^(de|do|da|no|na|para|pra|pro|[àa]s|o|a|um|uma)\s+/i, '').replace(/\s+(de|do|da|no|na|para|pra|pro|[àa]s)$/i, '').trim();
+    if (!titulo) titulo = 'Compromisso';
+    titulo = titulo.charAt(0).toUpperCase() + titulo.slice(1);
+    const hora = hr ? hr.hora : null;
+    const { error } = await supabase.from('compromissos').insert({
+      grupo_id: grupoId, titulo, data: dataISO, hora,
+      categoria: 'pessoal', cor: '#7c3aed',
+      lembrete_ativo: true, lembrete_antecedencia: hora ? 60 : 0,
+    });
+    if (error) {
+      await enviarTexto(phone, '😕 Não consegui salvar agora. Tenta pelo painel: forsora.com/grow/agenda');
+      return;
+    }
+    const dataFmt = new Date(dataISO + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+    await enviarTexto(phone,
+      `📅 *Marquei!*\n\n*${titulo}*\n🗓️ ${dataFmt}${hora ? ` às ${hora}` : ' (dia todo)'}\n` +
+      `🔔 ${hora ? 'Te aviso 1h antes' : 'Te aviso de manhã'}\n\nVer agenda: 🌐 forsora.com/grow/agenda`);
     return;
   }
 
