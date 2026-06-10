@@ -162,6 +162,12 @@ function interpretarRapido(message) {
   if ((m = msg.match(/transferir\s+(\d[\d.,]*)\s+do\s+(.+?)\s+(?:pro|para|pra)\s+(.+)/i)))
     return { acao: 'transferir', valor: parseValor(m[1]), origem: m[2].trim(), destino: m[3].trim() };
 
+  // --- REFEIÇÃO (nutrição/macros) → roteia pro Grow/Saúde ---
+  // "comi 2 ovos e pão", "almocei arroz feijão e frango", "jantei...".
+  // O cálculo (multi-alimentos, sem pontuação) é feito no handler via IA.
+  if (/^(?:comi|almocei|jantei|lanchei|caf[eé]\s+da\s+manh[ãa])\s+\S/i.test(msg))
+    return { acao: 'grow_refeicao' };
+
   // --- GASTOS ---
   // carteira_nome fica NULL quando o usuário não cita banco — assim o handler
   // roda a lógica inteligente (wallet padrão / conta única / perguntar qual).
