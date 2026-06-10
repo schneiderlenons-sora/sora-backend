@@ -11,13 +11,13 @@ const auth     = require('../middlewares/auth');
 const norm = p => p?.replace(/\D/g, '');
 
 // Verifica acesso ao Grow (Black auto / Premium-trial / Grow pago)
+// Estudos é Premium+ (não faz parte do Grow base do Básico).
 async function temAcessoGrow(phone) {
   const { data: u } = await supabase.from('users')
-    .select('plano, plano_grow, grow_trial_fim').eq('phone', norm(phone)).maybeSingle();
+    .select('plano, plano_grow').eq('phone', norm(phone)).maybeSingle();
   if (!u) return false;
-  if (u.plano === 'black') return true;
-  if (['grow_basico','grow_premium'].includes(u.plano_grow)) return true;
-  if (u.plano_grow === 'trial' && u.grow_trial_fim && new Date(u.grow_trial_fim) > new Date()) return true;
+  if (['premium', 'black'].includes(u.plano)) return true;
+  if (u.plano_grow === 'grow_premium') return true; // legado
   return false;
 }
 

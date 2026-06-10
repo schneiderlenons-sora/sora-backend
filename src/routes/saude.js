@@ -18,11 +18,11 @@ async function getUser(phone) {
   return data;
 }
 
+// Saúde é Premium+ (não faz parte do Grow base do Básico).
 function temAcessoGrow(u) {
   if (!u) return false;
-  if (u.plano === 'black') return true;
-  if (['grow_basico','grow_premium'].includes(u.plano_grow)) return true;
-  if (u.plano_grow === 'trial' && u.grow_trial_fim && new Date(u.grow_trial_fim) > new Date()) return true;
+  if (['premium', 'black'].includes(u.plano)) return true;
+  if (u.plano_grow === 'grow_premium') return true; // legado
   return false;
 }
 

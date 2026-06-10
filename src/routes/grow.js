@@ -12,11 +12,21 @@ async function getUser(phone) {
   return data;
 }
 
+// Acesso BASE ao Grow — todos os planos pagos (hábitos, tarefas, bem-estar,
+// lista de compras, agenda).
 function temAcessoGrow(user) {
   if (!user) return false;
-  if (user.plano === 'black') return true;
-  if (['grow_basico','grow_premium'].includes(user.plano_grow)) return true;
+  if (['basico', 'premium', 'black'].includes(user.plano)) return true;
+  if (['grow_basico', 'grow_premium'].includes(user.plano_grow)) return true; // legado
   if (user.plano_grow === 'trial' && user.grow_trial_fim && new Date(user.grow_trial_fim) > new Date()) return true;
+  return false;
+}
+
+// Grow PREMIUM — Saúde, Estudos e Casa avançada (despensa/receitas/manutenções).
+function temGrowPremium(user) {
+  if (!user) return false;
+  if (['premium', 'black'].includes(user.plano)) return true;
+  if (user.plano_grow === 'grow_premium') return true; // legado
   return false;
 }
 
@@ -26,6 +36,17 @@ async function requireGrow(req, res, next) {
   const user = await getUser(phone);
   if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
   if (!temAcessoGrow(user)) return res.status(403).json({ erro: 'sem_acesso_grow', mensagem: 'Acesso ao Sora Grow indisponivel no seu plano.' });
+  req.userRow = user;
+  next();
+}
+
+// Pra rotas Premium+ do Grow (despensa, receitas, manutenções)
+async function requirePremiumGrow(req, res, next) {
+  const phone = req.params.phone || req.body.phone || req.query.phone;
+  if (!phone) return res.status(400).json({ erro: 'phone obrigatorio' });
+  const user = await getUser(phone);
+  if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
+  if (!temGrowPremium(user)) return res.status(403).json({ erro: 'sem_acesso_premium', mensagem: 'Disponivel no plano Premium.' });
   req.userRow = user;
   next();
 }
@@ -419,7 +440,7 @@ async function sincronizarDespensaLista(grupoId, item) {
   }
 }
 
-router.get('/despensa/:phone', auth, requireGrow, async (req, res) => {
+router.get('/despensa/:phone', auth, requirePremiumGrow, async (req, res) => {
   try {
     const { data } = await supabase.from('despensa_itens')
       .select('*').eq('grupo_id', req.userRow.grupo_ativo)
@@ -428,7 +449,7 @@ router.get('/despensa/:phone', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.post('/despensa', auth, requireGrow, async (req, res) => {
+router.post('/despensa', auth, requirePremiumGrow, async (req, res) => {
   try {
     const { nome, categoria, status, quantidade_ideal, unidade } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
@@ -444,7 +465,7 @@ router.post('/despensa', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.put('/despensa/:id', auth, requireGrow, async (req, res) => {
+router.put('/despensa/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
     const allowed = ['nome','categoria','status','quantidade_ideal','unidade'];
     const patch = { updated_at: new Date().toISOString() };
@@ -460,7 +481,7 @@ router.put('/despensa/:id', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.delete('/despensa/:id', auth, requireGrow, async (req, res) => {
+router.delete('/despensa/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
     await supabase.from('despensa_itens').delete()
       .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
@@ -469,7 +490,7 @@ router.delete('/despensa/:id', auth, requireGrow, async (req, res) => {
 });
 
 // ─── MANUTENÇÕES ─────────────────────────────────────────────────────
-router.get('/manutencoes/:phone', auth, requireGrow, async (req, res) => {
+router.get('/manutencoes/:phone', auth, requirePremiumGrow, async (req, res) => {
   try {
     const { data } = await supabase.from('manutencoes')
       .select('*').eq('grupo_id', req.userRow.grupo_ativo)
@@ -478,7 +499,7 @@ router.get('/manutencoes/:phone', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.post('/manutencoes', auth, requireGrow, async (req, res) => {
+router.post('/manutencoes', auth, requirePremiumGrow, async (req, res) => {
   try {
     const { nome, icone, frequencia_dias, ultima_data, observacao, lembrete_ativo } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
@@ -496,7 +517,7 @@ router.post('/manutencoes', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.put('/manutencoes/:id', auth, requireGrow, async (req, res) => {
+router.put('/manutencoes/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
     const allowed = ['nome','icone','frequencia_dias','ultima_data','observacao','lembrete_ativo'];
     const patch = {};
@@ -512,7 +533,7 @@ router.put('/manutencoes/:id', auth, requireGrow, async (req, res) => {
 });
 
 // Marca como feita hoje → recalcula a próxima e zera o dedup do lembrete
-router.post('/manutencoes/:id/feito', auth, requireGrow, async (req, res) => {
+router.post('/manutencoes/:id/feito', auth, requirePremiumGrow, async (req, res) => {
   try {
     const hoje = new Date().toISOString().slice(0, 10);
     const { data, error } = await supabase.from('manutencoes')
@@ -524,7 +545,7 @@ router.post('/manutencoes/:id/feito', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.delete('/manutencoes/:id', auth, requireGrow, async (req, res) => {
+router.delete('/manutencoes/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
     await supabase.from('manutencoes').delete()
       .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
@@ -542,7 +563,7 @@ async function ingredientesDe(receitaIds) {
   return data || [];
 }
 
-router.get('/receitas/:phone', auth, requireGrow, async (req, res) => {
+router.get('/receitas/:phone', auth, requirePremiumGrow, async (req, res) => {
   try {
     const { data: receitas } = await supabase.from('receitas')
       .select('*').eq('grupo_id', req.userRow.grupo_ativo)
@@ -555,7 +576,7 @@ router.get('/receitas/:phone', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.post('/receitas', auth, requireGrow, async (req, res) => {
+router.post('/receitas', auth, requirePremiumGrow, async (req, res) => {
   try {
     const { nome, icone, porcoes, tempo_min, modo_preparo, ingredientes } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
@@ -577,7 +598,7 @@ router.post('/receitas', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.put('/receitas/:id', auth, requireGrow, async (req, res) => {
+router.put('/receitas/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
     const allowed = ['nome', 'icone', 'porcoes', 'tempo_min', 'modo_preparo'];
     const patch = { updated_at: new Date().toISOString() };
@@ -603,7 +624,7 @@ router.put('/receitas/:id', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.delete('/receitas/:id', auth, requireGrow, async (req, res) => {
+router.delete('/receitas/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
     await supabase.from('receitas').delete()
       .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
@@ -612,7 +633,7 @@ router.delete('/receitas/:id', auth, requireGrow, async (req, res) => {
 });
 
 // Cozinhar: o que falta (não está 'tem' na despensa) vai pra lista de compras
-router.post('/receitas/:id/cozinhar', auth, requireGrow, async (req, res) => {
+router.post('/receitas/:id/cozinhar', auth, requirePremiumGrow, async (req, res) => {
   try {
     const grupoId = req.userRow.grupo_ativo;
     const { data: receita } = await supabase.from('receitas')
