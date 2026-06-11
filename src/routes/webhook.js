@@ -221,10 +221,10 @@ router.post('/', async (req, res) => {
     // ── 3. Interpreta a mensagem ──────────────────────────────────
     if (!data) data = interpretarRapido(mensagem); // tenta regex primeiro (grátis)
 
-    // Fast-path da AGENDA (determinístico, sem IA): "marca X terça 15h" ou
-    // "tenho reunião amanhã às 19, me lembra?". Sem isso, o classificador da IA
-    // às vezes manda pra Finance/conversa e o lembrete não é criado.
-    if (!data && temAcessoGrow(user) && require('../handlers/grow').pareceCompromisso(mensagem)) {
+    // Fast-path da AGENDA (determinístico, sem IA): criar ("marca X terça 15h",
+    // "tenho reunião amanhã às 19, me lembra?") OU ajustar o lembrete do último
+    // ("me lembra 1 dia antes"). Sem isso, a IA às vezes manda pra Finance/conversa.
+    if (!data && temAcessoGrow(user) && require('../handlers/grow').pareceAgenda(mensagem)) {
       const ctx = { phone, grupoId: user.grupo_ativo, user, mensagem };
       await require('../handlers/grow')(mensagem, ctx);
       return;

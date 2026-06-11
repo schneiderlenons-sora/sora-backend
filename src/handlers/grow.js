@@ -140,6 +140,29 @@ function pareceCompromisso(mensagem) {
   return false;
 }
 
+// Mensagem que SÓ ajusta a antecedência do último compromisso ("me lembra 1 dia
+// antes", "6 horas antes", "me avise 30 min antes"). Tem antecedência, NÃO tem
+// data nova, e o que sobra é só "fluff" (me/pode/por favor/sora...).
+function pareceAjusteLembrete(mensagem) {
+  const msg = (mensagem || '').toLowerCase().trim();
+  const ant = parseAntecedenciaPt(msg);
+  if (!ant) return false;
+  const base = msg.replace(ant.matched, ' ');
+  if (parseDataPt(base)) return false; // tem data → é compromisso novo, não ajuste
+  const fluff = base
+    .replace(/^\s*sora[,!.\s]+/i, '')
+    .replace(/\b(me|pode|poderia|consegue|por\s*favor|pf|ent[aã]o|a[íi]|ai|na\s+verdade|melhor|prefiro|quero|queria|sim|ok|isso|t[áa]|pra|para|o|de)\b/gi, ' ')
+    .replace(/\b(me\s+)?(avis\w+|lembr\w+)\b/gi, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ').trim();
+  return fluff.length === 0;
+}
+
+// Detector combinado pro fast-path do webhook (criar OU ajustar lembrete).
+function pareceAgenda(mensagem) {
+  return pareceCompromisso(mensagem) || pareceAjusteLembrete(mensagem);
+}
+
 module.exports = async function handleGrow(mensagem, ctx) {
   const { phone, grupoId, user } = ctx;
   const msg = (mensagem || '').toLowerCase().trim();
@@ -534,6 +557,27 @@ module.exports = async function handleGrow(mensagem, ctx) {
     return;
   }
 
+  // ── AJUSTE do lembrete do último compromisso ────────────────────────
+  // "me lembra 1 dia antes" · "6 horas antes" · "me avise 30 min antes".
+  // Vem ANTES de criar — senão "6 horas antes" viraria evento às 06:00.
+  if (pareceAjusteLembrete(msg)) {
+    const ant = parseAntecedenciaPt(msg);
+    const hojeStr = isoD(new Date());
+    const { data: ultimo } = await supabase.from('compromissos')
+      .select('id, titulo, hora')
+      .eq('grupo_id', grupoId).gte('data', hojeStr)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (!ultimo) {
+      await enviarTexto(phone, '🤔 Não achei um compromisso futuro pra ajustar o lembrete. Marca um primeiro, ex.: *marca dentista terça 15h*.');
+      return;
+    }
+    await supabase.from('compromissos')
+      .update({ lembrete_antecedencia: ant.minutos, lembrete_ativo: true, lembrete_enviado: false })
+      .eq('id', ultimo.id);
+    await enviarTexto(phone, `🔔 Feito! Pro *${ultimo.titulo}*, ${fmtAntecedencia(ant.minutos, !!ultimo.hora).toLowerCase()}.`);
+    return;
+  }
+
   // ── AGENDA: criar compromisso por linguagem natural ─────────────────
   // "marca dentista terça 15h" · "agendar reunião amanhã 9h" · "marcar aniversário dia 20"
   // Aceita 2 formas:
@@ -588,7 +632,9 @@ module.exports = async function handleGrow(mensagem, ctx) {
     const dataFmt = new Date(dataISO + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
     await enviarTexto(phone,
       `📅 *Marquei!*\n\n*${titulo}*\n🗓️ ${dataFmt}${hora ? ` às ${hora}` : ' (dia todo)'}\n` +
-      `🔔 ${fmtAntecedencia(ant ? ant.minutos : null, !!hora)}\n\nVer agenda: 🌐 forsora.com/grow/agenda`);
+      `🔔 ${fmtAntecedencia(ant ? ant.minutos : null, !!hora)}\n\n` +
+      `_Quer ser avisado em outro momento? É só me dizer aqui, ex.: *me lembra 1 dia antes* ou *2 horas antes*._\n\n` +
+      `Ver agenda: 🌐 forsora.com/grow/agenda`);
     return;
   }
 
@@ -643,5 +689,6 @@ module.exports = async function handleGrow(mensagem, ctx) {
   );
 };
 
-// Detector exposto pro webhook usar como fast-path (sem IA).
+// Detectores expostos pro webhook usar como fast-path (sem IA).
 module.exports.pareceCompromisso = pareceCompromisso;
+module.exports.pareceAgenda = pareceAgenda; // criar OU ajustar lembrete
