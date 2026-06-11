@@ -30,6 +30,7 @@ app.use('/webhook',          require('./routes/webhook'));
 app.use('/webhook/negocios', require('./routes/webhook-negocios'));
 app.use('/api/negocios',     require('./routes/negocios'));
 app.use('/api/transacoes',   require('./routes/transacoes'));
+app.use('/api/dashboard',    require('./routes/dashboard'));
 app.use('/api/wallets',      require('./routes/wallets'));
 app.use('/api/grupos',       require('./routes/grupos'));
 app.use('/api/categorias',   require('./routes/categorias'));
