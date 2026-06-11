@@ -121,6 +121,15 @@ function fmtAntecedencia(minutos, temHora) {
   return `Te aviso ${minutos} min antes`;
 }
 
+// Detecta intenção de marcar compromisso — usado como fast-path no webhook
+// (determinístico, sem depender do classificador de IA). Mesmo gatilho do handler.
+function pareceCompromisso(mensagem) {
+  const msg = (mensagem || '').toLowerCase().trim();
+  if (/^(?:marca[r]?|marque|agenda[r]?|agende|novo\s+compromisso|criar\s+compromisso|adiciona[r]?\s+compromisso)\s+/.test(msg)) return true;
+  if (/\b(me\s+)?lembr\w+\b/.test(msg) && (parseDataPt(msg) || parseHoraPt(msg))) return true;
+  return false;
+}
+
 module.exports = async function handleGrow(mensagem, ctx) {
   const { phone, grupoId, user } = ctx;
   const msg = (mensagem || '').toLowerCase().trim();
@@ -609,3 +618,6 @@ module.exports = async function handleGrow(mensagem, ctx) {
     `🌐 Painel completo: https://www.forsora.com/grow/dashboard`
   );
 };
+
+// Detector exposto pro webhook usar como fast-path (sem IA).
+module.exports.pareceCompromisso = pareceCompromisso;
