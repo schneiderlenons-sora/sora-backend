@@ -48,8 +48,8 @@ function proximoDiaSemana(alvo) { // alvo: 0=dom .. 6=sab
 function parseDataPt(t) {
   const txt = ' ' + t.toLowerCase() + ' ';
   let m;
-  if (/\bdepois de amanh[ãa]\b/.test(txt)) { const d = new Date(); d.setDate(d.getDate() + 2); return { iso: isoD(d), matched: (txt.match(/depois de amanh[ãa]/) || [])[0] }; }
-  if (/\bamanh[ãa]\b/.test(txt))           { const d = new Date(); d.setDate(d.getDate() + 1); return { iso: isoD(d), matched: (txt.match(/amanh[ãa]/) || [])[0] }; }
+  if (/\bdepois de amanh[ãa](?=\W|$)/.test(txt)) { const d = new Date(); d.setDate(d.getDate() + 2); return { iso: isoD(d), matched: (txt.match(/depois de amanh[ãa]/) || [])[0] }; }
+  if (/\bamanh[ãa](?=\W|$)/.test(txt))           { const d = new Date(); d.setDate(d.getDate() + 1); return { iso: isoD(d), matched: (txt.match(/amanh[ãa]/) || [])[0] }; }
   if (/\bhoje\b/.test(txt))                { return { iso: isoD(new Date()), matched: 'hoje' }; }
   // dd/mm(/yyyy)
   if (m = txt.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/)) {
@@ -87,10 +87,10 @@ function parseHoraPt(t) {
   if (m = txt.match(/\b(\d{1,2})[:h](\d{2})\b/))      { hh = +m[1]; mm = +m[2]; matched = m[0]; }
   else if (m = txt.match(/\b(\d{1,2})\s*h\b/))        { hh = +m[1]; matched = m[0]; }
   else if (m = txt.match(/\b(\d{1,2})\s*horas?\b/))   { hh = +m[1]; matched = m[0]; }
-  else if (m = txt.match(/\b[àa]s\s+(\d{1,2})\b/))    { hh = +m[1]; matched = m[0]; }
+  else if (m = txt.match(/(?:^|\s)[àa]s\s+(\d{1,2})\b/)) { hh = +m[1]; matched = m[0].trim(); }
   if (hh == null) return null;
   if (/\bda\s+(tarde|noite)\b/.test(txt) && hh < 12) hh += 12;
-  if (/\bda\s+manh[ãa]\b/.test(txt) && hh === 12) hh = 0;
+  if (/\bda\s+manh[ãa](?=\W|$)/.test(txt) && hh === 12) hh = 0;
   if (hh > 23 || mm > 59) return null;
   return { hora: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, matched };
 }
@@ -503,8 +503,24 @@ module.exports = async function handleGrow(mensagem, ctx) {
 
   // ── AGENDA: criar compromisso por linguagem natural ─────────────────
   // "marca dentista terça 15h" · "agendar reunião amanhã 9h" · "marcar aniversário dia 20"
+  // Aceita 2 formas:
+  //   1. Direto: "marca dentista terça 15h" · "agendar reunião amanhã 9h"
+  //   2. Natural: "tenho uma reunião amanhã às 19, me lembra?" — pedido de
+  //      lembrete (lembr…) JUNTO de uma data/hora. Local-first: sem IA.
+  let restoAg = null;
   if ((m = msg.match(/^(?:marca[r]?|marque|agenda[r]?|agende|novo\s+compromisso|criar\s+compromisso|adiciona[r]?\s+compromisso)\s+(.+)$/i))) {
-    const resto = m[1].trim();
+    restoAg = m[1].trim();
+  } else if (/\b(me\s+)?lembr\w+\b/.test(msg) && (parseDataPt(msg) || parseHoraPt(msg))) {
+    restoAg = msg
+      .replace(/^\s*sora[,!.\s]+/i, '')                              // "Sora, ..."
+      .replace(/\b(que\s+eu\s+)?tenho\b|\btem\b|\bvou\s+ter\b/gi, ' ') // "tenho/tem"
+      .replace(/\b(uma|um)\b/gi, ' ')
+      .replace(/\bque\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  if (restoAg) {
+    const resto = restoAg;
     // Antecedência do lembrete sai do texto ANTES da hora — senão "avisa 2h
     // antes" seria confundido com o horário do evento.
     const ant = parseAntecedenciaPt(resto);
@@ -520,7 +536,8 @@ module.exports = async function handleGrow(mensagem, ctx) {
     if (dt?.matched) titulo = titulo.replace(dt.matched, ' ');
     if (hr?.matched) titulo = titulo.replace(hr.matched, ' ');
     titulo = titulo.replace(/\bda\s+(manh[ãa]|tarde|noite)\b/gi, ' ');
-    titulo = titulo.replace(/\b(me\s+)?(avis\w+|lembr\w+)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    titulo = titulo.replace(/\b(me\s+)?(avis\w+|lembr\w+)\b/gi, ' ');
+    titulo = titulo.replace(/[,;.!?]+/g, ' ').replace(/\s+/g, ' ').trim();
     titulo = titulo.replace(/^(de|do|da|no|na|para|pra|pro|[àa]s|o|a|um|uma|e)\s+/i, '').replace(/\s+(de|do|da|no|na|para|pra|pro|e|[àa]s)$/i, '').trim();
     if (!titulo) titulo = 'Compromisso';
     titulo = titulo.charAt(0).toUpperCase() + titulo.slice(1);
