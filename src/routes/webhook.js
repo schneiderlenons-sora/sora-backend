@@ -19,72 +19,39 @@ function temAcessoGrow(user) {
 }
 
 // Textos fixos
-const HELP_TEXT = `╔══════════════════════╗
-║  💬 *Sora — Ajuda*       ║
-╚══════════════════════╝
+const HELP_TEXT = `💬 *Sora — comandos principais*
 
-_Fala comigo em texto ou áudio — entendo linguagem natural_ 😉
+_Fala em texto ou áudio, em linguagem natural_ 😉
 
-━━━━━━━━━━━━━━━━
-💸 *LANÇAMENTOS*
+💸 *Lançar*
 • "gastei 50 no mercado"
-• "gastei 200 no nubank crédito"
 • "recebi 3500 de salário"
-• "gastei 80 em farmácia categoria saúde"
-↩️ "apagar último" — remove o último lançamento
+• "apagar último"
 
-━━━━━━━━━━━━━━━━
-🏦 *CONTAS & CARTÕES*
-• "nubank 1000" → cria conta corrente
-• "cartão nubank limite 5000 fecha 5 vence 15"
-• "saldo" → ver todos os saldos
-• "ajustar nubank 850" → corrigir saldo
+🏦 *Contas & cartões*
+• "saldo"  ·  "fatura nubank"
+• "pagar fatura nubank"
 • "transferir 200 do nubank pro inter"
 
-━━━━━━━━━━━━━━━━
-💳 *PARCELADO & FATURA*
-• "comprei fone em 3x de 150 no nubank crédito"
-• "antecipar parcela do fone"
-• "fatura nubank" → ver fatura do mês
+📊 *Resumo & metas*
+• "resumo"  ·  "analisar"
+• "limite 2000"  ·  "minhas dívidas"
+
+📅 *Agenda*
+• "marca dentista terça 15h"
+• "tenho reunião amanhã às 19, me lembra?"
+
+🌱 *Sora Grow*
+• "grow hábitos"  ·  "grow tarefas"
+• "comi 2 ovos e café" → registra a refeição
+• "grow" → menu completo do Grow
+
+🌐 "painel" → abrir o app
 
 ━━━━━━━━━━━━━━━━
-🔁 *CONTAS FIXAS & LEMBRETES*
-• "todo mês 1000 aluguel dia 5"
-• "lembrete pagar internet dia 10"
-• "cancelar recorrência aluguel"
-
-━━━━━━━━━━━━━━━━
-📊 *RELATÓRIOS & LIMITES*
-• "resumo" → relatório do mês
-• "analisar" → análise inteligente dos gastos
-• "limite 2000" → meta total de gastos
-• "limite mercado 500" → limite por categoria
-
-━━━━━━━━━━━━━━━━
-💰 *DÍVIDAS*
-• "criar divida empréstimo nubank 5000 em 10x dia 15"
-• "minhas dívidas"
-• "pagar divida nubank 250"
-• "quitar divida nubank"
-
-━━━━━━━━━━━━━━━━
-👥 *GRUPOS (compartilhado)*
-• "criar grupo família"
-• "convidar grupo 11999998888"
-• "meus grupos" / "trocar grupo"
-
-━━━━━━━━━━━━━━━━
-🌱 *SORA GROW*
-Rotinas, hábitos, saúde, estudos e mais.
-• "grow hábitos" → ver seus hábitos
-• "grow tarefas" → lista de tarefas
-• "grow humor 4" → registrar humor do dia
-• "grow" → menu do Sora Grow
-
-━━━━━━━━━━━━━━━━
-🌐 "painel" → abrir painel web
-❓ "ajuda" → este menu
-━━━━━━━━━━━━━━━━`;
+✨ *Quer ver TODOS os comandos?*
+Acesse a *Central da Sora* no app 👉
+www.forsora.com/central-sora`;
 
 const WELCOME_TEXT = (nome) => `👋 *Olá, ${nome}! Bem-vindo(a) à Sora!* 🌿
 
