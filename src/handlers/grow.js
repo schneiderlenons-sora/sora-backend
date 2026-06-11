@@ -95,6 +95,32 @@ function parseHoraPt(t) {
   return { hora: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, matched };
 }
 
+// ─── Antecedência do lembrete em MINUTOS, a partir da fala ──────────────
+// "me avisa 1 dia antes" · "avisa 30 min antes" · "lembra 2h antes" · "na hora".
+// Cap em 2 dias (2880) — é a janela que o cron JOB 1J consegue antecipar.
+function parseAntecedenciaPt(t) {
+  const txt = t.toLowerCase();
+  let m;
+  if (/\b(na\s+hora|no\s+hor[áa]rio|em\s+cima\s+da\s+hora)\b/.test(txt))
+    return { minutos: 0, matched: (txt.match(/(?:me\s+)?(?:avis\w+|lembr\w+)?\s*(?:na\s+hora|no\s+hor[áa]rio|em\s+cima\s+da\s+hora)/) || ['na hora'])[0] };
+  if (/\bmeia\s+hora\s+antes\b/.test(txt))
+    return { minutos: 30, matched: (txt.match(/(?:me\s+)?(?:avis\w+|lembr\w+)?\s*meia\s+hora\s+antes/) || ['meia hora antes'])[0] };
+  if (m = txt.match(/(?:(?:me\s+)?(?:avis\w+|lembr\w+)\s+)?(\d{1,2})\s*dias?\s+antes/)) return { minutos: Math.min(+m[1] * 1440, 2880), matched: m[0] };
+  if (/\bum\s+dia\s+antes\b/.test(txt)) return { minutos: 1440, matched: (txt.match(/(?:me\s+)?(?:avis\w+|lembr\w+)?\s*um\s+dia\s+antes/) || ['um dia antes'])[0] };
+  if (m = txt.match(/(?:(?:me\s+)?(?:avis\w+|lembr\w+)\s+)?(\d{1,2})\s*(?:h|horas?)\s+antes/)) return { minutos: Math.min(+m[1] * 60, 2880), matched: m[0] };
+  if (m = txt.match(/(?:(?:me\s+)?(?:avis\w+|lembr\w+)\s+)?(\d{1,3})\s*(?:min|minutos?|mins?)\s+antes/)) return { minutos: +m[1], matched: m[0] };
+  return null;
+}
+
+// Texto humano da antecedência pra confirmação. minutos=null → default do sistema.
+function fmtAntecedencia(minutos, temHora) {
+  if (minutos == null)     return temHora ? 'Te aviso 1h antes' : 'Te aviso de manhã';
+  if (minutos === 0)       return 'Te aviso na hora';
+  if (minutos % 1440 === 0) { const d = minutos / 1440; return `Te aviso ${d} dia${d > 1 ? 's' : ''} antes`; }
+  if (minutos % 60 === 0)   { const h = minutos / 60;  return `Te aviso ${h}h antes`; }
+  return `Te aviso ${minutos} min antes`;
+}
+
 module.exports = async function handleGrow(mensagem, ctx) {
   const { phone, grupoId, user } = ctx;
   const msg = (mensagem || '').toLowerCase().trim();
@@ -479,25 +505,31 @@ module.exports = async function handleGrow(mensagem, ctx) {
   // "marca dentista terça 15h" · "agendar reunião amanhã 9h" · "marcar aniversário dia 20"
   if ((m = msg.match(/^(?:marca[r]?|marque|agenda[r]?|agende|novo\s+compromisso|criar\s+compromisso|adiciona[r]?\s+compromisso)\s+(.+)$/i))) {
     const resto = m[1].trim();
-    const dt = parseDataPt(resto);
-    const hr = parseHoraPt(dt?.matched ? resto.replace(dt.matched, ' ') : resto);
+    // Antecedência do lembrete sai do texto ANTES da hora — senão "avisa 2h
+    // antes" seria confundido com o horário do evento.
+    const ant = parseAntecedenciaPt(resto);
+    const base = ant?.matched ? resto.replace(ant.matched, ' ') : resto;
+    const dt = parseDataPt(base);
+    const hr = parseHoraPt(dt?.matched ? base.replace(dt.matched, ' ') : base);
     if (!dt && !hr) {
-      await enviarTexto(phone, '📅 Pra marcar, me diz *o quê* e *quando*.\n\nEx.: *marca dentista terça 15h* ou *agendar reunião amanhã 9h*');
+      await enviarTexto(phone, '📅 Pra marcar, me diz *o quê* e *quando*.\n\nEx.: *marca dentista terça 15h* · *agendar reunião amanhã 9h me avisa 1 dia antes*');
       return;
     }
     const dataISO = dt ? dt.iso : isoD(new Date());
-    let titulo = resto;
+    let titulo = base;
     if (dt?.matched) titulo = titulo.replace(dt.matched, ' ');
     if (hr?.matched) titulo = titulo.replace(hr.matched, ' ');
-    titulo = titulo.replace(/\bda\s+(manh[ãa]|tarde|noite)\b/gi, ' ').replace(/\s+/g, ' ').trim();
-    titulo = titulo.replace(/^(de|do|da|no|na|para|pra|pro|[àa]s|o|a|um|uma)\s+/i, '').replace(/\s+(de|do|da|no|na|para|pra|pro|[àa]s)$/i, '').trim();
+    titulo = titulo.replace(/\bda\s+(manh[ãa]|tarde|noite)\b/gi, ' ');
+    titulo = titulo.replace(/\b(me\s+)?(avis\w+|lembr\w+)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    titulo = titulo.replace(/^(de|do|da|no|na|para|pra|pro|[àa]s|o|a|um|uma|e)\s+/i, '').replace(/\s+(de|do|da|no|na|para|pra|pro|e|[àa]s)$/i, '').trim();
     if (!titulo) titulo = 'Compromisso';
     titulo = titulo.charAt(0).toUpperCase() + titulo.slice(1);
     const hora = hr ? hr.hora : null;
+    const antecedencia = ant ? ant.minutos : (hora ? 60 : 0);
     const { error } = await supabase.from('compromissos').insert({
       grupo_id: grupoId, titulo, data: dataISO, hora,
       categoria: 'pessoal', cor: '#7c3aed',
-      lembrete_ativo: true, lembrete_antecedencia: hora ? 60 : 0,
+      lembrete_ativo: true, lembrete_antecedencia: antecedencia,
     });
     if (error) {
       await enviarTexto(phone, '😕 Não consegui salvar agora. Tenta pelo painel: forsora.com/grow/agenda');
@@ -506,7 +538,7 @@ module.exports = async function handleGrow(mensagem, ctx) {
     const dataFmt = new Date(dataISO + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
     await enviarTexto(phone,
       `📅 *Marquei!*\n\n*${titulo}*\n🗓️ ${dataFmt}${hora ? ` às ${hora}` : ' (dia todo)'}\n` +
-      `🔔 ${hora ? 'Te aviso 1h antes' : 'Te aviso de manhã'}\n\nVer agenda: 🌐 forsora.com/grow/agenda`);
+      `🔔 ${fmtAntecedencia(ant ? ant.minutos : null, !!hora)}\n\nVer agenda: 🌐 forsora.com/grow/agenda`);
     return;
   }
 
