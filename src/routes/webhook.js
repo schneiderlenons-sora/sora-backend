@@ -9,11 +9,13 @@ const { interpretarRapido }       = require('../handlers/interpretador');
 const { buscarPendente }          = require('../services/pendentes');
 const { resolverPendente }        = require('../handlers/pendentes');
 
-// Verifica acesso ao Grow
+// Verifica acesso ao Grow BASE (hábitos, tarefas, bem-estar, lista de compras,
+// agenda). Modelo novo: TODOS os planos têm o Grow base. Saúde/Estudos/Casa-
+// avançada são Premium+ e ficam gated dentro do handler (temGrowPremium).
 function temAcessoGrow(user) {
   if (!user) return false;
-  if (user.plano === 'black') return true;
-  if (['grow_basico','grow_premium'].includes(user.plano_grow)) return true;
+  if (['basico', 'premium', 'black'].includes(user.plano)) return true;
+  if (['grow_basico', 'grow_premium'].includes(user.plano_grow)) return true;
   if (user.plano_grow === 'trial' && user.grow_trial_fim && new Date(user.grow_trial_fim) > new Date()) return true;
   return false;
 }

@@ -121,6 +121,16 @@ function fmtAntecedencia(minutos, temHora) {
   return `Te aviso ${minutos} min antes`;
 }
 
+// Acesso às features Premium+ do Grow (Saúde, Estudos, Casa-avançada).
+// Base (hábitos/tarefas/bem-estar/compras/agenda) é de todos os planos.
+function temGrowPremium(user) {
+  if (!user) return false;
+  if (user.plano === 'premium' || user.plano === 'black') return true;
+  if (user.plano_grow === 'grow_premium') return true;
+  if (user.plano_grow === 'trial' && user.grow_trial_fim && new Date(user.grow_trial_fim) > new Date()) return true;
+  return false;
+}
+
 // Detecta intenção de marcar compromisso — usado como fast-path no webhook
 // (determinístico, sem depender do classificador de IA). Mesmo gatilho do handler.
 function pareceCompromisso(mensagem) {
@@ -133,15 +143,16 @@ function pareceCompromisso(mensagem) {
 module.exports = async function handleGrow(mensagem, ctx) {
   const { phone, grupoId, user } = ctx;
   const msg = (mensagem || '').toLowerCase().trim();
+  const growPremium = temGrowPremium(user);
 
-  // Tenta primeiro o handler de Saúde (medicamentos, peso, água, treino, consultas).
-  // Se reconheceu o comando, retorna. Senão, segue pra outros padrões do Grow.
-  const tratouSaude = await handleSaude(mensagem, ctx);
-  if (tratouSaude) return;
-
-  // Depois Estudos (estudei X 1h, minhas provas, tirei nota, streak)
-  const tratouEstudos = await handleEstudos(mensagem, ctx);
-  if (tratouEstudos) return;
+  // Saúde e Estudos são Premium+ — só roteia pra esses handlers se o plano dá
+  // acesso (medicamentos, peso, água, treino, consultas / estudei, provas, notas).
+  if (growPremium) {
+    const tratouSaude = await handleSaude(mensagem, ctx);
+    if (tratouSaude) return;
+    const tratouEstudos = await handleEstudos(mensagem, ctx);
+    if (tratouEstudos) return;
+  }
 
   // ── LISTAR (hábitos / tarefas / compras) ────────────────────────────
   if (/^(meus\s+habitos|habitos|meus\s+hábitos|hábitos)$/i.test(msg)) {
@@ -189,6 +200,19 @@ module.exports = async function handleGrow(mensagem, ctx) {
   }
 
   let m;
+
+  // ── Casa-avançada (Despensa / Receitas / Manutenções) = Premium+ ────
+  // Intercepta antes dos blocos abaixo e oferece upgrade pra quem é Básico.
+  if (!growPremium && (
+        /\b(manuten[çc]|despensa|receita|cozinh|ingrediente)/i.test(msg)
+        || /^(acabou|acabando|t[aá]\s+acabando|est[aá]\s+acabando)\b/i.test(msg)
+        || /o\s+que\s+.*(cozinhar|falta\s+em\s+casa)/i.test(msg))) {
+    await enviarTexto(phone,
+      '🔒 *Despensa, Receitas e Manutenções da casa* fazem parte do plano *Premium*.\n\n' +
+      'No seu plano você já tem hábitos, tarefas, bem-estar, lista de compras e agenda. ✨\n\n' +
+      'Ver planos: 🌐 forsora.com/planos');
+    return;
+  }
 
   // ── MANUTENÇÕES: listar ─────────────────────────────────────────────
   if (/^(minhas\s+manuten[çc][õo]es|manuten[çc][õo]es|manuten[çc][aã]o)$/i.test(msg)) {
