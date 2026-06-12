@@ -170,7 +170,10 @@ function pareceAgenda(mensagem) {
 
 module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   const { phone, grupoId, user } = ctx;
-  const msg = (mensagem || '').toLowerCase().trim();
+  // Tira o vocativo "Sora," do começo — senão quebra as âncoras ^ de vários
+  // padrões (ex.: "Sora, comi 2 ovos" não casava o registro de refeição).
+  mensagem = (mensagem || '').replace(/^\s*sora[,!.:\s]+/i, '');
+  const msg = mensagem.toLowerCase().trim();
   const growPremium = temGrowPremium(user);
 
   // Saúde e Estudos são Premium+ — só roteia pra esses handlers se o plano dá
