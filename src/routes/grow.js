@@ -765,4 +765,50 @@ router.post('/agenda/briefing', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// COLEÇÕES DO GROW — Viagens, Bucket list, Mídia (filmes/séries), Leituras.
+// CRUD genérico (base do Grow, todos os planos pagos). Migration 038.
+// ─────────────────────────────────────────────────────────────────────
+function crudColecao(tabela, campos, obrigatorio) {
+  router.get(`/${tabela}/:phone`, auth, requireGrow, async (req, res) => {
+    try {
+      const { data, error } = await supabase.from(tabela).select('*')
+        .eq('grupo_id', req.userRow.grupo_ativo).order('created_at', { ascending: false });
+      if (error) return res.status(503).json({ erro: `Coleção indisponível: rode a migration 038. (${error.message})` });
+      res.json(data || []);
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+  });
+  router.post(`/${tabela}`, auth, requireGrow, async (req, res) => {
+    try {
+      if (obrigatorio && !String(req.body[obrigatorio] ?? '').trim())
+        return res.status(400).json({ erro: `${obrigatorio} obrigatório` });
+      const ins = { grupo_id: req.userRow.grupo_ativo };
+      for (const k of campos) if (k in req.body) ins[k] = req.body[k];
+      const { data, error } = await supabase.from(tabela).insert(ins).select().single();
+      if (error) return res.status(500).json({ erro: error.message });
+      res.json(data);
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+  });
+  router.put(`/${tabela}/:id`, auth, requireGrow, async (req, res) => {
+    try {
+      const patch = {};
+      for (const k of campos) if (k in req.body) patch[k] = req.body[k];
+      const { data, error } = await supabase.from(tabela).update(patch).eq('id', req.params.id).select().single();
+      if (error) return res.status(500).json({ erro: error.message });
+      res.json(data);
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+  });
+  router.delete(`/${tabela}/:id`, auth, requireGrow, async (req, res) => {
+    try {
+      await supabase.from(tabela).delete().eq('id', req.params.id);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+  });
+}
+
+crudColecao('viagens',     ['destino','emoji','data_inicio','data_fim','orcamento','status','notas','checklist','cover_url'], 'destino');
+crudColecao('bucket_list', ['titulo','categoria','emoji','status','notas'], 'titulo');
+crudColecao('midia',       ['titulo','tipo','status','nota','cover_url','genero','ano','comentario','favorito'], 'titulo');
+crudColecao('leituras',    ['titulo','autor','status','nota','cover_url','total_paginas','pagina_atual','genero','comentario','favorito'], 'titulo');
+
 module.exports = router;
