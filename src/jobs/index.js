@@ -746,6 +746,65 @@ cron.schedule('5 0 * * *', async () => {
   console.log(`✅ DRE: ${okSnap} users · Insights: ${okIns} gerados.`);
 });
 
+// ─────────────────────────────────────────────────────────────────
+// JOB 1L — Aviso do SORA WRAPPED (mensal). Nos primeiros 7 dias do mês,
+// avisa quem já tem dados suficientes que o Wrapped do mês passado está
+// pronto. Dedup persistido em users.wrapped_avisado (período YYYY-MM).
+// ─────────────────────────────────────────────────────────────────
+const W_MIN_DIAS = 30, W_MIN_LANC = 12, W_MIN_GROW = 15;
+const W_MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+cron.schedule('0 13 * * *', async () => {
+  try {
+    const sp = agoraSP();
+    if (sp.getDate() > 7) return; // só no comecinho do mês
+
+    const alvo = new Date(sp.getFullYear(), sp.getMonth() - 1, 1); // mês passado
+    const ini = alvo.toISOString().slice(0, 10);
+    const fim = new Date(alvo.getFullYear(), alvo.getMonth() + 1, 1).toISOString().slice(0, 10);
+    const periodo = ini.slice(0, 7);
+    const mesNome = W_MESES[alvo.getMonth()];
+    console.log(`🎁 Wrapped: avaliando avisos de ${periodo}...`);
+
+    const { data: users, error } = await supabase.from('users')
+      .select('id, phone, grupo_ativo, created_at, wrapped_avisado')
+      .not('grupo_ativo', 'is', null).not('phone', 'is', null);
+    if (error) { console.log('🎁 Wrapped: rode a migration 037 (coluna wrapped_avisado).', error.message); return; }
+
+    let avisados = 0;
+    for (const u of users || []) {
+      try {
+        if (u.wrapped_avisado === periodo) continue;
+        if (!u.created_at) continue;
+        const diasUso = Math.floor((Date.now() - new Date(u.created_at).getTime()) / 86400000);
+        if (diasUso < W_MIN_DIAS) continue;
+
+        const { count: nTx } = await supabase.from('transacoes')
+          .select('id', { count: 'exact', head: true })
+          .eq('grupo_id', u.grupo_ativo).gte('data', ini).lt('data', fim);
+        let elegivel = (nTx || 0) >= W_MIN_LANC;
+        if (!elegivel) {
+          const { count: nHab } = await supabase.from('registros_habito')
+            .select('id', { count: 'exact', head: true })
+            .eq('grupo_id', u.grupo_ativo).eq('concluido', true).gte('data', ini).lt('data', fim);
+          elegivel = (nHab || 0) >= W_MIN_GROW;
+        }
+        if (!elegivel) continue;
+
+        await enviarTexto(u.phone,
+          `🎁 *Seu Sora Wrapped de ${mesNome} tá pronto!*\n\n` +
+          `Seus números viraram um resumo lindo — seu maior vilão de gastos, quanto você ` +
+          `economizou, sua sequência... do jeitinho que dá vontade de postar no story. 🐳\n\n` +
+          `👉 Veja e compartilhe: https://www.forsora.com/wrapped`);
+        await supabase.from('users').update({ wrapped_avisado: periodo }).eq('id', u.id);
+        avisados++;
+      } catch { /* tolerante por usuário */ }
+    }
+    console.log(`🎁 Wrapped: ${avisados} aviso(s) enviados.`);
+  } catch (e) {
+    console.log('🎁 Wrapped aviso falhou:', e.message);
+  }
+});
+
 console.log('⏰ Cron jobs registrados:');
 console.log('   • A cada hora  — recorrências, lembretes, parcelas, fatura');
 console.log('   • A cada 15min — lembretes de medicamentos');
