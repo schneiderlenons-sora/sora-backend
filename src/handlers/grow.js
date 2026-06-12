@@ -163,7 +163,7 @@ function pareceAgenda(mensagem) {
   return pareceCompromisso(mensagem) || pareceAjusteLembrete(mensagem);
 }
 
-module.exports = async function handleGrow(mensagem, ctx) {
+module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   const { phone, grupoId, user } = ctx;
   const msg = (mensagem || '').toLowerCase().trim();
   const growPremium = temGrowPremium(user);
@@ -677,6 +677,20 @@ module.exports = async function handleGrow(mensagem, ctx) {
   }
 
   // ── FALLBACK ────────────────────────────────────────────────────────
+  // Antes de desistir: a IA traduz a frase natural num comando canônico (só
+  // quando o parser local não reconheceu nada) e reexecuta UMA vez sem IA.
+  // Local-first preservado — a IA só roda nesse caso raro.
+  if (!opts.semIA) {
+    try {
+      const { interpretarGrowComando } = require('../services/ia');
+      const cmd = await interpretarGrowComando(mensagem);
+      if (cmd && cmd.toLowerCase().trim() !== msg) {
+        console.log(`🌱→IA traduziu: "${mensagem}" → "${cmd}"`);
+        return await handleGrow(cmd, ctx, { semIA: true });
+      }
+    } catch { /* cai no menu padrão */ }
+  }
+
   await enviarTexto(phone,
     `🌱 *Sora Grow*\n\n` +
     `Nao entendi. Exemplos:\n\n` +

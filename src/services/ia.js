@@ -228,4 +228,45 @@ Responda APENAS com a palavra "finance" ou "grow".`,
   }
 }
 
-module.exports = { interpretarMensagem, gerarDicas, analisarGastos, classificarIntencao };
+// Fallback do Grow: traduz uma frase natural NUM comando canônico que os
+// handlers locais já entendem (sem IA). Retorna a string ou null se não for
+// uma ação do Grow. Só é chamado quando o parser local não reconheceu nada.
+async function interpretarGrowComando(mensagem) {
+  try {
+    const hoje = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 60,
+      messages: [
+        {
+          role: 'system',
+          content: `Você converte UMA mensagem num comando canônico da Sora (assistente de hábitos/rotina/agenda). Hoje é ${hoje}.
+Responda APENAS JSON: {"comando":"..."} — ou {"comando":null} se não for nenhuma das ações abaixo.
+
+Ações (use EXATAMENTE estes formatos):
+- Marcar compromisso/lembrete: "marca [o quê] [dia] [hora]"   (ex: "marca dentista terça 15h", "marca médico amanhã 9h")
+- Marcar hábito como feito:    "fiz [hábito]"                  (ex: "fiz academia")
+- Criar hábito:                "novo hábito [nome]"
+- Criar tarefa:                "tarefa [título]"
+- Registrar humor:             "me sinto [palavra]"            (ex: "me sinto ótimo")
+- Adicionar à lista de compras:"comprar [item]"
+
+Regras:
+- Períodos do dia: "de manhã"→9h, "de tarde"→14h, "de noite"→20h.
+- Mantenha o dia em palavras ("amanhã", "hoje", "terça", "dia 20") — NÃO calcule a data.
+- Só gere um comando se a intenção for claramente uma dessas ações; senão {"comando":null}.`,
+        },
+        { role: 'user', content: mensagem },
+      ],
+    });
+    const txt = response.choices[0].message.content.replace(/```json|```/g, '').trim();
+    const obj = JSON.parse(txt);
+    const cmd = obj && typeof obj.comando === 'string' ? obj.comando.trim() : null;
+    return cmd && cmd.length > 1 ? cmd : null;
+  } catch (err) {
+    console.error('❌ Erro IA grow:', err.message);
+    return null;
+  }
+}
+
+module.exports = { interpretarMensagem, gerarDicas, analisarGastos, classificarIntencao, interpretarGrowComando };
