@@ -1,17 +1,18 @@
 // Detecta categoria pelo texto da mensagem
 function detectarCategoria(msg) {
-  const m = msg.toLowerCase();
+  // Tira acentos pra casar "farmácia"/"ração"/"água" com os keywords ASCII.
+  const m = msg.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   // Marketplaces ANTES de "mercado" — senão "mercado livre" cairia em supermercado.
   if (m.match(/(shopee|shein|aliexpress|amazon|mercado\s*livre|mercadolivre|magalu|magazine\s*luiza|americanas|submarino|temu|tiktok\s*shop)/i)) return 'Encomendas';
   if (m.includes('mercado') || m.includes('supermercado')) return 'Mercado';
   if (m.match(/(uber|99|gasolina|combustivel|posto|onibus|metro)/i)) return 'Transporte';
-  if (m.match(/(pizza|lanche|restaurante|janta|almoço|ifood|delivery)/i)) return 'Alimentação';
+  if (m.match(/(pizza|lanche|restaurante|janta|almoco|jantar|ifood|delivery|hamburguer|marmita)/i)) return 'Alimentação';
   if (m.match(/(netflix|spotify|prime|hbo|disney|globo|iptv)/i)) return 'Assinaturas';
-  if (m.match(/(farmacia|remedio|medico|hospital|clinica|plano de saude)/i)) return 'Saúde';
+  if (m.match(/(farmacia|drogaria|remedio|medico|medica|dentista|hospital|clinica|exame|consulta|laboratorio|plano de saude)/i)) return 'Saúde';
   if (m.includes('aluguel')) return 'Aluguel';
   if (m.match(/(padaria|pao|cafe da manha)/i)) return 'Padaria';
   if (m.match(/(internet|wifi|vivo|claro|tim|oi |banda larga)/i)) return 'Internet';
-  if (m.match(/(pet|cachorro|gato|racao|veterinario)/i)) return 'Pet';
+  if (m.match(/(pet|petshop|cachorro|cao|gato|racao|veterinari|tosa|banho e tosa)/i)) return 'Pet';
   if (m.match(/(lazer|cerveja|breja|balada|cinema|show)/i)) return 'Lazer e Entretenimento';
   if (m.match(/(escola|faculdade|curso|livro|material)/i)) return 'Educação';
   if (m.match(/(luz|agua|gas|condominio|iptu)/i)) return 'Casa';
