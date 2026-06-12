@@ -131,12 +131,17 @@ function temGrowPremium(user) {
   return false;
 }
 
-// Detecta intenção de marcar compromisso — usado como fast-path no webhook
-// (determinístico, sem depender do classificador de IA). Mesmo gatilho do handler.
+// Comando direto de marcar ("marca/agenda/anota dentista terça 15h")
+const RE_AGENDA_DIRETO = /^(?:marca[r]?|marque|agenda[r]?|agende|anota[r]?\s+(?:a[íi]\s+)?(?:que\s+)?|novo\s+compromisso|criar\s+compromisso|adiciona[r]?\s+compromisso)\s+/i;
+// Verbos/substantivos de agenda que, JUNTO de uma data/hora, indicam compromisso.
+const RE_AGENDA_NATURAL = /\b(me\s+)?lembr\w+\b|\b(anota[r]?|agenda[r]?|marca[r]?)\b|\b(reuni[ãa]o|consulta|compromisso|m[ée]dic[oa]|dentista|encontro|anivers[áa]rio|evento|call|entrevista|apresenta[çc][ãa]o|audi[êe]ncia|prova)\b/i;
+
+// Detecta intenção de marcar compromisso — fast-path determinístico no webhook
+// (sem depender do classificador de IA). Mesmo gatilho do handler.
 function pareceCompromisso(mensagem) {
   const msg = (mensagem || '').toLowerCase().trim();
-  if (/^(?:marca[r]?|marque|agenda[r]?|agende|novo\s+compromisso|criar\s+compromisso|adiciona[r]?\s+compromisso)\s+/.test(msg)) return true;
-  if (/\b(me\s+)?lembr\w+\b/.test(msg) && (parseDataPt(msg) || parseHoraPt(msg))) return true;
+  if (RE_AGENDA_DIRETO.test(msg)) return true;
+  if (RE_AGENDA_NATURAL.test(msg) && (parseDataPt(msg) || parseHoraPt(msg))) return true;
   return false;
 }
 
@@ -585,12 +590,15 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   //   2. Natural: "tenho uma reunião amanhã às 19, me lembra?" — pedido de
   //      lembrete (lembr…) JUNTO de uma data/hora. Local-first: sem IA.
   let restoAg = null;
-  if ((m = msg.match(/^(?:marca[r]?|marque|agenda[r]?|agende|novo\s+compromisso|criar\s+compromisso|adiciona[r]?\s+compromisso)\s+(.+)$/i))) {
-    restoAg = m[1].trim();
-  } else if (/\b(me\s+)?lembr\w+\b/.test(msg) && (parseDataPt(msg) || parseHoraPt(msg))) {
+  if ((m = msg.match(RE_AGENDA_DIRETO))) {
+    restoAg = msg.slice(m[0].length).trim();   // tira o verbo do começo ("marca/anota que ...")
+  } else if (RE_AGENDA_NATURAL.test(msg) && (parseDataPt(msg) || parseHoraPt(msg))) {
     restoAg = msg
       .replace(/^\s*sora[,!.\s]+/i, '')                              // "Sora, ..."
-      .replace(/\b(que\s+eu\s+)?tenho\b|\btem\b|\bvou\s+ter\b/gi, ' ') // "tenho/tem"
+      .replace(/^\s*(anota[r]?|agenda[r]?|marca[r]?)(\s+a[íi])?\s+(que\s+)?/i, '') // "anota aí que ..."
+      .replace(/\b(que\s+eu\s+)?tenho\b|\btem\b|\bvou\s+ter\b/gi, ' ') // "tenho/tem/vou ter"
+      .replace(/\bque\s+vem\b/gi, ' ')                              // "terça que vem" → "terça"
+      .replace(/\b(me\s+)?lembr\w+\b/gi, ' ')                       // "me lembra"
       .replace(/\b(uma|um)\b/gi, ' ')
       .replace(/\bque\b/gi, ' ')
       .replace(/\s+/g, ' ')

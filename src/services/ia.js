@@ -211,11 +211,12 @@ async function classificarIntencao(mensagem) {
           role: 'system',
           content: `Classifique a mensagem em apenas UMA palavra: "finance" ou "grow".
 
-FINANCE: dinheiro, gastos, despesas, receitas, salario, saldo, transferencias, contas bancarias, investimentos, cartoes, parcelas, limites, metas financeiras, dividas, emprestimos, financiamento, crediario, pix.
+FINANCE: dinheiro, gastos, despesas, receitas, salario, saldo, transferencias, contas bancarias, investimentos, cartoes, parcelas, limites, metas financeiras, dividas, emprestimos, financiamento, crediario, pix. Lembrete de PAGAR / conta / boleto / fatura / dívida.
 
-GROW: treino, exercicio, academia, corrida, dieta, peso, agua, habito, tarefa, projeto, humor, ansiedade, estresse, gratidao, sono, estudos, leitura, faculdade, filhos, escola, lista de compras (itens domesticos como leite, arroz), remedio, consulta medica, rotina, meditacao.
+GROW: treino, exercicio, academia, corrida, dieta, peso, agua, habito, tarefa, projeto, humor, ansiedade, estresse, gratidao, sono, estudos, leitura, faculdade, filhos, escola, remedio, rotina, meditacao. Lista de compras / "comprar [itens]" (pao, cafe, leite, arroz...). AGENDA: reuniao, compromisso, consulta, encontro, aniversario, entrevista, prova, evento, "anota/marca que tenho ... dia/hora", "me lembra de comprar/fazer/ligar/ir".
 
-Em caso de duvida ou conversa generica, responda "finance".
+REGRA: "me lembra de PAGAR/conta/boleto" = finance. "me lembra de COMPRAR/fazer/reuniao/marcar" = grow.
+Em caso de duvida, responda "finance".
 Responda APENAS com a palavra "finance" ou "grow".`,
         },
         { role: 'user', content: mensagem },

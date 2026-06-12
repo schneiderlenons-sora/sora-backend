@@ -28,12 +28,24 @@ module.exports = async function handleRecorrencias(data, ctx) {
   }
 
   if (data.acao === 'criar_lembrete') {
-    const dataVenc = new Date(new Date().getFullYear(), data.mes, data.dia);
+    const valorNum = parseFloat(data.valor);
+    const temValor = !isNaN(valorNum) && valorNum > 0;
+    const diaOk = Number.isInteger(data.dia) && data.dia >= 1 && data.dia <= 31;
+    // Sem dia válido = provável interpretação errada. Em vez de salvar lixo
+    // (R$ NaN / 31/12), orienta o usuário.
+    if (!diaOk) {
+      await enviarTexto(phone,
+        '🔔 Pra eu criar um lembrete de conta, me diz o dia. Ex.: *lembrete pagar internet dia 10*.\n\n' +
+        'Se você quis anotar na lista de compras, manda *comprar pão e café* 🛒');
+      return;
+    }
+    const mes = Number.isInteger(data.mes) ? data.mes : new Date().getMonth();
+    const dataVenc = new Date(new Date().getFullYear(), mes, data.dia);
     if (dataVenc < new Date()) dataVenc.setFullYear(dataVenc.getFullYear() + 1);
     await supabase.from('lembretes').insert({
-      grupo_id: grupoId, descricao: data.descricao, valor: data.valor,
+      grupo_id: grupoId, descricao: data.descricao, valor: temValor ? valorNum : null,
       tipo: data.tipo, data_vencimento: dataVenc.toISOString()
     });
-    await enviarTexto(phone, `🔔 Lembrete criado: ${data.tipo === 'pagar' ? '💸' : '💰'} *${data.descricao}* - R$ ${parseFloat(data.valor).toFixed(2)} em ${dataVenc.toLocaleDateString('pt-BR')}`);
+    await enviarTexto(phone, `🔔 Lembrete criado: ${data.tipo === 'pagar' ? '💸' : '💰'} *${data.descricao}*${temValor ? ` - R$ ${valorNum.toFixed(2)}` : ''} em ${dataVenc.toLocaleDateString('pt-BR')}`);
   }
 };
