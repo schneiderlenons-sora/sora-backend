@@ -129,9 +129,10 @@ function interpretarRapido(message) {
   if ((m = msg.match(/definir\s+fatura\s+dia\s+(\d{1,2})/i)))
     return { acao: 'set_fatura_dia', dia: parseInt(m[1]) };
 
-  // "pagar fatura nubank" / "quitar a fatura do nubank"
-  if ((m = msg.match(/^(?:pagar|quitar)\s+(?:a\s+|minha\s+)?fatura\s+(?:d[oae]\s+)?(.+)$/i)))
-    return { acao: 'pagar_fatura', termo: m[1].trim() };
+  // "pagar fatura" (sozinho) / "pagar fatura nubank" / "quitar a fatura do nubank"
+  // Cartão é OPCIONAL — sem ele, o handler usa o único cartão ou pergunta qual.
+  if ((m = msg.match(/^(?:pagar|quitar)\s+(?:a\s+|minha\s+)?fatura(?:\s+(?:d[oae]\s+)?(.+))?$/i)))
+    return { acao: 'pagar_fatura', termo: (m[1] || '').trim() };
 
   // --- DÍVIDAS ---
   // "minhas dividas" / "listar dividas" / "dividas"

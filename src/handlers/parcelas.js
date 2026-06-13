@@ -12,14 +12,19 @@ module.exports = async function handleParcelas(data, ctx) {
   if (data.acao === 'pagar_fatura') {
     const termo = (data.termo || '').trim();
     const { data: cartoes } = await supabase.from('wallets')
-      .select('id, nome').eq('grupo_id', grupoId).eq('tipo', 'Crédito').ilike('nome', `%${termo}%`);
+      .select('id, nome').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
+      .ilike('nome', `%${termo}%`).order('created_at', { ascending: true });
     if (!cartoes?.length) {
-      await enviarTexto(phone, `❌ Não encontrei cartão com *"${termo}"*. Veja os seus: 🌐 forsora.com/cartao-de-credito`);
+      await enviarTexto(phone, termo
+        ? `❌ Não encontrei cartão com *"${termo}"*. Veja os seus: 🌐 forsora.com/cartao-de-credito`
+        : `💳 Você ainda não tem cartão de crédito cadastrado.\nCrie um: *cartão nubank limite 5000 fecha 5 vence 15*`);
       return;
     }
     if (cartoes.length > 1) {
       const lista = cartoes.map(c => `• ${c.nome}`).join('\n');
-      await enviarTexto(phone, `🤔 Mais de um cartão com *"${termo}"*:\n${lista}\n\nSeja mais específico.`);
+      await enviarTexto(phone, termo
+        ? `🤔 Mais de um cartão com *"${termo}"*:\n${lista}\n\nSeja mais específico.`
+        : `💳 Você tem mais de um cartão. Qual fatura quer pagar?\n${lista}\n\nEx.: *pagar fatura ${cartoes[0].nome.toLowerCase()}*`);
       return;
     }
     const cartao = cartoes[0];
