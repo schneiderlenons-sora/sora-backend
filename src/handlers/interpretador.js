@@ -27,6 +27,46 @@ function parseValor(str) {
   return parseFloat(str.replace(/\./g, '').replace(',', '.'));
 }
 
+// Detecta a data de uma transação no texto (interpretação pro PASSADO).
+// "ontem", "anteontem", "3 dias atrás", "dia 5", "15/06", "segunda".
+// Retorna { iso:'YYYY-MM-DD', matched:'...' } ou null (= hoje).
+function parseDataGasto(texto) {
+  const t = ' ' + (texto || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') + ' ';
+  // "hoje" no fuso de São Paulo (YYYY-MM-DD) → âncora ao meio-dia UTC pra
+  // aritmética de data estável (sem off-by-one por fuso/DST).
+  const [Y, M, D] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+  const base = new Date(Date.UTC(Y, M - 1, D, 12));
+  const isoOf = d => d.toISOString().slice(0, 10);
+  const menos = n => { const d = new Date(base); d.setUTCDate(d.getUTCDate() - n); return d; };
+  let m;
+  if (/\bhoje\b/.test(t)) return { iso: isoOf(base), matched: 'hoje' };
+  if (/\b(anteontem|antes\s+de\s+ontem)\b/.test(t)) return { iso: isoOf(menos(2)), matched: (t.match(/anteontem|antes\s+de\s+ontem/) || [])[0] };
+  if (/\bontem\b/.test(t)) return { iso: isoOf(menos(1)), matched: 'ontem' };
+  if (m = t.match(/\b(\d{1,2})\s*dias?\s+atras\b/)) return { iso: isoOf(menos(+m[1])), matched: m[0].trim() };
+  if (/\bsemana\s+passada\b/.test(t)) return { iso: isoOf(menos(7)), matched: 'semana passada' };
+  // DD/MM ou DD/MM/AAAA
+  if (m = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/)) {
+    const dd = +m[1], mo = +m[2] - 1, yy = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : Y;
+    let d = new Date(Date.UTC(yy, mo, dd, 12));
+    if (!m[3] && d > base) d = new Date(Date.UTC(yy - 1, mo, dd, 12)); // futura sem ano → ano passado
+    return { iso: isoOf(d), matched: m[0].trim() };
+  }
+  // "dia 5"
+  if (m = t.match(/\bdia\s+(\d{1,2})\b/)) {
+    const dd = +m[1]; let d = new Date(Date.UTC(Y, M - 1, dd, 12));
+    if (d > base) d = new Date(Date.UTC(Y, M - 2, dd, 12)); // futura → mês passado
+    return { iso: isoOf(d), matched: m[0].trim() };
+  }
+  // dia da semana → ocorrência passada mais recente
+  const dias = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'], abbr = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+  for (let i = 0; i < 7; i++) {
+    const re = new RegExp(`\\b(${dias[i]}(?:-feira)?|${abbr[i]})\\b`);
+    const mm = t.match(re);
+    if (mm) { const delta = (base.getUTCDay() - i + 7) % 7 || 7; return { iso: isoOf(menos(delta)), matched: mm[0] }; }
+  }
+  return null;
+}
+
 // Tenta interpretar a mensagem sem chamar a IA (mais rápido e grátis)
 function interpretarRapido(message) {
   // Remove a unidade de moeda logo após o número ("10 reais" → "10"), pra
@@ -183,9 +223,17 @@ function interpretarRapido(message) {
       carteira  = partes.slice(1).join(',').trim() || null;
     }
     descricao = descricao.replace(/[,;]+$/, '').trim();
+    // Data da transação (ontem/dia 5/15-06/segunda) → remove da descrição e conta.
+    const dInfo = parseDataGasto(msg);
+    if (dInfo) {
+      const re = new RegExp(`\\b${dInfo.matched.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      descricao = descricao.replace(re, '').replace(/\s+/g, ' ').replace(/[,;]+$/, '').trim();
+      if (carteira) carteira = (carteira.replace(re, '').replace(/\s+/g, ' ').trim() || null);
+    }
     return {
       acao: 'salvar', tipo: 'Gasto',
       valor: parseValor(m[2]),
+      dataTx: dInfo ? dInfo.iso : null,
       categoria: detectarCategoria(descricao),
       observacao: descricao,   // só a descrição (ex: "padaria"), não a frase inteira
       carteira_nome: carteira || null
@@ -193,14 +241,19 @@ function interpretarRapido(message) {
   }
 
   // --- RECEITAS ---
-  if ((m = msg.match(/(ganhei|recebi|caiu|depositaram|entrou)\s+(\d[\d.,]*)(?:\s+(?:no|na|pelo|de)\s+(.+))?/i)))
+  if ((m = msg.match(/(ganhei|recebi|caiu|depositaram|entrou)\s+(\d[\d.,]*)(?:\s+(?:no|na|pelo|de)\s+(.+))?/i))) {
+    const dInfo = parseDataGasto(msg);
+    let obs = m[3] ? m[3].trim() : '';
+    if (dInfo && obs) obs = obs.replace(new RegExp(`\\b${dInfo.matched.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'), '').replace(/\s+/g, ' ').trim();
     return {
       acao: 'salvar', tipo: 'Recebimento',
       valor: parseValor(m[2]),
+      dataTx: dInfo ? dInfo.iso : null,
       categoria: 'Recebimento',
-      observacao: m[3] ? m[3].trim() : '',   // descrição curta, não a frase inteira
+      observacao: obs,   // descrição curta, não a frase inteira
       carteira_nome: null
     };
+  }
 
   // --- APORTE EM META (poupança): "guardar 500 na meta viagem" ---
   if ((m = msg.match(/^(?:guardar|aplicar|aportar|colocar|poupar|separar|depositar|juntar)\s+(\d[\d.,]*)\s+(?:n[ao]\s+|pra\s+|para\s+(?:a\s+|o\s+)?|em\s+|d[ao]\s+)?meta\s+(.+)$/i)))

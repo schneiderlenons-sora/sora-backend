@@ -261,6 +261,12 @@ module.exports = async function handleTransacoes(data, ctx) {
     const valor = parseFloat(data.valor);
     const idCurto = gerarId();
 
+    // Data da transação — pode ser anterior ("gastei 120 na adidas ontem").
+    // dataTx (parser local) ou data (IA): 'YYYY-MM-DD'. Sem isso → hoje.
+    const dataIso = data.dataTx || data.data || null;
+    const dataTsISO = dataIso ? new Date(dataIso + 'T12:00:00.000Z').toISOString() : new Date().toISOString();
+    const dataFmt = new Date(dataTsISO).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
     // Refina categoria pelas categorias/subcategorias reais do grupo
     // (ex: subcategoria "Shein"). Só sobrescreve se achar algo melhor que Outros.
     const catRefinada = await refinarCategoria(grupoId, ctx.mensagem || data.observacao);
@@ -325,7 +331,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       observacao:   data.observacao || '',
       carteira_nome: carteiraNome,
       pago:         true,
-      data:         new Date().toISOString()
+      data:         dataTsISO
     }).select().single();
 
     // Atualiza saldo da carteira (mesmo a temporária)
@@ -417,7 +423,8 @@ module.exports = async function handleTransacoes(data, ctx) {
       `${emoji} Categoria: ${data.categoria}\n` +
       `💸 Valor: R$ ${valor.toFixed(2)}\n` +
       `🔄 Tipo: ${tipo}\n` +
-      `🏦 Conta: ${carteiraNome}\n\n` +
+      `🏦 Conta: ${carteiraNome}\n` +
+      `📅 Data: ${dataFmt}\n\n` +
       `❌ Para desfazer: *excluir transação ${idCurto}*`;
 
     await enviarMenu(phone, msg);
