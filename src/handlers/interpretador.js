@@ -108,14 +108,19 @@ function interpretarRapido(message) {
   if ((m = msg.match(/(?:comprei|fiz uma compra de)\s+(.+?)\s+(?:no|na|pelo)\s+([\w\s]+?(?:\s+cr[eé]dito)?)\s+em\s+(\d+)x\s+de\s+(\d[\d.,]*)/i))) {
     const numParcelas  = parseInt(m[3]);
     const valorParcela = parseValor(m[4]);
+    let descricao = m[1].trim();
+    // Data da compra (ontem/dia 5/15-06) → base da 1ª parcela; limpa da descrição.
+    const dInfo = parseDataGasto(msg);
+    if (dInfo) descricao = descricao.replace(new RegExp(`\\b${dInfo.matched.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'), '').replace(/\s+/g, ' ').trim();
     return {
       acao: 'compra_parcelada',
-      descricao:    m[1].trim(),
+      descricao,
       carteira:     m[2].trim(),
       numParcelas,
       valorParcela,
       valorTotal:   numParcelas * valorParcela,
-      categoria:    detectarCategoria(m[1])
+      dataTx:       dInfo ? dInfo.iso : null,
+      categoria:    detectarCategoria(descricao)
     };
   }
 

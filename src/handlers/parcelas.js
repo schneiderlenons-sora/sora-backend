@@ -153,12 +153,16 @@ module.exports = async function handleParcelas(data, ctx) {
     // (que lê transações) reflete o limite comprometido, mostra faturas futuras
     // e permite antecipar. A 1ª parcela cai na FATURA ATUAL (mês corrente) —
     // a compra de hoje entra na fatura aberta. As seguintes nos meses seguintes.
-    const hoje = new Date();
+    // Base da 1ª parcela = data da compra ("comprei ... ontem") ou hoje (SP),
+    // ancorada ao meio-dia UTC. As demais caem nos meses seguintes.
+    let base;
+    if (data.dataTx) base = new Date(data.dataTx + 'T12:00:00.000Z');
+    else { const [Y, M, D] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number); base = new Date(Date.UTC(Y, M - 1, D, 12)); }
+    const bY = base.getUTCFullYear(), bM = base.getUTCMonth(), bD = base.getUTCDate();
+    const dataParcela = i => new Date(Date.UTC(bY, bM + i, Math.min(bD, 28), 12));
+
     const linhas = [];
     for (let i = 0; i < numParcelas; i++) {
-      const d = i === 0
-        ? hoje  // 1ª parcela na data de hoje (fatura atual)
-        : new Date(hoje.getFullYear(), hoje.getMonth() + i, Math.min(hoje.getDate(), 28));
       linhas.push({
         id_curto:      gerarId(),
         grupo_id:      grupoId,
@@ -168,19 +172,20 @@ module.exports = async function handleParcelas(data, ctx) {
         observacao:    `${descricao} (${i + 1}/${numParcelas})`,
         carteira_nome: wallet.nome,
         pago:          false,
-        data:          d.toISOString(),
+        data:          dataParcela(i).toISOString(),
       });
     }
     await supabase.from('transacoes').insert(linhas);
 
-    const ultimaData = new Date(hoje.getFullYear(), hoje.getMonth() + (numParcelas - 1), Math.min(hoje.getDate(), 28));
+    const ultimaData = dataParcela(numParcelas - 1);
+    const compraFmt = base.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
     await enviarTexto(phone,
       `✅ *Compra parcelada registrada!*\n\n` +
       `📦 ${descricao}\n` +
       `💳 Cartão: ${wallet.nome}\n` +
       `🏷️ Categoria: ${categoria || 'Outros'}\n` +
       `💵 Total: R$ ${valorTotal.toFixed(2)} em ${numParcelas}x de R$ ${valorParcela.toFixed(2)}\n` +
-      `📅 1ª parcela na fatura atual · última em ${ultimaData.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}\n\n` +
+      `📅 ${data.dataTx ? `Compra em ${compraFmt} · ` : '1ª parcela na fatura atual · '}última em ${ultimaData.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', month: 'long', year: 'numeric' })}\n\n` +
       `As ${numParcelas} parcelas já aparecem nas faturas do painel. Você pode antecipar por lá.`
     );
     return;
