@@ -223,6 +223,22 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     return;
   }
 
+  // ── Casa (Compras, Despensa, Receitas, Manutenções) = Premium+ ──────
+  // Intercepta TODOS os comandos de Casa antes dos handlers abaixo; Básico
+  // vê o convite de upgrade. (Hábitos, Tarefas, Agenda e Bem-estar são base.)
+  if (!growPremium && (
+        /^(lista\s+de\s+compras|minha\s+lista|compras)$/i.test(msg)
+        || /^(comprar|limpar\s+(a\s+)?lista|enviar\s+(a\s+)?lista)\b/i.test(msg)
+        || /\b(manuten[çc]|despensa|receita|cozinh|ingrediente)/i.test(msg)
+        || /^(acabou|acabando|t[aá]\s+acabando|est[aá]\s+acabando)\b/i.test(msg)
+        || /o\s+que\s+.*(cozinhar|falta\s+em\s+casa)/i.test(msg))) {
+    await enviarTexto(phone,
+      '🔒 *Casa* — lista de compras, despensa, receitas e manutenções — faz parte do plano *Premium*.\n\n' +
+      'No seu plano você já tem hábitos, tarefas, agenda e bem-estar. ✨\n\n' +
+      'Ver planos: 🌐 forsora.com/planos');
+    return;
+  }
+
   if (/^(lista\s+de\s+compras|minha\s+lista|compras)$/i.test(msg)) {
     const { data: lista } = await supabase.from('listas_compras')
       .select('id').eq('grupo_id', grupoId).eq('ativa', true).maybeSingle();
@@ -240,19 +256,6 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   }
 
   let m;
-
-  // ── Casa-avançada (Despensa / Receitas / Manutenções) = Premium+ ────
-  // Intercepta antes dos blocos abaixo e oferece upgrade pra quem é Básico.
-  if (!growPremium && (
-        /\b(manuten[çc]|despensa|receita|cozinh|ingrediente)/i.test(msg)
-        || /^(acabou|acabando|t[aá]\s+acabando|est[aá]\s+acabando)\b/i.test(msg)
-        || /o\s+que\s+.*(cozinhar|falta\s+em\s+casa)/i.test(msg))) {
-    await enviarTexto(phone,
-      '🔒 *Despensa, Receitas e Manutenções da casa* fazem parte do plano *Premium*.\n\n' +
-      'No seu plano você já tem hábitos, tarefas, bem-estar, lista de compras e agenda. ✨\n\n' +
-      'Ver planos: 🌐 forsora.com/planos');
-    return;
-  }
 
   // ── MANUTENÇÕES: listar ─────────────────────────────────────────────
   if (/^(minhas\s+manuten[çc][õo]es|manuten[çc][õo]es|manuten[çc][aã]o)$/i.test(msg)) {

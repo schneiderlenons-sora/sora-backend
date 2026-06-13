@@ -346,7 +346,7 @@ async function getOrCreateLista(grupoId) {
   return novo.id;
 }
 
-router.get('/lista-compras/:phone', auth, requireGrow, async (req, res) => {
+router.get('/lista-compras/:phone', auth, requirePremiumGrow, async (req, res) => {
   try {
     const cfg = await growShareCfg(req.userRow.grupo_ativo);
     const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
@@ -357,7 +357,7 @@ router.get('/lista-compras/:phone', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.post('/lista-compras/item', auth, requireGrow, async (req, res) => {
+router.post('/lista-compras/item', auth, requirePremiumGrow, async (req, res) => {
   try {
     const { nome, quantidade, unidade, categoria, preco_estimado } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
@@ -372,7 +372,7 @@ router.post('/lista-compras/item', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.patch('/lista-compras/item/:id', auth, requireGrow, async (req, res) => {
+router.patch('/lista-compras/item/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
     const allowed = ['comprado','nome','quantidade','unidade','categoria','preco_estimado'];
     const patch = {};
@@ -388,14 +388,14 @@ router.patch('/lista-compras/item/:id', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.delete('/lista-compras/item/:id', auth, requireGrow, async (req, res) => {
+router.delete('/lista-compras/item/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
     await supabase.from('itens_lista_compras').delete().eq('id', req.params.id);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.post('/lista-compras/limpar', auth, requireGrow, async (req, res) => {
+router.post('/lista-compras/limpar', auth, requirePremiumGrow, async (req, res) => {
   try {
     const cfg = await growShareCfg(req.userRow.grupo_ativo);
     const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
@@ -407,7 +407,7 @@ router.post('/lista-compras/limpar', auth, requireGrow, async (req, res) => {
 });
 
 // Envia a lista de compras (itens pendentes, agrupados por categoria) pro WhatsApp
-router.post('/lista-compras/enviar', auth, requireGrow, async (req, res) => {
+router.post('/lista-compras/enviar', auth, requirePremiumGrow, async (req, res) => {
   try {
     const phone = req.authUser?.phone;
     if (!phone) return res.status(400).json({ erro: 'Nenhum WhatsApp vinculado à sua conta.' });
@@ -796,7 +796,7 @@ router.post('/agenda/briefing', auth, requireGrow, async (req, res) => {
 // `flag` = chave em growShareCfg que decide se a coleção é compartilhada
 // (bucket_list compartilha a flag de viagens — são a mesma aba no app).
 function crudColecao(tabela, campos, obrigatorio, flag) {
-  router.get(`/${tabela}/:phone`, auth, requireGrow, async (req, res) => {
+  router.get(`/${tabela}/:phone`, auth, requirePremiumGrow, async (req, res) => {
     try {
       const cfg = await growShareCfg(req.userRow.grupo_ativo);
       const { data, error } = await escopoLeitura(supabase.from(tabela).select('*'), req, !!cfg[flag])
@@ -805,7 +805,7 @@ function crudColecao(tabela, campos, obrigatorio, flag) {
       res.json(data || []);
     } catch (e) { res.status(500).json({ erro: e.message }); }
   });
-  router.post(`/${tabela}`, auth, requireGrow, async (req, res) => {
+  router.post(`/${tabela}`, auth, requirePremiumGrow, async (req, res) => {
     try {
       if (obrigatorio && !String(req.body[obrigatorio] ?? '').trim())
         return res.status(400).json({ erro: `${obrigatorio} obrigatório` });
@@ -816,7 +816,7 @@ function crudColecao(tabela, campos, obrigatorio, flag) {
       res.json(data);
     } catch (e) { res.status(500).json({ erro: e.message }); }
   });
-  router.put(`/${tabela}/:id`, auth, requireGrow, async (req, res) => {
+  router.put(`/${tabela}/:id`, auth, requirePremiumGrow, async (req, res) => {
     try {
       const patch = {};
       for (const k of campos) if (k in req.body) patch[k] = req.body[k];
@@ -825,7 +825,7 @@ function crudColecao(tabela, campos, obrigatorio, flag) {
       res.json(data);
     } catch (e) { res.status(500).json({ erro: e.message }); }
   });
-  router.delete(`/${tabela}/:id`, auth, requireGrow, async (req, res) => {
+  router.delete(`/${tabela}/:id`, auth, requirePremiumGrow, async (req, res) => {
     try {
       await supabase.from(tabela).delete().eq('id', req.params.id);
       res.json({ ok: true });
