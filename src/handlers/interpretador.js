@@ -219,7 +219,7 @@ function interpretarRapido(message) {
   // --- GASTOS ---
   // carteira_nome fica NULL quando o usuário não cita banco — assim o handler
   // roda a lógica inteligente (wallet padrão / conta única / perguntar qual).
-  if ((m = msg.match(/(gastei|paguei|comprei)\s+(\d[\d.,]*)\s+(?:em\s+|no\s+|na\s+|de\s+)?(.+?)(?:\s+(?:no|na|pelo|pela|com)\s+(.+))?$/i))) {
+  if ((m = msg.match(/(gastei|paguei|comprei)\s+(\d[\d.,]*)\s+(?:em\s+|no\s+|na\s+|de\s+|com\s+|pra\s+|para\s+|pelo\s+|pela\s+)?(.+?)(?:\s+(?:no|na|pelo|pela|com)\s+(.+))?$/i))) {
     let descricao  = m[3].trim();
     let carteira   = m[4] ? m[4].trim() : null;
     // "loja, banco" — vírgula separa descrição do banco quando o usuário não
