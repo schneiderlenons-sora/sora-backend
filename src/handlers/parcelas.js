@@ -5,6 +5,22 @@ const { oferecerDesconto } = require('../services/descontoConta');
 
 const gerarId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
+// Ciclo da fatura ABERTA pelo dia de fechamento: do dia seguinte ao fechamento
+// anterior até o próximo fechamento (inclusive). Fuso de São Paulo.
+// Retorna { ini, fimExcl (exclusivo p/ query), label } em YYYY-MM-DD.
+function cicloFatura(diaFechamento) {
+  const fech = Math.min(Math.max(parseInt(diaFechamento) || 1, 1), 28);
+  const [Y, M, D] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+  const iso = d => d.toISOString().slice(0, 10);
+  // fim = dia de fechamento do ciclo aberto (este mês se ainda não passou; senão o próximo)
+  const fimMonthIdx = (D > fech) ? (M - 1) + 1 : (M - 1); // M é 1-based; index 0-based
+  const fim = new Date(Date.UTC(Y, fimMonthIdx, fech, 12));
+  const ini = new Date(Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth() - 1, fech + 1, 12));
+  const fimExcl = new Date(fim); fimExcl.setUTCDate(fimExcl.getUTCDate() + 1);
+  const dm = d => `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  return { ini: iso(ini), fimExcl: iso(fimExcl), label: `${dm(ini)} a ${dm(fim)}` };
+}
+
 module.exports = async function handleParcelas(data, ctx) {
   const { phone, grupoId, user } = ctx;
 
@@ -12,7 +28,7 @@ module.exports = async function handleParcelas(data, ctx) {
   if (data.acao === 'pagar_fatura') {
     const termo = (data.termo || '').trim();
     const { data: cartoes } = await supabase.from('wallets')
-      .select('id, nome').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
+      .select('id, nome, dia_fechamento').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
       .ilike('nome', `%${termo}%`).order('created_at', { ascending: true });
     if (!cartoes?.length) {
       await enviarTexto(phone, termo
@@ -29,24 +45,30 @@ module.exports = async function handleParcelas(data, ctx) {
     }
     const cartao = cartoes[0];
 
-    // Fatura do mês = soma dos gastos do cartão no mês atual
-    const hoje = new Date();
-    const ini = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-01`;
-    const prox = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1).toISOString().slice(0, 10);
+    // Fatura ABERTA = soma dos gastos do cartão no CICLO (dia de fechamento).
+    // Sem dia de fechamento cadastrado → cai no mês calendário (fallback).
+    let ini, fimExcl, cicloLabel = null;
+    if (cartao.dia_fechamento) {
+      ({ ini, fimExcl, label: cicloLabel } = cicloFatura(cartao.dia_fechamento));
+    } else {
+      const [Y, M] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+      ini = `${Y}-${String(M).padStart(2, '0')}-01`;
+      fimExcl = new Date(Date.UTC(Y, M, 1)).toISOString().slice(0, 10);
+    }
     const { data: txs } = await supabase.from('transacoes')
       .select('valor').eq('grupo_id', grupoId).eq('tipo', 'Gasto')
-      .ilike('carteira_nome', cartao.nome).gte('data', ini).lt('data', prox);
+      .ilike('carteira_nome', cartao.nome).gte('data', ini).lt('data', fimExcl);
     const fatura = (txs || []).reduce((s, t) => s + (t.valor || 0), 0);
 
     if (fatura <= 0) {
-      await enviarTexto(phone, `🎉 A fatura do *${cartao.nome}* está zerada este mês. Nada a pagar!`);
+      await enviarTexto(phone, `🎉 A fatura do *${cartao.nome}* está zerada${cicloLabel ? ` (ciclo ${cicloLabel})` : ' este mês'}. Nada a pagar!`);
       return;
     }
 
     await oferecerDesconto({
       user, phone, grupoId, valor: fatura,
       categoria: 'Fatura cartão', observacao: `Fatura ${cartao.nome}`,
-      intro: `💳 *Fatura ${cartao.nome}: R$ ${fatura.toFixed(2)}*\nDe qual conta você quer pagar?`,
+      intro: `💳 *Fatura ${cartao.nome}: R$ ${fatura.toFixed(2)}*${cicloLabel ? `\n📅 Ciclo: ${cicloLabel}` : ''}\nDe qual conta você quer pagar?`,
     });
     return;
   }
