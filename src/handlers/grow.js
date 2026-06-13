@@ -1,5 +1,6 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
+const { growShareCfg } = require('../services/growShare');
 const handleSaude   = require('./saude');
 const handleEstudos = require('./estudos');
 
@@ -176,6 +177,12 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   const msg = mensagem.toLowerCase().trim();
   const growPremium = temGrowPremium(user);
 
+  // Privacidade do Grow: Hábitos/Tarefas/Agenda são sempre por user.id.
+  // Casa (despensa/receitas/manutenções/compras) lê por grupo_id só quando
+  // a flag do grupo está ligada — senão por user.id. Coleções não passam aqui.
+  const cfg = await growShareCfg(grupoId);
+  const escCasa = (q) => cfg.casa ? q.eq('grupo_id', grupoId) : q.eq('user_id', user.id);
+
   // Saúde e Estudos são Premium+ — só roteia pra esses handlers se o plano dá
   // acesso (medicamentos, peso, água, treino, consultas / estudei, provas, notas).
   if (growPremium) {
@@ -188,14 +195,14 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   // ── LISTAR (hábitos / tarefas / compras) ────────────────────────────
   if (/^(meus\s+habitos|habitos|meus\s+hábitos|hábitos)$/i.test(msg)) {
     const { data: habitos } = await supabase.from('habitos')
-      .select('id, nome, icone').eq('grupo_id', grupoId).eq('ativo', true);
+      .select('id, nome, icone').eq('user_id', user.id).eq('ativo', true);
     if (!habitos?.length) {
       await enviarTexto(phone, '🌱 Voce ainda nao tem habitos cadastrados. Crie no painel Grow ou diga: *novo habito beber agua*');
       return;
     }
     const hoje = new Date().toISOString().slice(0, 10);
     const { data: regs } = await supabase.from('registros_habito')
-      .select('habito_id, concluido').eq('grupo_id', grupoId).eq('data', hoje);
+      .select('habito_id, concluido').eq('user_id', user.id).eq('data', hoje);
     const concluidos = new Set((regs || []).filter(r => r.concluido).map(r => r.habito_id));
     const linhas = habitos.map(h => `${concluidos.has(h.id) ? '✅' : '⬜'} ${h.icone} ${h.nome}`);
     await enviarTexto(phone, `🌱 *Seus habitos de hoje*\n\n${linhas.join('\n')}\n\nPara marcar: *fiz [nome do habito]*`);
@@ -204,7 +211,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
 
   if (/^(minhas\s+tarefas|tarefas|todo|todos)$/i.test(msg)) {
     const { data: tarefas } = await supabase.from('tarefas')
-      .select('titulo, prioridade').eq('grupo_id', grupoId).eq('concluida', false)
+      .select('titulo, prioridade').eq('user_id', user.id).eq('concluida', false)
       .order('created_at', { ascending: false }).limit(15);
     if (!tarefas?.length) {
       await enviarTexto(phone, '✨ Nenhuma tarefa pendente! Voce esta em dia.');
@@ -220,8 +227,10 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     const { data: lista } = await supabase.from('listas_compras')
       .select('id').eq('grupo_id', grupoId).eq('ativa', true).maybeSingle();
     if (!lista) { await enviarTexto(phone, '🛒 Lista vazia. Adicione: *comprar leite*'); return; }
-    const { data: itens } = await supabase.from('itens_lista_compras')
-      .select('nome, quantidade, comprado').eq('lista_id', lista.id)
+    let qItens = supabase.from('itens_lista_compras')
+      .select('nome, quantidade, comprado').eq('lista_id', lista.id);
+    if (!cfg.casa) qItens = qItens.eq('user_id', user.id);
+    const { data: itens } = await qItens
       .order('comprado').order('created_at', { ascending: false });
     if (!itens?.length) { await enviarTexto(phone, '🛒 Lista vazia. Adicione: *comprar leite*'); return; }
     const linhas = itens.map(i => `${i.comprado ? '✅' : '⬜'} ${i.nome}${i.quantidade && i.quantidade !== '1' ? ` (${i.quantidade})` : ''}`);
@@ -247,8 +256,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
 
   // ── MANUTENÇÕES: listar ─────────────────────────────────────────────
   if (/^(minhas\s+manuten[çc][õo]es|manuten[çc][õo]es|manuten[çc][aã]o)$/i.test(msg)) {
-    const { data: mans } = await supabase.from('manutencoes')
-      .select('nome, icone, frequencia_dias, ultima_data').eq('grupo_id', grupoId);
+    const { data: mans } = await escCasa(supabase.from('manutencoes')
+      .select('nome, icone, frequencia_dias, ultima_data'));
     if (!mans?.length) {
       await enviarTexto(phone, '🔧 Nenhuma manutenção cadastrada. Adicione no painel: *Casa → Manutenções*.');
       return;
@@ -273,8 +282,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   // ── MANUTENÇÕES: marcar feita (antes do "fiz X" de hábitos) ──────────
   if ((m = msg.match(/^(?:fiz|fa[çc]o|completei|realizei)\s+(?:a\s+)?manuten[çc][aã]o\s+(?:d[eoa]s?\s+)?(.+)$/i))) {
     const termo = m[1].trim();
-    const { data: achados } = await supabase.from('manutencoes')
-      .select('id, nome, icone, frequencia_dias').eq('grupo_id', grupoId).ilike('nome', `%${termo}%`);
+    const { data: achados } = await escCasa(supabase.from('manutencoes')
+      .select('id, nome, icone, frequencia_dias')).ilike('nome', `%${termo}%`);
     if (!achados?.length) {
       await enviarTexto(phone, `❌ Não encontrei manutenção com *"${termo}"*. Cadastre no painel: *Casa → Manutenções*.`);
       return;
@@ -291,7 +300,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   if ((m = msg.match(/^(?:novo|criar|adicionar)\s+h[aá]bito\s+(.+)$/i))) {
     const nome = m[1].trim();
     const { data: h } = await supabase.from('habitos').insert({
-      grupo_id: grupoId, nome, icone: '🎯', cor: '#7c3aed',
+      grupo_id: grupoId, user_id: user.id, nome, icone: '🎯', cor: '#7c3aed',
     }).select().single();
     await enviarTexto(phone, `🌱 *Habito criado!*\n\n🎯 ${h.nome}\n\nPara marcar como feito hoje: *fiz ${nome}*`);
     return;
@@ -302,7 +311,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   if (/^(?:fiz|completei|conclu[ií]|terminei|marquei|fechei)\s+(?:todos?|tudo)(?:\s+(?:os\s+)?h[aá]bitos?)?(?:\s+(?:de\s+)?hoje)?$/i.test(msg)) {
     const diaSemana = (() => { const j = new Date().getDay(); return j === 0 ? 7 : j; })();
     const { data: habitos } = await supabase.from('habitos')
-      .select('id, nome, icone, dias_semana').eq('grupo_id', grupoId).eq('ativo', true);
+      .select('id, nome, icone, dias_semana').eq('user_id', user.id).eq('ativo', true);
     const doDia = (habitos || []).filter(h => (h.dias_semana || [1,2,3,4,5,6,7]).includes(diaSemana));
     if (!doDia.length) {
       await enviarTexto(phone, '🌱 Voce nao tem habitos pra hoje. Crie no painel ou diga: *novo habito beber agua*');
@@ -310,7 +319,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     }
     const hoje = new Date().toISOString().slice(0, 10);
     await supabase.from('registros_habito').upsert(
-      doDia.map(h => ({ habito_id: h.id, grupo_id: grupoId, data: hoje, concluido: true })),
+      doDia.map(h => ({ habito_id: h.id, grupo_id: grupoId, user_id: user.id, data: hoje, concluido: true })),
       { onConflict: 'habito_id,data' }
     );
     const lista = doDia.map(h => `✅ ${h.icone} ${h.nome}`).join('\n');
@@ -322,7 +331,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   if ((m = msg.match(/^(?:fiz|completei|conclu[ií]|terminei|marquei)\s+(.+)$/i))) {
     const termo = m[1].trim();
     const { data: habitos } = await supabase.from('habitos')
-      .select('id, nome, icone').eq('grupo_id', grupoId).eq('ativo', true)
+      .select('id, nome, icone').eq('user_id', user.id).eq('ativo', true)
       .ilike('nome', `%${termo}%`);
     if (!habitos?.length) {
       await enviarTexto(phone, `❌ Nao encontrei habito com *"${termo}"*.\nCrie com: *novo habito ${termo}*`);
@@ -336,7 +345,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     const habito = habitos[0];
     const hoje = new Date().toISOString().slice(0, 10);
     await supabase.from('registros_habito').upsert(
-      { habito_id: habito.id, grupo_id: grupoId, data: hoje, concluido: true },
+      { habito_id: habito.id, grupo_id: grupoId, user_id: user.id, data: hoje, concluido: true },
       { onConflict: 'habito_id,data' }
     );
     const streak = await calcularStreak(habito.id);
@@ -356,7 +365,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     if (/urgente|urgent[ií]ssim/i.test(titulo)) prioridade = 'urgente';
     else if (/importante|prioridade\s+alta/i.test(titulo)) prioridade = 'alta';
     const { data: t } = await supabase.from('tarefas').insert({
-      grupo_id: grupoId, titulo, prioridade, criado_por: user.id,
+      grupo_id: grupoId, user_id: user.id, titulo, prioridade, criado_por: user.id,
     }).select().single();
     const priLabel = { urgente: ' 🔴 URGENTE', alta: ' 🟠 Alta prioridade', media: '', baixa: ' 🟢' };
     await enviarTexto(phone, `📋 *Tarefa criada*${priLabel[prioridade]}\n\n${t.titulo}\n\nVer todas: *tarefas*`);
@@ -365,8 +374,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
 
   // ── DESPENSA: listar status ─────────────────────────────────────────
   if (/^(minha\s+despensa|despensa|o\s+que\s+(t[aá]|est[aá])\s+acabando|que\s+falta\s+em\s+casa)$/i.test(msg)) {
-    const { data: itens } = await supabase.from('despensa_itens')
-      .select('nome, status').eq('grupo_id', grupoId);
+    const { data: itens } = await escCasa(supabase.from('despensa_itens')
+      .select('nome, status'));
     if (!itens?.length) {
       await enviarTexto(phone, '🧺 Sua despensa está vazia. Cadastre o que costuma ter em casa no painel, ou diga *acabou o café* que eu já começo a montar.');
       return;
@@ -386,8 +395,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     || (m = msg.match(/^(?:acabou|acabando)\s+(.+)$/i))) {
     const termo = m[1].trim();
     const novoStatus = /acabando/i.test(msg) ? 'acabando' : 'acabou';
-    let { data: achados } = await supabase.from('despensa_itens')
-      .select('id, nome').eq('grupo_id', grupoId).ilike('nome', `%${termo}%`);
+    let { data: achados } = await escCasa(supabase.from('despensa_itens')
+      .select('id, nome')).ilike('nome', `%${termo}%`);
     let item;
     if (achados?.length) {
       item = achados[0];
@@ -395,7 +404,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
         .update({ status: novoStatus, updated_at: new Date().toISOString() }).eq('id', item.id);
     } else {
       const { data: novo } = await supabase.from('despensa_itens')
-        .insert({ grupo_id: grupoId, nome: termo, status: novoStatus }).select().single();
+        .insert({ grupo_id: grupoId, user_id: user.id, nome: termo, status: novoStatus }).select().single();
       item = novo;
     }
     // Garante na lista de compras (linkado, sem duplicar)
@@ -404,7 +413,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
       .select('id').eq('lista_id', listaId).eq('despensa_item_id', item.id).eq('comprado', false).maybeSingle();
     if (!jaTem) {
       await supabase.from('itens_lista_compras')
-        .insert({ lista_id: listaId, nome: item.nome, despensa_item_id: item.id });
+        .insert({ lista_id: listaId, nome: item.nome, user_id: user.id, despensa_item_id: item.id });
     }
     await enviarTexto(phone, `🛒 *${item.nome}* ${novoStatus === 'acabando' ? 'tá acabando' : 'acabou'} — já coloquei na lista de compras!\n\nVer lista: *lista de compras*`);
     return;
@@ -412,16 +421,16 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
 
   // ── RECEITAS: o que dá pra cozinhar com o que tem em casa ───────────
   if (/^(?:o\s+que\s+(?:eu\s+)?(?:posso|d[aá]\s+(?:pra?|para))\s+cozinhar|o\s+que\s+(?:eu\s+)?fa[çc]o\s+(?:pra?|para)\s+(?:comer|jantar|almo[çc]ar)|sugest[ãa]o\s+de\s+receita)/i.test(msg)) {
-    const { data: receitas } = await supabase.from('receitas')
-      .select('id, nome, icone').eq('grupo_id', grupoId);
+    const { data: receitas } = await escCasa(supabase.from('receitas')
+      .select('id, nome, icone'));
     if (!receitas?.length) {
       await enviarTexto(phone, '🍳 Você ainda não cadastrou receitas. Crie no painel: *Casa → Receitas*.');
       return;
     }
     const { data: ings } = await supabase.from('receita_ingredientes')
       .select('receita_id, nome').in('receita_id', receitas.map(r => r.id));
-    const { data: despensa } = await supabase.from('despensa_itens')
-      .select('nome, status').eq('grupo_id', grupoId);
+    const { data: despensa } = await escCasa(supabase.from('despensa_itens')
+      .select('nome, status'));
     const tem = (despensa || []).filter(d => d.status === 'tem').map(d => d.nome.toLowerCase());
     const temIng = nome => tem.some(t => t.includes(nome.toLowerCase()) || nome.toLowerCase().includes(t));
     const ranking = receitas.map(r => {
@@ -446,8 +455,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
 
   // ── RECEITAS: listar ────────────────────────────────────────────────
   if (/^(minhas\s+receitas|receitas)$/i.test(msg)) {
-    const { data: receitas } = await supabase.from('receitas')
-      .select('id, nome, icone, tempo_min, porcoes').eq('grupo_id', grupoId)
+    const { data: receitas } = await escCasa(supabase.from('receitas')
+      .select('id, nome, icone, tempo_min, porcoes'))
       .order('created_at', { ascending: false });
     if (!receitas?.length) {
       await enviarTexto(phone, '🍳 Você ainda não tem receitas. Cadastre no painel: *Casa → Receitas*.');
@@ -464,8 +473,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   // ── RECEITAS: cozinhar (manda o que falta pra lista de compras) ─────
   if ((m = msg.match(/^(?:vou\s+cozinhar|cozinhar|fazer\s+(?:a\s+)?receita|preparar)\s+(.+)$/i))) {
     const termo = m[1].trim();
-    const { data: achadas } = await supabase.from('receitas')
-      .select('id, nome, icone').eq('grupo_id', grupoId).ilike('nome', `%${termo}%`);
+    const { data: achadas } = await escCasa(supabase.from('receitas')
+      .select('id, nome, icone')).ilike('nome', `%${termo}%`);
     if (!achadas?.length) {
       await enviarTexto(phone, `❌ Não encontrei receita com *"${termo}"*. Veja as suas: *receitas*`);
       return;
@@ -477,8 +486,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
       await enviarTexto(phone, `🍳 *${rec.icone || '🍳'} ${rec.nome}* ainda não tem ingredientes cadastrados. Adicione no painel: *Casa → Receitas*.`);
       return;
     }
-    const { data: despensa } = await supabase.from('despensa_itens')
-      .select('id, nome, status').eq('grupo_id', grupoId);
+    const { data: despensa } = await escCasa(supabase.from('despensa_itens')
+      .select('id, nome, status'));
     const acha = nome => (despensa || []).find(d => {
       const a = d.nome.toLowerCase(), b = nome.toLowerCase();
       return a.includes(b) || b.includes(a);
@@ -488,11 +497,13 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     for (const ing of ings) {
       const match = acha(ing.nome);
       if (match && match.status === 'tem') { jaTem.push(ing.nome); continue; }
-      const { data: dup } = await supabase.from('itens_lista_compras')
-        .select('id').eq('lista_id', listaId).ilike('nome', ing.nome).eq('comprado', false).maybeSingle();
+      let qDup = supabase.from('itens_lista_compras')
+        .select('id').eq('lista_id', listaId).ilike('nome', ing.nome).eq('comprado', false);
+      if (!cfg.casa) qDup = qDup.eq('user_id', user.id);
+      const { data: dup } = await qDup.maybeSingle();
       if (!dup) {
         await supabase.from('itens_lista_compras').insert({
-          lista_id: listaId, nome: ing.nome, quantidade: ing.quantidade || '1',
+          lista_id: listaId, nome: ing.nome, quantidade: ing.quantidade || '1', user_id: user.id,
           categoria: ing.categoria || null, despensa_item_id: match ? match.id : null,
         });
       }
@@ -510,8 +521,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   // ── RECEITAS: ver uma receita (ingredientes + preparo) ──────────────
   if ((m = msg.match(/^(?:receita|como\s+(?:eu\s+)?(?:fa[çc]o|faz|se\s+faz)(?:\s+(?:o|a|os|as))?|ingredientes\s+(?:d[eoa]s?\s+)?)\s*(.+)$/i))) {
     const termo = m[1].trim();
-    const { data: achadas } = await supabase.from('receitas')
-      .select('id, nome, icone, tempo_min, porcoes, modo_preparo').eq('grupo_id', grupoId).ilike('nome', `%${termo}%`);
+    const { data: achadas } = await escCasa(supabase.from('receitas')
+      .select('id, nome, icone, tempo_min, porcoes, modo_preparo')).ilike('nome', `%${termo}%`);
     if (!achadas?.length) {
       await enviarTexto(phone, `❌ Não encontrei receita com *"${termo}"*. Veja as suas: *receitas*`);
       return;
@@ -538,7 +549,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     const deStr = hoje.toISOString().slice(0, 10);
     const ateStr = ate.toISOString().slice(0, 10);
     const { data: comps } = await supabase.from('compromissos')
-      .select('titulo, data, hora, local').eq('grupo_id', grupoId)
+      .select('titulo, data, hora, local').eq('user_id', user.id)
       .gte('data', deStr).lte('data', ateStr)
       .order('data', { ascending: true }).order('hora', { ascending: true, nullsFirst: true });
     if (!comps?.length) {
@@ -573,7 +584,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     const hojeStr = isoD(new Date());
     const { data: ultimo } = await supabase.from('compromissos')
       .select('id, titulo, hora')
-      .eq('grupo_id', grupoId).gte('data', hojeStr)
+      .eq('user_id', user.id).gte('data', hojeStr)
       .order('created_at', { ascending: false }).limit(1).maybeSingle();
     if (!ultimo) {
       await enviarTexto(phone, '🤔 Não achei um compromisso futuro pra ajustar o lembrete. Marca um primeiro, ex.: *marca dentista terça 15h*.');
@@ -632,7 +643,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     const hora = hr ? hr.hora : null;
     const antecedencia = ant ? ant.minutos : (hora ? 60 : 0);
     const { error } = await supabase.from('compromissos').insert({
-      grupo_id: grupoId, titulo, data: dataISO, hora,
+      grupo_id: grupoId, user_id: user.id, titulo, data: dataISO, hora,
       categoria: 'pessoal', cor: '#7c3aed',
       lembrete_ativo: true, lembrete_antecedencia: antecedencia,
     });

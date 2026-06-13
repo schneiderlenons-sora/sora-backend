@@ -51,6 +51,19 @@ async function requirePremiumGrow(req, res, next) {
   next();
 }
 
+// ─── Privacidade / compartilhamento do Grow ──────────────────────────
+// Cada linha guarda user_id (dono) + grupo_id. Abas pessoais (Hábitos,
+// Tarefas, Agenda, Bem-estar) leem SEMPRE por user_id. Abas opcionais
+// (Casa + Coleções) leem por grupo_id quando a flag do grupo está ligada,
+// senão por user_id. Alternar a flag não migra dado — só troca o filtro.
+const { growShareCfg } = require('../services/growShare');
+// Aplica o filtro de leitura numa query: compartilhado→grupo_id, privado→user_id.
+function escopoLeitura(query, req, compartilhado) {
+  return compartilhado
+    ? query.eq('grupo_id', req.userRow.grupo_ativo)
+    : query.eq('user_id', req.userRow.id);
+}
+
 // ─── STATUS ──────────────────────────────────────────────────────────
 router.get('/status/:phone', auth, async (req, res) => {
   try {
@@ -110,13 +123,13 @@ router.get('/habitos/:phone', auth, requireGrow, async (req, res) => {
     const dias = parseInt(req.query.dias) || 120;
     const incluirArquivados = req.query.incluir_arquivados === 'true';
     const inicio = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
-    let qh = supabase.from('habitos').select('*').eq('grupo_id', req.userRow.grupo_ativo);
+    let qh = supabase.from('habitos').select('*').eq('user_id', req.userRow.id);
     if (!incluirArquivados) qh = qh.eq('ativo', true);
     qh = qh.order('ordem', { ascending: true }).order('created_at', { ascending: true });
     const { data: habitos } = await qh;
     const { data: registros } = await supabase.from('registros_habito')
       .select('habito_id, data, concluido')
-      .eq('grupo_id', req.userRow.grupo_ativo).gte('data', inicio);
+      .eq('user_id', req.userRow.id).gte('data', inicio);
     // Lembrete buscado à parte e tolerante: se a migration 031 ainda não
     // rodou, as colunas não existem → data vem null e devolvemos o default
     // sem derrubar a listagem de hábitos.
@@ -159,7 +172,7 @@ router.post('/habitos', auth, requireGrow, async (req, res) => {
     const { nome, descricao, icone, cor, frequencia, dias_semana, horario_lembrete, motivo, tipo, ordem } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
     const { data } = await supabase.from('habitos').insert({
-      grupo_id: req.userRow.grupo_ativo,
+      grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id,
       nome: nome.trim(), descricao, icone: icone || '🎯', cor: cor || '#7c3aed',
       frequencia: frequencia || 'diario',
       dias_semana: dias_semana || [1,2,3,4,5,6,7],
@@ -187,7 +200,7 @@ router.post('/habitos/reordenar', auth, requireGrow, async (req, res) => {
     const { ordens } = req.body;
     if (!Array.isArray(ordens)) return res.status(400).json({ erro: 'ordens deve ser array de {id, ordem}' });
     await Promise.all(ordens.map((o) =>
-      supabase.from('habitos').update({ ordem: o.ordem }).eq('id', o.id).eq('grupo_id', req.userRow.grupo_ativo)
+      supabase.from('habitos').update({ ordem: o.ordem }).eq('id', o.id).eq('user_id', req.userRow.id)
     ));
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -212,7 +225,7 @@ router.post('/habitos/:id/toggle', auth, requireGrow, async (req, res) => {
       return res.json(upd);
     }
     const { data: novo } = await supabase.from('registros_habito').insert({
-      habito_id: req.params.id, grupo_id: req.userRow.grupo_ativo, data: dataReg, concluido: true,
+      habito_id: req.params.id, grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, data: dataReg, concluido: true,
     }).select().single();
     res.json(novo);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -224,7 +237,7 @@ router.get('/tarefas/:phone', auth, requireGrow, async (req, res) => {
   try {
     const { concluida, projeto_id, prioridade } = req.query;
     let q = supabase.from('tarefas').select('*, projetos(nome,cor,icone)')
-      .eq('grupo_id', req.userRow.grupo_ativo).order('created_at', { ascending: false });
+      .eq('user_id', req.userRow.id).order('created_at', { ascending: false });
     if (concluida !== undefined) q = q.eq('concluida', concluida === 'true');
     if (projeto_id) q = q.eq('projeto_id', projeto_id);
     if (prioridade) q = q.eq('prioridade', prioridade);
@@ -238,7 +251,7 @@ router.post('/tarefas', auth, requireGrow, async (req, res) => {
     const { titulo, descricao, prioridade, data_vencimento, recorrente, projeto_id, tags, status_kanban } = req.body;
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Titulo obrigatorio' });
     const { data } = await supabase.from('tarefas').insert({
-      grupo_id: req.userRow.grupo_ativo, titulo: titulo.trim(), descricao,
+      grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, titulo: titulo.trim(), descricao,
       prioridade: prioridade || 'media',
       data_vencimento: data_vencimento || null,
       recorrente: !!recorrente, projeto_id: projeto_id || null,
@@ -270,7 +283,7 @@ router.delete('/tarefas/:id', auth, requireGrow, async (req, res) => {
 // ─── PROJETOS ────────────────────────────────────────────────────────
 router.get('/projetos/:phone', auth, requireGrow, async (req, res) => {
   try {
-    const { data } = await supabase.from('projetos').select('*').eq('grupo_id', req.userRow.grupo_ativo).order('created_at');
+    const { data } = await supabase.from('projetos').select('*').eq('user_id', req.userRow.id).order('created_at');
     res.json(data || []);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -280,7 +293,7 @@ router.post('/projetos', auth, requireGrow, async (req, res) => {
     const { nome, descricao, cor, icone, data_prazo } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
     const { data } = await supabase.from('projetos').insert({
-      grupo_id: req.userRow.grupo_ativo, nome: nome.trim(), descricao,
+      grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, nome: nome.trim(), descricao,
       cor: cor || '#7c3aed', icone: icone || '📋', data_prazo: data_prazo || null,
     }).select().single();
     res.json(data);
@@ -300,7 +313,7 @@ router.get('/humor/:phone', auth, requireGrow, async (req, res) => {
     const dias = parseInt(req.query.dias) || 30;
     const inicio = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
     const { data } = await supabase.from('registros_humor')
-      .select('*').eq('grupo_id', req.userRow.grupo_ativo)
+      .select('*').eq('user_id', req.userRow.id)
       .gte('data', inicio).order('data', { ascending: true });
     res.json(data || []);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -335,9 +348,11 @@ async function getOrCreateLista(grupoId) {
 
 router.get('/lista-compras/:phone', auth, requireGrow, async (req, res) => {
   try {
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
     const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
-    const { data: itens } = await supabase.from('itens_lista_compras')
-      .select('*').eq('lista_id', listaId).order('created_at', { ascending: false });
+    let qi = supabase.from('itens_lista_compras').select('*').eq('lista_id', listaId);
+    if (!cfg.casa) qi = qi.eq('user_id', req.userRow.id);
+    const { data: itens } = await qi.order('created_at', { ascending: false });
     res.json({ lista_id: listaId, itens: itens || [] });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -348,7 +363,7 @@ router.post('/lista-compras/item', auth, requireGrow, async (req, res) => {
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
     const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
     const { data } = await supabase.from('itens_lista_compras').insert({
-      lista_id: listaId, nome: nome.trim(),
+      lista_id: listaId, nome: nome.trim(), user_id: req.userRow.id,
       quantidade: quantidade || '1', unidade: unidade || null,
       categoria: categoria || null,
       preco_estimado: preco_estimado ? parseFloat(preco_estimado) : null,
@@ -382,8 +397,11 @@ router.delete('/lista-compras/item/:id', auth, requireGrow, async (req, res) => 
 
 router.post('/lista-compras/limpar', auth, requireGrow, async (req, res) => {
   try {
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
     const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
-    await supabase.from('itens_lista_compras').delete().eq('lista_id', listaId).eq('comprado', true);
+    let qdel = supabase.from('itens_lista_compras').delete().eq('lista_id', listaId).eq('comprado', true);
+    if (!cfg.casa) qdel = qdel.eq('user_id', req.userRow.id);
+    await qdel;
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -393,9 +411,11 @@ router.post('/lista-compras/enviar', auth, requireGrow, async (req, res) => {
   try {
     const phone = req.authUser?.phone;
     if (!phone) return res.status(400).json({ erro: 'Nenhum WhatsApp vinculado à sua conta.' });
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
     const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
-    const { data: itens } = await supabase.from('itens_lista_compras')
-      .select('nome, quantidade, categoria, comprado').eq('lista_id', listaId);
+    let qe = supabase.from('itens_lista_compras').select('nome, quantidade, categoria, comprado').eq('lista_id', listaId);
+    if (!cfg.casa) qe = qe.eq('user_id', req.userRow.id);
+    const { data: itens } = await qe;
     const pendentes = (itens || []).filter(i => !i.comprado);
     if (!pendentes.length) {
       await enviarTexto(phone, '🛒 Sua lista de compras está vazia — não há nada pendente. 🎉');
@@ -429,7 +449,7 @@ async function sincronizarDespensaLista(grupoId, item) {
   if (item.status === 'acabou' || item.status === 'acabando') {
     if (!pendente) {
       await supabase.from('itens_lista_compras').insert({
-        lista_id: listaId, nome: item.nome,
+        lista_id: listaId, nome: item.nome, user_id: item.user_id || null,
         quantidade: item.quantidade_ideal || '1', unidade: item.unidade || null,
         categoria: item.categoria || null, despensa_item_id: item.id,
       });
@@ -442,8 +462,8 @@ async function sincronizarDespensaLista(grupoId, item) {
 
 router.get('/despensa/:phone', auth, requirePremiumGrow, async (req, res) => {
   try {
-    const { data } = await supabase.from('despensa_itens')
-      .select('*').eq('grupo_id', req.userRow.grupo_ativo)
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    const { data } = await escopoLeitura(supabase.from('despensa_itens').select('*'), req, cfg.casa)
       .order('created_at', { ascending: false });
     res.json({ itens: data || [] });
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -455,7 +475,7 @@ router.post('/despensa', auth, requirePremiumGrow, async (req, res) => {
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
     const st = ['tem','acabando','acabou'].includes(status) ? status : 'tem';
     const { data, error } = await supabase.from('despensa_itens').insert({
-      grupo_id: req.userRow.grupo_ativo, nome: nome.trim(),
+      grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, nome: nome.trim(),
       categoria: categoria || null, status: st,
       quantidade_ideal: quantidade_ideal || null, unidade: unidade || null,
     }).select().single();
@@ -492,8 +512,8 @@ router.delete('/despensa/:id', auth, requirePremiumGrow, async (req, res) => {
 // ─── MANUTENÇÕES ─────────────────────────────────────────────────────
 router.get('/manutencoes/:phone', auth, requirePremiumGrow, async (req, res) => {
   try {
-    const { data } = await supabase.from('manutencoes')
-      .select('*').eq('grupo_id', req.userRow.grupo_ativo)
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    const { data } = await escopoLeitura(supabase.from('manutencoes').select('*'), req, cfg.casa)
       .order('created_at', { ascending: false });
     res.json({ itens: data || [] });
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -505,7 +525,7 @@ router.post('/manutencoes', auth, requirePremiumGrow, async (req, res) => {
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
     const freq = parseInt(frequencia_dias);
     const { data, error } = await supabase.from('manutencoes').insert({
-      grupo_id: req.userRow.grupo_ativo, nome: nome.trim(),
+      grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, nome: nome.trim(),
       icone: icone || '🔧',
       frequencia_dias: freq > 0 ? freq : 90,
       ultima_data: ultima_data || null,
@@ -565,8 +585,8 @@ async function ingredientesDe(receitaIds) {
 
 router.get('/receitas/:phone', auth, requirePremiumGrow, async (req, res) => {
   try {
-    const { data: receitas } = await supabase.from('receitas')
-      .select('*').eq('grupo_id', req.userRow.grupo_ativo)
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    const { data: receitas } = await escopoLeitura(supabase.from('receitas').select('*'), req, cfg.casa)
       .order('created_at', { ascending: false });
     const ings = await ingredientesDe((receitas || []).map(r => r.id));
     const itens = (receitas || []).map(r => ({
@@ -581,7 +601,7 @@ router.post('/receitas', auth, requirePremiumGrow, async (req, res) => {
     const { nome, icone, porcoes, tempo_min, modo_preparo, ingredientes } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
     const { data: receita, error } = await supabase.from('receitas').insert({
-      grupo_id: req.userRow.grupo_ativo, nome: nome.trim(), icone: icone || '🍳',
+      grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, nome: nome.trim(), icone: icone || '🍳',
       porcoes: porcoes ? parseInt(porcoes) : null,
       tempo_min: tempo_min ? parseInt(tempo_min) : null,
       modo_preparo: modo_preparo || null,
@@ -636,14 +656,15 @@ router.delete('/receitas/:id', auth, requirePremiumGrow, async (req, res) => {
 router.post('/receitas/:id/cozinhar', auth, requirePremiumGrow, async (req, res) => {
   try {
     const grupoId = req.userRow.grupo_ativo;
+    const cfg = await growShareCfg(grupoId);
     const { data: receita } = await supabase.from('receitas')
       .select('id, nome').eq('id', req.params.id).eq('grupo_id', grupoId).maybeSingle();
     if (!receita) return res.status(404).json({ erro: 'Receita nao encontrada' });
     const ings = await ingredientesDe([receita.id]);
     if (!ings.length) return res.json({ ok: true, receita: receita.nome, adicionados: [], jaTem: [] });
 
-    const { data: despensa } = await supabase.from('despensa_itens')
-      .select('id, nome, status').eq('grupo_id', grupoId);
+    const { data: despensa } = await escopoLeitura(
+      supabase.from('despensa_itens').select('id, nome, status'), req, cfg.casa);
     const acha = nome => (despensa || []).find(d => {
       const a = d.nome.toLowerCase(), b = nome.toLowerCase();
       return a.includes(b) || b.includes(a);
@@ -654,11 +675,13 @@ router.post('/receitas/:id/cozinhar', auth, requirePremiumGrow, async (req, res)
     for (const ing of ings) {
       const match = acha(ing.nome);
       if (match && match.status === 'tem') { jaTem.push(ing.nome); continue; }
-      const { data: dup } = await supabase.from('itens_lista_compras')
-        .select('id').eq('lista_id', listaId).ilike('nome', ing.nome).eq('comprado', false).maybeSingle();
+      let qd = supabase.from('itens_lista_compras')
+        .select('id').eq('lista_id', listaId).ilike('nome', ing.nome).eq('comprado', false);
+      if (!cfg.casa) qd = qd.eq('user_id', req.userRow.id);
+      const { data: dup } = await qd.maybeSingle();
       if (!dup) {
         await supabase.from('itens_lista_compras').insert({
-          lista_id: listaId, nome: ing.nome, quantidade: ing.quantidade || '1',
+          lista_id: listaId, nome: ing.nome, quantidade: ing.quantidade || '1', user_id: req.userRow.id,
           categoria: ing.categoria || null, despensa_item_id: match ? match.id : null,
         });
       }
@@ -674,7 +697,7 @@ const CATS_COMP = ['pessoal', 'trabalho', 'familia', 'saude', 'financas', 'estud
 router.get('/compromissos/:phone', auth, requireGrow, async (req, res) => {
   try {
     let q = supabase.from('compromissos')
-      .select('*').eq('grupo_id', req.userRow.grupo_ativo);
+      .select('*').eq('user_id', req.userRow.id);
     if (req.query.de)  q = q.gte('data', req.query.de);
     if (req.query.ate) q = q.lte('data', req.query.ate);
     const { data } = await q.order('data', { ascending: true }).order('hora', { ascending: true, nullsFirst: true });
@@ -688,7 +711,7 @@ router.post('/compromissos', auth, requireGrow, async (req, res) => {
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Titulo obrigatorio' });
     if (!data)           return res.status(400).json({ erro: 'Data obrigatoria' });
     const { data: novo, error } = await supabase.from('compromissos').insert({
-      grupo_id: req.userRow.grupo_ativo, titulo: titulo.trim(),
+      grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, titulo: titulo.trim(),
       descricao: descricao || null, data, hora: hora || null, local: local || null,
       categoria: CATS_COMP.includes(categoria) ? categoria : 'pessoal',
       cor: cor || '#7c3aed',
@@ -711,7 +734,7 @@ router.put('/compromissos/:id', auth, requireGrow, async (req, res) => {
       patch.lembrete_enviado = false;
     }
     const { data, error } = await supabase.from('compromissos')
-      .update(patch).eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
+      .update(patch).eq('id', req.params.id).eq('user_id', req.userRow.id)
       .select().single();
     if (error || !data) return res.status(404).json({ erro: 'Compromisso nao encontrado' });
     res.json(data);
@@ -721,7 +744,7 @@ router.put('/compromissos/:id', auth, requireGrow, async (req, res) => {
 router.delete('/compromissos/:id', auth, requireGrow, async (req, res) => {
   try {
     await supabase.from('compromissos').delete()
-      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
+      .eq('id', req.params.id).eq('user_id', req.userRow.id);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -735,7 +758,8 @@ router.get('/agenda/feed/:phone', auth, requireGrow, async (req, res) => {
     const hoje = new Date();
     const de  = req.query.de  || isoLocal(new Date(hoje.getTime() - 31 * 86400000));
     const ate = req.query.ate || isoLocal(new Date(hoje.getTime() + 180 * 86400000));
-    const eventos = await montarFeed(req.userRow.grupo_ativo, de, ate);
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    const eventos = await montarFeed(req.userRow.grupo_ativo, de, ate, { userId: req.userRow.id, casaCompartilhada: cfg.casa });
     res.json({ eventos });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -769,11 +793,14 @@ router.post('/agenda/briefing', auth, requireGrow, async (req, res) => {
 // COLEÇÕES DO GROW — Viagens, Bucket list, Mídia (filmes/séries), Leituras.
 // CRUD genérico (base do Grow, todos os planos pagos). Migration 038.
 // ─────────────────────────────────────────────────────────────────────
-function crudColecao(tabela, campos, obrigatorio) {
+// `flag` = chave em growShareCfg que decide se a coleção é compartilhada
+// (bucket_list compartilha a flag de viagens — são a mesma aba no app).
+function crudColecao(tabela, campos, obrigatorio, flag) {
   router.get(`/${tabela}/:phone`, auth, requireGrow, async (req, res) => {
     try {
-      const { data, error } = await supabase.from(tabela).select('*')
-        .eq('grupo_id', req.userRow.grupo_ativo).order('created_at', { ascending: false });
+      const cfg = await growShareCfg(req.userRow.grupo_ativo);
+      const { data, error } = await escopoLeitura(supabase.from(tabela).select('*'), req, !!cfg[flag])
+        .order('created_at', { ascending: false });
       if (error) return res.status(503).json({ erro: `Coleção indisponível: rode a migration 038. (${error.message})` });
       res.json(data || []);
     } catch (e) { res.status(500).json({ erro: e.message }); }
@@ -782,7 +809,7 @@ function crudColecao(tabela, campos, obrigatorio) {
     try {
       if (obrigatorio && !String(req.body[obrigatorio] ?? '').trim())
         return res.status(400).json({ erro: `${obrigatorio} obrigatório` });
-      const ins = { grupo_id: req.userRow.grupo_ativo };
+      const ins = { grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id };
       for (const k of campos) if (k in req.body) ins[k] = req.body[k];
       const { data, error } = await supabase.from(tabela).insert(ins).select().single();
       if (error) return res.status(500).json({ erro: error.message });
@@ -806,9 +833,52 @@ function crudColecao(tabela, campos, obrigatorio) {
   });
 }
 
-crudColecao('viagens',     ['destino','emoji','data_inicio','data_fim','orcamento','status','notas','checklist','cover_url'], 'destino');
-crudColecao('bucket_list', ['titulo','categoria','emoji','status','notas'], 'titulo');
-crudColecao('midia',       ['titulo','tipo','status','nota','cover_url','genero','ano','comentario','favorito'], 'titulo');
-crudColecao('leituras',    ['titulo','autor','status','nota','cover_url','total_paginas','pagina_atual','genero','comentario','favorito'], 'titulo');
+crudColecao('viagens',     ['destino','emoji','data_inicio','data_fim','orcamento','status','notas','checklist','cover_url'], 'destino', 'viagens');
+crudColecao('bucket_list', ['titulo','categoria','emoji','status','notas'], 'titulo', 'viagens');
+crudColecao('midia',       ['titulo','tipo','status','nota','cover_url','genero','ano','comentario','favorito'], 'titulo', 'midia');
+crudColecao('leituras',    ['titulo','autor','status','nota','cover_url','total_paginas','pagina_atual','genero','comentario','favorito'], 'titulo', 'leituras');
+
+// ─── COMPARTILHAMENTO DO GROW (toggles por aba, por grupo) ───────────
+// Abas opcionais: Casa + Coleções. Hábitos/Saúde/Tarefas/Agenda são sempre
+// privados (sem flag). Só admin do grupo altera; o estado é por grupo.
+const SHARE_ABAS = {
+  casa:     'grow_compartilha_casa',
+  viagens:  'grow_compartilha_viagens',
+  midia:    'grow_compartilha_midia',
+  leituras: 'grow_compartilha_leituras',
+};
+
+router.get('/share-config/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const grupoId = req.userRow.grupo_ativo;
+    const cfg = await growShareCfg(grupoId);
+    // quantos membros + se sou admin (compartilhar só faz sentido com 2+)
+    const { data: membros } = await supabase.from('grupo_membros')
+      .select('user_id, papel').eq('grupo_id', grupoId);
+    const eu = (membros || []).find(m => m.user_id === req.userRow.id);
+    res.json({
+      config: cfg,
+      totalMembros: (membros || []).length || 1,
+      isAdmin: eu ? eu.papel === 'admin' : true, // grupo pessoal sem linha de membro → trata como admin
+    });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.post('/share-config', auth, requireGrow, async (req, res) => {
+  try {
+    const { aba, valor } = req.body;
+    const coluna = SHARE_ABAS[aba];
+    if (!coluna) return res.status(400).json({ erro: 'aba invalida' });
+    const grupoId = req.userRow.grupo_ativo;
+    // só admin do grupo pode alterar (grupo pessoal de 1 membro: dono é admin)
+    const { data: eu } = await supabase.from('grupo_membros')
+      .select('papel').eq('grupo_id', grupoId).eq('user_id', req.userRow.id).maybeSingle();
+    if (eu && eu.papel !== 'admin')
+      return res.status(403).json({ erro: 'Apenas o admin do grupo pode mudar o compartilhamento.' });
+    const { error } = await supabase.from('grupos').update({ [coluna]: !!valor }).eq('id', grupoId);
+    if (error) return res.status(503).json({ erro: 'Compartilhamento indisponível: rode a migration 040 no Supabase.' });
+    res.json({ ok: true, config: await growShareCfg(grupoId) });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
 
 module.exports = router;

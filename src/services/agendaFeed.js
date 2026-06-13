@@ -31,13 +31,19 @@ function ocorrenciasMensais(dia, deStr, ateStr) {
   return out;
 }
 
-async function montarFeed(grupoId, deStr, ateStr) {
+// opts = { userId, casaCompartilhada }. Compromissos e consultas são pessoais
+// (filtram por userId quando informado). Manutenções (Casa) seguem o toggle do
+// grupo. Recorrências/dívidas/faturas são finanças → sempre por grupo.
+async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
+  const { userId = null, casaCompartilhada = false } = opts;
   const eventos = [];
 
-  // 1. Compromissos nativos (editáveis)
+  // 1. Compromissos nativos (editáveis) — pessoais
   try {
-    const { data } = await supabase.from('compromissos').select('*')
-      .eq('grupo_id', grupoId).gte('data', deStr).lte('data', ateStr);
+    let q = supabase.from('compromissos').select('*')
+      .gte('data', deStr).lte('data', ateStr);
+    q = userId ? q.eq('user_id', userId) : q.eq('grupo_id', grupoId);
+    const { data } = await q;
     for (const c of data || []) eventos.push({
       id: `comp-${c.id}`, source: 'compromisso', titulo: c.titulo, data: c.data, hora: c.hora || null,
       cor: c.cor || '#7c3aed', local: c.local || null, deeplink: '/grow/agenda', editavel: true, raw: c,
@@ -46,9 +52,10 @@ async function montarFeed(grupoId, deStr, ateStr) {
 
   // 2. Consultas + retornos (Saúde)
   try {
-    const { data } = await supabase.from('consultas')
-      .select('id, profissional, especialidade, data, hora, local, retorno_data, status')
-      .eq('grupo_id', grupoId);
+    let qc = supabase.from('consultas')
+      .select('id, profissional, especialidade, data, hora, local, retorno_data, status');
+    qc = userId ? qc.eq('user_id', userId) : qc.eq('grupo_id', grupoId);
+    const { data } = await qc;
     for (const c of data || []) {
       if (c.status === 'cancelada') continue;
       if (c.data >= deStr && c.data <= ateStr) {
@@ -106,8 +113,10 @@ async function montarFeed(grupoId, deStr, ateStr) {
 
   // 6. Manutenções (próxima prevista)
   try {
-    const { data } = await supabase.from('manutencoes')
-      .select('id, nome, icone, frequencia_dias, ultima_data').eq('grupo_id', grupoId).not('ultima_data', 'is', null);
+    let qm = supabase.from('manutencoes')
+      .select('id, nome, icone, frequencia_dias, ultima_data').not('ultima_data', 'is', null);
+    qm = (casaCompartilhada || !userId) ? qm.eq('grupo_id', grupoId) : qm.eq('user_id', userId);
+    const { data } = await qm;
     for (const mn of data || []) {
       const prox = new Date(mn.ultima_data + 'T12:00:00');
       prox.setDate(prox.getDate() + (mn.frequencia_dias || 90));

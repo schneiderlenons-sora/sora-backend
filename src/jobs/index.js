@@ -15,6 +15,16 @@ async function phoneDono(grupoId) {
   return user?.phone || null;
 }
 
+// Telefone do dono de um item pessoal (hábito/agenda/manutenção). Cai pro dono
+// do grupo se o item ainda não tiver user_id (linhas antigas pré-migration 039).
+async function phoneDoUser(userId, grupoId) {
+  if (userId) {
+    const { data: u } = await supabase.from('users').select('phone').eq('id', userId).maybeSingle();
+    if (u?.phone) return u.phone;
+  }
+  return grupoId ? phoneDono(grupoId) : null;
+}
+
 // Busca o dono do grupo (id + phone) — preciso do id pra criar pendentes.
 async function donoDoGrupo(grupoId) {
   const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', grupoId).single();
@@ -320,12 +330,12 @@ cron.schedule('*/15 * * * *', async () => {
     await supabase.from('users').update({ habito_lembrete_ultimo: sp.dataStr }).eq('id', u.id);
 
     const { data: habitos } = await supabase.from('habitos')
-      .select('id, dias_semana').eq('grupo_id', u.grupo_ativo).eq('ativo', true);
+      .select('id, dias_semana').eq('user_id', u.id).eq('ativo', true);
     const doDia = (habitos || []).filter(h => (h.dias_semana || [1,2,3,4,5,6,7]).includes(sp.diaSemana));
     if (!doDia.length) continue; // nada programado pra hoje
 
     const { data: regs } = await supabase.from('registros_habito')
-      .select('habito_id, concluido').eq('grupo_id', u.grupo_ativo).eq('data', sp.dataStr);
+      .select('habito_id, concluido').eq('user_id', u.id).eq('data', sp.dataStr);
     const feitos = new Set((regs || []).filter(r => r.concluido).map(r => r.habito_id));
     const pendentes = doDia.filter(h => !feitos.has(h.id)).length;
     if (pendentes === 0) continue; // tudo feito — não precisa lembrar
@@ -350,7 +360,7 @@ cron.schedule('0 9 * * *', async () => {
   const hojeStr = hoje.toISOString().slice(0, 10);
 
   const { data: mans } = await supabase.from('manutencoes')
-    .select('id, grupo_id, nome, icone, frequencia_dias, ultima_data, lembrete_ultimo')
+    .select('id, grupo_id, user_id, nome, icone, frequencia_dias, ultima_data, lembrete_ultimo')
     .eq('lembrete_ativo', true);
 
   for (const m of mans || []) {
@@ -370,7 +380,7 @@ cron.schedule('0 9 * * *', async () => {
       if (Math.round((hoje - ult) / 86400000) < 7) continue;
     }
 
-    const phone = await phoneDono(m.grupo_id);
+    const phone = await phoneDoUser(m.user_id, m.grupo_id);
     if (!phone) continue;
 
     const diasAtraso = Math.round((hoje - proxima) / 86400000);
@@ -404,7 +414,7 @@ cron.schedule('*/15 * * * *', async () => {
   const ontem   = new Date(); ontem.setDate(ontem.getDate() - 1);
   const amanha2 = new Date(); amanha2.setDate(amanha2.getDate() + 2);
   const { data: comps } = await supabase.from('compromissos')
-    .select('id, grupo_id, titulo, hora, local, data, lembrete_antecedencia')
+    .select('id, grupo_id, user_id, titulo, hora, local, data, lembrete_antecedencia')
     .eq('lembrete_ativo', true).eq('lembrete_enviado', false)
     .gte('data', ontem.toISOString().slice(0, 10))
     .lte('data', amanha2.toISOString().slice(0, 10));
@@ -421,7 +431,7 @@ cron.schedule('*/15 * * * *', async () => {
     }
     if (nowMin < triggerMin) continue; // ainda não chegou a hora de avisar
 
-    const phone = await phoneDono(c.grupo_id);
+    const phone = await phoneDoUser(c.user_id, c.grupo_id);
     if (!phone) continue;
 
     await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
@@ -441,6 +451,7 @@ cron.schedule('*/15 * * * *', async () => {
 // Só envia se houver algo hoje. Dedup persistido via agenda_briefing_ultimo.
 // ─────────────────────────────────────────────────────────────────
 const { montarFeed } = require('../services/agendaFeed');
+const { growShareCfg } = require('../services/growShare');
 const EMOJI_AGENDA = { compromisso: '📌', consulta: '🩺', recorrencia: '💰', divida: '💳', fatura: '💳', fechamento: '🧾', manutencao: '🔧' };
 
 cron.schedule('*/15 * * * *', async () => {
@@ -462,7 +473,8 @@ cron.schedule('*/15 * * * *', async () => {
     // Marca ANTES de enviar — evita duplicar em restart
     await supabase.from('users').update({ agenda_briefing_ultimo: sp.dataStr }).eq('id', u.id);
 
-    const eventos = await montarFeed(u.grupo_ativo, sp.dataStr, sp.dataStr);
+    const cfg = await growShareCfg(u.grupo_ativo);
+    const eventos = await montarFeed(u.grupo_ativo, sp.dataStr, sp.dataStr, { userId: u.id, casaCompartilhada: cfg.casa });
     if (!eventos.length) continue; // nada hoje — não enche o saco
 
     eventos.sort((a, b) => (a.hora || '99:99').localeCompare(b.hora || '99:99'));
@@ -785,7 +797,7 @@ cron.schedule('0 13 * * *', async () => {
         if (!elegivel) {
           const { count: nHab } = await supabase.from('registros_habito')
             .select('id', { count: 'exact', head: true })
-            .eq('grupo_id', u.grupo_ativo).eq('concluido', true).gte('data', ini).lt('data', fim);
+            .eq('user_id', u.id).eq('concluido', true).gte('data', ini).lt('data', fim);
           elegivel = (nHab || 0) >= W_MIN_GROW;
         }
         if (!elegivel) continue;

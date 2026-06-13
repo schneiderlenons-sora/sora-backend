@@ -133,13 +133,15 @@ router.get('/grow/:phone', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const P = resolverPeriodo(req.query.periodo);
-    const g = user.grupo_ativo;
+    // Grow é pessoal (hábitos/tarefas/humor por user_id) — o Wrapped é do
+    // próprio usuário, não do grupo. Finanças seguem por grupo em outra rota.
+    const uid = user.id;
 
     const [{ data: regs }, { data: habitos }, { data: tarefas }, { data: humores }] = await Promise.all([
-      supabase.from('registros_habito').select('habito_id, data, concluido').eq('grupo_id', g).gte('data', P.inicio).lt('data', P.fim),
-      supabase.from('habitos').select('id, nome, icone').eq('grupo_id', g),
-      supabase.from('tarefas').select('id, concluida, updated_at, created_at').eq('grupo_id', g),
-      supabase.from('registros_humor').select('humor, data').eq('grupo_id', g).gte('data', P.inicio).lt('data', P.fim),
+      supabase.from('registros_habito').select('habito_id, data, concluido').eq('user_id', uid).gte('data', P.inicio).lt('data', P.fim),
+      supabase.from('habitos').select('id, nome, icone').eq('user_id', uid),
+      supabase.from('tarefas').select('id, concluida, updated_at, created_at').eq('user_id', uid),
+      supabase.from('registros_humor').select('humor, data').eq('user_id', uid).gte('data', P.inicio).lt('data', P.fim),
     ]);
 
     const feitos = (regs || []).filter(r => r.concluido);
