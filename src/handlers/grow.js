@@ -672,8 +672,13 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   }
 
   // ── LISTA DE COMPRAS ────────────────────────────────────────────────
-  if ((m = msg.match(/^(?:comprar|adicionar\s+na\s+lista|lista)\s+(.+)$/i))) {
-    const item = m[1].trim();
+  // "comprar X" no começo OU em frase de intenção ("tô precisando comprar X").
+  if ((m = msg.match(/^(?:comprar|adicionar\s+na\s+lista|lista)\s+(.+)$/i))
+    || (m = msg.match(/\bcomprar\s+(.+)$/i))) {
+    // Vários itens numa frase: "pão, leite e café" → 3 itens.
+    const itens = m[1].trim().replace(/^(mais|uns|umas|um|uma)\s+/i, '')
+      .split(/\s*,\s*|\s+e\s+/i).map(s => s.trim()).filter(Boolean);
+    if (!itens.length) { await enviarTexto(phone, '🛒 O que você quer comprar? Ex.: *comprar leite e pão*'); return; }
     const { data: existing } = await supabase.from('listas_compras')
       .select('id').eq('grupo_id', grupoId).eq('ativa', true).maybeSingle();
     let listaId = existing?.id;
@@ -682,8 +687,9 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
         .insert({ grupo_id: grupoId }).select('id').single();
       listaId = nova.id;
     }
-    await supabase.from('itens_lista_compras').insert({ lista_id: listaId, nome: item });
-    await enviarTexto(phone, `🛒 *"${item}"* adicionado a lista!\n\nVer tudo: *lista de compras*`);
+    await supabase.from('itens_lista_compras').insert(itens.map(nome => ({ lista_id: listaId, nome })));
+    const txtItens = itens.length > 1 ? `Adicionei à lista: *${itens.join(', ')}*` : `*"${itens[0]}"* adicionado à lista!`;
+    await enviarTexto(phone, `🛒 ${txtItens}\n\nVer tudo: *lista de compras*`);
     return;
   }
 

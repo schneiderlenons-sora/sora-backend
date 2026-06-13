@@ -235,34 +235,39 @@ Responda APENAS com a palavra "finance" ou "grow".`,
 async function interpretarGrowComando(mensagem) {
   try {
     const hoje = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+    const sistema = `Você converte UMA frase num comando canônico da Sora (hábitos/rotina/agenda/compras). Hoje é ${hoje}.
+Responda APENAS JSON: {"comando":"..."} — ou {"comando":null} se não for nenhuma dessas ações.
+EXTRAIA a ação mesmo de frases indiretas ("tô precisando", "acabei de", "preciso").
+
+Formatos (use EXATAMENTE):
+- Compromisso/lembrete:  "marca [o quê] [dia] [hora]"
+- Hábito feito:          "fiz [hábito]"
+- Criar hábito:          "novo hábito [nome]"
+- Tarefa:                "tarefa [título]"
+- Humor:                 "me sinto [palavra]"
+- Lista de compras:      "comprar [itens]"
+
+Regras: períodos→hora ("de manhã"=9h, "de tarde"=14h, "de noite"=20h); mantenha o dia em palavras (amanhã/terça/dia 20), NÃO calcule a data.`;
+    // Few-shot: ancora a extração mesmo em frases indiretas.
+    const exemplos = [
+      ['tô precisando comprar pão, leite e café', '{"comando":"comprar pão, leite e café"}'],
+      ['acabei de voltar da academia', '{"comando":"fiz academia"}'],
+      ['preciso lembrar de ligar pro contador', '{"comando":"tarefa ligar pro contador"}'],
+      ['hoje foi um dia péssimo', '{"comando":"me sinto péssimo"}'],
+      ['anota aí que tenho médico quinta de manhã', '{"comando":"marca médico quinta 9h"}'],
+      ['qual a capital da frança?', '{"comando":null}'],
+    ];
+    const messages = [{ role: 'system', content: sistema }];
+    for (const [u, a] of exemplos) { messages.push({ role: 'user', content: u }, { role: 'assistant', content: a }); }
+    messages.push({ role: 'user', content: mensagem });
+
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 60,
-      messages: [
-        {
-          role: 'system',
-          content: `Você converte UMA mensagem num comando canônico da Sora (assistente de hábitos/rotina/agenda). Hoje é ${hoje}.
-Responda APENAS JSON: {"comando":"..."} — ou {"comando":null} se não for nenhuma das ações abaixo.
-
-Ações (use EXATAMENTE estes formatos):
-- Marcar compromisso/lembrete: "marca [o quê] [dia] [hora]"   (ex: "marca dentista terça 15h", "marca médico amanhã 9h")
-- Marcar hábito como feito:    "fiz [hábito]"                  (ex: "fiz academia")
-- Criar hábito:                "novo hábito [nome]"
-- Criar tarefa:                "tarefa [título]"
-- Registrar humor:             "me sinto [palavra]"            (ex: "me sinto ótimo")
-- Adicionar à lista de compras:"comprar [item]"
-
-Regras:
-- Períodos do dia: "de manhã"→9h, "de tarde"→14h, "de noite"→20h.
-- Mantenha o dia em palavras ("amanhã", "hoje", "terça", "dia 20") — NÃO calcule a data.
-- Só gere um comando se a intenção for claramente uma dessas ações; senão {"comando":null}.`,
-        },
-        { role: 'user', content: mensagem },
-      ],
+      model: 'gpt-4o-mini', max_tokens: 60, temperature: 0, messages,
     });
     const txt = response.choices[0].message.content.replace(/```json|```/g, '').trim();
     const obj = JSON.parse(txt);
     const cmd = obj && typeof obj.comando === 'string' ? obj.comando.trim() : null;
+    console.log(`🌱 IA-grow: "${mensagem}" → ${cmd || 'null'}`);
     return cmd && cmd.length > 1 ? cmd : null;
   } catch (err) {
     console.error('❌ Erro IA grow:', err.message);
