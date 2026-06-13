@@ -129,10 +129,16 @@ function interpretarRapido(message) {
   if ((m = msg.match(/definir\s+fatura\s+dia\s+(\d{1,2})/i)))
     return { acao: 'set_fatura_dia', dia: parseInt(m[1]) };
 
-  // "pagar fatura" (sozinho) / "pagar fatura nubank" / "quitar a fatura do nubank"
+  // "pagar fatura" (aberta) / "pagar fatura fechada/anterior" (a que vence agora).
   // Cartão é OPCIONAL — sem ele, o handler usa o único cartão ou pergunta qual.
-  if ((m = msg.match(/^(?:pagar|quitar)\s+(?:a\s+|minha\s+)?fatura(?:\s+(?:d[oae]\s+)?(.+))?$/i)))
-    return { acao: 'pagar_fatura', termo: (m[1] || '').trim() };
+  if ((m = msg.match(/^(?:pagar|quitar)\s+(?:a\s+|minha\s+)?fatura(?:\s+(?:d[oae]\s+)?(.+))?$/i))) {
+    let termo = (m[1] || '').trim();
+    const fechada = /\b(fechada|anterior|passada|vencida|vencendo|atrasada)\b/i.test(termo) || /\bm[êe]s\s+passado\b/i.test(termo);
+    if (fechada) termo = termo
+      .replace(/\b(fechada|anterior|passada|vencida|vencendo|atrasada|do\s+m[êe]s\s+passado|m[êe]s\s+passado)\b/gi, '')
+      .replace(/^\s*d[oae]\s+/i, '').replace(/\s+/g, ' ').trim();
+    return { acao: 'pagar_fatura', termo, fechada };
+  }
 
   // --- DÍVIDAS ---
   // "minhas dividas" / "listar dividas" / "dividas"
