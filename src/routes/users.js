@@ -54,6 +54,15 @@ router.post('/welcome', auth, async (req, res) => {
       force: !!force,
     });
 
+    // Número já vinculado a OUTRA conta → 409 pro frontend bloquear o cadastro
+    // com mensagem clara (em vez de seguir pro pagamento com a conta quebrada).
+    if (resultado.motivo === 'phone_em_uso') {
+      return res.status(409).json({
+        erro: 'Esse WhatsApp já está vinculado a outra conta. Faça login nessa conta ou use outro número.',
+        motivo: 'phone_em_uso',
+      });
+    }
+
     res.json(resultado);
   } catch (err) {
     console.error('[/api/user/welcome] erro:', err);

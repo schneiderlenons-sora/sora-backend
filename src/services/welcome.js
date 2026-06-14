@@ -75,12 +75,19 @@ async function enviarBoasVindas({ user_id, phone, nome, force = false }) {
   // independente do timing da sessão no cliente. É aqui que o WhatsApp fica
   // de fato vinculado ao cadastro.
   if (user_id) {
-    try {
-      const patch = { phone };   // já chega normalizado do route
-      if (nome) patch.name = nome;
-      await supabase.from('users').update(patch).eq('id', user_id);
-    } catch (e) {
-      console.warn('[welcome] erro ao salvar phone:', e.message);
+    const patch = { phone };   // já chega normalizado do route
+    if (nome) patch.name = nome;
+    const { error: upErr } = await supabase
+      .from('users').update(patch).eq('id', user_id).select('id');
+    if (upErr) {
+      // 23505 = unique_violation no users_phone_key: o número JÁ está vinculado
+      // a OUTRA conta. Em vez de falhar em silêncio (deixando phone null e o
+      // onboarding inteiro quebrado, pois o app é keyed by phone), sinaliza pro
+      // frontend bloquear o cadastro com uma mensagem clara.
+      if (upErr.code === '23505') {
+        return { enviado: false, motivo: 'phone_em_uso' };
+      }
+      console.warn('[welcome] erro ao salvar phone:', upErr.message);
     }
   }
 
