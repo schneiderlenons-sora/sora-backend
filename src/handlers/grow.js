@@ -228,7 +228,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   // vê o convite de upgrade. (Hábitos, Tarefas, Agenda e Bem-estar são base.)
   if (!growPremium && (
         /^(lista\s+de\s+compras|minha\s+lista|compras)$/i.test(msg)
-        || /^(comprar|limpar\s+(a\s+)?lista|enviar\s+(a\s+)?lista)\b/i.test(msg)
+        || /\bcomprar\s+/i.test(msg)
+        || /^(limpar\s+(a\s+)?lista|enviar\s+(a\s+)?lista)\b/i.test(msg)
         || /\b(manuten[çc]|despensa|receita|cozinh|ingrediente)/i.test(msg)
         || /^(acabou|acabando|t[aá]\s+acabando|est[aá]\s+acabando)\b/i.test(msg)
         || /o\s+que\s+.*(cozinhar|falta\s+em\s+casa)/i.test(msg))) {
@@ -701,7 +702,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
         .insert({ grupo_id: grupoId }).select('id').single();
       listaId = nova.id;
     }
-    await supabase.from('itens_lista_compras').insert(itens.map(nome => ({ lista_id: listaId, nome })));
+    await supabase.from('itens_lista_compras').insert(itens.map(nome => ({ lista_id: listaId, nome, user_id: user.id })));
     const txtItens = itens.length > 1 ? `Adicionei à lista: *${itens.join(', ')}*` : `*"${itens[0]}"* adicionado à lista!`;
     await enviarTexto(phone, `🛒 ${txtItens}\n\nVer tudo: *lista de compras*`);
     return;
