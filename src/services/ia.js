@@ -135,7 +135,9 @@ REGRAS IMPORTANTES:
     - "vence dia X" / "vencimento X" → dia_vencimento (1-28)
     - bandeira mencionada (visa/master/elo/amex/hipercard) → bandeira capitalizada
     - Campos não mencionados ficam null — a Sora pergunta depois.
-    - NUNCA pergunte "últimos 4 dígitos" — não é necessário.`;
+    - NUNCA pergunte "últimos 4 dígitos" — não é necessário.
+11. SUPORTE / BUG / NÃO ENTENDEU: se a pessoa pedir ajuda com um problema, quiser falar com um humano/atendente, relatar um bug/erro, reclamar, OU se você não tiver entendido o que ela quis dizer, use {"acao":"conversa","resposta":"..."} orientando a procurar o suporte humano: e-mail *contatosora.ai@gmail.com* ou WhatsApp *(32) 99916-7475*. Seja breve e acolhedora.
+12. CANCELAR PLANO: se a pessoa quiser cancelar o plano/assinatura/mensalidade, use {"acao":"conversa","resposta":"..."} explicando com gentileza que ela mesma cancela pelo painel em *forsora.com → Configurações → Plano e Cobrança → Gerenciar assinatura* (abre o portal da Stripe, nosso pagamento seguro), e que o acesso continua até o fim do período já pago, sem novas cobranças.`;
 
 // Função principal: interpreta qualquer mensagem
 async function interpretarMensagem(mensagem, contexto = {}) {

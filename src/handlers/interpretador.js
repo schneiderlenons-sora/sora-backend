@@ -74,8 +74,25 @@ function interpretarRapido(message) {
   const msg = message.toLowerCase().trim()
     .replace(/(\d)\s+(?:reais|real|conto|contos|pila|pilas|mango|mangos|pau|paus|prata|pratas|din[\s-]?din|dinheiro)\b/gi, '$1');
 
-  // --- GRUPOS ---
   let m;
+
+  // --- CANCELAR PLANO / ASSINATURA (orienta a cancelar pela Stripe) ---
+  // Específico de plano/assinatura — não conflita com "cancelar recorrência X"
+  // nem "cancelar lembrete", que têm keywords próprias mais abaixo.
+  if (/\b(cancelar|cancela|encerrar|desativar|suspender|parar(?:\s+de\s+pagar)?)\s+(?:o\s+|a\s+|meu\s+|minha\s+)?(plano|assinatura|inscri[cç][aã]o|mensalidade|premium|black|b[aá]sico|sora)\b/i.test(msg)
+      || /\b(quero|gostaria de|preciso|como (?:fa[cç]o|posso|que faz)|posso)\s+(?:para\s+)?cancelar\b/i.test(msg)
+      || /\bn[aã]o\s+quero\s+mais\s+(?:pagar|assinar|a\s+sora|o\s+plano|continuar)\b/i.test(msg)
+      || /\b(cancelar|encerrar)\s+pagamento\b/i.test(msg))
+    return { acao: 'cancelar_plano' };
+
+  // --- SUPORTE / BUG / FALAR COM HUMANO ---
+  if (/\b(suporte|atendente|atendimento|central de ajuda|fal[ae]r?\s+com\s+(?:o\s+|a\s+|um\s+|uma\s+)?(?:algu[eé]m|humano|pessoa|atendente|voc[eê]s|time|equipe|respons[aá]vel))\b/i.test(msg)
+      || /\b(relatar|reportar|achei|encontrei|tem|t[aá]\s+com|deu)\s+(?:um\s+)?(bug|erro|problema|falha)\b/i.test(msg)
+      || /\b(n[aã]o\s+(?:est[aá]\s+|ta\s+|t[aá]\s+)?(?:funciona|funcionando)|parou\s+de\s+funcionar|n[aã]o\s+abre|n[aã]o\s+carrega)\b/i.test(msg)
+      || /\b(reclama[cç][aã]o|reclamar|quero\s+falar\s+com\s+algu[eé]m)\b/i.test(msg))
+    return { acao: 'suporte' };
+
+  // --- GRUPOS ---
   if ((m = msg.match(/criar\s+grupo\s+(.+)/i)))
     return { acao: 'criar_grupo', nome: m[1].trim() };
 

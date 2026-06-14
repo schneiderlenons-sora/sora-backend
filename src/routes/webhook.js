@@ -97,6 +97,32 @@ const PAYWALL_TEXT = `🔒 Pra organizar suas finanças comigo de verdade — la
 
 Qualquer dúvida sobre os planos, é só perguntar! 😉`;
 
+// Suporte humano — usado quando o usuário pede ajuda, relata bug ou a Sora
+// não entende a mensagem.
+const SUPORTE_TEXT = `Quer falar com a gente? Tô aqui pra ajudar 💚
+
+Pra dúvidas, problemas ou pra relatar um bug, é só chamar o nosso suporte:
+
+📧 *E-mail:* contatosora.ai@gmail.com
+📱 *WhatsApp:* (32) 99916-7475
+
+Manda o que aconteceu com o máximo de detalhes que o time te responde rapidinho! 🙌`;
+
+// Cancelamento — orienta a cancelar pela Stripe (portal seguro), de forma
+// gentil e fácil de seguir.
+const CANCELAR_TEXT = `Poxa, que pena que você quer cancelar 😢 Mas fica tranquilo: você mesmo faz em menos de 1 minutinho, na hora que quiser.
+
+A sua assinatura é cuidada pela *Stripe* (nosso sistema de pagamento seguro). Pra cancelar:
+
+1️⃣ Acesse *forsora.com* e entre na sua conta
+2️⃣ Vá em *Configurações → Plano e Cobrança*
+3️⃣ Toque em *Gerenciar assinatura* (abre o portal da Stripe)
+4️⃣ Escolha *Cancelar plano* e confirme
+
+Pronto! ✅ Você continua com acesso até o fim do período que já pagou e não recebe mais nenhuma cobrança.
+
+Se tiver qualquer dificuldade, é só chamar o suporte: 📧 contatosora.ai@gmail.com`;
+
 // Normaliza telefone (remove tudo que não é dígito)
 const norm = (p) => p ? p.replace(/\D/g, '') : p;
 
@@ -322,7 +348,10 @@ router.post('/', async (req, res) => {
     // ── 3.5. PAYWALL: lead sem plano pode TIRAR DÚVIDAS (conversa), mas não
     // USAR funções (lançar, saldo, etc.). Qualquer ação financeira é bloqueada
     // com convite de assinatura. 'ajuda'/'painel' também viram convite. ──────
-    if (!temAcessoGrow(user) && data?.acao && data.acao !== 'conversa') {
+    // 'suporte' e 'cancelar_plano' valem pra todo mundo (inclusive lead/inativo):
+    // pedir ajuda ou querer cancelar não pode esbarrar no paywall.
+    const ACOES_LIVRES = ['conversa', 'suporte', 'cancelar_plano'];
+    if (!temAcessoGrow(user) && data?.acao && !ACOES_LIVRES.includes(data.acao)) {
       await enviarTexto(phone, PAYWALL_TEXT);
       console.log(`🔒 [${phone}] lead bloqueado na ação "${data.acao}"`);
       return;
@@ -343,6 +372,14 @@ router.post('/', async (req, res) => {
 
       case 'painel':
         await enviarTexto(phone, `🌐 *Acesse seu painel:*\n\nhttps://www.forsora.com/dashboard`);
+        break;
+
+      case 'suporte':
+        await enviarTexto(phone, SUPORTE_TEXT);
+        break;
+
+      case 'cancelar_plano':
+        await enviarTexto(phone, CANCELAR_TEXT);
         break;
 
       // Transações

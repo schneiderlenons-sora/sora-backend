@@ -13,22 +13,35 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
  * Monta a mensagem de boas-vindas personalizada.
  * Tom amigável, deixa o link de onboarding bem visível.
  */
-function montarMensagem({ nome, primeiroAcesso }) {
+function montarMensagem({ nome, primeiroAcesso, onboardingCompleto }) {
   const primeiroNome = (nome || 'tudo bem').split(' ')[0];
 
   if (primeiroAcesso) {
-    return [
+    const linhas = [
       `Oi ${primeiroNome}! 👋 Sou a Sora — sua assistente financeira.`,
       ``,
-      `Sua conta tá ativa 🎉`,
+      `Seu plano tá ativo 🎉`,
       ``,
-      `Pra começar, vou te guiar nos primeiros passos pra organizar tudo em 3 minutinhos:`,
-      `👉 ${APP_URL}/onboarding`,
-      ``,
-      `Quando terminar, é só me mandar mensagem aqui mesmo pra registrar gastos por *texto*, *áudio*, *foto* ou até *PDF* 😉`,
-      ``,
-      `Digite *ajuda* a qualquer momento pra ver tudo que eu sei fazer.`,
-    ].join('\n');
+    ];
+    if (onboardingCompleto) {
+      // Já passou pelo onboarding → manda direto o link do painel.
+      linhas.push(
+        `Tudo pronto! Acesse seu painel quando quiser:`,
+        `👉 ${APP_URL}/dashboard`,
+        ``,
+        `E aqui no WhatsApp é só me mandar mensagem pra registrar gastos por *texto*, *áudio*, *foto* ou até *PDF* 😉`,
+      );
+    } else {
+      // Ainda não fez o onboarding → guia pelos primeiros passos.
+      linhas.push(
+        `Pra começar, vou te guiar nos primeiros passos pra organizar tudo em 3 minutinhos:`,
+        `👉 ${APP_URL}/onboarding`,
+        ``,
+        `Quando terminar, é só me mandar mensagem aqui mesmo pra registrar gastos por *texto*, *áudio*, *foto* ou até *PDF* 😉`,
+      );
+    }
+    linhas.push(``, `Digite *ajuda* a qualquer momento pra ver tudo que eu sei fazer.`);
+    return linhas.join('\n');
   }
 
   // Reenvio (ex.: usuário trocou o WhatsApp)
@@ -38,7 +51,7 @@ function montarMensagem({ nome, primeiroAcesso }) {
     `Esse número agora está vinculado à sua conta na Sora ✓`,
     ``,
     `Continue de onde parou:`,
-    `👉 ${APP_URL}/dashboard`,
+    `👉 ${APP_URL}/${onboardingCompleto ? 'dashboard' : 'onboarding'}`,
   ].join('\n');
 }
 
@@ -71,26 +84,39 @@ async function enviarBoasVindas({ user_id, phone, nome, force = false }) {
     }
   }
 
-  // Verifica se já enviou
+  // Lê o estado do usuário: plano (gate), onboarding (link) e welcomed_at (idempotência).
   let primeiroAcesso = true;
-  if (user_id && !force) {
+  let onboardingCompleto = false;
+  let plano = null;
+  if (user_id) {
     try {
       const { data: user } = await supabase
         .from('users')
-        .select('welcomed_at, name')
+        .select('welcomed_at, name, plano, onboarding_completed')
         .eq('id', user_id)
         .maybeSingle();
 
-      if (user?.welcomed_at) {
-        primeiroAcesso = false;
+      if (user) {
+        if (user.welcomed_at && !force) primeiroAcesso = false;
+        if (!nome && user.name) nome = user.name;
+        onboardingCompleto = !!user.onboarding_completed;
+        plano = user.plano;
       }
-      if (!nome && user?.name) nome = user.name;
     } catch (e) {
-      console.warn('[welcome] erro ao consultar welcomed_at:', e.message);
+      console.warn('[welcome] erro ao consultar usuário:', e.message);
     }
   }
 
-  const mensagem = montarMensagem({ nome, primeiroAcesso });
+  // GATE: a Sora só manda boas-vindas com o PLANO ATIVO. Antes do pagamento o
+  // número já fica vinculado (acima), mas nenhuma mensagem é enviada — evita a
+  // Sora falar com quem ainda não pagou. Quando o plano ativa (webhook/sync), o
+  // frontend chama o welcome de novo e aí a mensagem sai.
+  const planoAtivo = plano && plano !== 'inativo';
+  if (!planoAtivo) {
+    return { enviado: false, motivo: 'plano_inativo' };
+  }
+
+  const mensagem = montarMensagem({ nome, primeiroAcesso, onboardingCompleto });
 
   try {
     await enviarTexto(phone, mensagem);
