@@ -173,6 +173,43 @@ function crud(tabela, campos, filtroPai) {
   });
 }
 
+// ─── ARQUIVOS (bucket privado, URLs assinadas) ───────────────────────
+const BUCKET = 'dados-arquivos';
+
+// Gera URL assinada de UPLOAD (o front envia o arquivo direto pro Storage).
+router.post('/upload-url', auth, requireGrow, async (req, res) => {
+  try {
+    const nome = String(req.body.filename || 'arquivo').replace(/[^\w.\- ]+/g, '_').slice(0, 90);
+    const path = `${req.userRow.id}/${crypto.randomUUID()}-${nome}`;
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
+    if (error) return res.status(503).json({ erro: `Storage indisponível: rode a migration 042. (${error.message})` });
+    res.json({ path, token: data.token, nome });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Gera URL assinada de DOWNLOAD (válida 2 min). Só do próprio usuário.
+router.post('/download-url', auth, requireGrow, async (req, res) => {
+  try {
+    const path = String(req.body.path || '');
+    if (!path.startsWith(`${req.userRow.id}/`)) return res.status(403).json({ erro: 'sem_acesso' });
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 120);
+    if (error) return res.status(500).json({ erro: error.message });
+    res.json({ url: data.signedUrl });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// DELETE de item — remove o arquivo do Storage se houver. Registrado ANTES do
+// crud genérico pra ter precedência sobre o DELETE padrão.
+router.delete('/dados_itens/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const { data: item } = await supabase.from('dados_itens')
+      .select('arquivo_url').eq('id', req.params.id).eq('user_id', req.userRow.id).maybeSingle();
+    if (item?.arquivo_url) { try { await supabase.storage.from(BUCKET).remove([item.arquivo_url]); } catch {} }
+    await supabase.from('dados_itens').delete().eq('id', req.params.id).eq('user_id', req.userRow.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 crud('dados_quadros', ['nome', 'cor', 'icone', 'ordem']);
 crud('dados_secoes',  ['quadro_id', 'nome', 'icone', 'ordem'], 'quadro_id');
 crud('dados_itens',   ['secao_id', 'tipo', 'titulo', 'valor', 'arquivo_url', 'arquivo_nome', 'ordem'], 'secao_id');
