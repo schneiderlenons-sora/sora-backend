@@ -67,6 +67,28 @@ Digite *ajuda* a qualquer momento pra ver o menu completo.
 
 🚀 Me manda seu primeiro lançamento!`;
 
+// ── PRÉ-VENDA: lead (sem plano pago) perguntando sobre testar/comprar/preço ──
+// Local-first (sem IA): responde como vendedora — demo ao vivo no site + planos
+// + cadastro. Antes disso, a Sora caía na "conversa" genérica da IA (papo de
+// e-commerce sem contexto), perdendo o lead no momento mais quente do funil.
+function pareceVenda(msg) {
+  const t = (msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return /\b(testar|teste|experimentar|demonstrac|demo|antes de comprar|quero comprar|vou comprar|como (comprar|assinar|funciona|contrat)|assinar|assinatura|contratar|adquirir|preco|precos|quanto custa|qual o valor|mensalidade|mensalidades|plano|planos|e gratis|gratis|gratuit|trial|periodo de teste|vale a pena|o que (voce|vc) faz|o que e a sora|pra que serve|como (voce|vc) funciona)\b/.test(t);
+}
+
+const VENDAS_TEXT = (nome) => `${nome ? `Oi, ${nome}! ` : 'Oi! '}Que bom que você quer conhecer a Sora antes de assinar 💚
+
+Eu sou sua *assistente financeira no WhatsApp*: você me fala em texto ou áudio — tipo *"gastei 50 no mercado"* ou *"recebi 3000 de salário"* — e eu organizo tudo sozinha: gastos, contas, cartões, metas e relatórios. 📊
+
+🎬 *Quer me ver funcionando agora, de graça?*
+Tem uma demonstração ao vivo no site (o *Test Drive*) — você digita e vê na hora como eu respondo, sem compromisso:
+👉 forsora.com
+
+💚 *Planos a partir de R$ 19,90/mês* — sem fidelidade, cancela quando quiser:
+👉 forsora.com/planos
+
+Pode me perguntar o que quiser sobre os planos ou sobre o que eu faço! 😉`;
+
 // Normaliza telefone (remove tudo que não é dígito)
 const norm = (p) => p ? p.replace(/\D/g, '') : p;
 
@@ -160,6 +182,13 @@ router.post('/', async (req, res) => {
 
     // Novo usuário: pede o nome
     if (!user) {
+      // Lead novo já chegando com intenção de testar/comprar/preço → pitch
+      // direto (sem pedir nome). Ele se cadastra no site.
+      if (pareceVenda(mensagem)) {
+        await enviarTexto(phone, VENDAS_TEXT(null));
+        console.log(`💚 [${phone}] pré-venda (número novo): "${mensagem}"`);
+        return;
+      }
       // Tenta extrair nome da primeira mensagem via IA
       const respNome = await interpretarMensagem(
         `O usuário enviou sua primeira mensagem: "${mensagem}". Extraia o nome próprio se houver, ou responda apenas a palavra PEDIR.`,
@@ -187,6 +216,15 @@ router.post('/', async (req, res) => {
       return;
     }
     const grupoId = user.grupo_ativo;
+
+    // ── 2.4. PRÉ-VENDA: lead sem plano pago perguntando sobre testar/comprar/
+    // preço/planos → responde como vendedora (local-first), em vez de cair na
+    // "conversa" genérica da IA. Não intercepta quem já é assinante.
+    if (!temAcessoGrow(user) && pareceVenda(mensagem)) {
+      await enviarTexto(phone, VENDAS_TEXT(user.name));
+      console.log(`💚 [${phone}] pré-venda (lead sem plano): "${mensagem}"`);
+      return;
+    }
 
     // ── 2.5. Verifica se há pendente aguardando resposta ──────────
     // Se a última interação foi uma pergunta da Sora (ex.: "de qual conta?"),
