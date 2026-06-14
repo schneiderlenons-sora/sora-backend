@@ -89,6 +89,14 @@ Tem uma demonstração ao vivo no site (o *Test Drive*) — você digita e vê n
 
 Pode me perguntar o que quiser sobre os planos ou sobre o que eu faço! 😉`;
 
+// Mostrado quando um lead (sem plano) tenta USAR uma função (lançar, saldo…).
+const PAYWALL_TEXT = `🔒 Pra organizar suas finanças comigo de verdade — lançar gastos, ver saldo, metas, relatórios — você precisa de um plano ativo.
+
+🎬 Mas pode me ver funcionando agora, de graça, na demo ao vivo: 👉 forsora.com
+💚 Planos a partir de *R$ 19,90/mês*, sem fidelidade: 👉 forsora.com/planos
+
+Qualquer dúvida sobre os planos, é só perguntar! 😉`;
+
 // Normaliza telefone (remove tudo que não é dígito)
 const norm = (p) => p ? p.replace(/\D/g, '') : p;
 
@@ -293,6 +301,11 @@ router.post('/', async (req, res) => {
       const ctxIA = walletPadraoNome
         ? { resumo: `wallet_padrao_nome: ${walletPadraoNome}` }
         : {};
+      // Lead sem plano: avisa a IA pra responder a dúvida no tom de venda.
+      if (!temAcessoGrow(user)) {
+        ctxIA.resumo = (ctxIA.resumo ? ctxIA.resumo + '\n' : '')
+          + 'OBS: usuário ainda SEM plano ativo (lead). Responda a dúvida de forma útil e, se fizer sentido, convide a conhecer a demo e os planos em forsora.com.';
+      }
       data = await interpretarMensagem(mensagem, ctxIA);
     }
 
@@ -305,6 +318,15 @@ router.post('/', async (req, res) => {
     }
 
     console.log(`📩 [${phone}] "${mensagem}" → ação: ${data?.acao}`);
+
+    // ── 3.5. PAYWALL: lead sem plano pode TIRAR DÚVIDAS (conversa), mas não
+    // USAR funções (lançar, saldo, etc.). Qualquer ação financeira é bloqueada
+    // com convite de assinatura. 'ajuda'/'painel' também viram convite. ──────
+    if (!temAcessoGrow(user) && data?.acao && data.acao !== 'conversa') {
+      await enviarTexto(phone, PAYWALL_TEXT);
+      console.log(`🔒 [${phone}] lead bloqueado na ação "${data.acao}"`);
+      return;
+    }
 
     // ── 4. Roteia para o handler correto ──────────────────────────
     const ctx = { phone, grupoId, user, mensagem };
