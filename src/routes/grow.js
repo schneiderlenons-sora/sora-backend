@@ -171,7 +171,7 @@ router.post('/habitos', auth, requireGrow, async (req, res) => {
   try {
     const { nome, descricao, icone, cor, frequencia, dias_semana, horario_lembrete, motivo, tipo, ordem } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
-    const { data } = await supabase.from('habitos').insert({
+    const { data, error } = await supabase.from('habitos').insert({
       grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id,
       nome: nome.trim(), descricao, icone: icone || '🎯', cor: cor || '#7c3aed',
       frequencia: frequencia || 'diario',
@@ -181,6 +181,14 @@ router.post('/habitos', auth, requireGrow, async (req, res) => {
       tipo: tipo || 'construir',
       ordem: ordem ?? 0,
     }).select().single();
+    if (error) {
+      console.error('❌ POST /habitos:', error.message);
+      // Coluna faltando → migration 015 (motivo/tipo/ordem) não rodou.
+      const faltaCol = /column .* does not exist|could not find/i.test(error.message);
+      return res.status(faltaCol ? 503 : 500).json({
+        erro: faltaCol ? `Falta rodar a migration 015 no Supabase. (${error.message})` : error.message,
+      });
+    }
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
