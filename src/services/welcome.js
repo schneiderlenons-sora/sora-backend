@@ -32,10 +32,14 @@ function montarMensagem({ nome, primeiroAcesso, onboardingCompleto }) {
         `E aqui no WhatsApp é só me mandar mensagem pra registrar gastos por *texto*, *áudio*, *foto* ou até *PDF* 😉`,
       );
     } else {
-      // Ainda não fez o onboarding → guia pelos primeiros passos.
+      // Ainda não fez o onboarding → guia pelos primeiros passos, mas já manda
+      // também o link do painel (acesso direto quando quiser).
       linhas.push(
         `Pra começar, vou te guiar nos primeiros passos pra organizar tudo em 3 minutinhos:`,
         `👉 ${APP_URL}/onboarding`,
+        ``,
+        `Seu painel completo fica sempre aqui:`,
+        `👉 ${APP_URL}/dashboard`,
         ``,
         `Quando terminar, é só me mandar mensagem aqui mesmo pra registrar gastos por *texto*, *áudio*, *foto* ou até *PDF* 😉`,
       );
