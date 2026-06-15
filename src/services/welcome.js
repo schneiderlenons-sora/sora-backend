@@ -5,9 +5,12 @@
 // =====================================================================
 
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('./zapi');
+const { enviarTexto, enviarImagem } = require('./zapi');
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
+// Capa da marca (mesma usada nos resumos). Acompanha a boas-vindas como imagem
+// + legenda. Se o envio da imagem falhar, enviarImagem cai pra texto.
+const CAPA = process.env.SORA_CAPA_URL || `${APP_URL}/sora-capa.png`;
 
 /**
  * Monta a mensagem de boas-vindas personalizada.
@@ -130,7 +133,9 @@ async function enviarBoasVindas({ user_id, phone, nome, force = false }) {
   const mensagem = montarMensagem({ nome, primeiroAcesso, onboardingCompleto });
 
   try {
-    await enviarTexto(phone, mensagem);
+    // Boas-vindas com a capa da marca + a mensagem como legenda.
+    // enviarImagem já cai pra texto se a imagem falhar.
+    await enviarImagem(phone, CAPA, mensagem);
   } catch (e) {
     console.error('[welcome] erro ao enviar Z-API:', e.message);
     return { enviado: false, motivo: e.message };

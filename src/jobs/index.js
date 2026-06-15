@@ -827,10 +827,9 @@ const {
   TITULO_SEMANAL, TITULO_MENSAL, CTA,
 } = require('../services/resumoFinanceiro');
 const APP_URL_RESUMO = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
-// Capas (URL pública). Defina no Render quando tiver as artes; sem elas, o card
-// é enviado sem imagem (ainda com título + botão "Ver no painel").
-const CAPA_SEMANAL = process.env.RESUMO_CAPA_SEMANAL_URL || '';
-const CAPA_MENSAL  = process.env.RESUMO_CAPA_MENSAL_URL || '';
+// Capa única (URL pública) usada nos resumos e na boas-vindas. Override via
+// SORA_CAPA_URL no Render; default aponta pro /public do site.
+const CAPA = process.env.SORA_CAPA_URL || `${APP_URL_RESUMO}/sora-capa.png`;
 
 function addDiasISO(str, n) {
   const [Y, M, D] = str.split('-').map(Number);
@@ -867,7 +866,7 @@ cron.schedule('*/15 * * * *', async () => {
         const insight = await gerarInsight({ periodo: 'semana', atual, anterior });
         await enviarLink(u.phone, {
           message: montarCorpoSemanal({ atual, anterior, insight }),
-          image: CAPA_SEMANAL,
+          image: CAPA,
           linkUrl: `${APP_URL_RESUMO}/dashboard`,
           title: TITULO_SEMANAL,
           linkDescription: CTA,
@@ -910,7 +909,7 @@ cron.schedule('*/15 * * * *', async () => {
         const insight = await gerarInsight({ periodo: 'mes', atual, anterior });
         await enviarLink(u.phone, {
           message: montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight }),
-          image: CAPA_MENSAL,
+          image: CAPA,
           linkUrl: `${APP_URL_RESUMO}/dashboard`,
           title: TITULO_MENSAL,
           linkDescription: CTA,
