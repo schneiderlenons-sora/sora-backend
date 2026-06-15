@@ -831,12 +831,12 @@ function addDiasISO(str, n) {
   return d.toISOString().slice(0, 10);
 }
 
-// JOB 1M — Resumo SEMANAL: toda segunda a partir das 08:00 (SP).
+// JOB 1M — Resumo SEMANAL: todo domingo a partir das 09:00 (SP).
 cron.schedule('*/15 * * * *', async () => {
   try {
     const sp = agoraSP();
-    if (sp.diaSemana !== 1) return;   // só segunda-feira
-    if (sp.minutos < 8 * 60) return;  // a partir das 08:00
+    if (sp.diaSemana !== 7) return;   // só domingo (agoraSP: Dom = 7)
+    if (sp.minutos < 9 * 60) return;  // a partir das 09:00
 
     const { data: usuarios, error } = await supabase.from('users')
       .select('id, phone, grupo_ativo, resumo_semanal_em')

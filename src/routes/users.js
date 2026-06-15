@@ -70,4 +70,34 @@ router.post('/welcome', auth, async (req, res) => {
   }
 });
 
+// =====================================================================
+// Resumos proativos (semanal/mensal) — preferência do usuário logado.
+// GET  /api/user/resumos        → { semanal, mensal }
+// POST /api/user/resumos { semanal?, mensal? }
+// =====================================================================
+router.get('/resumos', auth, async (req, res) => {
+  try {
+    const user_id = req.authUser?.id;
+    const { data, error } = await supabase
+      .from('users').select('resumo_semanal, resumo_mensal').eq('id', user_id).maybeSingle();
+    if (error) throw error; // coluna pode não existir antes da migration 044
+    res.json({ semanal: data?.resumo_semanal ?? true, mensal: data?.resumo_mensal ?? true });
+  } catch {
+    res.json({ semanal: true, mensal: true }); // default tolerante
+  }
+});
+
+router.post('/resumos', auth, async (req, res) => {
+  try {
+    const user_id = req.authUser?.id;
+    const patch = {};
+    if (typeof req.body?.semanal === 'boolean') patch.resumo_semanal = req.body.semanal;
+    if (typeof req.body?.mensal === 'boolean') patch.resumo_mensal = req.body.mensal;
+    if (Object.keys(patch).length) await supabase.from('users').update(patch).eq('id', user_id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 module.exports = router;
