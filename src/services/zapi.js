@@ -37,4 +37,15 @@ async function enviarMenu(phone, message) {
   }
 }
 
-module.exports = { enviarTexto, enviarMenu };
+// Envia uma imagem (URL pública OU data URI base64) com legenda opcional.
+async function enviarImagem(phone, image, caption = '') {
+  try {
+    await axios.post(`${BASE}/send-image`, { phone, image, caption }, { headers: HEADERS });
+  } catch (e) {
+    console.error(`❌ Erro ao enviar imagem para ${phone}:`, e.message);
+    // Fallback: ao menos manda o texto pra não perder o conteúdo.
+    if (caption) await enviarTexto(phone, caption + '\n\n(⚠️ a imagem anexada falhou ao enviar)');
+  }
+}
+
+module.exports = { enviarTexto, enviarMenu, enviarImagem };

@@ -45,6 +45,7 @@ app.use('/api/wrapped',      require('./routes/wrapped'));
 app.use('/api/saude',        require('./routes/saude'));
 app.use('/api/estudos',      require('./routes/estudos'));
 app.use('/api/user',         require('./routes/users'));
+app.use('/api/bug',          require('./routes/bug'));
 
 // --- 404 ---
 app.use((req, res) => {
