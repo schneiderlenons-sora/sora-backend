@@ -85,6 +85,14 @@ function interpretarRapido(message) {
       || /\b(cancelar|encerrar)\s+pagamento\b/i.test(msg))
     return { acao: 'cancelar_plano' };
 
+  // --- RESUMOS PROATIVOS (liga/desliga) ---
+  if (/\b(desativar|desligar|parar|cancelar|silenciar)\s+(os\s+)?resumos?\b/i.test(msg)
+      || /\bn[aã]o\s+quero\s+(mais\s+)?(receber\s+)?(os\s+)?resumos?\b/i.test(msg)
+      || /\bchega\s+de\s+resumos?\b/i.test(msg))
+    return { acao: 'config_resumos', valor: false };
+  if (/\b(ativar|ligar|reativar|quero)\s+(os\s+)?resumos?\b/i.test(msg))
+    return { acao: 'config_resumos', valor: true };
+
   // --- SUPORTE / BUG / FALAR COM HUMANO ---
   if (/\b(suporte|atendente|atendimento|central de ajuda|fal[ae]r?\s+com\s+(?:o\s+|a\s+|um\s+|uma\s+)?(?:algu[eé]m|humano|pessoa|atendente|voc[eê]s|time|equipe|respons[aá]vel))\b/i.test(msg)
       || /\b(relatar|reportar|achei|encontrei|tem|t[aá]\s+com|deu)\s+(?:um\s+)?(bug|erro|problema|falha)\b/i.test(msg)

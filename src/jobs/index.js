@@ -817,6 +817,89 @@ cron.schedule('0 13 * * *', async () => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────
+// JOB 1M / 1N — RESUMOS proativos (semanal + fechamento mensal), opt-in.
+// Independentes do Wrapped. Dedup persistido (resumo_*_em) à prova de
+// restart. Só envia se houve movimento no período.
+// ─────────────────────────────────────────────────────────────────
+const { resumoPeriodo, montarResumoSemanal, montarResumoMensal } = require('../services/resumoFinanceiro');
+
+function addDiasISO(str, n) {
+  const [Y, M, D] = str.split('-').map(Number);
+  const d = new Date(Date.UTC(Y, M - 1, D, 12));
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// JOB 1M — Resumo SEMANAL: toda segunda a partir das 08:00 (SP).
+cron.schedule('*/15 * * * *', async () => {
+  try {
+    const sp = agoraSP();
+    if (sp.diaSemana !== 1) return;   // só segunda-feira
+    if (sp.minutos < 8 * 60) return;  // a partir das 08:00
+
+    const { data: usuarios, error } = await supabase.from('users')
+      .select('id, phone, grupo_ativo, resumo_semanal_em')
+      .eq('resumo_semanal', true)
+      .not('phone', 'is', null).not('grupo_ativo', 'is', null);
+    if (error) { console.log('📅 Resumo semanal: rode a migration 044.', error.message); return; }
+
+    const fim = sp.dataStr;                  // esta segunda (exclusivo)
+    const ini = addDiasISO(sp.dataStr, -7);  // segunda passada
+    const prevIni = addDiasISO(sp.dataStr, -14);
+
+    let enviados = 0;
+    for (const u of usuarios || []) {
+      try {
+        if (u.resumo_semanal_em === sp.dataStr) continue;                 // já enviou hoje
+        await supabase.from('users').update({ resumo_semanal_em: sp.dataStr }).eq('id', u.id); // marca ANTES
+        const atual = await resumoPeriodo(u.grupo_ativo, ini, fim);
+        if (atual.count === 0) continue;                                  // semana sem movimento
+        const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
+        await enviarTexto(u.phone, montarResumoSemanal({ atual, anterior }));
+        enviados++;
+      } catch { /* tolerante por usuário */ }
+    }
+    if (enviados) console.log(`📅 Resumo semanal: ${enviados} enviado(s).`);
+  } catch (e) { console.log('📅 Resumo semanal falhou:', e.message); }
+});
+
+// JOB 1N — Fechamento MENSAL: dia 1 a partir das 09:00 (SP), do mês anterior.
+cron.schedule('*/15 * * * *', async () => {
+  try {
+    const sp = agoraSP();
+    if (parseInt(sp.dataStr.slice(8, 10), 10) !== 1) return; // só no dia 1º
+    if (sp.minutos < 9 * 60) return;                          // a partir das 09:00
+
+    const mesCorrente = sp.dataStr.slice(0, 7); // 'YYYY-MM' — chave de dedup
+    const { data: usuarios, error } = await supabase.from('users')
+      .select('id, phone, grupo_ativo, meta_mensal, resumo_mensal_em')
+      .eq('resumo_mensal', true)
+      .not('phone', 'is', null).not('grupo_ativo', 'is', null);
+    if (error) { console.log('🧾 Resumo mensal: rode a migration 044.', error.message); return; }
+
+    const [Y, M] = sp.dataStr.split('-').map(Number);                         // M = mês corrente (dia 1)
+    const ini = new Date(Date.UTC(Y, M - 2, 1, 12)).toISOString().slice(0, 10);   // 1º do mês passado
+    const fim = new Date(Date.UTC(Y, M - 1, 1, 12)).toISOString().slice(0, 10);   // 1º do mês corrente
+    const prevIni = new Date(Date.UTC(Y, M - 3, 1, 12)).toISOString().slice(0, 10); // 1º do mês retrasado
+    const mesNome = W_MESES[(M - 2 + 12) % 12];
+
+    let enviados = 0;
+    for (const u of usuarios || []) {
+      try {
+        if (u.resumo_mensal_em === mesCorrente) continue;
+        await supabase.from('users').update({ resumo_mensal_em: mesCorrente }).eq('id', u.id);
+        const atual = await resumoPeriodo(u.grupo_ativo, ini, fim);
+        if (atual.count === 0) continue;
+        const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
+        await enviarTexto(u.phone, montarResumoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0 }));
+        enviados++;
+      } catch { /* tolerante por usuário */ }
+    }
+    if (enviados) console.log(`🧾 Resumo mensal: ${enviados} enviado(s).`);
+  } catch (e) { console.log('🧾 Resumo mensal falhou:', e.message); }
+});
+
 console.log('⏰ Cron jobs registrados:');
 console.log('   • A cada hora  — recorrências, lembretes, parcelas, fatura');
 console.log('   • A cada 15min — lembretes de medicamentos');

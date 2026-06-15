@@ -350,7 +350,7 @@ router.post('/', async (req, res) => {
     // com convite de assinatura. 'ajuda'/'painel' também viram convite. ──────
     // 'suporte' e 'cancelar_plano' valem pra todo mundo (inclusive lead/inativo):
     // pedir ajuda ou querer cancelar não pode esbarrar no paywall.
-    const ACOES_LIVRES = ['conversa', 'suporte', 'cancelar_plano'];
+    const ACOES_LIVRES = ['conversa', 'suporte', 'cancelar_plano', 'config_resumos'];
     if (!temAcessoGrow(user) && data?.acao && !ACOES_LIVRES.includes(data.acao)) {
       await enviarTexto(phone, PAYWALL_TEXT);
       console.log(`🔒 [${phone}] lead bloqueado na ação "${data.acao}"`);
@@ -376,6 +376,17 @@ router.post('/', async (req, res) => {
 
       case 'suporte':
         await enviarTexto(phone, SUPORTE_TEXT);
+        break;
+
+      case 'config_resumos':
+        if (user?.id) {
+          await supabase.from('users')
+            .update({ resumo_semanal: data.valor, resumo_mensal: data.valor })
+            .eq('id', user.id);
+        }
+        await enviarTexto(phone, data.valor
+          ? '✅ Resumos *ativados*! Toda segunda eu te mando o resumo da semana e, no início do mês, o fechamento do mês anterior.'
+          : '🔕 Resumos *desativados*. Não vou mais te mandar os resumos semanais/mensais. Quando quiser de volta, é só dizer *ativar resumos*.');
         break;
 
       case 'cancelar_plano':
