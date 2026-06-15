@@ -48,4 +48,18 @@ async function enviarImagem(phone, image, caption = '') {
   }
 }
 
-module.exports = { enviarTexto, enviarMenu, enviarImagem };
+// Mensagem com link enriquecido: capa (image, opcional) no topo + título +
+// descrição (vira o "botão"/CTA) + corpo, com o card clicável abrindo linkUrl.
+// Cai pra texto simples se o send-link falhar.
+async function enviarLink(phone, { message, image, linkUrl, title, linkDescription }) {
+  try {
+    const body = { phone, message, linkUrl, title, linkDescription };
+    if (image) body.image = image;
+    await axios.post(`${BASE}/send-link`, body, { headers: HEADERS });
+  } catch (e) {
+    console.error(`❌ send-link falhou para ${phone} (fallback texto):`, e.message);
+    await enviarTexto(phone, `${message}\n\n👉 ${linkUrl}`);
+  }
+}
+
+module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink };

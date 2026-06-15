@@ -1,6 +1,6 @@
 const cron      = require('node-cron');
 const supabase  = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto, enviarLink } = require('../services/zapi');
 const { criarPendente } = require('../services/pendentes');
 const yahooFinance    = require('yahoo-finance2').default;
 
@@ -822,7 +822,15 @@ cron.schedule('0 13 * * *', async () => {
 // Independentes do Wrapped. Dedup persistido (resumo_*_em) à prova de
 // restart. Só envia se houve movimento no período.
 // ─────────────────────────────────────────────────────────────────
-const { resumoPeriodo, montarResumoSemanal, montarResumoMensal } = require('../services/resumoFinanceiro');
+const {
+  resumoPeriodo, gerarInsight, montarCorpoSemanal, montarCorpoMensal,
+  TITULO_SEMANAL, TITULO_MENSAL, CTA,
+} = require('../services/resumoFinanceiro');
+const APP_URL_RESUMO = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
+// Capas (URL pública). Defina no Render quando tiver as artes; sem elas, o card
+// é enviado sem imagem (ainda com título + botão "Ver no painel").
+const CAPA_SEMANAL = process.env.RESUMO_CAPA_SEMANAL_URL || '';
+const CAPA_MENSAL  = process.env.RESUMO_CAPA_MENSAL_URL || '';
 
 function addDiasISO(str, n) {
   const [Y, M, D] = str.split('-').map(Number);
@@ -856,7 +864,14 @@ cron.schedule('*/15 * * * *', async () => {
         const atual = await resumoPeriodo(u.grupo_ativo, ini, fim);
         if (atual.count === 0) continue;                                  // semana sem movimento
         const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
-        await enviarTexto(u.phone, montarResumoSemanal({ atual, anterior }));
+        const insight = await gerarInsight({ periodo: 'semana', atual, anterior });
+        await enviarLink(u.phone, {
+          message: montarCorpoSemanal({ atual, anterior, insight }),
+          image: CAPA_SEMANAL,
+          linkUrl: `${APP_URL_RESUMO}/dashboard`,
+          title: TITULO_SEMANAL,
+          linkDescription: CTA,
+        });
         enviados++;
       } catch { /* tolerante por usuário */ }
     }
@@ -892,7 +907,14 @@ cron.schedule('*/15 * * * *', async () => {
         const atual = await resumoPeriodo(u.grupo_ativo, ini, fim);
         if (atual.count === 0) continue;
         const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
-        await enviarTexto(u.phone, montarResumoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0 }));
+        const insight = await gerarInsight({ periodo: 'mes', atual, anterior });
+        await enviarLink(u.phone, {
+          message: montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight }),
+          image: CAPA_MENSAL,
+          linkUrl: `${APP_URL_RESUMO}/dashboard`,
+          title: TITULO_MENSAL,
+          linkDescription: CTA,
+        });
         enviados++;
       } catch { /* tolerante por usuário */ }
     }
