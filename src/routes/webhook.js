@@ -1,7 +1,9 @@
 const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
-const { enviarTexto, enviarMenu } = require('../services/zapi');
+const { enviarTexto, enviarMenu, enviarLink } = require('../services/zapi');
+const APP_URL_WH = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
+const SORA_CAPA = process.env.SORA_CAPA_URL || `${APP_URL_WH}/sora-capa.png`;
 const { interpretarMensagem, classificarIntencao } = require('../services/ia');
 const { transcreverAudio }        = require('../services/whisper');
 const { lerNotaFiscal }           = require('../services/ocr');
@@ -371,7 +373,13 @@ router.post('/', async (req, res) => {
         break;
 
       case 'painel':
-        await enviarTexto(phone, `🌐 *Acesse seu painel:*\n\nhttps://www.forsora.com/dashboard`);
+        await enviarLink(phone, {
+          message: '🌐 *Seu painel da Sora*\n\nGráficos, saldos, metas e tudo organizado num lugar só.',
+          image: SORA_CAPA,
+          linkUrl: `${APP_URL_WH}/dashboard`,
+          title: '🐳 Painel da Sora',
+          linkDescription: 'Abrir painel',
+        });
         break;
 
       case 'suporte':
