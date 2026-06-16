@@ -354,13 +354,7 @@ router.post('/', async (req, res) => {
     // pedir ajuda ou querer cancelar não pode esbarrar no paywall.
     const ACOES_LIVRES = ['conversa', 'suporte', 'cancelar_plano', 'config_resumos'];
     if (!temAcessoGrow(user) && data?.acao && !ACOES_LIVRES.includes(data.acao)) {
-      await enviarLink(phone, {
-        message: PAYWALL_TEXT,
-        image: SORA_CAPA,
-        linkUrl: `${APP_URL_WH}/planos`,
-        title: '💚 Planos da Sora',
-        linkDescription: 'Ver os planos',
-      });
+      await enviarImagem(phone, SORA_CAPA, PAYWALL_TEXT);
       console.log(`🔒 [${phone}] lead bloqueado na ação "${data.acao}"`);
       return;
     }

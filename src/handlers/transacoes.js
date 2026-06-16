@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto, enviarMenu, enviarLink } = require('../services/zapi');
+const { enviarTexto, enviarMenu, enviarImagem } = require('../services/zapi');
 const { analisarGastos } = require('../services/ia');
 const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
@@ -608,17 +608,12 @@ module.exports = async function handleTransacoes(data, ctx) {
       ? `\n🎯 Meta: R$ ${metaMensal.toFixed(2)} (${((gastos/metaMensal)*100).toFixed(0)}% usado)`
       : '';
 
-    await enviarLink(phone, {
-      message:
-        `📊 *RESUMO DO MÊS*\n\n${catOrdenadas}\n\n` +
-        `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
-        `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
-        `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}`,
-      image: SORA_CAPA_TX,
-      linkUrl: `${APP_URL_TX}/dashboard`,
-      title: '📊 Resumo do mês',
-      linkDescription: 'Abrir painel',
-    });
+    await enviarImagem(phone, SORA_CAPA_TX,
+      `📊 *RESUMO DO MÊS*\n\n${catOrdenadas}\n\n` +
+      `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
+      `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
+      `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}\n\n` +
+      `👉 Ver no painel: ${APP_URL_TX}/dashboard`);
     return;
   }
 

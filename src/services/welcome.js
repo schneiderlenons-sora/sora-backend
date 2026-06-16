@@ -5,7 +5,7 @@
 // =====================================================================
 
 const supabase = require('../db/supabase');
-const { enviarTexto, enviarLink } = require('./zapi');
+const { enviarTexto, enviarImagem } = require('./zapi');
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 // Capa da marca (mesma usada nos resumos). Acompanha a boas-vindas como imagem
@@ -133,17 +133,9 @@ async function enviarBoasVindas({ user_id, phone, nome, force = false }) {
   const mensagem = montarMensagem({ nome, primeiroAcesso, onboardingCompleto });
 
   try {
-    // Boas-vindas como CARD de link (igual aos resumos): capa em paisagem no
-    // topo + título + corpo + botão. NÃO usar send-image (vira foto quadrada
-    // clicável). enviarLink cai pra texto se o send-link falhar.
-    const destino = onboardingCompleto ? `${APP_URL}/dashboard` : `${APP_URL}/onboarding`;
-    await enviarLink(phone, {
-      message: mensagem,
-      image: CAPA,
-      linkUrl: destino,
-      title: '🐳 Bem-vindo à Sora',
-      linkDescription: onboardingCompleto ? 'Abrir painel' : 'Começar agora',
-    });
+    // Boas-vindas com a capa como banner no topo + a mensagem (que já tem os
+    // links) na legenda. enviarImagem cai pra texto se a imagem falhar.
+    await enviarImagem(phone, CAPA, mensagem);
   } catch (e) {
     console.error('[welcome] erro ao enviar Z-API:', e.message);
     return { enviado: false, motivo: e.message };
