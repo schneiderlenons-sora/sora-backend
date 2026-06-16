@@ -379,12 +379,12 @@ router.post('/', async (req, res) => {
         break;
 
       case 'painel':
-        await enviarBotaoLink(phone, {
+        await enviarLink(phone, {
           message: '🌐 *Seu painel da Sora*\n\nGráficos, saldos, metas e tudo organizado num lugar só.',
           image: SORA_CAPA,
+          linkUrl: `${APP_URL_WH}/dashboard`,
           title: '🐳 Painel da Sora',
-          label: 'Abrir painel',
-          url: `${APP_URL_WH}/dashboard`,
+          linkDescription: 'Abrir painel',
         });
         break;
 
