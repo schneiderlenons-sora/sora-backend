@@ -802,11 +802,15 @@ cron.schedule('0 13 * * *', async () => {
         }
         if (!elegivel) continue;
 
-        await enviarTexto(u.phone,
-          `🎁 *Seu Sora Wrapped de ${mesNome} tá pronto!*\n\n` +
-          `Seus números viraram um resumo lindo — seu maior vilão de gastos, quanto você ` +
-          `economizou, sua sequência... do jeitinho que dá vontade de postar no story. 🐳\n\n` +
-          `👉 Veja e compartilhe: https://www.forsora.com/wrapped`);
+        await enviarLink(u.phone, {
+          message: `🎁 *Seu Sora Wrapped de ${mesNome} tá pronto!*\n\n` +
+            `Seus números viraram um resumo lindo — seu maior vilão de gastos, quanto você ` +
+            `economizou, sua sequência... do jeitinho que dá vontade de postar no story. 🐳`,
+          image: CAPA,
+          linkUrl: `${APP_URL_RESUMO}/wrapped`,
+          title: '🎁 Seu Sora Wrapped',
+          linkDescription: 'Ver meu Wrapped',
+        });
         await supabase.from('users').update({ wrapped_avisado: periodo }).eq('id', u.id);
         avisados++;
       } catch { /* tolerante por usuário */ }

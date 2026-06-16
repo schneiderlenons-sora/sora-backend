@@ -1,6 +1,8 @@
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto, enviarLink } = require('../services/zapi');
 const { growShareCfg } = require('../services/growShare');
+const APP_URL_GROW = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
+const SORA_CAPA_GROW = process.env.SORA_CAPA_URL || `${APP_URL_GROW}/sora-capa.png`;
 const handleSaude   = require('./saude');
 const handleEstudos = require('./estudos');
 
@@ -233,10 +235,15 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
         || /\b(manuten[çc]|despensa|receita|cozinh|ingrediente)/i.test(msg)
         || /^(acabou|acabando|t[aá]\s+acabando|est[aá]\s+acabando)\b/i.test(msg)
         || /o\s+que\s+.*(cozinhar|falta\s+em\s+casa)/i.test(msg))) {
-    await enviarTexto(phone,
-      '🔒 *Casa* — lista de compras, despensa, receitas e manutenções — faz parte do plano *Premium*.\n\n' +
-      'No seu plano você já tem hábitos, tarefas, agenda e bem-estar. ✨\n\n' +
-      'Ver planos: 🌐 forsora.com/planos');
+    await enviarLink(phone, {
+      message:
+        '🔒 *Casa* — lista de compras, despensa, receitas e manutenções — faz parte do plano *Premium*.\n\n' +
+        'No seu plano você já tem hábitos, tarefas, agenda e bem-estar. ✨',
+      image: SORA_CAPA_GROW,
+      linkUrl: `${APP_URL_GROW}/planos`,
+      title: '✨ Desbloquear o Premium',
+      linkDescription: 'Ver os planos',
+    });
     return;
   }
 
