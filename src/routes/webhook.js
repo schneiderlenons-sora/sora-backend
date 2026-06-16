@@ -1,7 +1,7 @@
 const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
-const { enviarTexto, enviarMenu, enviarLink, enviarBotaoLink } = require('../services/zapi');
+const { enviarTexto, enviarMenu, enviarLink, enviarBotaoLink, enviarImagem } = require('../services/zapi');
 const APP_URL_WH = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA = process.env.SORA_CAPA_URL || `${APP_URL_WH}/sora-capa.png`;
 const { interpretarMensagem, classificarIntencao } = require('../services/ia');
@@ -379,13 +379,10 @@ router.post('/', async (req, res) => {
         break;
 
       case 'painel':
-        await enviarLink(phone, {
-          message: '🌐 *Seu painel da Sora*\n\nGráficos, saldos, metas e tudo organizado num lugar só.',
-          image: SORA_CAPA,
-          linkUrl: `${APP_URL_WH}/dashboard`,
-          title: '🐳 Painel da Sora',
-          linkDescription: 'Abrir painel',
-        });
+        // send-image: capa como banner no topo + texto (com link) na legenda.
+        await enviarImagem(phone, SORA_CAPA,
+          '🐳 *Seu painel da Sora*\n\nGráficos, saldos, metas e tudo organizado num lugar só.\n\n' +
+          `👉 ${APP_URL_WH}/dashboard`);
         break;
 
       case 'suporte':
