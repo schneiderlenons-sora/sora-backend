@@ -340,8 +340,17 @@ function interpretarRapido(message) {
     };
   }
 
+  // Pedido de LEMBRETE com data ("me lembra que amanhã tenho que X") NÃO pode
+  // cair nos comandos simples só porque a frase menciona "painel/saldo/resumo".
+  // Retorna null → o webhook roteia pro parser de agenda (cria o compromisso).
+  if (/\b(me\s+)?lembr\w+\b/i.test(msg)
+      && /\b(amanh[ãa]|hoje|depois\s+de\s+amanh|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|semana|m[êe]s|dia\s+\d|\d{1,2}\/\d{1,2}|[àa]s?\s+\d{1,2}|\d{1,2}\s*h|daqui)\b/i.test(msg))
+    return null;
+
   // --- COMANDOS SIMPLES ---
-  if (/\bpainel\b/i.test(msg))         return { acao: 'painel' };
+  // "painel" só vira comando em mensagem curta (ex.: "painel", "abrir painel") —
+  // não quando a palavra aparece no meio de uma frase ("...da aba de estudos do painel").
+  if (/\bpainel\b/i.test(msg) && msg.trim().split(/\s+/).length <= 5) return { acao: 'painel' };
   if (/\bsaldo\b/i.test(msg))          return { acao: 'ver_saldos' };
   if (/\b(resumo|relat[oó]rio)\b/i.test(msg)) return { acao: 'resumo' };
   if (/\banalisar\b/i.test(msg))       return { acao: 'analisar' };
