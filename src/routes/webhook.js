@@ -354,7 +354,7 @@ router.post('/', async (req, res) => {
     // pedir ajuda ou querer cancelar não pode esbarrar no paywall.
     const ACOES_LIVRES = ['conversa', 'suporte', 'cancelar_plano', 'config_resumos'];
     if (!temAcessoGrow(user) && data?.acao && !ACOES_LIVRES.includes(data.acao)) {
-      await enviarImagem(phone, SORA_CAPA, PAYWALL_TEXT);
+      await enviarTexto(phone, PAYWALL_TEXT);
       console.log(`🔒 [${phone}] lead bloqueado na ação "${data.acao}"`);
       return;
     }
@@ -373,8 +373,7 @@ router.post('/', async (req, res) => {
         break;
 
       case 'painel':
-        // send-image: capa como banner no topo + texto (com link) na legenda.
-        await enviarImagem(phone, SORA_CAPA,
+        await enviarTexto(phone,
           '🐳 *Seu painel da Sora*\n\nGráficos, saldos, metas e tudo organizado num lugar só.\n\n' +
           `👉 ${APP_URL_WH}/dashboard`);
         break;

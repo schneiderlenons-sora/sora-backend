@@ -802,7 +802,7 @@ cron.schedule('0 13 * * *', async () => {
         }
         if (!elegivel) continue;
 
-        await enviarImagem(u.phone, CAPA,
+        await enviarTexto(u.phone,
           `🎁 *Seu Sora Wrapped de ${mesNome} tá pronto!*\n\n` +
           `Seus números viraram um resumo lindo — seu maior vilão de gastos, quanto você ` +
           `economizou, sua sequência... do jeitinho que dá vontade de postar no story. 🐳\n\n` +
@@ -864,7 +864,7 @@ cron.schedule('*/15 * * * *', async () => {
         if (atual.count === 0) continue;                                  // semana sem movimento
         const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
         const insight = await gerarInsight({ periodo: 'semana', atual, anterior });
-        await enviarImagem(u.phone, CAPA,
+        await enviarTexto(u.phone,
           `${montarCorpoSemanal({ atual, anterior, insight })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/dashboard`);
         enviados++;
       } catch { /* tolerante por usuário */ }
@@ -902,7 +902,7 @@ cron.schedule('*/15 * * * *', async () => {
         if (atual.count === 0) continue;
         const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
         const insight = await gerarInsight({ periodo: 'mes', atual, anterior });
-        await enviarImagem(u.phone, CAPA,
+        await enviarTexto(u.phone,
           `${montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/dashboard`);
         enviados++;
       } catch { /* tolerante por usuário */ }

@@ -608,7 +608,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       ? `\n🎯 Meta: R$ ${metaMensal.toFixed(2)} (${((gastos/metaMensal)*100).toFixed(0)}% usado)`
       : '';
 
-    await enviarImagem(phone, SORA_CAPA_TX,
+    await enviarTexto(phone,
       `📊 *RESUMO DO MÊS*\n\n${catOrdenadas}\n\n` +
       `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
       `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +

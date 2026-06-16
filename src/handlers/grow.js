@@ -235,7 +235,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
         || /\b(manuten[çc]|despensa|receita|cozinh|ingrediente)/i.test(msg)
         || /^(acabou|acabando|t[aá]\s+acabando|est[aá]\s+acabando)\b/i.test(msg)
         || /o\s+que\s+.*(cozinhar|falta\s+em\s+casa)/i.test(msg))) {
-    await enviarImagem(phone, SORA_CAPA_GROW,
+    await enviarTexto(phone,
       '🔒 *Casa* — lista de compras, despensa, receitas e manutenções — faz parte do plano *Premium*.\n\n' +
       'No seu plano você já tem hábitos, tarefas, agenda e bem-estar. ✨\n\n' +
       `👉 Ver os planos: ${APP_URL_GROW}/planos`);
