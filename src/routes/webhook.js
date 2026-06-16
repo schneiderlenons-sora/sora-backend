@@ -2,6 +2,7 @@ const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarMenu, enviarLink, enviarBotaoLink, enviarImagem } = require('../services/zapi');
+const { responderFaq } = require('../services/faq');
 const APP_URL_WH = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA = process.env.SORA_CAPA_URL || `${APP_URL_WH}/sora-capa.png`;
 const { interpretarMensagem, classificarIntencao } = require('../services/ia');
@@ -302,6 +303,18 @@ router.post('/', async (req, res) => {
       const ctx = { phone, grupoId: user.grupo_ativo, user, mensagem };
       await require('../handlers/grow')(mensagem, ctx);
       return;
+    }
+
+    // FAQ local-first: perguntas comuns (planos, painel, como funciona, suporte…)
+    // respondidas na hora, sem IA. Só pega PERGUNTAS (gatilhos com "como/o que/…"),
+    // nunca comandos/lançamentos. Vale pra lead também (informação é livre).
+    if (!data) {
+      const faqResp = responderFaq(mensagem);
+      if (faqResp) {
+        await enviarTexto(phone, faqResp);
+        console.log(`💬 [${phone}] FAQ respondido`);
+        return;
+      }
     }
 
     // Se regex nao identificou, tenta classificar Finance vs Grow (usuarios com acesso ao Grow)
