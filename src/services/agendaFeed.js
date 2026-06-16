@@ -35,7 +35,7 @@ function ocorrenciasMensais(dia, deStr, ateStr) {
 // (filtram por userId quando informado). Manutenções (Casa) seguem o toggle do
 // grupo. Recorrências/dívidas/faturas são finanças → sempre por grupo.
 async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
-  const { userId = null, casaCompartilhada = false } = opts;
+  const { userId = null, casaCompartilhada = false, incluirTransacoes = false } = opts;
   const eventos = [];
 
   // 1. Compromissos nativos (editáveis) — pessoais
@@ -126,6 +126,30 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
           cor: '#d97706', deeplink: '/grow/casa', editavel: false });
     }
   } catch {}
+
+  // 7. Transações (gastos/receitas) — OPT-IN. Só a agenda pede isso; o briefing
+  //    matinal NÃO (senão listaria cada gasto do dia). Finanças = por grupo.
+  if (incluirTransacoes) {
+    try {
+      const { data } = await supabase.from('transacoes')
+        .select('id, tipo, categoria, valor, data, observacao')
+        .eq('grupo_id', grupoId)
+        .gte('data', deStr).lte('data', ateStr + 'T23:59:59.999')
+        .order('data', { ascending: false })
+        .limit(1000);
+      for (const t of data || []) {
+        const gasto = t.tipo === 'Gasto';
+        const dia = String(t.data).slice(0, 10); // agrupa por dia (YYYY-MM-DD)
+        const desc = String(t.observacao || t.categoria || '').replace(/\p{Emoji}/gu, '').trim();
+        eventos.push({
+          id: `tx-${t.id}`, source: 'transacao', tipo: gasto ? 'gasto' : 'receita',
+          titulo: desc || (gasto ? 'Gasto' : 'Receita'), categoria: t.categoria || null,
+          data: dia, hora: null, cor: gasto ? '#dc2626' : '#16a34a',
+          valor: t.valor || 0, deeplink: '/transacoes', editavel: false,
+        });
+      }
+    } catch {}
+  }
 
   return eventos;
 }

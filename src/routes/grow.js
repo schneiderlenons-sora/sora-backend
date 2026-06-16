@@ -767,7 +767,7 @@ router.get('/agenda/feed/:phone', auth, requireGrow, async (req, res) => {
     const de  = req.query.de  || isoLocal(new Date(hoje.getTime() - 31 * 86400000));
     const ate = req.query.ate || isoLocal(new Date(hoje.getTime() + 180 * 86400000));
     const cfg = await growShareCfg(req.userRow.grupo_ativo);
-    const eventos = await montarFeed(req.userRow.grupo_ativo, de, ate, { userId: req.userRow.id, casaCompartilhada: cfg.casa });
+    const eventos = await montarFeed(req.userRow.grupo_ativo, de, ate, { userId: req.userRow.id, casaCompartilhada: cfg.casa, incluirTransacoes: true });
     res.json({ eventos });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
