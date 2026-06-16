@@ -62,4 +62,24 @@ async function enviarLink(phone, { message, image, linkUrl, title, linkDescripti
   }
 }
 
-module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink };
+// Mensagem interativa: header de IMAGEM (capa, paisagem no topo) + corpo +
+// BOTÃO de URL (ex.: "Ver no painel"). É o formato do exemplo (Pierre).
+// Cai pra send-link e, por fim, texto, se a conta não suportar botões.
+async function enviarBotaoLink(phone, { message, image, title, footer, label, url }) {
+  try {
+    const body = {
+      phone,
+      message,
+      buttonActions: [{ id: '1', type: 'URL', url, label: (label || 'Abrir').slice(0, 24) }],
+    };
+    if (title)  body.title = title;
+    if (footer) body.footer = footer;
+    if (image)  body.image = image;
+    await axios.post(`${BASE}/send-button-actions`, body, { headers: HEADERS });
+  } catch (e) {
+    console.error(`❌ send-button-actions falhou para ${phone} (fallback link):`, e.response?.status || e.message);
+    await enviarLink(phone, { message, image, linkUrl: url, title: title || '', linkDescription: label || 'Abrir' });
+  }
+}
+
+module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink, enviarBotaoLink };
