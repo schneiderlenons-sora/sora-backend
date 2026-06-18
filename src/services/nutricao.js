@@ -366,11 +366,82 @@ function gerarDiagnostico(macrosHoje, meta) {
   return itens;
 }
 
+// ── ANÁLISE DE FOTO DE COMIDA (visão) ───────────────────────────
+// Recebe a URL da imagem, identifica os alimentos + estima a porção e os
+// macros. Refina com o banco local (TACO) quando o alimento existe lá.
+const PROMPT_FOTO = `Você é a Sora, nutricionista. Analise esta FOTO de comida/refeição e estime os macronutrientes.
+
+Para CADA alimento visível no prato, identifique o nome e estime a porção em GRAMAS pela aparência (tamanho, quantidade). Depois dê, PARA A PORÇÃO ESTIMADA (não por 100g): calorias (kcal), proteína, carboidrato e gordura em gramas.
+
+Coerência: kcal ≈ proteina*4 + carboidrato*4 + gordura*9.
+
+Se a imagem NÃO for comida (ex.: nota fiscal, documento, foto aleatória), retorne {"comida": false}.
+
+Retorne APENAS um JSON válido, sem texto antes/depois:
+{"comida": true, "itens": [{"nome":"Arroz branco","gramas":120,"kcal":154,"p":3,"c":34,"g":0.3}], "confianca":"alta"}
+("confianca": "alta" | "media" | "baixa", conforme a nitidez/clareza da foto)`;
+
+async function analisarFotoComida(imageUrl) {
+  try {
+    const resp = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: PROMPT_FOTO },
+          { type: 'image_url', image_url: { url: imageUrl } },
+        ],
+      }],
+    });
+    const txt = (resp.choices[0].message.content || '').replace(/```json|```/g, '').trim();
+    const j = JSON.parse(txt);
+    if (!j || j.comida === false || !Array.isArray(j.itens) || j.itens.length === 0) {
+      return { comida: false };
+    }
+
+    // Refina com o banco local (TACO) quando o alimento existe lá.
+    const itens = j.itens.map((it) => {
+      const al = lookupLocal(it.nome);
+      const gramas = Math.max(1, Math.round(Number(it.gramas) || 0));
+      if (al && gramas) {
+        const m = macrosParaQuantidade(al, gramas);
+        return { nome: it.nome, gramas, calorias: m.calorias, proteinas_g: m.proteinas_g, carboidratos_g: m.carboidratos_g, gorduras_g: m.gorduras_g, fonte: 'banco' };
+      }
+      return {
+        nome: it.nome, gramas: gramas || null,
+        calorias: Math.round(Number(it.kcal) || 0),
+        proteinas_g: +(Number(it.p) || 0).toFixed(1),
+        carboidratos_g: +(Number(it.c) || 0).toFixed(1),
+        gorduras_g: +(Number(it.g) || 0).toFixed(1),
+        fonte: 'ia',
+      };
+    });
+
+    const totais = itens.reduce((s, i) => ({
+      calorias: s.calorias + i.calorias,
+      proteinas_g: s.proteinas_g + i.proteinas_g,
+      carboidratos_g: s.carboidratos_g + i.carboidratos_g,
+      gorduras_g: s.gorduras_g + i.gorduras_g,
+    }), { calorias: 0, proteinas_g: 0, carboidratos_g: 0, gorduras_g: 0 });
+    totais.calorias = Math.round(totais.calorias);
+    totais.proteinas_g = +totais.proteinas_g.toFixed(1);
+    totais.carboidratos_g = +totais.carboidratos_g.toFixed(1);
+    totais.gorduras_g = +totais.gorduras_g.toFixed(1);
+
+    return { comida: true, itens, totais, confianca: j.confianca || 'media' };
+  } catch (e) {
+    console.error('❌ analisarFotoComida:', e.message);
+    return { comida: false, erro: true };
+  }
+}
+
 module.exports = {
   lookupLocal,
   buscarAlimentos,
   macrosParaQuantidade,
   analisarRefeicao,
+  analisarFotoComida,
   calcularMetas,
   calcularIdade,
   gerarDiagnostico,

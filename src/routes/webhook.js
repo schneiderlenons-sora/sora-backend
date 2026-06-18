@@ -8,6 +8,7 @@ const SORA_CAPA = process.env.SORA_CAPA_URL || `${APP_URL_WH}/sora-capa.png`;
 const { interpretarMensagem, classificarIntencao } = require('../services/ia');
 const { transcreverAudio }        = require('../services/whisper');
 const { lerNotaFiscal }           = require('../services/ocr');
+const { analisarFotoComida }      = require('../services/nutricao');
 const { interpretarRapido }       = require('../handlers/interpretador');
 const { buscarPendente }          = require('../services/pendentes');
 const { resolverPendente }        = require('../handlers/pendentes');
@@ -129,6 +130,27 @@ Se tiver qualquer dificuldade, é só chamar o suporte: 📧 contatosora.ai@gmai
 // Normaliza telefone (remove tudo que não é dígito)
 const norm = (p) => p ? p.replace(/\D/g, '') : p;
 
+// Formata a resposta da análise de foto de comida (macros).
+function formatarMacrosFoto(r) {
+  const t = r.totais;
+  const lista = r.itens.map(i => `• ${i.nome}${i.gramas ? ` (~${i.gramas}g)` : ''}`).join('\n');
+  const conf = r.confianca === 'alta' ? 'alta' : r.confianca === 'baixa' ? 'baixa' : 'média';
+  return [
+    '🍽️ *Análise da sua refeição*',
+    '',
+    'Identifiquei:',
+    lista,
+    '',
+    '📊 *Totais estimados:*',
+    `🔥 ${t.calorias} kcal`,
+    `🥩 Proteínas: ${t.proteinas_g} g`,
+    `🍞 Carboidratos: ${t.carboidratos_g} g`,
+    `🧈 Gorduras: ${t.gorduras_g} g`,
+    '',
+    `_Estimativa pela foto (confiança ${conf}) — valores aproximados._`,
+  ].join('\n');
+}
+
 // Retorna variantes do número para busca:
 // Z-API envia sem o 9º dígito (12 dígitos) mas usuários podem cadastrar
 // com ele (13 dígitos). Tenta os dois formatos.
@@ -204,6 +226,8 @@ router.post('/', async (req, res) => {
   // Só guarda a URL aqui; o OCR roda depois de carregar o usuário (pra
   // checar plano e ter o contexto do grupo).
   const imageUrl = image?.url || image?.imageUrl || null;
+  // Legenda da foto (pra rotear: comida → macros, vs nota fiscal → OCR).
+  const legendaImg = String(image?.caption || mensagem || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   if (imageUrl) mensagem = '__imagem__'; // placeholder pra passar a validação abaixo
 
   if (!mensagem || !phone) return;
@@ -278,7 +302,21 @@ router.post('/', async (req, res) => {
     let data = null;
     if (imageUrl) {
       if (!['premium', 'black'].includes(user.plano)) {
-        await enviarTexto(phone, '🚫 Leitura de notas fiscais e comprovantes é exclusiva dos planos Premium e Black.');
+        await enviarTexto(phone, '🚫 Ler fotos (notas fiscais e fotos de comida) é exclusivo dos planos Premium e Black.');
+        return;
+      }
+      // Foto de COMIDA (legenda com macros/calorias/comida…) → análise nutricional.
+      const querMacros = /\b(macro|macros|caloria|calorias|kcal|nutri\w*|proteina|carboidrato|gordura|comida|refei\w*|prato|calcula)\b/.test(legendaImg);
+      if (querMacros) {
+        await enviarTexto(phone, '🍽️ Analisando sua refeição...');
+        const r = await analisarFotoComida(imageUrl);
+        if (!r.comida) {
+          await enviarTexto(phone, r.erro
+            ? '😕 Não consegui analisar agora. Tenta de novo em instantes.'
+            : '🍽️ Não reconheci comida nessa foto. Manda uma foto mais nítida do prato (com a legenda *macros*).');
+          return;
+        }
+        await enviarTexto(phone, formatarMacrosFoto(r));
         return;
       }
       await enviarTexto(phone, '🔍 Analisando a imagem...');

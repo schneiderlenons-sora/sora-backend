@@ -47,6 +47,16 @@ Eu entendo o valor, a categoria e a conta, e lanço na hora. Funciona por *texto
 Ótimo pra quando você tá na correria e não quer digitar. Funciona igual ao texto.`,
   },
   {
+    id: 'foto-comida-macros',
+    gatilhos: [/foto.{0,12}(comida|prato|refei)/, /(macro|caloria|kcal).{0,18}(foto|imagem)/, /(foto|imagem).{0,18}(macro|caloria|kcal|comida|prato)/, /como.{0,18}(saber|ver|calcul\w*|descobr\w*).{0,18}(macro|caloria|kcal)/, /quantas calorias.{0,18}(tem|isso|foto|prato)/],
+    resposta:
+`Manda a *foto da comida* aqui com a legenda *macros* (ou "calorias") 📸🍽️
+
+Eu analiso o prato, identifico os alimentos e te devolvo os *macros estimados*: calorias, proteínas, carboidratos e gorduras.
+
+É uma estimativa pela imagem (valores aproximados). Disponível nos planos *Premium* e *Black*.`,
+  },
+  {
     id: 'foto-pdf-ocr',
     gatilhos: [/foto da nota/, /(mandar|enviar|tirar) foto/, /\bnota fiscal\b/, /\bcupom\b/, /\bocr\b/, /\bpdf\b/, /(foto|imagem) (do|de) comprovante/, /comprovante/],
     resposta:
