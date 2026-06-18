@@ -420,6 +420,10 @@ router.post('/treino-registros', auth, requireGrow, async (req, res) => {
       hora, duracao_min, intensidade, calorias_kcal, observacao,
     }).select().single();
     if (error) throw error;
+    // Sessão detalhada de um treino vinculado a hábito → marca o hábito do dia
+    // e remove a sessão auto-criada (origem 'habito') pra não contar em dobro.
+    // Tolerante: se a migration 045 não rodou, ignora sem quebrar o registro.
+    if (treino_id) await sincronizarHabitoDoTreino(u, treino_id, r).catch(() => {});
     res.json(r);
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
@@ -428,6 +432,29 @@ router.delete('/treino-registros/:id', auth, requireGrow, async (req, res) => {
   try { await supabase.from('treino_registros').delete().eq('id', req.params.id); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ erro: e.message }); }
 });
+
+// Sync treino → hábito. Ao registrar uma sessão detalhada de um treino que
+// tem hábito vinculado: marca o hábito do dia como feito e apaga a sessão
+// auto-criada (origem 'habito') desse dia, deixando só a sessão detalhada.
+async function sincronizarHabitoDoTreino(u, treinoId, reg) {
+  const { data: h } = await supabase.from('habitos')
+    .select('id').eq('user_id', u.id).eq('treino_id', treinoId).eq('ativo', true).maybeSingle();
+  if (!h) return;
+  // Remove sessões auto-criadas do mesmo dia/treino (a detalhada as substitui).
+  await supabase.from('treino_registros').delete()
+    .eq('user_id', u.id).eq('treino_id', treinoId).eq('data', reg.data)
+    .eq('origem', 'habito').neq('id', reg.id);
+  // Marca o hábito do dia.
+  const { data: existing } = await supabase.from('registros_habito')
+    .select('id, concluido').eq('habito_id', h.id).eq('data', reg.data).maybeSingle();
+  if (existing) {
+    if (!existing.concluido) await supabase.from('registros_habito').update({ concluido: true }).eq('id', existing.id);
+  } else {
+    await supabase.from('registros_habito').insert({
+      habito_id: h.id, grupo_id: u.grupo_ativo, user_id: u.id, data: reg.data, concluido: true,
+    });
+  }
+}
 
 // ═════════════════════════════════════════════════════════════════
 // CHECKUPS

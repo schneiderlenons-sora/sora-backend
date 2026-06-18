@@ -169,9 +169,9 @@ router.post('/habitos/lembrete', auth, requireGrow, async (req, res) => {
 
 router.post('/habitos', auth, requireGrow, async (req, res) => {
   try {
-    const { nome, descricao, icone, cor, frequencia, dias_semana, horario_lembrete, motivo, tipo, ordem } = req.body;
+    const { nome, descricao, icone, cor, frequencia, dias_semana, horario_lembrete, motivo, tipo, ordem, treino_id, treino_duracao_padrao } = req.body;
     if (!nome?.trim()) return res.status(400).json({ erro: 'Nome obrigatorio' });
-    const { data, error } = await supabase.from('habitos').insert({
+    const insert = {
       grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id,
       nome: nome.trim(), descricao, icone: icone || '🎯', cor: cor || '#7c3aed',
       frequencia: frequencia || 'diario',
@@ -180,13 +180,21 @@ router.post('/habitos', auth, requireGrow, async (req, res) => {
       motivo: motivo || null,
       tipo: tipo || 'construir',
       ordem: ordem ?? 0,
-    }).select().single();
+    };
+    // Só inclui os campos de treino quando vier um vínculo — assim hábitos
+    // normais continuam sendo criados mesmo se a migration 045 não rodou.
+    if (treino_id) {
+      insert.treino_id = treino_id;
+      insert.treino_duracao_padrao = treino_duracao_padrao ?? null;
+    }
+    const { data, error } = await supabase.from('habitos').insert(insert).select().single();
     if (error) {
       console.error('❌ POST /habitos:', error.message);
       // Coluna faltando → migration 015 (motivo/tipo/ordem) não rodou.
       const faltaCol = /column .* does not exist|could not find/i.test(error.message);
+      const migr = treino_id ? '045' : '015';
       return res.status(faltaCol ? 503 : 500).json({
-        erro: faltaCol ? `Falta rodar a migration 015 no Supabase. (${error.message})` : error.message,
+        erro: faltaCol ? `Falta rodar a migration ${migr} no Supabase. (${error.message})` : error.message,
       });
     }
     res.json(data);
@@ -195,7 +203,7 @@ router.post('/habitos', auth, requireGrow, async (req, res) => {
 
 router.put('/habitos/:id', auth, requireGrow, async (req, res) => {
   try {
-    const allowed = ['nome','descricao','icone','cor','frequencia','dias_semana','horario_lembrete','ativo','motivo','tipo','ordem'];
+    const allowed = ['nome','descricao','icone','cor','frequencia','dias_semana','horario_lembrete','ativo','motivo','tipo','ordem','treino_id','treino_duracao_padrao'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     const { data } = await supabase.from('habitos').update(patch).eq('id', req.params.id).select().single();
@@ -227,18 +235,50 @@ router.post('/habitos/:id/toggle', auth, requireGrow, async (req, res) => {
     const dataReg = data_req(hoje);
     const { data: existing } = await supabase.from('registros_habito')
       .select('id, concluido').eq('habito_id', req.params.id).eq('data', dataReg).maybeSingle();
+    let resultado, concluido;
     if (existing) {
+      concluido = !existing.concluido;
       const { data: upd } = await supabase.from('registros_habito')
-        .update({ concluido: !existing.concluido }).eq('id', existing.id).select().single();
-      return res.json(upd);
+        .update({ concluido }).eq('id', existing.id).select().single();
+      resultado = upd;
+    } else {
+      concluido = true;
+      const { data: novo } = await supabase.from('registros_habito').insert({
+        habito_id: req.params.id, grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, data: dataReg, concluido: true,
+      }).select().single();
+      resultado = novo;
     }
-    const { data: novo } = await supabase.from('registros_habito').insert({
-      habito_id: req.params.id, grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, data: dataReg, concluido: true,
-    }).select().single();
-    res.json(novo);
+    // Hábito vinculado a treino → reflete o check na aba Treinos.
+    // Tolerante: se a migration 045 não rodou, ignora sem quebrar o toggle.
+    await sincronizarTreinoDoHabito(req.params.id, req.userRow, dataReg, concluido).catch(() => {});
+    res.json(resultado);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 function data_req(v) { return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : new Date().toISOString().slice(0, 10); }
+
+// Sync hábito → treino. Checar cria a sessão do dia (origem 'habito') com a
+// duração padrão; desmarcar remove só essa sessão auto-criada (nunca uma
+// sessão detalhada digitada à mão). Se já existe QUALQUER sessão no dia, não duplica.
+async function sincronizarTreinoDoHabito(habitoId, userRow, dataReg, concluido) {
+  const { data: h } = await supabase.from('habitos')
+    .select('treino_id, treino_duracao_padrao, nome').eq('id', habitoId).maybeSingle();
+  if (!h || !h.treino_id) return;
+  if (concluido) {
+    const { data: ja } = await supabase.from('treino_registros')
+      .select('id').eq('user_id', userRow.id).eq('treino_id', h.treino_id).eq('data', dataReg).limit(1);
+    if (ja && ja.length) return; // já há sessão (manual ou auto) — não duplica
+    await supabase.from('treino_registros').insert({
+      grupo_id: userRow.grupo_ativo, user_id: userRow.id,
+      treino_id: h.treino_id, treino_nome: h.nome,
+      data: dataReg, duracao_min: h.treino_duracao_padrao || null,
+      origem: 'habito',
+    });
+  } else {
+    await supabase.from('treino_registros').delete()
+      .eq('user_id', userRow.id).eq('treino_id', h.treino_id)
+      .eq('data', dataReg).eq('origem', 'habito');
+  }
+}
 
 // ─── TAREFAS ─────────────────────────────────────────────────────────
 router.get('/tarefas/:phone', auth, requireGrow, async (req, res) => {
