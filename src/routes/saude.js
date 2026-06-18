@@ -397,6 +397,24 @@ router.post('/treinos', auth, requireGrow, async (req, res) => {
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// Exclui (soft-delete) uma modalidade do catálogo. Mantém o histórico de
+// sessões (ainda referenciam o treino p/ exibir nome/ícone) e desvincula
+// hábitos que apontavam pra ela, pra não gerar sessões fantasma.
+router.delete('/treinos/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const u = req._user;
+    await supabase.from('treinos').update({ ativo: false })
+      .eq('id', req.params.id).eq('grupo_id', u.grupo_ativo);
+    // Desvincula hábitos ligados a este treino (vira hábito normal). Tolerante
+    // à migration 045 — se a coluna não existe, ignora sem quebrar o delete.
+    try {
+      await supabase.from('habitos').update({ treino_id: null })
+        .eq('treino_id', req.params.id).eq('user_id', u.id);
+    } catch {}
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 router.get('/treino-registros/:phone', auth, requireGrow, async (req, res) => {
   try {
     const { dias } = req.query;
