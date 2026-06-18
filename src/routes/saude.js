@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────
-// Sora Grow — Saude (perfil, peso, agua, nutricao, treinos, checkups,
-// consultas, exames, medicamentos, medidas, fotos, sintomas, vacinas, ciclo)
+// Sora Grow — Saude (perfil, peso, agua, nutricao, treinos,
+// consultas, exames, medicamentos, medidas, fotos, vacinas, ciclo)
 // ─────────────────────────────────────────────────────────────────
 const express  = require('express');
 const router   = express.Router();
@@ -66,7 +66,6 @@ router.get('/dashboard/:phone', auth, requireGrow, async (req, res) => {
       { data: refeicoes30 },
       { data: itensRef },
       { data: treinosSem },
-      { data: checkHoje },
       { data: consultasProx },
       { data: medicamentosAtivos },
     ] = await Promise.all([
@@ -81,7 +80,6 @@ router.get('/dashboard/:phone', auth, requireGrow, async (req, res) => {
         (await supabase.from('refeicoes').select('id').eq('user_id', user.id).gte('data', ini30)).data?.map(r => r.id) || []
       ),
       supabase.from('treino_registros').select('data, duracao_min, treino_nome').eq('user_id', user.id).gte('data', iniSemana),
-      supabase.from('checkups').select('*').eq('user_id', user.id).eq('data', hoje).maybeSingle(),
       supabase.from('consultas').select('*').eq('user_id', user.id).eq('status', 'agendada').gte('data', hoje).order('data').limit(3),
       supabase.from('medicamentos').select('id, nome, dosagem, horarios, estoque_atual, estoque_alerta').eq('user_id', user.id).eq('ativo', true),
     ]);
@@ -147,7 +145,6 @@ router.get('/dashboard/:phone', auth, requireGrow, async (req, res) => {
         minutos: minutosSemana,
         lista:  treinosSem || [],
       },
-      checkup_hoje: checkHoje || null,
       consultas_proximas: consultasProx || [],
       medicamentos_ativos: medicamentosAtivos || [],
     });
@@ -475,29 +472,6 @@ async function sincronizarHabitoDoTreino(u, treinoId, reg) {
 }
 
 // ═════════════════════════════════════════════════════════════════
-// CHECKUPS
-// ═════════════════════════════════════════════════════════════════
-router.get('/checkups/:phone', auth, requireGrow, async (req, res) => {
-  try {
-    const { dias } = req.query;
-    const ini = new Date(Date.now() - (parseInt(dias) || 90) * 86400000).toISOString().slice(0,10);
-    const { data } = await supabase.from('checkups').select('*').eq('user_id', req._user.id).gte('data', ini).order('data', { ascending: false });
-    res.json(data || []);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-router.post('/checkups', auth, requireGrow, async (req, res) => {
-  try {
-    const u = req._user;
-    const payload = { ...req.body, grupo_id: u.grupo_ativo, user_id: u.id, data: req.body.data || new Date().toISOString().slice(0,10) };
-    delete payload.phone;
-    const { data, error } = await supabase.from('checkups').upsert(payload, { onConflict: 'user_id,data' }).select().single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-// ═════════════════════════════════════════════════════════════════
 // CONSULTAS
 // ═════════════════════════════════════════════════════════════════
 router.get('/consultas/:phone', auth, requireGrow, async (req, res) => {
@@ -665,28 +639,8 @@ router.post('/fotos', auth, requireGrow, async (req, res) => {
 });
 
 // ═════════════════════════════════════════════════════════════════
-// SINTOMAS / VACINAS / CICLO
+// VACINAS / CICLO
 // ═════════════════════════════════════════════════════════════════
-router.get('/sintomas/:phone', auth, requireGrow, async (req, res) => {
-  try {
-    const { dias } = req.query;
-    const ini = new Date(Date.now() - (parseInt(dias) || 60) * 86400000).toISOString().slice(0,10);
-    const { data } = await supabase.from('sintomas').select('*').eq('user_id', req._user.id).gte('data', ini).order('data', { ascending: false });
-    res.json(data || []);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-router.post('/sintomas', auth, requireGrow, async (req, res) => {
-  try {
-    const u = req._user;
-    const payload = { ...req.body, grupo_id: u.grupo_ativo, user_id: u.id };
-    delete payload.phone;
-    const { data, error } = await supabase.from('sintomas').insert(payload).select().single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
 router.get('/vacinas/:phone', auth, requireGrow, async (req, res) => {
   try {
     const { data } = await supabase.from('vacinas').select('*').eq('user_id', req._user.id).order('data_aplicacao', { ascending: false });
