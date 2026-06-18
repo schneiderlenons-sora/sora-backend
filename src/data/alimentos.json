@@ -1,208 +1,9238 @@
 [
-  { "nome": "Arroz branco cozido", "aliases": ["arroz", "arroz branco", "arroz cozido"], "porcao": { "descricao": "1 concha", "g": 80 }, "kcal_100": 128, "p_100": 2.5, "c_100": 28.1, "g_100": 0.2 },
-  { "nome": "Arroz integral cozido", "aliases": ["arroz integral"], "porcao": { "descricao": "1 concha", "g": 80 }, "kcal_100": 124, "p_100": 2.6, "c_100": 25.8, "g_100": 1.0 },
-  { "nome": "Arroz parboilizado cozido", "aliases": ["arroz parboilizado"], "porcao": { "descricao": "1 concha", "g": 80 }, "kcal_100": 128, "p_100": 2.7, "c_100": 27.5, "g_100": 0.2 },
-  { "nome": "Cuscuz de milho", "aliases": ["cuscuz", "cuscuz nordestino"], "porcao": { "descricao": "1 fatia", "g": 100 }, "kcal_100": 130, "p_100": 2.6, "c_100": 27.8, "g_100": 1.2 },
-  { "nome": "Fubá de milho cru", "aliases": ["fubá", "fuba"], "porcao": { "descricao": "2 colheres sopa", "g": 30 }, "kcal_100": 367, "p_100": 8.1, "c_100": 78.3, "g_100": 3.0 },
-  { "nome": "Polenta cozida", "aliases": ["polenta", "angu"], "porcao": { "descricao": "1 porção", "g": 200 }, "kcal_100": 71, "p_100": 1.8, "c_100": 15.6, "g_100": 0.5 },
-  { "nome": "Farinha de mandioca crua", "aliases": ["farinha de mandioca", "farinha", "farinha seca"], "porcao": { "descricao": "1 colher sopa", "g": 20 }, "kcal_100": 361, "p_100": 1.8, "c_100": 87.9, "g_100": 0.3 },
-  { "nome": "Farofa de mandioca", "aliases": ["farofa"], "porcao": { "descricao": "2 colheres sopa", "g": 30 }, "kcal_100": 392, "p_100": 2.4, "c_100": 82.1, "g_100": 6.8 },
-  { "nome": "Farinha de trigo", "aliases": ["farinha de trigo"], "porcao": { "descricao": "1 colher sopa", "g": 15 }, "kcal_100": 361, "p_100": 9.8, "c_100": 75.1, "g_100": 1.4 },
-  { "nome": "Quinoa cozida", "aliases": ["quinoa", "quinua"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 120, "p_100": 4.4, "c_100": 21.3, "g_100": 1.9 },
-
-  { "nome": "Feijão preto cozido", "aliases": ["feijão preto", "feijao preto"], "porcao": { "descricao": "1 concha", "g": 90 }, "kcal_100": 77, "p_100": 4.5, "c_100": 14.0, "g_100": 0.5 },
-  { "nome": "Feijão carioca cozido", "aliases": ["feijão", "feijao", "feijão carioca", "feijao carioca"], "porcao": { "descricao": "1 concha", "g": 90 }, "kcal_100": 76, "p_100": 4.8, "c_100": 13.6, "g_100": 0.5 },
-  { "nome": "Feijão vermelho cozido", "aliases": ["feijão vermelho", "feijao vermelho"], "porcao": { "descricao": "1 concha", "g": 90 }, "kcal_100": 77, "p_100": 4.5, "c_100": 13.8, "g_100": 0.5 },
-  { "nome": "Feijão branco cozido", "aliases": ["feijão branco", "feijao branco"], "porcao": { "descricao": "1 concha", "g": 90 }, "kcal_100": 139, "p_100": 9.7, "c_100": 25.1, "g_100": 0.5 },
-  { "nome": "Ervilha cozida", "aliases": ["ervilha"], "porcao": { "descricao": "1 porção", "g": 80 }, "kcal_100": 81, "p_100": 5.4, "c_100": 14.5, "g_100": 0.4 },
-  { "nome": "Soja cozida", "aliases": ["soja"], "porcao": { "descricao": "1 concha", "g": 90 }, "kcal_100": 141, "p_100": 12.4, "c_100": 11.5, "g_100": 6.4 },
-  { "nome": "Lentilha cozida", "aliases": ["lentilha"], "porcao": { "descricao": "1 concha", "g": 90 }, "kcal_100": 116, "p_100": 9.0, "c_100": 20.1, "g_100": 0.4 },
-  { "nome": "Grão de bico cozido", "aliases": ["grão de bico", "grao de bico"], "porcao": { "descricao": "1 concha", "g": 90 }, "kcal_100": 121, "p_100": 8.4, "c_100": 19.0, "g_100": 1.4 },
-
-  { "nome": "Batata inglesa cozida", "aliases": ["batata", "batata cozida", "batata inglesa"], "porcao": { "descricao": "1 média", "g": 150 }, "kcal_100": 52, "p_100": 1.2, "c_100": 11.9, "g_100": 0.0 },
-  { "nome": "Batata doce cozida", "aliases": ["batata doce"], "porcao": { "descricao": "1 média", "g": 150 }, "kcal_100": 77, "p_100": 0.6, "c_100": 18.4, "g_100": 0.1 },
-  { "nome": "Batata frita", "aliases": ["batata frita", "fritas"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 312, "p_100": 3.4, "c_100": 40.0, "g_100": 15.0 },
-  { "nome": "Mandioca cozida", "aliases": ["mandioca", "aipim", "macaxeira"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 125, "p_100": 0.6, "c_100": 30.1, "g_100": 0.3 },
-  { "nome": "Inhame cozido", "aliases": ["inhame"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 118, "p_100": 1.5, "c_100": 27.9, "g_100": 0.1 },
-  { "nome": "Cará cozido", "aliases": ["cará", "cara"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 99, "p_100": 1.4, "c_100": 23.4, "g_100": 0.1 },
-
-  { "nome": "Pão francês", "aliases": ["pão francês", "pao frances", "pão", "pao", "pãozinho"], "porcao": { "descricao": "1 unidade", "g": 50 }, "kcal_100": 300, "p_100": 8.0, "c_100": 58.6, "g_100": 3.1 },
-  { "nome": "Pão de forma integral", "aliases": ["pão integral", "pão de forma integral"], "porcao": { "descricao": "1 fatia", "g": 25 }, "kcal_100": 253, "p_100": 9.4, "c_100": 49.0, "g_100": 3.5 },
-  { "nome": "Pão de forma branco", "aliases": ["pão de forma", "pão de forma branco"], "porcao": { "descricao": "1 fatia", "g": 25 }, "kcal_100": 270, "p_100": 8.5, "c_100": 50.8, "g_100": 3.2 },
-  { "nome": "Pão de leite", "aliases": ["pão de leite", "pao de leite"], "porcao": { "descricao": "1 unidade", "g": 35 }, "kcal_100": 323, "p_100": 8.5, "c_100": 57.8, "g_100": 6.1 },
-  { "nome": "Pão de milho", "aliases": ["pão de milho", "pao de milho", "broa de milho"], "porcao": { "descricao": "1 fatia", "g": 50 }, "kcal_100": 266, "p_100": 6.2, "c_100": 50.8, "g_100": 4.2 },
-  { "nome": "Pão sírio", "aliases": ["pão sírio", "pao sirio", "pita"], "porcao": { "descricao": "1 unidade", "g": 60 }, "kcal_100": 262, "p_100": 9.2, "c_100": 55.1, "g_100": 1.1 },
-  { "nome": "Pão de queijo", "aliases": ["pão de queijo", "pao de queijo"], "porcao": { "descricao": "1 unidade", "g": 30 }, "kcal_100": 364, "p_100": 5.6, "c_100": 40.0, "g_100": 18.5 },
-  { "nome": "Tapioca", "aliases": ["tapioca", "goma de tapioca"], "porcao": { "descricao": "1 unidade", "g": 60 }, "kcal_100": 240, "p_100": 0.3, "c_100": 59.0, "g_100": 0.1 },
-  { "nome": "Biscoito água e sal", "aliases": ["biscoito de água e sal", "biscoito agua e sal"], "porcao": { "descricao": "5 unidades", "g": 30 }, "kcal_100": 441, "p_100": 8.0, "c_100": 72.2, "g_100": 13.5 },
-  { "nome": "Biscoito cream cracker", "aliases": ["cream cracker", "bolacha cream cracker"], "porcao": { "descricao": "5 unidades", "g": 30 }, "kcal_100": 428, "p_100": 10.2, "c_100": 68.5, "g_100": 12.8 },
-  { "nome": "Biscoito maisena", "aliases": ["biscoito maisena", "bolacha maisena"], "porcao": { "descricao": "4 unidades", "g": 30 }, "kcal_100": 473, "p_100": 7.5, "c_100": 77.2, "g_100": 14.2 },
-  { "nome": "Biscoito recheado", "aliases": ["biscoito recheado", "oreo", "negresco", "trakinas"], "porcao": { "descricao": "3 unidades", "g": 30 }, "kcal_100": 478, "p_100": 5.2, "c_100": 72.8, "g_100": 19.1 },
-  { "nome": "Aveia em flocos", "aliases": ["aveia"], "porcao": { "descricao": "1 colher sopa", "g": 12 }, "kcal_100": 394, "p_100": 13.9, "c_100": 66.6, "g_100": 8.5 },
-  { "nome": "Granola", "aliases": ["granola"], "porcao": { "descricao": "2 colheres sopa", "g": 30 }, "kcal_100": 471, "p_100": 10.0, "c_100": 65.0, "g_100": 19.0 },
-
-  { "nome": "Macarrão cozido", "aliases": ["macarrão", "macarrao", "espaguete", "espagueti", "talharim", "massa"], "porcao": { "descricao": "1 prato", "g": 200 }, "kcal_100": 159, "p_100": 5.4, "c_100": 32.0, "g_100": 0.9 },
-  { "nome": "Macarrão integral cozido", "aliases": ["macarrão integral", "espaguete integral"], "porcao": { "descricao": "1 prato", "g": 200 }, "kcal_100": 124, "p_100": 5.3, "c_100": 26.4, "g_100": 0.5 },
-  { "nome": "Nhoque de batata", "aliases": ["nhoque", "gnocchi"], "porcao": { "descricao": "1 porção", "g": 200 }, "kcal_100": 131, "p_100": 2.8, "c_100": 28.0, "g_100": 0.4 },
-
-  { "nome": "Peito de frango grelhado", "aliases": ["peito de frango", "frango grelhado", "frango", "filé de frango", "file de frango"], "porcao": { "descricao": "1 filé", "g": 150 }, "kcal_100": 165, "p_100": 31.0, "c_100": 0.0, "g_100": 3.6 },
-  { "nome": "Coxa de frango assada", "aliases": ["coxa de frango", "sobrecoxa", "coxa"], "porcao": { "descricao": "1 unidade", "g": 100 }, "kcal_100": 215, "p_100": 26.0, "c_100": 0.0, "g_100": 12.0 },
-  { "nome": "Frango inteiro assado", "aliases": ["frango assado", "frango no forno"], "porcao": { "descricao": "1 porção", "g": 150 }, "kcal_100": 239, "p_100": 27.3, "c_100": 0.0, "g_100": 14.0 },
-  { "nome": "Coração de frango", "aliases": ["coração de frango", "coracao de frango"], "porcao": { "descricao": "1 espeto", "g": 80 }, "kcal_100": 185, "p_100": 26.0, "c_100": 0.3, "g_100": 8.5 },
-  { "nome": "Fígado de frango", "aliases": ["fígado de frango", "figado de frango"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 119, "p_100": 16.9, "c_100": 3.7, "g_100": 3.7 },
-  { "nome": "Bife (alcatra) grelhado", "aliases": ["bife", "alcatra", "carne grelhada", "carne bovina"], "porcao": { "descricao": "1 bife", "g": 100 }, "kcal_100": 213, "p_100": 32.0, "c_100": 0.0, "g_100": 8.0 },
-  { "nome": "Filé mignon grelhado", "aliases": ["filé mignon", "file mignon", "filé"], "porcao": { "descricao": "1 medalhão", "g": 120 }, "kcal_100": 218, "p_100": 27.5, "c_100": 0.0, "g_100": 11.6 },
-  { "nome": "Contrafilé grelhado", "aliases": ["contrafilé", "contrafile", "sirloin"], "porcao": { "descricao": "1 bife", "g": 120 }, "kcal_100": 200, "p_100": 27.0, "c_100": 0.0, "g_100": 9.6 },
-  { "nome": "Patinho moído grelhado", "aliases": ["patinho", "carne moída", "carne moida"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 169, "p_100": 26.0, "c_100": 0.0, "g_100": 6.5 },
-  { "nome": "Picanha grelhada", "aliases": ["picanha"], "porcao": { "descricao": "1 porção", "g": 150 }, "kcal_100": 290, "p_100": 26.0, "c_100": 0.0, "g_100": 20.0 },
-  { "nome": "Costela bovina", "aliases": ["costela"], "porcao": { "descricao": "1 porção", "g": 150 }, "kcal_100": 327, "p_100": 21.0, "c_100": 0.0, "g_100": 26.0 },
-  { "nome": "Músculo bovino cozido", "aliases": ["músculo", "musculo"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 174, "p_100": 27.6, "c_100": 0.0, "g_100": 6.4 },
-  { "nome": "Carne seca (charque)", "aliases": ["carne seca", "charque", "jabá"], "porcao": { "descricao": "1 porção", "g": 80 }, "kcal_100": 357, "p_100": 41.5, "c_100": 0.0, "g_100": 21.3 },
-  { "nome": "Hambúrguer bovino", "aliases": ["hambúrguer", "hamburger", "burger"], "porcao": { "descricao": "1 unidade", "g": 90 }, "kcal_100": 265, "p_100": 19.4, "c_100": 0.5, "g_100": 20.3 },
-  { "nome": "Fígado bovino", "aliases": ["fígado", "figado bovino", "figado"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 131, "p_100": 21.6, "c_100": 4.0, "g_100": 3.6 },
-  { "nome": "Lombo de porco grelhado", "aliases": ["lombo de porco", "lombo suíno", "lombo"], "porcao": { "descricao": "1 fatia", "g": 100 }, "kcal_100": 218, "p_100": 26.5, "c_100": 0.0, "g_100": 12.0 },
-  { "nome": "Pernil de porco assado", "aliases": ["pernil", "pernil de porco"], "porcao": { "descricao": "1 porção", "g": 150 }, "kcal_100": 238, "p_100": 24.8, "c_100": 0.0, "g_100": 15.0 },
-  { "nome": "Linguiça", "aliases": ["linguiça", "linguica"], "porcao": { "descricao": "1 unidade", "g": 60 }, "kcal_100": 280, "p_100": 15.0, "c_100": 2.0, "g_100": 24.0 },
-  { "nome": "Bacon", "aliases": ["bacon", "toucinho defumado"], "porcao": { "descricao": "2 fatias", "g": 25 }, "kcal_100": 541, "p_100": 12.6, "c_100": 0.0, "g_100": 53.8 },
-  { "nome": "Presunto", "aliases": ["presunto"], "porcao": { "descricao": "1 fatia", "g": 20 }, "kcal_100": 145, "p_100": 16.6, "c_100": 1.5, "g_100": 7.8 },
-  { "nome": "Mortadela", "aliases": ["mortadela"], "porcao": { "descricao": "1 fatia", "g": 20 }, "kcal_100": 290, "p_100": 13.4, "c_100": 4.1, "g_100": 24.7 },
-  { "nome": "Salsicha", "aliases": ["salsicha"], "porcao": { "descricao": "1 unidade", "g": 50 }, "kcal_100": 283, "p_100": 12.2, "c_100": 4.3, "g_100": 25.0 },
-  { "nome": "Salmão grelhado", "aliases": ["salmão", "salmao"], "porcao": { "descricao": "1 filé", "g": 130 }, "kcal_100": 208, "p_100": 22.0, "c_100": 0.0, "g_100": 13.0 },
-  { "nome": "Tilápia grelhada", "aliases": ["tilápia", "tilapia", "peixe"], "porcao": { "descricao": "1 filé", "g": 130 }, "kcal_100": 128, "p_100": 26.0, "c_100": 0.0, "g_100": 2.7 },
-  { "nome": "Atum em lata", "aliases": ["atum", "atum em lata"], "porcao": { "descricao": "1 lata", "g": 120 }, "kcal_100": 116, "p_100": 25.0, "c_100": 0.0, "g_100": 1.0 },
-  { "nome": "Sardinha em lata", "aliases": ["sardinha", "sardinhas"], "porcao": { "descricao": "1 lata pequena", "g": 90 }, "kcal_100": 208, "p_100": 24.6, "c_100": 0.0, "g_100": 11.5 },
-  { "nome": "Merluza grelhada", "aliases": ["merluza", "pescada"], "porcao": { "descricao": "1 filé", "g": 130 }, "kcal_100": 78, "p_100": 17.4, "c_100": 0.0, "g_100": 0.7 },
-  { "nome": "Bacalhau cozido", "aliases": ["bacalhau"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 105, "p_100": 23.5, "c_100": 0.0, "g_100": 0.6 },
-  { "nome": "Camarão cozido", "aliases": ["camarão", "camarao"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 85, "p_100": 20.3, "c_100": 0.0, "g_100": 0.6 },
-  { "nome": "Cação grelhado", "aliases": ["cação", "cacao", "tubarão"], "porcao": { "descricao": "1 porção", "g": 130 }, "kcal_100": 94, "p_100": 20.6, "c_100": 0.0, "g_100": 1.0 },
-
-  { "nome": "Ovo cozido", "aliases": ["ovo", "ovo cozido", "ovos"], "porcao": { "descricao": "1 unidade", "g": 50 }, "kcal_100": 155, "p_100": 13.0, "c_100": 1.1, "g_100": 11.0 },
-  { "nome": "Clara de ovo", "aliases": ["clara", "clara de ovo"], "porcao": { "descricao": "1 clara", "g": 30 }, "kcal_100": 52, "p_100": 10.9, "c_100": 0.7, "g_100": 0.2 },
-  { "nome": "Ovo frito", "aliases": ["ovo frito", "ovo na manteiga"], "porcao": { "descricao": "1 unidade", "g": 50 }, "kcal_100": 196, "p_100": 13.6, "c_100": 0.3, "g_100": 15.2 },
-  { "nome": "Omelete", "aliases": ["omelete", "omelete simples"], "porcao": { "descricao": "1 unidade", "g": 100 }, "kcal_100": 154, "p_100": 10.6, "c_100": 1.2, "g_100": 11.6 },
-
-  { "nome": "Leite integral", "aliases": ["leite", "leite integral"], "porcao": { "descricao": "1 copo", "g": 200 }, "kcal_100": 61, "p_100": 3.2, "c_100": 4.6, "g_100": 3.3 },
-  { "nome": "Leite desnatado", "aliases": ["leite desnatado", "leite zero"], "porcao": { "descricao": "1 copo", "g": 200 }, "kcal_100": 33, "p_100": 3.0, "c_100": 4.7, "g_100": 0.1 },
-  { "nome": "Leite semidesnatado", "aliases": ["leite semidesnatado"], "porcao": { "descricao": "1 copo", "g": 200 }, "kcal_100": 46, "p_100": 3.2, "c_100": 4.6, "g_100": 1.6 },
-  { "nome": "Leite de soja", "aliases": ["leite de soja", "extrato de soja"], "porcao": { "descricao": "1 copo", "g": 200 }, "kcal_100": 54, "p_100": 3.3, "c_100": 6.3, "g_100": 1.8 },
-  { "nome": "Iogurte natural", "aliases": ["iogurte", "iogurte natural"], "porcao": { "descricao": "1 pote", "g": 170 }, "kcal_100": 51, "p_100": 4.1, "c_100": 4.7, "g_100": 1.5 },
-  { "nome": "Iogurte grego", "aliases": ["iogurte grego"], "porcao": { "descricao": "1 pote", "g": 130 }, "kcal_100": 97, "p_100": 9.0, "c_100": 4.0, "g_100": 5.0 },
-  { "nome": "Queijo branco (minas frescal)", "aliases": ["queijo branco", "queijo minas", "queijo frescal"], "porcao": { "descricao": "1 fatia", "g": 30 }, "kcal_100": 264, "p_100": 17.0, "c_100": 3.1, "g_100": 20.0 },
-  { "nome": "Queijo mussarela", "aliases": ["queijo", "mussarela", "muçarela"], "porcao": { "descricao": "1 fatia", "g": 20 }, "kcal_100": 281, "p_100": 22.0, "c_100": 2.3, "g_100": 21.0 },
-  { "nome": "Queijo parmesão", "aliases": ["parmesão", "parmesao", "queijo parmesão", "queijo ralado"], "porcao": { "descricao": "1 colher sopa", "g": 10 }, "kcal_100": 456, "p_100": 35.7, "c_100": 3.2, "g_100": 32.8 },
-  { "nome": "Queijo coalho", "aliases": ["queijo coalho", "coalho"], "porcao": { "descricao": "1 espeto", "g": 60 }, "kcal_100": 280, "p_100": 18.0, "c_100": 0.0, "g_100": 23.0 },
-  { "nome": "Queijo prato", "aliases": ["queijo prato"], "porcao": { "descricao": "1 fatia", "g": 20 }, "kcal_100": 341, "p_100": 25.0, "c_100": 0.5, "g_100": 26.3 },
-  { "nome": "Ricota", "aliases": ["ricota"], "porcao": { "descricao": "2 colheres sopa", "g": 40 }, "kcal_100": 142, "p_100": 11.8, "c_100": 1.0, "g_100": 9.8 },
-  { "nome": "Requeijão cremoso", "aliases": ["requeijão", "requeijao"], "porcao": { "descricao": "1 colher sopa", "g": 20 }, "kcal_100": 262, "p_100": 7.7, "c_100": 4.9, "g_100": 24.0 },
-  { "nome": "Creme de leite", "aliases": ["creme de leite", "nata"], "porcao": { "descricao": "1 colher sopa", "g": 20 }, "kcal_100": 235, "p_100": 2.5, "c_100": 3.6, "g_100": 24.0 },
-  { "nome": "Leite condensado", "aliases": ["leite condensado"], "porcao": { "descricao": "1 colher sopa", "g": 20 }, "kcal_100": 321, "p_100": 7.6, "c_100": 54.5, "g_100": 8.3 },
-  { "nome": "Manteiga", "aliases": ["manteiga"], "porcao": { "descricao": "1 colher chá", "g": 10 }, "kcal_100": 717, "p_100": 0.9, "c_100": 0.1, "g_100": 81.0 },
-  { "nome": "Margarina", "aliases": ["margarina"], "porcao": { "descricao": "1 colher chá", "g": 10 }, "kcal_100": 720, "p_100": 0.1, "c_100": 0.1, "g_100": 80.0 },
-
-  { "nome": "Azeite de oliva", "aliases": ["azeite", "azeite de oliva"], "porcao": { "descricao": "1 colher sopa", "g": 13 }, "kcal_100": 884, "p_100": 0.0, "c_100": 0.0, "g_100": 100.0 },
-  { "nome": "Óleo de soja", "aliases": ["óleo de soja", "oleo de soja", "óleo vegetal", "oleo"], "porcao": { "descricao": "1 colher sopa", "g": 13 }, "kcal_100": 884, "p_100": 0.0, "c_100": 0.0, "g_100": 100.0 },
-  { "nome": "Óleo de coco", "aliases": ["óleo de coco", "oleo de coco"], "porcao": { "descricao": "1 colher sopa", "g": 13 }, "kcal_100": 862, "p_100": 0.0, "c_100": 0.0, "g_100": 100.0 },
-
-  { "nome": "Banana", "aliases": ["banana", "banana prata", "banana nanica"], "porcao": { "descricao": "1 média", "g": 100 }, "kcal_100": 89, "p_100": 1.1, "c_100": 22.8, "g_100": 0.3 },
-  { "nome": "Maçã", "aliases": ["maçã", "maca"], "porcao": { "descricao": "1 média", "g": 150 }, "kcal_100": 52, "p_100": 0.3, "c_100": 13.8, "g_100": 0.2 },
-  { "nome": "Laranja", "aliases": ["laranja", "laranja pera", "laranja bahia"], "porcao": { "descricao": "1 média", "g": 130 }, "kcal_100": 47, "p_100": 0.9, "c_100": 11.8, "g_100": 0.1 },
-  { "nome": "Mamão papaya", "aliases": ["mamão", "mamao", "papaya"], "porcao": { "descricao": "1 fatia", "g": 150 }, "kcal_100": 43, "p_100": 0.5, "c_100": 10.8, "g_100": 0.3 },
-  { "nome": "Melancia", "aliases": ["melancia"], "porcao": { "descricao": "1 fatia", "g": 200 }, "kcal_100": 30, "p_100": 0.6, "c_100": 7.5, "g_100": 0.2 },
-  { "nome": "Abacaxi", "aliases": ["abacaxi", "ananás"], "porcao": { "descricao": "1 fatia", "g": 100 }, "kcal_100": 50, "p_100": 0.5, "c_100": 13.1, "g_100": 0.1 },
-  { "nome": "Manga", "aliases": ["manga", "manga tommy", "manga haden"], "porcao": { "descricao": "1 unidade", "g": 200 }, "kcal_100": 60, "p_100": 0.8, "c_100": 15.0, "g_100": 0.4 },
-  { "nome": "Morango", "aliases": ["morango", "morangos"], "porcao": { "descricao": "1 xícara", "g": 150 }, "kcal_100": 30, "p_100": 0.9, "c_100": 6.8, "g_100": 0.3 },
-  { "nome": "Uva", "aliases": ["uva", "uvas", "uva itália", "uva niágara"], "porcao": { "descricao": "1 cacho pequeno", "g": 100 }, "kcal_100": 69, "p_100": 0.7, "c_100": 18.1, "g_100": 0.2 },
-  { "nome": "Abacate", "aliases": ["abacate"], "porcao": { "descricao": "1/2 unidade", "g": 100 }, "kcal_100": 160, "p_100": 2.0, "c_100": 8.5, "g_100": 14.7 },
-  { "nome": "Goiaba", "aliases": ["goiaba"], "porcao": { "descricao": "1 média", "g": 100 }, "kcal_100": 68, "p_100": 2.6, "c_100": 14.3, "g_100": 1.0 },
-  { "nome": "Caju", "aliases": ["caju", "caju fresco"], "porcao": { "descricao": "1 unidade", "g": 80 }, "kcal_100": 43, "p_100": 0.9, "c_100": 9.2, "g_100": 0.2 },
-  { "nome": "Maracujá", "aliases": ["maracujá", "maracuja", "fruta do conde"], "porcao": { "descricao": "1 unidade", "g": 100 }, "kcal_100": 97, "p_100": 2.4, "c_100": 21.2, "g_100": 0.7 },
-  { "nome": "Pitanga", "aliases": ["pitanga"], "porcao": { "descricao": "1 xícara", "g": 100 }, "kcal_100": 41, "p_100": 0.7, "c_100": 9.2, "g_100": 0.5 },
-  { "nome": "Jabuticaba", "aliases": ["jabuticaba"], "porcao": { "descricao": "1 xícara", "g": 100 }, "kcal_100": 58, "p_100": 0.7, "c_100": 14.9, "g_100": 0.1 },
-  { "nome": "Graviola", "aliases": ["graviola"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 65, "p_100": 1.0, "c_100": 16.3, "g_100": 0.3 },
-  { "nome": "Cupuaçu", "aliases": ["cupuaçu", "cupuacu"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 49, "p_100": 1.4, "c_100": 10.5, "g_100": 0.5 },
-  { "nome": "Carambola", "aliases": ["carambola", "fruta estrela"], "porcao": { "descricao": "1 média", "g": 100 }, "kcal_100": 31, "p_100": 1.0, "c_100": 6.7, "g_100": 0.3 },
-  { "nome": "Limão", "aliases": ["limão", "limao", "limão tahiti", "limão siciliano"], "porcao": { "descricao": "1 unidade", "g": 60 }, "kcal_100": 29, "p_100": 1.1, "c_100": 6.5, "g_100": 0.3 },
-  { "nome": "Pêra", "aliases": ["pêra", "pera"], "porcao": { "descricao": "1 média", "g": 150 }, "kcal_100": 57, "p_100": 0.4, "c_100": 15.2, "g_100": 0.1 },
-  { "nome": "Kiwi", "aliases": ["kiwi"], "porcao": { "descricao": "1 unidade", "g": 80 }, "kcal_100": 61, "p_100": 1.1, "c_100": 14.7, "g_100": 0.5 },
-  { "nome": "Pêssego", "aliases": ["pêssego", "pessego"], "porcao": { "descricao": "1 médio", "g": 120 }, "kcal_100": 39, "p_100": 0.9, "c_100": 9.5, "g_100": 0.3 },
-  { "nome": "Ameixa", "aliases": ["ameixa", "ameixa fresca"], "porcao": { "descricao": "2 unidades", "g": 100 }, "kcal_100": 46, "p_100": 0.7, "c_100": 11.4, "g_100": 0.3 },
-  { "nome": "Melão", "aliases": ["melão", "melon"], "porcao": { "descricao": "1 fatia", "g": 150 }, "kcal_100": 34, "p_100": 0.8, "c_100": 8.1, "g_100": 0.2 },
-  { "nome": "Tangerina", "aliases": ["tangerina", "mexerica", "ponkan", "mandarina"], "porcao": { "descricao": "1 média", "g": 100 }, "kcal_100": 40, "p_100": 0.7, "c_100": 9.9, "g_100": 0.2 },
-  { "nome": "Água de coco", "aliases": ["água de coco", "agua de coco"], "porcao": { "descricao": "1 copo", "g": 200 }, "kcal_100": 19, "p_100": 0.7, "c_100": 3.7, "g_100": 0.2 },
-  { "nome": "Coco seco ralado", "aliases": ["coco ralado", "coco"], "porcao": { "descricao": "1 colher sopa", "g": 10 }, "kcal_100": 354, "p_100": 3.5, "c_100": 15.2, "g_100": 33.5 },
-
-  { "nome": "Alface", "aliases": ["alface"], "porcao": { "descricao": "2 folhas", "g": 30 }, "kcal_100": 15, "p_100": 1.4, "c_100": 2.9, "g_100": 0.1 },
-  { "nome": "Tomate", "aliases": ["tomate"], "porcao": { "descricao": "1 médio", "g": 120 }, "kcal_100": 18, "p_100": 0.9, "c_100": 3.9, "g_100": 0.2 },
-  { "nome": "Cenoura crua", "aliases": ["cenoura", "cenoura crua"], "porcao": { "descricao": "1 média", "g": 80 }, "kcal_100": 34, "p_100": 0.6, "c_100": 8.0, "g_100": 0.2 },
-  { "nome": "Brócolis cozido", "aliases": ["brócolis", "brocolis"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 35, "p_100": 2.4, "c_100": 7.2, "g_100": 0.4 },
-  { "nome": "Couve refogada", "aliases": ["couve", "couve manteiga"], "porcao": { "descricao": "1 porção", "g": 80 }, "kcal_100": 27, "p_100": 2.7, "c_100": 4.3, "g_100": 0.5 },
-  { "nome": "Espinafre", "aliases": ["espinafre"], "porcao": { "descricao": "1 porção", "g": 80 }, "kcal_100": 23, "p_100": 2.9, "c_100": 3.6, "g_100": 0.4 },
-  { "nome": "Pepino", "aliases": ["pepino"], "porcao": { "descricao": "1/2 unidade", "g": 100 }, "kcal_100": 16, "p_100": 0.7, "c_100": 3.6, "g_100": 0.1 },
-  { "nome": "Cebola", "aliases": ["cebola"], "porcao": { "descricao": "1/2 média", "g": 60 }, "kcal_100": 40, "p_100": 1.1, "c_100": 9.3, "g_100": 0.1 },
-  { "nome": "Alho", "aliases": ["alho"], "porcao": { "descricao": "1 dente", "g": 5 }, "kcal_100": 149, "p_100": 6.4, "c_100": 33.1, "g_100": 0.5 },
-  { "nome": "Abobrinha cozida", "aliases": ["abobrinha"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 17, "p_100": 1.2, "c_100": 3.1, "g_100": 0.3 },
-  { "nome": "Berinjela cozida", "aliases": ["berinjela"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 24, "p_100": 0.8, "c_100": 5.7, "g_100": 0.2 },
-  { "nome": "Pimentão verde", "aliases": ["pimentão", "pimentao", "pimentão verde"], "porcao": { "descricao": "1/2 unidade", "g": 80 }, "kcal_100": 27, "p_100": 1.0, "c_100": 5.9, "g_100": 0.3 },
-  { "nome": "Pimentão vermelho", "aliases": ["pimentão vermelho", "pimentao vermelho"], "porcao": { "descricao": "1/2 unidade", "g": 80 }, "kcal_100": 31, "p_100": 1.0, "c_100": 7.2, "g_100": 0.3 },
-  { "nome": "Chuchu cozido", "aliases": ["chuchu"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 19, "p_100": 0.9, "c_100": 4.0, "g_100": 0.3 },
-  { "nome": "Quiabo cozido", "aliases": ["quiabo"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 31, "p_100": 1.9, "c_100": 7.0, "g_100": 0.2 },
-  { "nome": "Vagem cozida", "aliases": ["vagem"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 30, "p_100": 1.7, "c_100": 6.8, "g_100": 0.1 },
-  { "nome": "Milho verde cozido", "aliases": ["milho", "milho verde", "milho cozido"], "porcao": { "descricao": "1 espiga pequena", "g": 120 }, "kcal_100": 86, "p_100": 3.2, "c_100": 18.7, "g_100": 1.2 },
-  { "nome": "Beterraba cozida", "aliases": ["beterraba"], "porcao": { "descricao": "2 fatias", "g": 80 }, "kcal_100": 43, "p_100": 1.7, "c_100": 9.6, "g_100": 0.1 },
-  { "nome": "Repolho cozido", "aliases": ["repolho"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 28, "p_100": 1.3, "c_100": 6.1, "g_100": 0.1 },
-  { "nome": "Couve-flor cozida", "aliases": ["couve-flor", "couve flor"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 25, "p_100": 1.9, "c_100": 4.9, "g_100": 0.3 },
-  { "nome": "Cogumelo champignon", "aliases": ["cogumelo", "champignon", "shimeji"], "porcao": { "descricao": "1 porção", "g": 80 }, "kcal_100": 22, "p_100": 3.1, "c_100": 3.3, "g_100": 0.3 },
-  { "nome": "Jiló cozido", "aliases": ["jiló", "jilo"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 24, "p_100": 1.2, "c_100": 5.2, "g_100": 0.2 },
-  { "nome": "Maxixe cozido", "aliases": ["maxixe"], "porcao": { "descricao": "1 porção", "g": 100 }, "kcal_100": 17, "p_100": 0.9, "c_100": 3.4, "g_100": 0.2 },
-  { "nome": "Palmito em conserva", "aliases": ["palmito"], "porcao": { "descricao": "2 pedaços", "g": 60 }, "kcal_100": 28, "p_100": 2.6, "c_100": 4.6, "g_100": 0.2 },
-  { "nome": "Agrião", "aliases": ["agrião", "agriao"], "porcao": { "descricao": "1 porção", "g": 40 }, "kcal_100": 18, "p_100": 2.0, "c_100": 2.5, "g_100": 0.3 },
-  { "nome": "Rúcula", "aliases": ["rúcula", "rucula"], "porcao": { "descricao": "1 porção", "g": 40 }, "kcal_100": 25, "p_100": 2.6, "c_100": 3.7, "g_100": 0.7 },
-  { "nome": "Chicória", "aliases": ["chicória", "chicoria", "endívia"], "porcao": { "descricao": "1 porção", "g": 50 }, "kcal_100": 20, "p_100": 1.5, "c_100": 3.4, "g_100": 0.3 },
-
-  { "nome": "Café sem açúcar", "aliases": ["café", "cafe", "café preto", "espresso"], "porcao": { "descricao": "1 xícara", "g": 200 }, "kcal_100": 2, "p_100": 0.1, "c_100": 0.0, "g_100": 0.0 },
-  { "nome": "Suco de laranja natural", "aliases": ["suco de laranja", "suco natural"], "porcao": { "descricao": "1 copo", "g": 200 }, "kcal_100": 45, "p_100": 0.7, "c_100": 10.4, "g_100": 0.2 },
-  { "nome": "Suco de caju", "aliases": ["suco de caju"], "porcao": { "descricao": "1 copo", "g": 200 }, "kcal_100": 48, "p_100": 0.6, "c_100": 11.7, "g_100": 0.2 },
-  { "nome": "Suco de goiaba", "aliases": ["suco de goiaba"], "porcao": { "descricao": "1 copo", "g": 200 }, "kcal_100": 54, "p_100": 0.5, "c_100": 13.2, "g_100": 0.3 },
-  { "nome": "Vitamina de banana", "aliases": ["vitamina de banana", "shake de banana"], "porcao": { "descricao": "1 copo", "g": 250 }, "kcal_100": 85, "p_100": 3.2, "c_100": 14.8, "g_100": 1.9 },
-  { "nome": "Refrigerante", "aliases": ["refrigerante", "coca", "coca-cola", "guaraná", "pepsi"], "porcao": { "descricao": "1 lata", "g": 350 }, "kcal_100": 41, "p_100": 0.0, "c_100": 10.6, "g_100": 0.0 },
-  { "nome": "Refrigerante zero", "aliases": ["refrigerante zero", "coca zero", "guaraná zero", "diet"], "porcao": { "descricao": "1 lata", "g": 350 }, "kcal_100": 0, "p_100": 0.0, "c_100": 0.0, "g_100": 0.0 },
-  { "nome": "Cerveja", "aliases": ["cerveja", "birra", "chopp"], "porcao": { "descricao": "1 lata", "g": 350 }, "kcal_100": 43, "p_100": 0.5, "c_100": 3.5, "g_100": 0.0 },
-  { "nome": "Chá preto", "aliases": ["chá preto", "cha preto", "chá verde", "cha verde", "chá"], "porcao": { "descricao": "1 xícara", "g": 200 }, "kcal_100": 1, "p_100": 0.0, "c_100": 0.2, "g_100": 0.0 },
-  { "nome": "Açaí puro", "aliases": ["açaí", "acai"], "porcao": { "descricao": "1 tigela", "g": 200 }, "kcal_100": 70, "p_100": 0.8, "c_100": 6.2, "g_100": 4.0 },
-  { "nome": "Suco de uva integral", "aliases": ["suco de uva"], "porcao": { "descricao": "1 copo", "g": 200 }, "kcal_100": 68, "p_100": 0.5, "c_100": 16.8, "g_100": 0.1 },
-
-  { "nome": "Castanha do Pará", "aliases": ["castanha", "castanha do pará", "castanha do para"], "porcao": { "descricao": "3 unidades", "g": 15 }, "kcal_100": 656, "p_100": 14.0, "c_100": 12.0, "g_100": 67.0 },
-  { "nome": "Amendoim torrado", "aliases": ["amendoim"], "porcao": { "descricao": "1 punhado", "g": 30 }, "kcal_100": 567, "p_100": 26.0, "c_100": 16.0, "g_100": 49.0 },
-  { "nome": "Pasta de amendoim", "aliases": ["pasta de amendoim"], "porcao": { "descricao": "1 colher sopa", "g": 16 }, "kcal_100": 588, "p_100": 25.0, "c_100": 20.0, "g_100": 50.0 },
-  { "nome": "Castanha de caju torrada", "aliases": ["castanha de caju", "caju torrado"], "porcao": { "descricao": "10 unidades", "g": 30 }, "kcal_100": 553, "p_100": 18.2, "c_100": 32.7, "g_100": 43.9 },
-  { "nome": "Nozes", "aliases": ["nozes", "noz"], "porcao": { "descricao": "5 metades", "g": 28 }, "kcal_100": 654, "p_100": 15.2, "c_100": 13.7, "g_100": 65.2 },
-  { "nome": "Amêndoas", "aliases": ["amêndoas", "amendoas", "amêndoa"], "porcao": { "descricao": "1 punhado", "g": 28 }, "kcal_100": 579, "p_100": 21.2, "c_100": 21.6, "g_100": 49.9 },
-  { "nome": "Semente de chia", "aliases": ["chia", "semente de chia"], "porcao": { "descricao": "1 colher sopa", "g": 12 }, "kcal_100": 486, "p_100": 16.5, "c_100": 42.1, "g_100": 30.7 },
-  { "nome": "Semente de linhaça", "aliases": ["linhaça", "semente de linhaca", "semente de linhaça"], "porcao": { "descricao": "1 colher sopa", "g": 12 }, "kcal_100": 534, "p_100": 18.3, "c_100": 28.9, "g_100": 42.2 },
-  { "nome": "Chocolate amargo 70%", "aliases": ["chocolate", "chocolate amargo", "chocolate 70"], "porcao": { "descricao": "2 quadrados", "g": 20 }, "kcal_100": 580, "p_100": 7.8, "c_100": 46.0, "g_100": 42.0 },
-  { "nome": "Chocolate ao leite", "aliases": ["chocolate ao leite", "chocolate com leite"], "porcao": { "descricao": "1/4 barra", "g": 25 }, "kcal_100": 536, "p_100": 6.9, "c_100": 59.7, "g_100": 29.7 },
-
-  { "nome": "Chips de batata", "aliases": ["chips", "chips de batata", "batata chips"], "porcao": { "descricao": "1 pacotinho", "g": 30 }, "kcal_100": 536, "p_100": 6.5, "c_100": 53.5, "g_100": 34.6 },
-  { "nome": "Salgadinho de milho", "aliases": ["salgadinho", "cheetos", "salgadinho de milho", "elma chips"], "porcao": { "descricao": "1 pacotinho", "g": 30 }, "kcal_100": 534, "p_100": 8.2, "c_100": 57.8, "g_100": 29.4 },
-  { "nome": "Pipoca salgada", "aliases": ["pipoca", "pipoca salgada"], "porcao": { "descricao": "1 tigela", "g": 30 }, "kcal_100": 424, "p_100": 9.7, "c_100": 77.8, "g_100": 8.8 },
-  { "nome": "Paçoca", "aliases": ["paçoca", "pacoca"], "porcao": { "descricao": "1 unidade", "g": 30 }, "kcal_100": 454, "p_100": 14.2, "c_100": 61.3, "g_100": 18.5 },
-  { "nome": "Brigadeiro", "aliases": ["brigadeiro"], "porcao": { "descricao": "1 unidade", "g": 25 }, "kcal_100": 458, "p_100": 5.8, "c_100": 63.7, "g_100": 20.4 },
-  { "nome": "Barra de cereal", "aliases": ["barra de cereal", "barra cereal"], "porcao": { "descricao": "1 unidade", "g": 25 }, "kcal_100": 379, "p_100": 7.2, "c_100": 74.7, "g_100": 6.3 },
-  { "nome": "Sorvete de creme", "aliases": ["sorvete", "sorvete de creme", "gelado"], "porcao": { "descricao": "1 bola", "g": 80 }, "kcal_100": 207, "p_100": 3.5, "c_100": 24.8, "g_100": 10.5 },
-  { "nome": "Coxinha", "aliases": ["coxinha"], "porcao": { "descricao": "1 unidade", "g": 80 }, "kcal_100": 252, "p_100": 10.8, "c_100": 27.8, "g_100": 11.0 },
-  { "nome": "Esfiha", "aliases": ["esfiha", "esfirra", "esfiha aberta"], "porcao": { "descricao": "1 unidade", "g": 80 }, "kcal_100": 237, "p_100": 8.5, "c_100": 31.5, "g_100": 8.2 },
-  { "nome": "Pizza mussarela", "aliases": ["pizza", "pizza mussarela"], "porcao": { "descricao": "1 fatia", "g": 100 }, "kcal_100": 266, "p_100": 11.5, "c_100": 29.4, "g_100": 11.5 },
-
-  { "nome": "Açúcar refinado", "aliases": ["açúcar", "acucar"], "porcao": { "descricao": "1 colher chá", "g": 5 }, "kcal_100": 387, "p_100": 0.0, "c_100": 100.0, "g_100": 0.0 },
-  { "nome": "Mel", "aliases": ["mel"], "porcao": { "descricao": "1 colher chá", "g": 7 }, "kcal_100": 304, "p_100": 0.3, "c_100": 82.4, "g_100": 0.0 },
-  { "nome": "Ketchup", "aliases": ["ketchup", "catchup"], "porcao": { "descricao": "1 colher sopa", "g": 17 }, "kcal_100": 101, "p_100": 1.9, "c_100": 25.3, "g_100": 0.1 },
-  { "nome": "Maionese", "aliases": ["maionese"], "porcao": { "descricao": "1 colher sopa", "g": 14 }, "kcal_100": 680, "p_100": 1.3, "c_100": 2.7, "g_100": 74.9 },
-  { "nome": "Molho de tomate", "aliases": ["molho de tomate", "extrato de tomate"], "porcao": { "descricao": "2 colheres sopa", "g": 30 }, "kcal_100": 40, "p_100": 1.7, "c_100": 8.3, "g_100": 0.3 },
-  { "nome": "Shoyu", "aliases": ["shoyu", "molho de soja", "molho shoyu"], "porcao": { "descricao": "1 colher sopa", "g": 15 }, "kcal_100": 53, "p_100": 8.1, "c_100": 4.9, "g_100": 0.1 },
-
-  { "nome": "Feijoada", "aliases": ["feijoada"], "porcao": { "descricao": "1 porção", "g": 300 }, "kcal_100": 156, "p_100": 10.2, "c_100": 14.5, "g_100": 6.1 },
-  { "nome": "Canja de galinha", "aliases": ["canja", "canja de frango", "canja de galinha"], "porcao": { "descricao": "1 prato fundo", "g": 300 }, "kcal_100": 76, "p_100": 8.2, "c_100": 7.5, "g_100": 1.2 },
-  { "nome": "Moqueca de peixe", "aliases": ["moqueca"], "porcao": { "descricao": "1 porção", "g": 250 }, "kcal_100": 137, "p_100": 15.2, "c_100": 5.4, "g_100": 5.8 },
-
-  { "nome": "Whey protein", "aliases": ["whey", "whey protein", "proteína em pó", "proteina em po"], "porcao": { "descricao": "1 scoop", "g": 30 }, "kcal_100": 380, "p_100": 80.0, "c_100": 5.0, "g_100": 4.0 }
+  {
+    "nome": "Arroz branco cozido",
+    "aliases": [
+      "arroz",
+      "arroz branco",
+      "arroz cozido"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 80
+    },
+    "kcal_100": 128,
+    "p_100": 2.5,
+    "c_100": 28.1,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Arroz integral cozido",
+    "aliases": [
+      "arroz integral"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 80
+    },
+    "kcal_100": 124,
+    "p_100": 2.6,
+    "c_100": 25.8,
+    "g_100": 1
+  },
+  {
+    "nome": "Arroz parboilizado cozido",
+    "aliases": [
+      "arroz parboilizado"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 80
+    },
+    "kcal_100": 128,
+    "p_100": 2.7,
+    "c_100": 27.5,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Cuscuz de milho",
+    "aliases": [
+      "cuscuz",
+      "cuscuz nordestino"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 100
+    },
+    "kcal_100": 130,
+    "p_100": 2.6,
+    "c_100": 27.8,
+    "g_100": 1.2
+  },
+  {
+    "nome": "Fubá de milho cru",
+    "aliases": [
+      "fubá",
+      "fuba"
+    ],
+    "porcao": {
+      "descricao": "2 colheres sopa",
+      "g": 30
+    },
+    "kcal_100": 367,
+    "p_100": 8.1,
+    "c_100": 78.3,
+    "g_100": 3
+  },
+  {
+    "nome": "Polenta cozida",
+    "aliases": [
+      "polenta",
+      "angu"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 71,
+    "p_100": 1.8,
+    "c_100": 15.6,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Farinha de mandioca crua",
+    "aliases": [
+      "farinha de mandioca",
+      "farinha",
+      "farinha seca"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 20
+    },
+    "kcal_100": 361,
+    "p_100": 1.8,
+    "c_100": 87.9,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Farofa de mandioca",
+    "aliases": [
+      "farofa"
+    ],
+    "porcao": {
+      "descricao": "2 colheres sopa",
+      "g": 30
+    },
+    "kcal_100": 392,
+    "p_100": 2.4,
+    "c_100": 82.1,
+    "g_100": 6.8
+  },
+  {
+    "nome": "Farinha de trigo",
+    "aliases": [
+      "farinha de trigo"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 15
+    },
+    "kcal_100": 361,
+    "p_100": 9.8,
+    "c_100": 75.1,
+    "g_100": 1.4
+  },
+  {
+    "nome": "Quinoa cozida",
+    "aliases": [
+      "quinoa",
+      "quinua"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 120,
+    "p_100": 4.4,
+    "c_100": 21.3,
+    "g_100": 1.9
+  },
+  {
+    "nome": "Feijão preto cozido",
+    "aliases": [
+      "feijão preto",
+      "feijao preto"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 90
+    },
+    "kcal_100": 77,
+    "p_100": 4.5,
+    "c_100": 14,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Feijão carioca cozido",
+    "aliases": [
+      "feijão",
+      "feijao",
+      "feijão carioca",
+      "feijao carioca"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 90
+    },
+    "kcal_100": 76,
+    "p_100": 4.8,
+    "c_100": 13.6,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Feijão vermelho cozido",
+    "aliases": [
+      "feijão vermelho",
+      "feijao vermelho"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 90
+    },
+    "kcal_100": 77,
+    "p_100": 4.5,
+    "c_100": 13.8,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Feijão branco cozido",
+    "aliases": [
+      "feijão branco",
+      "feijao branco"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 90
+    },
+    "kcal_100": 139,
+    "p_100": 9.7,
+    "c_100": 25.1,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Ervilha cozida",
+    "aliases": [
+      "ervilha"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 81,
+    "p_100": 5.4,
+    "c_100": 14.5,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Soja cozida",
+    "aliases": [
+      "soja"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 90
+    },
+    "kcal_100": 141,
+    "p_100": 12.4,
+    "c_100": 11.5,
+    "g_100": 6.4
+  },
+  {
+    "nome": "Lentilha cozida",
+    "aliases": [
+      "lentilha"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 90
+    },
+    "kcal_100": 116,
+    "p_100": 9,
+    "c_100": 20.1,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Grão de bico cozido",
+    "aliases": [
+      "grão de bico",
+      "grao de bico"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 90
+    },
+    "kcal_100": 121,
+    "p_100": 8.4,
+    "c_100": 19,
+    "g_100": 1.4
+  },
+  {
+    "nome": "Batata inglesa cozida",
+    "aliases": [
+      "batata",
+      "batata cozida",
+      "batata inglesa"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 150
+    },
+    "kcal_100": 52,
+    "p_100": 1.2,
+    "c_100": 11.9,
+    "g_100": 0
+  },
+  {
+    "nome": "Batata doce cozida",
+    "aliases": [
+      "batata doce"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 150
+    },
+    "kcal_100": 77,
+    "p_100": 0.6,
+    "c_100": 18.4,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Batata frita",
+    "aliases": [
+      "batata frita",
+      "fritas"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 312,
+    "p_100": 3.4,
+    "c_100": 40,
+    "g_100": 15
+  },
+  {
+    "nome": "Mandioca cozida",
+    "aliases": [
+      "mandioca",
+      "aipim",
+      "macaxeira"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 125,
+    "p_100": 0.6,
+    "c_100": 30.1,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Inhame cozido",
+    "aliases": [
+      "inhame"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 118,
+    "p_100": 1.5,
+    "c_100": 27.9,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Cará cozido",
+    "aliases": [
+      "cará",
+      "cara"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 99,
+    "p_100": 1.4,
+    "c_100": 23.4,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Pão francês",
+    "aliases": [
+      "pão francês",
+      "pao frances",
+      "pão",
+      "pao",
+      "pãozinho"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 300,
+    "p_100": 8,
+    "c_100": 58.6,
+    "g_100": 3.1
+  },
+  {
+    "nome": "Pão de forma integral",
+    "aliases": [
+      "pão integral",
+      "pão de forma integral"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 25
+    },
+    "kcal_100": 253,
+    "p_100": 9.4,
+    "c_100": 49,
+    "g_100": 3.5
+  },
+  {
+    "nome": "Pão de forma branco",
+    "aliases": [
+      "pão de forma",
+      "pão de forma branco"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 25
+    },
+    "kcal_100": 270,
+    "p_100": 8.5,
+    "c_100": 50.8,
+    "g_100": 3.2
+  },
+  {
+    "nome": "Pão de leite",
+    "aliases": [
+      "pão de leite",
+      "pao de leite"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 35
+    },
+    "kcal_100": 323,
+    "p_100": 8.5,
+    "c_100": 57.8,
+    "g_100": 6.1
+  },
+  {
+    "nome": "Pão de milho",
+    "aliases": [
+      "pão de milho",
+      "pao de milho",
+      "broa de milho"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 50
+    },
+    "kcal_100": 266,
+    "p_100": 6.2,
+    "c_100": 50.8,
+    "g_100": 4.2
+  },
+  {
+    "nome": "Pão sírio",
+    "aliases": [
+      "pão sírio",
+      "pao sirio",
+      "pita"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 60
+    },
+    "kcal_100": 262,
+    "p_100": 9.2,
+    "c_100": 55.1,
+    "g_100": 1.1
+  },
+  {
+    "nome": "Pão de queijo",
+    "aliases": [
+      "pão de queijo",
+      "pao de queijo"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 30
+    },
+    "kcal_100": 364,
+    "p_100": 5.6,
+    "c_100": 40,
+    "g_100": 18.5
+  },
+  {
+    "nome": "Tapioca",
+    "aliases": [
+      "tapioca",
+      "goma de tapioca"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 60
+    },
+    "kcal_100": 240,
+    "p_100": 0.3,
+    "c_100": 59,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Biscoito água e sal",
+    "aliases": [
+      "biscoito de água e sal",
+      "biscoito agua e sal"
+    ],
+    "porcao": {
+      "descricao": "5 unidades",
+      "g": 30
+    },
+    "kcal_100": 441,
+    "p_100": 8,
+    "c_100": 72.2,
+    "g_100": 13.5
+  },
+  {
+    "nome": "Biscoito cream cracker",
+    "aliases": [
+      "cream cracker",
+      "bolacha cream cracker"
+    ],
+    "porcao": {
+      "descricao": "5 unidades",
+      "g": 30
+    },
+    "kcal_100": 428,
+    "p_100": 10.2,
+    "c_100": 68.5,
+    "g_100": 12.8
+  },
+  {
+    "nome": "Biscoito maisena",
+    "aliases": [
+      "biscoito maisena",
+      "bolacha maisena"
+    ],
+    "porcao": {
+      "descricao": "4 unidades",
+      "g": 30
+    },
+    "kcal_100": 473,
+    "p_100": 7.5,
+    "c_100": 77.2,
+    "g_100": 14.2
+  },
+  {
+    "nome": "Biscoito recheado",
+    "aliases": [
+      "biscoito recheado",
+      "oreo",
+      "negresco",
+      "trakinas"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 30
+    },
+    "kcal_100": 478,
+    "p_100": 5.2,
+    "c_100": 72.8,
+    "g_100": 19.1
+  },
+  {
+    "nome": "Aveia em flocos",
+    "aliases": [
+      "aveia"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 12
+    },
+    "kcal_100": 394,
+    "p_100": 13.9,
+    "c_100": 66.6,
+    "g_100": 8.5
+  },
+  {
+    "nome": "Granola",
+    "aliases": [
+      "granola"
+    ],
+    "porcao": {
+      "descricao": "2 colheres sopa",
+      "g": 30
+    },
+    "kcal_100": 471,
+    "p_100": 10,
+    "c_100": 65,
+    "g_100": 19
+  },
+  {
+    "nome": "Macarrão cozido",
+    "aliases": [
+      "macarrão",
+      "macarrao",
+      "espaguete",
+      "espagueti",
+      "talharim",
+      "massa"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 200
+    },
+    "kcal_100": 159,
+    "p_100": 5.4,
+    "c_100": 32,
+    "g_100": 0.9
+  },
+  {
+    "nome": "Macarrão integral cozido",
+    "aliases": [
+      "macarrão integral",
+      "espaguete integral"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 200
+    },
+    "kcal_100": 124,
+    "p_100": 5.3,
+    "c_100": 26.4,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Nhoque de batata",
+    "aliases": [
+      "nhoque",
+      "gnocchi"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 131,
+    "p_100": 2.8,
+    "c_100": 28,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Peito de frango grelhado",
+    "aliases": [
+      "peito de frango",
+      "frango grelhado",
+      "frango",
+      "filé de frango",
+      "file de frango"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 150
+    },
+    "kcal_100": 165,
+    "p_100": 31,
+    "c_100": 0,
+    "g_100": 3.6
+  },
+  {
+    "nome": "Coxa de frango assada",
+    "aliases": [
+      "coxa de frango",
+      "sobrecoxa",
+      "coxa"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 215,
+    "p_100": 26,
+    "c_100": 0,
+    "g_100": 12
+  },
+  {
+    "nome": "Frango inteiro assado",
+    "aliases": [
+      "frango assado",
+      "frango no forno"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 150
+    },
+    "kcal_100": 239,
+    "p_100": 27.3,
+    "c_100": 0,
+    "g_100": 14
+  },
+  {
+    "nome": "Coração de frango",
+    "aliases": [
+      "coração de frango",
+      "coracao de frango"
+    ],
+    "porcao": {
+      "descricao": "1 espeto",
+      "g": 80
+    },
+    "kcal_100": 185,
+    "p_100": 26,
+    "c_100": 0.3,
+    "g_100": 8.5
+  },
+  {
+    "nome": "Fígado de frango",
+    "aliases": [
+      "fígado de frango",
+      "figado de frango"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 119,
+    "p_100": 16.9,
+    "c_100": 3.7,
+    "g_100": 3.7
+  },
+  {
+    "nome": "Bife (alcatra) grelhado",
+    "aliases": [
+      "bife",
+      "alcatra",
+      "carne grelhada",
+      "carne bovina"
+    ],
+    "porcao": {
+      "descricao": "1 bife",
+      "g": 100
+    },
+    "kcal_100": 213,
+    "p_100": 32,
+    "c_100": 0,
+    "g_100": 8
+  },
+  {
+    "nome": "Filé mignon grelhado",
+    "aliases": [
+      "filé mignon",
+      "file mignon",
+      "filé"
+    ],
+    "porcao": {
+      "descricao": "1 medalhão",
+      "g": 120
+    },
+    "kcal_100": 218,
+    "p_100": 27.5,
+    "c_100": 0,
+    "g_100": 11.6
+  },
+  {
+    "nome": "Contrafilé grelhado",
+    "aliases": [
+      "contrafilé",
+      "contrafile",
+      "sirloin"
+    ],
+    "porcao": {
+      "descricao": "1 bife",
+      "g": 120
+    },
+    "kcal_100": 200,
+    "p_100": 27,
+    "c_100": 0,
+    "g_100": 9.6
+  },
+  {
+    "nome": "Patinho moído grelhado",
+    "aliases": [
+      "patinho",
+      "carne moída",
+      "carne moida"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 169,
+    "p_100": 26,
+    "c_100": 0,
+    "g_100": 6.5
+  },
+  {
+    "nome": "Picanha grelhada",
+    "aliases": [
+      "picanha"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 150
+    },
+    "kcal_100": 290,
+    "p_100": 26,
+    "c_100": 0,
+    "g_100": 20
+  },
+  {
+    "nome": "Costela bovina",
+    "aliases": [
+      "costela"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 150
+    },
+    "kcal_100": 327,
+    "p_100": 21,
+    "c_100": 0,
+    "g_100": 26
+  },
+  {
+    "nome": "Músculo bovino cozido",
+    "aliases": [
+      "músculo",
+      "musculo"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 174,
+    "p_100": 27.6,
+    "c_100": 0,
+    "g_100": 6.4
+  },
+  {
+    "nome": "Carne seca (charque)",
+    "aliases": [
+      "carne seca",
+      "charque",
+      "jabá"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 357,
+    "p_100": 41.5,
+    "c_100": 0,
+    "g_100": 21.3
+  },
+  {
+    "nome": "Hambúrguer bovino",
+    "aliases": [
+      "hambúrguer",
+      "hamburger",
+      "burger"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 90
+    },
+    "kcal_100": 265,
+    "p_100": 19.4,
+    "c_100": 0.5,
+    "g_100": 20.3
+  },
+  {
+    "nome": "Fígado bovino",
+    "aliases": [
+      "fígado",
+      "figado bovino",
+      "figado"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 131,
+    "p_100": 21.6,
+    "c_100": 4,
+    "g_100": 3.6
+  },
+  {
+    "nome": "Lombo de porco grelhado",
+    "aliases": [
+      "lombo de porco",
+      "lombo suíno",
+      "lombo"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 100
+    },
+    "kcal_100": 218,
+    "p_100": 26.5,
+    "c_100": 0,
+    "g_100": 12
+  },
+  {
+    "nome": "Pernil de porco assado",
+    "aliases": [
+      "pernil",
+      "pernil de porco"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 150
+    },
+    "kcal_100": 238,
+    "p_100": 24.8,
+    "c_100": 0,
+    "g_100": 15
+  },
+  {
+    "nome": "Linguiça",
+    "aliases": [
+      "linguiça",
+      "linguica"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 60
+    },
+    "kcal_100": 280,
+    "p_100": 15,
+    "c_100": 2,
+    "g_100": 24
+  },
+  {
+    "nome": "Bacon",
+    "aliases": [
+      "bacon",
+      "toucinho defumado"
+    ],
+    "porcao": {
+      "descricao": "2 fatias",
+      "g": 25
+    },
+    "kcal_100": 541,
+    "p_100": 12.6,
+    "c_100": 0,
+    "g_100": 53.8
+  },
+  {
+    "nome": "Presunto",
+    "aliases": [
+      "presunto"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 20
+    },
+    "kcal_100": 145,
+    "p_100": 16.6,
+    "c_100": 1.5,
+    "g_100": 7.8
+  },
+  {
+    "nome": "Mortadela",
+    "aliases": [
+      "mortadela"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 20
+    },
+    "kcal_100": 290,
+    "p_100": 13.4,
+    "c_100": 4.1,
+    "g_100": 24.7
+  },
+  {
+    "nome": "Salsicha",
+    "aliases": [
+      "salsicha"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 283,
+    "p_100": 12.2,
+    "c_100": 4.3,
+    "g_100": 25
+  },
+  {
+    "nome": "Salmão grelhado",
+    "aliases": [
+      "salmão",
+      "salmao"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 130
+    },
+    "kcal_100": 208,
+    "p_100": 22,
+    "c_100": 0,
+    "g_100": 13
+  },
+  {
+    "nome": "Tilápia grelhada",
+    "aliases": [
+      "tilápia",
+      "tilapia",
+      "peixe"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 130
+    },
+    "kcal_100": 128,
+    "p_100": 26,
+    "c_100": 0,
+    "g_100": 2.7
+  },
+  {
+    "nome": "Atum em lata",
+    "aliases": [
+      "atum",
+      "atum em lata"
+    ],
+    "porcao": {
+      "descricao": "1 lata",
+      "g": 120
+    },
+    "kcal_100": 116,
+    "p_100": 25,
+    "c_100": 0,
+    "g_100": 1
+  },
+  {
+    "nome": "Sardinha em lata",
+    "aliases": [
+      "sardinha",
+      "sardinhas"
+    ],
+    "porcao": {
+      "descricao": "1 lata pequena",
+      "g": 90
+    },
+    "kcal_100": 208,
+    "p_100": 24.6,
+    "c_100": 0,
+    "g_100": 11.5
+  },
+  {
+    "nome": "Merluza grelhada",
+    "aliases": [
+      "merluza",
+      "pescada"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 130
+    },
+    "kcal_100": 78,
+    "p_100": 17.4,
+    "c_100": 0,
+    "g_100": 0.7
+  },
+  {
+    "nome": "Bacalhau cozido",
+    "aliases": [
+      "bacalhau"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 105,
+    "p_100": 23.5,
+    "c_100": 0,
+    "g_100": 0.6
+  },
+  {
+    "nome": "Camarão cozido",
+    "aliases": [
+      "camarão",
+      "camarao"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 85,
+    "p_100": 20.3,
+    "c_100": 0,
+    "g_100": 0.6
+  },
+  {
+    "nome": "Cação grelhado",
+    "aliases": [
+      "cação",
+      "cacao",
+      "tubarão"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 130
+    },
+    "kcal_100": 94,
+    "p_100": 20.6,
+    "c_100": 0,
+    "g_100": 1
+  },
+  {
+    "nome": "Ovo cozido",
+    "aliases": [
+      "ovo",
+      "ovo cozido",
+      "ovos"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 155,
+    "p_100": 13,
+    "c_100": 1.1,
+    "g_100": 11
+  },
+  {
+    "nome": "Clara de ovo",
+    "aliases": [
+      "clara",
+      "clara de ovo"
+    ],
+    "porcao": {
+      "descricao": "1 clara",
+      "g": 30
+    },
+    "kcal_100": 52,
+    "p_100": 10.9,
+    "c_100": 0.7,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Ovo frito",
+    "aliases": [
+      "ovo frito",
+      "ovo na manteiga"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 196,
+    "p_100": 13.6,
+    "c_100": 0.3,
+    "g_100": 15.2
+  },
+  {
+    "nome": "Omelete",
+    "aliases": [
+      "omelete",
+      "omelete simples"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 154,
+    "p_100": 10.6,
+    "c_100": 1.2,
+    "g_100": 11.6
+  },
+  {
+    "nome": "Leite integral",
+    "aliases": [
+      "leite",
+      "leite integral"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 61,
+    "p_100": 3.2,
+    "c_100": 4.6,
+    "g_100": 3.3
+  },
+  {
+    "nome": "Leite desnatado",
+    "aliases": [
+      "leite desnatado",
+      "leite zero"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 33,
+    "p_100": 3,
+    "c_100": 4.7,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Leite semidesnatado",
+    "aliases": [
+      "leite semidesnatado"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 46,
+    "p_100": 3.2,
+    "c_100": 4.6,
+    "g_100": 1.6
+  },
+  {
+    "nome": "Leite de soja",
+    "aliases": [
+      "leite de soja",
+      "extrato de soja"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 54,
+    "p_100": 3.3,
+    "c_100": 6.3,
+    "g_100": 1.8
+  },
+  {
+    "nome": "Iogurte natural",
+    "aliases": [
+      "iogurte",
+      "iogurte natural"
+    ],
+    "porcao": {
+      "descricao": "1 pote",
+      "g": 170
+    },
+    "kcal_100": 51,
+    "p_100": 4.1,
+    "c_100": 4.7,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Iogurte grego",
+    "aliases": [
+      "iogurte grego"
+    ],
+    "porcao": {
+      "descricao": "1 pote",
+      "g": 130
+    },
+    "kcal_100": 97,
+    "p_100": 9,
+    "c_100": 4,
+    "g_100": 5
+  },
+  {
+    "nome": "Queijo branco (minas frescal)",
+    "aliases": [
+      "queijo branco",
+      "queijo minas",
+      "queijo frescal"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 30
+    },
+    "kcal_100": 264,
+    "p_100": 17,
+    "c_100": 3.1,
+    "g_100": 20
+  },
+  {
+    "nome": "Queijo mussarela",
+    "aliases": [
+      "queijo",
+      "mussarela",
+      "muçarela"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 20
+    },
+    "kcal_100": 281,
+    "p_100": 22,
+    "c_100": 2.3,
+    "g_100": 21
+  },
+  {
+    "nome": "Queijo parmesão",
+    "aliases": [
+      "parmesão",
+      "parmesao",
+      "queijo parmesão",
+      "queijo ralado"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 10
+    },
+    "kcal_100": 456,
+    "p_100": 35.7,
+    "c_100": 3.2,
+    "g_100": 32.8
+  },
+  {
+    "nome": "Queijo coalho",
+    "aliases": [
+      "queijo coalho",
+      "coalho"
+    ],
+    "porcao": {
+      "descricao": "1 espeto",
+      "g": 60
+    },
+    "kcal_100": 280,
+    "p_100": 18,
+    "c_100": 0,
+    "g_100": 23
+  },
+  {
+    "nome": "Queijo prato",
+    "aliases": [
+      "queijo prato"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 20
+    },
+    "kcal_100": 341,
+    "p_100": 25,
+    "c_100": 0.5,
+    "g_100": 26.3
+  },
+  {
+    "nome": "Ricota",
+    "aliases": [
+      "ricota"
+    ],
+    "porcao": {
+      "descricao": "2 colheres sopa",
+      "g": 40
+    },
+    "kcal_100": 142,
+    "p_100": 11.8,
+    "c_100": 1,
+    "g_100": 9.8
+  },
+  {
+    "nome": "Requeijão cremoso",
+    "aliases": [
+      "requeijão",
+      "requeijao"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 20
+    },
+    "kcal_100": 262,
+    "p_100": 7.7,
+    "c_100": 4.9,
+    "g_100": 24
+  },
+  {
+    "nome": "Creme de leite",
+    "aliases": [
+      "creme de leite",
+      "nata"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 20
+    },
+    "kcal_100": 235,
+    "p_100": 2.5,
+    "c_100": 3.6,
+    "g_100": 24
+  },
+  {
+    "nome": "Leite condensado",
+    "aliases": [
+      "leite condensado"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 20
+    },
+    "kcal_100": 321,
+    "p_100": 7.6,
+    "c_100": 54.5,
+    "g_100": 8.3
+  },
+  {
+    "nome": "Manteiga",
+    "aliases": [
+      "manteiga"
+    ],
+    "porcao": {
+      "descricao": "1 colher chá",
+      "g": 10
+    },
+    "kcal_100": 717,
+    "p_100": 0.9,
+    "c_100": 0.1,
+    "g_100": 81
+  },
+  {
+    "nome": "Margarina",
+    "aliases": [
+      "margarina"
+    ],
+    "porcao": {
+      "descricao": "1 colher chá",
+      "g": 10
+    },
+    "kcal_100": 720,
+    "p_100": 0.1,
+    "c_100": 0.1,
+    "g_100": 80
+  },
+  {
+    "nome": "Azeite de oliva",
+    "aliases": [
+      "azeite",
+      "azeite de oliva"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 13
+    },
+    "kcal_100": 884,
+    "p_100": 0,
+    "c_100": 0,
+    "g_100": 100
+  },
+  {
+    "nome": "Óleo de soja",
+    "aliases": [
+      "óleo de soja",
+      "oleo de soja",
+      "óleo vegetal",
+      "oleo"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 13
+    },
+    "kcal_100": 884,
+    "p_100": 0,
+    "c_100": 0,
+    "g_100": 100
+  },
+  {
+    "nome": "Óleo de coco",
+    "aliases": [
+      "óleo de coco",
+      "oleo de coco"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 13
+    },
+    "kcal_100": 862,
+    "p_100": 0,
+    "c_100": 0,
+    "g_100": 100
+  },
+  {
+    "nome": "Banana",
+    "aliases": [
+      "banana",
+      "banana prata",
+      "banana nanica"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 100
+    },
+    "kcal_100": 89,
+    "p_100": 1.1,
+    "c_100": 22.8,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Maçã",
+    "aliases": [
+      "maçã",
+      "maca"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 150
+    },
+    "kcal_100": 52,
+    "p_100": 0.3,
+    "c_100": 13.8,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Laranja",
+    "aliases": [
+      "laranja",
+      "laranja pera",
+      "laranja bahia"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 130
+    },
+    "kcal_100": 47,
+    "p_100": 0.9,
+    "c_100": 11.8,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Mamão papaya",
+    "aliases": [
+      "mamão",
+      "mamao",
+      "papaya"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 150
+    },
+    "kcal_100": 43,
+    "p_100": 0.5,
+    "c_100": 10.8,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Melancia",
+    "aliases": [
+      "melancia"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 200
+    },
+    "kcal_100": 30,
+    "p_100": 0.6,
+    "c_100": 7.5,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Abacaxi",
+    "aliases": [
+      "abacaxi",
+      "ananás"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 100
+    },
+    "kcal_100": 50,
+    "p_100": 0.5,
+    "c_100": 13.1,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Manga",
+    "aliases": [
+      "manga",
+      "manga tommy",
+      "manga haden"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 200
+    },
+    "kcal_100": 60,
+    "p_100": 0.8,
+    "c_100": 15,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Morango",
+    "aliases": [
+      "morango",
+      "morangos"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 150
+    },
+    "kcal_100": 30,
+    "p_100": 0.9,
+    "c_100": 6.8,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Uva",
+    "aliases": [
+      "uva",
+      "uvas",
+      "uva itália",
+      "uva niágara"
+    ],
+    "porcao": {
+      "descricao": "1 cacho pequeno",
+      "g": 100
+    },
+    "kcal_100": 69,
+    "p_100": 0.7,
+    "c_100": 18.1,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Abacate",
+    "aliases": [
+      "abacate"
+    ],
+    "porcao": {
+      "descricao": "1/2 unidade",
+      "g": 100
+    },
+    "kcal_100": 160,
+    "p_100": 2,
+    "c_100": 8.5,
+    "g_100": 14.7
+  },
+  {
+    "nome": "Goiaba",
+    "aliases": [
+      "goiaba"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 100
+    },
+    "kcal_100": 68,
+    "p_100": 2.6,
+    "c_100": 14.3,
+    "g_100": 1
+  },
+  {
+    "nome": "Caju",
+    "aliases": [
+      "caju",
+      "caju fresco"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 43,
+    "p_100": 0.9,
+    "c_100": 9.2,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Maracujá",
+    "aliases": [
+      "maracujá",
+      "maracuja",
+      "fruta do conde"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 97,
+    "p_100": 2.4,
+    "c_100": 21.2,
+    "g_100": 0.7
+  },
+  {
+    "nome": "Pitanga",
+    "aliases": [
+      "pitanga"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 100
+    },
+    "kcal_100": 41,
+    "p_100": 0.7,
+    "c_100": 9.2,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Jabuticaba",
+    "aliases": [
+      "jabuticaba"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 100
+    },
+    "kcal_100": 58,
+    "p_100": 0.7,
+    "c_100": 14.9,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Graviola",
+    "aliases": [
+      "graviola"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 65,
+    "p_100": 1,
+    "c_100": 16.3,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Cupuaçu",
+    "aliases": [
+      "cupuaçu",
+      "cupuacu"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 49,
+    "p_100": 1.4,
+    "c_100": 10.5,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Carambola",
+    "aliases": [
+      "carambola",
+      "fruta estrela"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 100
+    },
+    "kcal_100": 31,
+    "p_100": 1,
+    "c_100": 6.7,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Limão",
+    "aliases": [
+      "limão",
+      "limao",
+      "limão tahiti",
+      "limão siciliano"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 60
+    },
+    "kcal_100": 29,
+    "p_100": 1.1,
+    "c_100": 6.5,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Pêra",
+    "aliases": [
+      "pêra",
+      "pera"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 150
+    },
+    "kcal_100": 57,
+    "p_100": 0.4,
+    "c_100": 15.2,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Kiwi",
+    "aliases": [
+      "kiwi"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 61,
+    "p_100": 1.1,
+    "c_100": 14.7,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Pêssego",
+    "aliases": [
+      "pêssego",
+      "pessego"
+    ],
+    "porcao": {
+      "descricao": "1 médio",
+      "g": 120
+    },
+    "kcal_100": 39,
+    "p_100": 0.9,
+    "c_100": 9.5,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Ameixa",
+    "aliases": [
+      "ameixa",
+      "ameixa fresca"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 100
+    },
+    "kcal_100": 46,
+    "p_100": 0.7,
+    "c_100": 11.4,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Melão",
+    "aliases": [
+      "melão",
+      "melon"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 150
+    },
+    "kcal_100": 34,
+    "p_100": 0.8,
+    "c_100": 8.1,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Tangerina",
+    "aliases": [
+      "tangerina",
+      "mexerica",
+      "ponkan",
+      "mandarina"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 100
+    },
+    "kcal_100": 40,
+    "p_100": 0.7,
+    "c_100": 9.9,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Água de coco",
+    "aliases": [
+      "água de coco",
+      "agua de coco"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 19,
+    "p_100": 0.7,
+    "c_100": 3.7,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Coco seco ralado",
+    "aliases": [
+      "coco ralado",
+      "coco"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 10
+    },
+    "kcal_100": 354,
+    "p_100": 3.5,
+    "c_100": 15.2,
+    "g_100": 33.5
+  },
+  {
+    "nome": "Alface",
+    "aliases": [
+      "alface"
+    ],
+    "porcao": {
+      "descricao": "2 folhas",
+      "g": 30
+    },
+    "kcal_100": 15,
+    "p_100": 1.4,
+    "c_100": 2.9,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Tomate",
+    "aliases": [
+      "tomate"
+    ],
+    "porcao": {
+      "descricao": "1 médio",
+      "g": 120
+    },
+    "kcal_100": 18,
+    "p_100": 0.9,
+    "c_100": 3.9,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Cenoura crua",
+    "aliases": [
+      "cenoura",
+      "cenoura crua"
+    ],
+    "porcao": {
+      "descricao": "1 média",
+      "g": 80
+    },
+    "kcal_100": 34,
+    "p_100": 0.6,
+    "c_100": 8,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Brócolis cozido",
+    "aliases": [
+      "brócolis",
+      "brocolis"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 35,
+    "p_100": 2.4,
+    "c_100": 7.2,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Couve refogada",
+    "aliases": [
+      "couve",
+      "couve manteiga"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 27,
+    "p_100": 2.7,
+    "c_100": 4.3,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Espinafre",
+    "aliases": [
+      "espinafre"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 23,
+    "p_100": 2.9,
+    "c_100": 3.6,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Pepino",
+    "aliases": [
+      "pepino"
+    ],
+    "porcao": {
+      "descricao": "1/2 unidade",
+      "g": 100
+    },
+    "kcal_100": 16,
+    "p_100": 0.7,
+    "c_100": 3.6,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Cebola",
+    "aliases": [
+      "cebola"
+    ],
+    "porcao": {
+      "descricao": "1/2 média",
+      "g": 60
+    },
+    "kcal_100": 40,
+    "p_100": 1.1,
+    "c_100": 9.3,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Alho",
+    "aliases": [
+      "alho"
+    ],
+    "porcao": {
+      "descricao": "1 dente",
+      "g": 5
+    },
+    "kcal_100": 149,
+    "p_100": 6.4,
+    "c_100": 33.1,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Abobrinha cozida",
+    "aliases": [
+      "abobrinha"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 17,
+    "p_100": 1.2,
+    "c_100": 3.1,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Berinjela cozida",
+    "aliases": [
+      "berinjela"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 24,
+    "p_100": 0.8,
+    "c_100": 5.7,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Pimentão verde",
+    "aliases": [
+      "pimentão",
+      "pimentao",
+      "pimentão verde"
+    ],
+    "porcao": {
+      "descricao": "1/2 unidade",
+      "g": 80
+    },
+    "kcal_100": 27,
+    "p_100": 1,
+    "c_100": 5.9,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Pimentão vermelho",
+    "aliases": [
+      "pimentão vermelho",
+      "pimentao vermelho"
+    ],
+    "porcao": {
+      "descricao": "1/2 unidade",
+      "g": 80
+    },
+    "kcal_100": 31,
+    "p_100": 1,
+    "c_100": 7.2,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Chuchu cozido",
+    "aliases": [
+      "chuchu"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 19,
+    "p_100": 0.9,
+    "c_100": 4,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Quiabo cozido",
+    "aliases": [
+      "quiabo"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 31,
+    "p_100": 1.9,
+    "c_100": 7,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Vagem cozida",
+    "aliases": [
+      "vagem"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 30,
+    "p_100": 1.7,
+    "c_100": 6.8,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Milho verde cozido",
+    "aliases": [
+      "milho",
+      "milho verde",
+      "milho cozido"
+    ],
+    "porcao": {
+      "descricao": "1 espiga pequena",
+      "g": 120
+    },
+    "kcal_100": 86,
+    "p_100": 3.2,
+    "c_100": 18.7,
+    "g_100": 1.2
+  },
+  {
+    "nome": "Beterraba cozida",
+    "aliases": [
+      "beterraba"
+    ],
+    "porcao": {
+      "descricao": "2 fatias",
+      "g": 80
+    },
+    "kcal_100": 43,
+    "p_100": 1.7,
+    "c_100": 9.6,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Repolho cozido",
+    "aliases": [
+      "repolho"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 28,
+    "p_100": 1.3,
+    "c_100": 6.1,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Couve-flor cozida",
+    "aliases": [
+      "couve-flor",
+      "couve flor"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 25,
+    "p_100": 1.9,
+    "c_100": 4.9,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Cogumelo champignon",
+    "aliases": [
+      "cogumelo",
+      "champignon",
+      "shimeji"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 22,
+    "p_100": 3.1,
+    "c_100": 3.3,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Jiló cozido",
+    "aliases": [
+      "jiló",
+      "jilo"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 24,
+    "p_100": 1.2,
+    "c_100": 5.2,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Maxixe cozido",
+    "aliases": [
+      "maxixe"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 17,
+    "p_100": 0.9,
+    "c_100": 3.4,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Palmito em conserva",
+    "aliases": [
+      "palmito"
+    ],
+    "porcao": {
+      "descricao": "2 pedaços",
+      "g": 60
+    },
+    "kcal_100": 28,
+    "p_100": 2.6,
+    "c_100": 4.6,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Agrião",
+    "aliases": [
+      "agrião",
+      "agriao"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 40
+    },
+    "kcal_100": 18,
+    "p_100": 2,
+    "c_100": 2.5,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Rúcula",
+    "aliases": [
+      "rúcula",
+      "rucula"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 40
+    },
+    "kcal_100": 25,
+    "p_100": 2.6,
+    "c_100": 3.7,
+    "g_100": 0.7
+  },
+  {
+    "nome": "Chicória",
+    "aliases": [
+      "chicória",
+      "chicoria",
+      "endívia"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 50
+    },
+    "kcal_100": 20,
+    "p_100": 1.5,
+    "c_100": 3.4,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Café sem açúcar",
+    "aliases": [
+      "café",
+      "cafe",
+      "café preto",
+      "espresso"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 200
+    },
+    "kcal_100": 2,
+    "p_100": 0.1,
+    "c_100": 0,
+    "g_100": 0
+  },
+  {
+    "nome": "Suco de laranja natural",
+    "aliases": [
+      "suco de laranja",
+      "suco natural"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 45,
+    "p_100": 0.7,
+    "c_100": 10.4,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Suco de caju",
+    "aliases": [
+      "suco de caju"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 48,
+    "p_100": 0.6,
+    "c_100": 11.7,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Suco de goiaba",
+    "aliases": [
+      "suco de goiaba"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 54,
+    "p_100": 0.5,
+    "c_100": 13.2,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Vitamina de banana",
+    "aliases": [
+      "vitamina de banana",
+      "shake de banana"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 85,
+    "p_100": 3.2,
+    "c_100": 14.8,
+    "g_100": 1.9
+  },
+  {
+    "nome": "Refrigerante",
+    "aliases": [
+      "refrigerante",
+      "coca",
+      "coca-cola",
+      "guaraná",
+      "pepsi"
+    ],
+    "porcao": {
+      "descricao": "1 lata",
+      "g": 350
+    },
+    "kcal_100": 41,
+    "p_100": 0,
+    "c_100": 10.6,
+    "g_100": 0
+  },
+  {
+    "nome": "Refrigerante zero",
+    "aliases": [
+      "refrigerante zero",
+      "coca zero",
+      "guaraná zero",
+      "diet"
+    ],
+    "porcao": {
+      "descricao": "1 lata",
+      "g": 350
+    },
+    "kcal_100": 0,
+    "p_100": 0,
+    "c_100": 0,
+    "g_100": 0
+  },
+  {
+    "nome": "Cerveja",
+    "aliases": [
+      "cerveja",
+      "birra",
+      "chopp"
+    ],
+    "porcao": {
+      "descricao": "1 lata",
+      "g": 350
+    },
+    "kcal_100": 43,
+    "p_100": 0.5,
+    "c_100": 3.5,
+    "g_100": 0
+  },
+  {
+    "nome": "Chá preto",
+    "aliases": [
+      "chá preto",
+      "cha preto",
+      "chá verde",
+      "cha verde",
+      "chá"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 200
+    },
+    "kcal_100": 1,
+    "p_100": 0,
+    "c_100": 0.2,
+    "g_100": 0
+  },
+  {
+    "nome": "Açaí puro",
+    "aliases": [
+      "açaí",
+      "acai"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 200
+    },
+    "kcal_100": 70,
+    "p_100": 0.8,
+    "c_100": 6.2,
+    "g_100": 4
+  },
+  {
+    "nome": "Suco de uva integral",
+    "aliases": [
+      "suco de uva"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 68,
+    "p_100": 0.5,
+    "c_100": 16.8,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Castanha do Pará",
+    "aliases": [
+      "castanha",
+      "castanha do pará",
+      "castanha do para"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 15
+    },
+    "kcal_100": 656,
+    "p_100": 14,
+    "c_100": 12,
+    "g_100": 67
+  },
+  {
+    "nome": "Amendoim torrado",
+    "aliases": [
+      "amendoim"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 30
+    },
+    "kcal_100": 567,
+    "p_100": 26,
+    "c_100": 16,
+    "g_100": 49
+  },
+  {
+    "nome": "Pasta de amendoim",
+    "aliases": [
+      "pasta de amendoim"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 16
+    },
+    "kcal_100": 588,
+    "p_100": 25,
+    "c_100": 20,
+    "g_100": 50
+  },
+  {
+    "nome": "Castanha de caju torrada",
+    "aliases": [
+      "castanha de caju",
+      "caju torrado"
+    ],
+    "porcao": {
+      "descricao": "10 unidades",
+      "g": 30
+    },
+    "kcal_100": 553,
+    "p_100": 18.2,
+    "c_100": 32.7,
+    "g_100": 43.9
+  },
+  {
+    "nome": "Nozes",
+    "aliases": [
+      "nozes",
+      "noz"
+    ],
+    "porcao": {
+      "descricao": "5 metades",
+      "g": 28
+    },
+    "kcal_100": 654,
+    "p_100": 15.2,
+    "c_100": 13.7,
+    "g_100": 65.2
+  },
+  {
+    "nome": "Amêndoas",
+    "aliases": [
+      "amêndoas",
+      "amendoas",
+      "amêndoa"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 28
+    },
+    "kcal_100": 579,
+    "p_100": 21.2,
+    "c_100": 21.6,
+    "g_100": 49.9
+  },
+  {
+    "nome": "Semente de chia",
+    "aliases": [
+      "chia",
+      "semente de chia"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 12
+    },
+    "kcal_100": 486,
+    "p_100": 16.5,
+    "c_100": 42.1,
+    "g_100": 30.7
+  },
+  {
+    "nome": "Semente de linhaça",
+    "aliases": [
+      "linhaça",
+      "semente de linhaca",
+      "semente de linhaça"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 12
+    },
+    "kcal_100": 534,
+    "p_100": 18.3,
+    "c_100": 28.9,
+    "g_100": 42.2
+  },
+  {
+    "nome": "Chocolate amargo 70%",
+    "aliases": [
+      "chocolate",
+      "chocolate amargo",
+      "chocolate 70"
+    ],
+    "porcao": {
+      "descricao": "2 quadrados",
+      "g": 20
+    },
+    "kcal_100": 580,
+    "p_100": 7.8,
+    "c_100": 46,
+    "g_100": 42
+  },
+  {
+    "nome": "Chocolate ao leite",
+    "aliases": [
+      "chocolate ao leite",
+      "chocolate com leite"
+    ],
+    "porcao": {
+      "descricao": "1/4 barra",
+      "g": 25
+    },
+    "kcal_100": 536,
+    "p_100": 6.9,
+    "c_100": 59.7,
+    "g_100": 29.7
+  },
+  {
+    "nome": "Chips de batata",
+    "aliases": [
+      "chips",
+      "chips de batata",
+      "batata chips"
+    ],
+    "porcao": {
+      "descricao": "1 pacotinho",
+      "g": 30
+    },
+    "kcal_100": 536,
+    "p_100": 6.5,
+    "c_100": 53.5,
+    "g_100": 34.6
+  },
+  {
+    "nome": "Salgadinho de milho",
+    "aliases": [
+      "salgadinho",
+      "cheetos",
+      "salgadinho de milho",
+      "elma chips"
+    ],
+    "porcao": {
+      "descricao": "1 pacotinho",
+      "g": 30
+    },
+    "kcal_100": 534,
+    "p_100": 8.2,
+    "c_100": 57.8,
+    "g_100": 29.4
+  },
+  {
+    "nome": "Pipoca salgada",
+    "aliases": [
+      "pipoca",
+      "pipoca salgada"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 30
+    },
+    "kcal_100": 424,
+    "p_100": 9.7,
+    "c_100": 77.8,
+    "g_100": 8.8
+  },
+  {
+    "nome": "Paçoca",
+    "aliases": [
+      "paçoca",
+      "pacoca"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 30
+    },
+    "kcal_100": 454,
+    "p_100": 14.2,
+    "c_100": 61.3,
+    "g_100": 18.5
+  },
+  {
+    "nome": "Brigadeiro",
+    "aliases": [
+      "brigadeiro"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 25
+    },
+    "kcal_100": 458,
+    "p_100": 5.8,
+    "c_100": 63.7,
+    "g_100": 20.4
+  },
+  {
+    "nome": "Barra de cereal",
+    "aliases": [
+      "barra de cereal",
+      "barra cereal"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 25
+    },
+    "kcal_100": 379,
+    "p_100": 7.2,
+    "c_100": 74.7,
+    "g_100": 6.3
+  },
+  {
+    "nome": "Sorvete de creme",
+    "aliases": [
+      "sorvete",
+      "sorvete de creme",
+      "gelado"
+    ],
+    "porcao": {
+      "descricao": "1 bola",
+      "g": 80
+    },
+    "kcal_100": 207,
+    "p_100": 3.5,
+    "c_100": 24.8,
+    "g_100": 10.5
+  },
+  {
+    "nome": "Coxinha",
+    "aliases": [
+      "coxinha"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 252,
+    "p_100": 10.8,
+    "c_100": 27.8,
+    "g_100": 11
+  },
+  {
+    "nome": "Esfiha",
+    "aliases": [
+      "esfiha",
+      "esfirra",
+      "esfiha aberta"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 237,
+    "p_100": 8.5,
+    "c_100": 31.5,
+    "g_100": 8.2
+  },
+  {
+    "nome": "Pizza mussarela",
+    "aliases": [
+      "pizza",
+      "pizza mussarela"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 100
+    },
+    "kcal_100": 266,
+    "p_100": 11.5,
+    "c_100": 29.4,
+    "g_100": 11.5
+  },
+  {
+    "nome": "Açúcar refinado",
+    "aliases": [
+      "açúcar",
+      "acucar"
+    ],
+    "porcao": {
+      "descricao": "1 colher chá",
+      "g": 5
+    },
+    "kcal_100": 387,
+    "p_100": 0,
+    "c_100": 100,
+    "g_100": 0
+  },
+  {
+    "nome": "Mel",
+    "aliases": [
+      "mel"
+    ],
+    "porcao": {
+      "descricao": "1 colher chá",
+      "g": 7
+    },
+    "kcal_100": 304,
+    "p_100": 0.3,
+    "c_100": 82.4,
+    "g_100": 0
+  },
+  {
+    "nome": "Ketchup",
+    "aliases": [
+      "ketchup",
+      "catchup"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 17
+    },
+    "kcal_100": 101,
+    "p_100": 1.9,
+    "c_100": 25.3,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Maionese",
+    "aliases": [
+      "maionese"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 14
+    },
+    "kcal_100": 680,
+    "p_100": 1.3,
+    "c_100": 2.7,
+    "g_100": 74.9
+  },
+  {
+    "nome": "Molho de tomate",
+    "aliases": [
+      "molho de tomate",
+      "extrato de tomate"
+    ],
+    "porcao": {
+      "descricao": "2 colheres sopa",
+      "g": 30
+    },
+    "kcal_100": 40,
+    "p_100": 1.7,
+    "c_100": 8.3,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Shoyu",
+    "aliases": [
+      "shoyu",
+      "molho de soja",
+      "molho shoyu"
+    ],
+    "porcao": {
+      "descricao": "1 colher sopa",
+      "g": 15
+    },
+    "kcal_100": 53,
+    "p_100": 8.1,
+    "c_100": 4.9,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Feijoada",
+    "aliases": [
+      "feijoada"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 300
+    },
+    "kcal_100": 156,
+    "p_100": 10.2,
+    "c_100": 14.5,
+    "g_100": 6.1
+  },
+  {
+    "nome": "Canja de galinha",
+    "aliases": [
+      "canja",
+      "canja de frango",
+      "canja de galinha"
+    ],
+    "porcao": {
+      "descricao": "1 prato fundo",
+      "g": 300
+    },
+    "kcal_100": 76,
+    "p_100": 8.2,
+    "c_100": 7.5,
+    "g_100": 1.2
+  },
+  {
+    "nome": "Moqueca de peixe",
+    "aliases": [
+      "moqueca"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 250
+    },
+    "kcal_100": 137,
+    "p_100": 15.2,
+    "c_100": 5.4,
+    "g_100": 5.8
+  },
+  {
+    "nome": "Whey protein",
+    "aliases": [
+      "whey",
+      "whey protein",
+      "proteína em pó",
+      "proteina em po"
+    ],
+    "porcao": {
+      "descricao": "1 scoop",
+      "g": 30
+    },
+    "kcal_100": 380,
+    "p_100": 80,
+    "c_100": 5,
+    "g_100": 4
+  },
+  {
+    "nome": "Acém cozido",
+    "aliases": [
+      "acem",
+      "acem bovino"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 215,
+    "p_100": 26.5,
+    "c_100": 0,
+    "g_100": 12
+  },
+  {
+    "nome": "Paleta bovina cozida",
+    "aliases": [
+      "paleta",
+      "paleta de boi"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 217,
+    "p_100": 27,
+    "c_100": 0,
+    "g_100": 12
+  },
+  {
+    "nome": "Cupim assado",
+    "aliases": [
+      "cupim"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 100
+    },
+    "kcal_100": 330,
+    "p_100": 18,
+    "c_100": 0,
+    "g_100": 29
+  },
+  {
+    "nome": "Fraldinha grelhada",
+    "aliases": [
+      "fraldinha",
+      "vazio"
+    ],
+    "porcao": {
+      "descricao": "1 bife",
+      "g": 120
+    },
+    "kcal_100": 230,
+    "p_100": 26,
+    "c_100": 0,
+    "g_100": 14
+  },
+  {
+    "nome": "Maminha assada",
+    "aliases": [
+      "maminha"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 210,
+    "p_100": 27,
+    "c_100": 0,
+    "g_100": 11
+  },
+  {
+    "nome": "Coxão mole grelhado",
+    "aliases": [
+      "coxao mole",
+      "chã de dentro"
+    ],
+    "porcao": {
+      "descricao": "1 bife",
+      "g": 120
+    },
+    "kcal_100": 190,
+    "p_100": 29,
+    "c_100": 0,
+    "g_100": 8
+  },
+  {
+    "nome": "Coxão duro cozido",
+    "aliases": [
+      "coxao duro",
+      "chã de fora"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 195,
+    "p_100": 28,
+    "c_100": 0,
+    "g_100": 9
+  },
+  {
+    "nome": "Lagarto cozido",
+    "aliases": [
+      "lagarto"
+    ],
+    "porcao": {
+      "descricao": "3 fatias",
+      "g": 100
+    },
+    "kcal_100": 175,
+    "p_100": 30,
+    "c_100": 0,
+    "g_100": 6
+  },
+  {
+    "nome": "Ossobuco cozido",
+    "aliases": [
+      "ossobuco"
+    ],
+    "porcao": {
+      "descricao": "1 pedaço",
+      "g": 150
+    },
+    "kcal_100": 215,
+    "p_100": 27,
+    "c_100": 0,
+    "g_100": 12
+  },
+  {
+    "nome": "Língua bovina cozida",
+    "aliases": [
+      "lingua",
+      "lingua de boi"
+    ],
+    "porcao": {
+      "descricao": "3 fatias",
+      "g": 100
+    },
+    "kcal_100": 283,
+    "p_100": 21,
+    "c_100": 0,
+    "g_100": 22
+  },
+  {
+    "nome": "Bife à milanesa",
+    "aliases": [
+      "bife a milanesa",
+      "bife empanado"
+    ],
+    "porcao": {
+      "descricao": "1 bife",
+      "g": 120
+    },
+    "kcal_100": 270,
+    "p_100": 22,
+    "c_100": 15,
+    "g_100": 13
+  },
+  {
+    "nome": "Almôndega ao molho",
+    "aliases": [
+      "almondega",
+      "almôndegas"
+    ],
+    "porcao": {
+      "descricao": "3 almôndegas",
+      "g": 120
+    },
+    "kcal_100": 195,
+    "p_100": 15,
+    "c_100": 8,
+    "g_100": 11
+  },
+  {
+    "nome": "Carne de panela",
+    "aliases": [
+      "carne de panela",
+      "carne cozida"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 120
+    },
+    "kcal_100": 205,
+    "p_100": 26,
+    "c_100": 2,
+    "g_100": 10
+  },
+  {
+    "nome": "Espetinho de carne bovina",
+    "aliases": [
+      "espetinho",
+      "espeto de carne",
+      "churrasquinho"
+    ],
+    "porcao": {
+      "descricao": "1 espeto",
+      "g": 80
+    },
+    "kcal_100": 230,
+    "p_100": 26,
+    "c_100": 0,
+    "g_100": 14
+  },
+  {
+    "nome": "Filé à parmegiana",
+    "aliases": [
+      "parmegiana",
+      "file a parmegiana",
+      "bife a parmegiana"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 200
+    },
+    "kcal_100": 215,
+    "p_100": 16,
+    "c_100": 11,
+    "g_100": 12
+  },
+  {
+    "nome": "Carne seca refogada",
+    "aliases": [
+      "carne de sol",
+      "carne seca refogada"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 300,
+    "p_100": 33,
+    "c_100": 1,
+    "g_100": 18
+  },
+  {
+    "nome": "Costela suína assada",
+    "aliases": [
+      "costela de porco",
+      "costelinha"
+    ],
+    "porcao": {
+      "descricao": "2 costelas",
+      "g": 150
+    },
+    "kcal_100": 290,
+    "p_100": 24,
+    "c_100": 0,
+    "g_100": 21
+  },
+  {
+    "nome": "Bisteca suína grelhada",
+    "aliases": [
+      "bisteca",
+      "bisteca de porco"
+    ],
+    "porcao": {
+      "descricao": "1 bisteca",
+      "g": 120
+    },
+    "kcal_100": 240,
+    "p_100": 26,
+    "c_100": 0,
+    "g_100": 15
+  },
+  {
+    "nome": "Barriga de porco assada",
+    "aliases": [
+      "barriga de porco",
+      "panceta"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 80
+    },
+    "kcal_100": 520,
+    "p_100": 9,
+    "c_100": 0,
+    "g_100": 53
+  },
+  {
+    "nome": "Torresmo",
+    "aliases": [
+      "torresmo",
+      "pururuca"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 40
+    },
+    "kcal_100": 540,
+    "p_100": 30,
+    "c_100": 0,
+    "g_100": 47
+  },
+  {
+    "nome": "Costelinha BBQ",
+    "aliases": [
+      "costelinha bbq",
+      "costela barbecue"
+    ],
+    "porcao": {
+      "descricao": "2 costelas",
+      "g": 150
+    },
+    "kcal_100": 310,
+    "p_100": 22,
+    "c_100": 6,
+    "g_100": 22
+  },
+  {
+    "nome": "Linguiça calabresa",
+    "aliases": [
+      "calabresa",
+      "linguica calabresa"
+    ],
+    "porcao": {
+      "descricao": "1 gomo",
+      "g": 60
+    },
+    "kcal_100": 310,
+    "p_100": 18,
+    "c_100": 2,
+    "g_100": 26
+  },
+  {
+    "nome": "Linguiça toscana",
+    "aliases": [
+      "linguica toscana",
+      "toscana"
+    ],
+    "porcao": {
+      "descricao": "1 gomo",
+      "g": 70
+    },
+    "kcal_100": 290,
+    "p_100": 16,
+    "c_100": 1,
+    "g_100": 25
+  },
+  {
+    "nome": "Salame",
+    "aliases": [
+      "salame",
+      "salaminho"
+    ],
+    "porcao": {
+      "descricao": "5 fatias",
+      "g": 30
+    },
+    "kcal_100": 380,
+    "p_100": 22,
+    "c_100": 1,
+    "g_100": 32
+  },
+  {
+    "nome": "Copa suína",
+    "aliases": [
+      "copa",
+      "copa lombo"
+    ],
+    "porcao": {
+      "descricao": "4 fatias",
+      "g": 40
+    },
+    "kcal_100": 330,
+    "p_100": 24,
+    "c_100": 1,
+    "g_100": 26
+  },
+  {
+    "nome": "Asa de frango assada",
+    "aliases": [
+      "asa de frango",
+      "asinha"
+    ],
+    "porcao": {
+      "descricao": "2 asas",
+      "g": 80
+    },
+    "kcal_100": 230,
+    "p_100": 24,
+    "c_100": 0,
+    "g_100": 15
+  },
+  {
+    "nome": "Peito de frango desfiado",
+    "aliases": [
+      "frango desfiado",
+      "peito desfiado"
+    ],
+    "porcao": {
+      "descricao": "3 colheres",
+      "g": 100
+    },
+    "kcal_100": 165,
+    "p_100": 31,
+    "c_100": 0,
+    "g_100": 4
+  },
+  {
+    "nome": "Frango à milanesa",
+    "aliases": [
+      "frango a milanesa",
+      "file de frango empanado",
+      "frango empanado"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 120
+    },
+    "kcal_100": 250,
+    "p_100": 23,
+    "c_100": 14,
+    "g_100": 11
+  },
+  {
+    "nome": "Nuggets de frango",
+    "aliases": [
+      "nuggets",
+      "nuggets de frango"
+    ],
+    "porcao": {
+      "descricao": "6 unidades",
+      "g": 100
+    },
+    "kcal_100": 270,
+    "p_100": 15,
+    "c_100": 17,
+    "g_100": 16
+  },
+  {
+    "nome": "Frango à passarinho",
+    "aliases": [
+      "frango a passarinho",
+      "frango frito"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 120
+    },
+    "kcal_100": 280,
+    "p_100": 24,
+    "c_100": 3,
+    "g_100": 19
+  },
+  {
+    "nome": "Coxa de frango frita",
+    "aliases": [
+      "coxa frita",
+      "frango frito coxa"
+    ],
+    "porcao": {
+      "descricao": "1 coxa",
+      "g": 100
+    },
+    "kcal_100": 255,
+    "p_100": 24,
+    "c_100": 2,
+    "g_100": 17
+  },
+  {
+    "nome": "Peito de peru",
+    "aliases": [
+      "peito de peru",
+      "peru fatiado",
+      "blanquet"
+    ],
+    "porcao": {
+      "descricao": "4 fatias",
+      "g": 60
+    },
+    "kcal_100": 110,
+    "p_100": 18,
+    "c_100": 2,
+    "g_100": 3
+  },
+  {
+    "nome": "Peru assado",
+    "aliases": [
+      "peru",
+      "peru de natal"
+    ],
+    "porcao": {
+      "descricao": "3 fatias",
+      "g": 120
+    },
+    "kcal_100": 170,
+    "p_100": 29,
+    "c_100": 0,
+    "g_100": 6
+  },
+  {
+    "nome": "Chester assado",
+    "aliases": [
+      "chester"
+    ],
+    "porcao": {
+      "descricao": "3 fatias",
+      "g": 120
+    },
+    "kcal_100": 190,
+    "p_100": 27,
+    "c_100": 0,
+    "g_100": 9
+  },
+  {
+    "nome": "Moela de frango cozida",
+    "aliases": [
+      "moela",
+      "moela de frango"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 154,
+    "p_100": 30,
+    "c_100": 0,
+    "g_100": 3
+  },
+  {
+    "nome": "Frango cozido desfiado",
+    "aliases": [
+      "frango cozido",
+      "frango ensopado"
+    ],
+    "porcao": {
+      "descricao": "3 colheres",
+      "g": 100
+    },
+    "kcal_100": 170,
+    "p_100": 29,
+    "c_100": 0,
+    "g_100": 6
+  },
+  {
+    "nome": "Frango xadrez",
+    "aliases": [
+      "xadrez",
+      "frango xadrez"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 150
+    },
+    "kcal_100": 150,
+    "p_100": 13,
+    "c_100": 9,
+    "g_100": 7
+  },
+  {
+    "nome": "Strogonoff de frango",
+    "aliases": [
+      "estrogonofe de frango",
+      "strogonoff de frango",
+      "estrogonofe"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 150
+    },
+    "kcal_100": 160,
+    "p_100": 11,
+    "c_100": 6,
+    "g_100": 10
+  },
+  {
+    "nome": "Corvina grelhada",
+    "aliases": [
+      "corvina"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 120
+    },
+    "kcal_100": 110,
+    "p_100": 21,
+    "c_100": 0,
+    "g_100": 3
+  },
+  {
+    "nome": "Robalo grelhado",
+    "aliases": [
+      "robalo"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 120
+    },
+    "kcal_100": 118,
+    "p_100": 24,
+    "c_100": 0,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Dourado grelhado",
+    "aliases": [
+      "dourado"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 120
+    },
+    "kcal_100": 110,
+    "p_100": 23,
+    "c_100": 0,
+    "g_100": 2
+  },
+  {
+    "nome": "Tainha assada",
+    "aliases": [
+      "tainha"
+    ],
+    "porcao": {
+      "descricao": "1 posta",
+      "g": 120
+    },
+    "kcal_100": 150,
+    "p_100": 21,
+    "c_100": 0,
+    "g_100": 7
+  },
+  {
+    "nome": "Manjuba frita",
+    "aliases": [
+      "manjuba",
+      "manjubinha"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 240,
+    "p_100": 20,
+    "c_100": 5,
+    "g_100": 16
+  },
+  {
+    "nome": "Lula grelhada",
+    "aliases": [
+      "lula",
+      "lula à dorê"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 105,
+    "p_100": 18,
+    "c_100": 3,
+    "g_100": 2
+  },
+  {
+    "nome": "Polvo cozido",
+    "aliases": [
+      "polvo"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 92,
+    "p_100": 18,
+    "c_100": 2,
+    "g_100": 1
+  },
+  {
+    "nome": "Mexilhão cozido",
+    "aliases": [
+      "mexilhao",
+      "marisco"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 86,
+    "p_100": 12,
+    "c_100": 4,
+    "g_100": 2
+  },
+  {
+    "nome": "Ostra fresca",
+    "aliases": [
+      "ostra",
+      "ostras"
+    ],
+    "porcao": {
+      "descricao": "6 unidades",
+      "g": 80
+    },
+    "kcal_100": 81,
+    "p_100": 9,
+    "c_100": 4,
+    "g_100": 2.3
+  },
+  {
+    "nome": "Caranguejo cozido",
+    "aliases": [
+      "caranguejo",
+      "siri"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 97,
+    "p_100": 19,
+    "c_100": 0,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Atum fresco grelhado",
+    "aliases": [
+      "atum fresco",
+      "posta de atum"
+    ],
+    "porcao": {
+      "descricao": "1 posta",
+      "g": 120
+    },
+    "kcal_100": 184,
+    "p_100": 25,
+    "c_100": 0,
+    "g_100": 9
+  },
+  {
+    "nome": "Namorado grelhado",
+    "aliases": [
+      "namorado"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 120
+    },
+    "kcal_100": 110,
+    "p_100": 22,
+    "c_100": 0,
+    "g_100": 2
+  },
+  {
+    "nome": "Pintado grelhado",
+    "aliases": [
+      "pintado",
+      "surubim"
+    ],
+    "porcao": {
+      "descricao": "1 posta",
+      "g": 120
+    },
+    "kcal_100": 105,
+    "p_100": 19,
+    "c_100": 0,
+    "g_100": 3
+  },
+  {
+    "nome": "Filé de peixe à milanesa",
+    "aliases": [
+      "peixe empanado",
+      "file de peixe a milanesa",
+      "isca de peixe"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 120
+    },
+    "kcal_100": 230,
+    "p_100": 16,
+    "c_100": 15,
+    "g_100": 12
+  },
+  {
+    "nome": "Salmão defumado",
+    "aliases": [
+      "salmao defumado",
+      "salmão defumado"
+    ],
+    "porcao": {
+      "descricao": "3 fatias",
+      "g": 50
+    },
+    "kcal_100": 117,
+    "p_100": 18,
+    "c_100": 0,
+    "g_100": 4.3
+  },
+  {
+    "nome": "Truta grelhada",
+    "aliases": [
+      "truta"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 120
+    },
+    "kcal_100": 140,
+    "p_100": 21,
+    "c_100": 0,
+    "g_100": 6
+  },
+  {
+    "nome": "Anchova grelhada",
+    "aliases": [
+      "anchova",
+      "enchova"
+    ],
+    "porcao": {
+      "descricao": "1 posta",
+      "g": 120
+    },
+    "kcal_100": 130,
+    "p_100": 20,
+    "c_100": 0,
+    "g_100": 5
+  },
+  {
+    "nome": "Camarão frito",
+    "aliases": [
+      "camarao frito",
+      "camarão frito"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 210,
+    "p_100": 18,
+    "c_100": 8,
+    "g_100": 12
+  },
+  {
+    "nome": "Ovo de codorna cozido",
+    "aliases": [
+      "ovo de codorna",
+      "codorna"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 30
+    },
+    "kcal_100": 158,
+    "p_100": 13,
+    "c_100": 0.4,
+    "g_100": 11
+  },
+  {
+    "nome": "Ovo mexido",
+    "aliases": [
+      "ovo mexido",
+      "ovos mexidos"
+    ],
+    "porcao": {
+      "descricao": "2 ovos",
+      "g": 100
+    },
+    "kcal_100": 165,
+    "p_100": 11,
+    "c_100": 1,
+    "g_100": 13
+  },
+  {
+    "nome": "Ovo poché",
+    "aliases": [
+      "ovo poche",
+      "ovo pochê"
+    ],
+    "porcao": {
+      "descricao": "1 ovo",
+      "g": 50
+    },
+    "kcal_100": 143,
+    "p_100": 13,
+    "c_100": 0.7,
+    "g_100": 9.5
+  },
+  {
+    "nome": "Gema de ovo",
+    "aliases": [
+      "gema",
+      "gema de ovo"
+    ],
+    "porcao": {
+      "descricao": "1 gema",
+      "g": 17
+    },
+    "kcal_100": 322,
+    "p_100": 16,
+    "c_100": 3.6,
+    "g_100": 27
+  },
+  {
+    "nome": "Queijo gorgonzola",
+    "aliases": [
+      "gorgonzola",
+      "queijo azul"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 30
+    },
+    "kcal_100": 353,
+    "p_100": 21,
+    "c_100": 2.3,
+    "g_100": 29
+  },
+  {
+    "nome": "Queijo brie",
+    "aliases": [
+      "brie"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 30
+    },
+    "kcal_100": 334,
+    "p_100": 21,
+    "c_100": 0.5,
+    "g_100": 28
+  },
+  {
+    "nome": "Queijo provolone",
+    "aliases": [
+      "provolone"
+    ],
+    "porcao": {
+      "descricao": "2 fatias",
+      "g": 40
+    },
+    "kcal_100": 352,
+    "p_100": 26,
+    "c_100": 2,
+    "g_100": 27
+  },
+  {
+    "nome": "Catupiry",
+    "aliases": [
+      "catupiry",
+      "requeijão catupiry"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 30
+    },
+    "kcal_100": 290,
+    "p_100": 9,
+    "c_100": 3,
+    "g_100": 27
+  },
+  {
+    "nome": "Queijo cottage",
+    "aliases": [
+      "cottage",
+      "queijo cottage"
+    ],
+    "porcao": {
+      "descricao": "3 colheres",
+      "g": 80
+    },
+    "kcal_100": 98,
+    "p_100": 11,
+    "c_100": 3.4,
+    "g_100": 4.3
+  },
+  {
+    "nome": "Queijo gouda",
+    "aliases": [
+      "gouda"
+    ],
+    "porcao": {
+      "descricao": "2 fatias",
+      "g": 40
+    },
+    "kcal_100": 356,
+    "p_100": 25,
+    "c_100": 2.2,
+    "g_100": 27
+  },
+  {
+    "nome": "Queijo cheddar",
+    "aliases": [
+      "cheddar",
+      "queijo cheddar"
+    ],
+    "porcao": {
+      "descricao": "2 fatias",
+      "g": 40
+    },
+    "kcal_100": 402,
+    "p_100": 25,
+    "c_100": 1.3,
+    "g_100": 33
+  },
+  {
+    "nome": "Cream cheese",
+    "aliases": [
+      "cream cheese",
+      "requeijão cremoso light"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 30
+    },
+    "kcal_100": 255,
+    "p_100": 6,
+    "c_100": 4,
+    "g_100": 24
+  },
+  {
+    "nome": "Iogurte desnatado",
+    "aliases": [
+      "iogurte desnatado",
+      "iogurte zero"
+    ],
+    "porcao": {
+      "descricao": "1 pote",
+      "g": 170
+    },
+    "kcal_100": 42,
+    "p_100": 4,
+    "c_100": 6,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Iogurte de frutas",
+    "aliases": [
+      "iogurte de frutas",
+      "iogurte com fruta"
+    ],
+    "porcao": {
+      "descricao": "1 pote",
+      "g": 170
+    },
+    "kcal_100": 85,
+    "p_100": 3.5,
+    "c_100": 14,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Leite fermentado",
+    "aliases": [
+      "leite fermentado",
+      "yakult"
+    ],
+    "porcao": {
+      "descricao": "1 frasco",
+      "g": 80
+    },
+    "kcal_100": 70,
+    "p_100": 1.4,
+    "c_100": 16,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Kefir",
+    "aliases": [
+      "kefir"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 55,
+    "p_100": 3.3,
+    "c_100": 4.5,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Doce de leite",
+    "aliases": [
+      "doce de leite"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 20
+    },
+    "kcal_100": 315,
+    "p_100": 6,
+    "c_100": 56,
+    "g_100": 7
+  },
+  {
+    "nome": "Leite em pó integral",
+    "aliases": [
+      "leite em po",
+      "leite ninho"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 26
+    },
+    "kcal_100": 496,
+    "p_100": 26,
+    "c_100": 38,
+    "g_100": 27
+  },
+  {
+    "nome": "Bebida láctea",
+    "aliases": [
+      "bebida lactea",
+      "iogurte bandejinha"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 140
+    },
+    "kcal_100": 75,
+    "p_100": 2.5,
+    "c_100": 13,
+    "g_100": 1.3
+  },
+  {
+    "nome": "Manteiga ghee",
+    "aliases": [
+      "ghee",
+      "manteiga clarificada"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 12
+    },
+    "kcal_100": 900,
+    "p_100": 0,
+    "c_100": 0,
+    "g_100": 100
+  },
+  {
+    "nome": "Arroz de carreteiro",
+    "aliases": [
+      "carreteiro",
+      "arroz carreteiro"
+    ],
+    "porcao": {
+      "descricao": "1 escumadeira",
+      "g": 150
+    },
+    "kcal_100": 180,
+    "p_100": 8,
+    "c_100": 22,
+    "g_100": 6
+  },
+  {
+    "nome": "Arroz à grega",
+    "aliases": [
+      "arroz a grega"
+    ],
+    "porcao": {
+      "descricao": "1 escumadeira",
+      "g": 120
+    },
+    "kcal_100": 150,
+    "p_100": 3,
+    "c_100": 29,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Risoto de frango",
+    "aliases": [
+      "risoto",
+      "risotto"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 150
+    },
+    "kcal_100": 165,
+    "p_100": 7,
+    "c_100": 24,
+    "g_100": 4.5
+  },
+  {
+    "nome": "Sucrilhos",
+    "aliases": [
+      "sucrilhos",
+      "flocos de milho açucarados",
+      "cereal matinal"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 30
+    },
+    "kcal_100": 375,
+    "p_100": 7,
+    "c_100": 84,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Granola sem açúcar",
+    "aliases": [
+      "granola caseira",
+      "granola natural"
+    ],
+    "porcao": {
+      "descricao": "3 colheres",
+      "g": 40
+    },
+    "kcal_100": 420,
+    "p_100": 11,
+    "c_100": 62,
+    "g_100": 13
+  },
+  {
+    "nome": "Musli",
+    "aliases": [
+      "musli",
+      "muesli"
+    ],
+    "porcao": {
+      "descricao": "3 colheres",
+      "g": 40
+    },
+    "kcal_100": 360,
+    "p_100": 10,
+    "c_100": 66,
+    "g_100": 6
+  },
+  {
+    "nome": "Farelo de aveia",
+    "aliases": [
+      "farelo de aveia"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 20
+    },
+    "kcal_100": 246,
+    "p_100": 17,
+    "c_100": 50,
+    "g_100": 7
+  },
+  {
+    "nome": "Farinha de aveia",
+    "aliases": [
+      "farinha de aveia"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 20
+    },
+    "kcal_100": 389,
+    "p_100": 14,
+    "c_100": 66,
+    "g_100": 7
+  },
+  {
+    "nome": "Cevada cozida",
+    "aliases": [
+      "cevada",
+      "cevadinha"
+    ],
+    "porcao": {
+      "descricao": "1 escumadeira",
+      "g": 100
+    },
+    "kcal_100": 123,
+    "p_100": 2.3,
+    "c_100": 28,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Trigo para quibe",
+    "aliases": [
+      "trigo para quibe",
+      "triguilho",
+      "bulgur"
+    ],
+    "porcao": {
+      "descricao": "1 escumadeira",
+      "g": 100
+    },
+    "kcal_100": 83,
+    "p_100": 3,
+    "c_100": 18,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Amaranto",
+    "aliases": [
+      "amaranto"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 30
+    },
+    "kcal_100": 371,
+    "p_100": 14,
+    "c_100": 65,
+    "g_100": 7
+  },
+  {
+    "nome": "Painço cozido",
+    "aliases": [
+      "painço",
+      "milheto"
+    ],
+    "porcao": {
+      "descricao": "1 escumadeira",
+      "g": 100
+    },
+    "kcal_100": 119,
+    "p_100": 3.5,
+    "c_100": 24,
+    "g_100": 1
+  },
+  {
+    "nome": "Feijão fradinho cozido",
+    "aliases": [
+      "feijao fradinho",
+      "fradinho",
+      "feijão de corda"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 100
+    },
+    "kcal_100": 116,
+    "p_100": 7.7,
+    "c_100": 21,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Feijão jalo cozido",
+    "aliases": [
+      "feijao jalo",
+      "jalo"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 100
+    },
+    "kcal_100": 95,
+    "p_100": 6,
+    "c_100": 17,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Fava cozida",
+    "aliases": [
+      "fava",
+      "favas"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 100
+    },
+    "kcal_100": 110,
+    "p_100": 7.6,
+    "c_100": 20,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Tremoço",
+    "aliases": [
+      "tremoço",
+      "tremoco"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 60
+    },
+    "kcal_100": 119,
+    "p_100": 16,
+    "c_100": 10,
+    "g_100": 2.9
+  },
+  {
+    "nome": "Edamame",
+    "aliases": [
+      "edamame",
+      "soja verde"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 121,
+    "p_100": 12,
+    "c_100": 9,
+    "g_100": 5
+  },
+  {
+    "nome": "Proteína de soja texturizada",
+    "aliases": [
+      "proteina de soja",
+      "carne de soja",
+      "pts"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 50
+    },
+    "kcal_100": 337,
+    "p_100": 52,
+    "c_100": 31,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Ervilha seca cozida",
+    "aliases": [
+      "ervilha seca",
+      "ervilha partida"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 100
+    },
+    "kcal_100": 118,
+    "p_100": 8,
+    "c_100": 21,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Hummus",
+    "aliases": [
+      "homus",
+      "pasta de grao de bico"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 40
+    },
+    "kcal_100": 177,
+    "p_100": 8,
+    "c_100": 20,
+    "g_100": 8
+  },
+  {
+    "nome": "Lasanha à bolonhesa",
+    "aliases": [
+      "lasanha",
+      "lasanha bolonhesa"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 250
+    },
+    "kcal_100": 135,
+    "p_100": 8,
+    "c_100": 13,
+    "g_100": 6
+  },
+  {
+    "nome": "Macarrão à bolonhesa",
+    "aliases": [
+      "macarrao a bolonhesa",
+      "espaguete a bolonhesa",
+      "macarrão com carne"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 250
+    },
+    "kcal_100": 140,
+    "p_100": 6,
+    "c_100": 20,
+    "g_100": 4
+  },
+  {
+    "nome": "Macarrão alho e óleo",
+    "aliases": [
+      "macarrao alho e oleo",
+      "espaguete alho e óleo"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 200
+    },
+    "kcal_100": 180,
+    "p_100": 5,
+    "c_100": 28,
+    "g_100": 5
+  },
+  {
+    "nome": "Ravióli",
+    "aliases": [
+      "ravioli",
+      "raviole"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 200
+    },
+    "kcal_100": 165,
+    "p_100": 7,
+    "c_100": 25,
+    "g_100": 4
+  },
+  {
+    "nome": "Capeletti ao molho",
+    "aliases": [
+      "capeletti",
+      "capelete"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 200
+    },
+    "kcal_100": 170,
+    "p_100": 7,
+    "c_100": 24,
+    "g_100": 5
+  },
+  {
+    "nome": "Miojo preparado",
+    "aliases": [
+      "miojo",
+      "macarrao instantaneo",
+      "lámen"
+    ],
+    "porcao": {
+      "descricao": "1 pacote",
+      "g": 100
+    },
+    "kcal_100": 190,
+    "p_100": 4.5,
+    "c_100": 26,
+    "g_100": 7
+  },
+  {
+    "nome": "Yakisoba",
+    "aliases": [
+      "yakisoba",
+      "yakissoba"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 300
+    },
+    "kcal_100": 125,
+    "p_100": 6,
+    "c_100": 18,
+    "g_100": 3.5
+  },
+  {
+    "nome": "Panqueca de carne",
+    "aliases": [
+      "panqueca",
+      "panqueca de carne"
+    ],
+    "porcao": {
+      "descricao": "1 panqueca",
+      "g": 120
+    },
+    "kcal_100": 175,
+    "p_100": 9,
+    "c_100": 16,
+    "g_100": 8
+  },
+  {
+    "nome": "Pão australiano",
+    "aliases": [
+      "pao australiano",
+      "pão australiano"
+    ],
+    "porcao": {
+      "descricao": "2 fatias",
+      "g": 60
+    },
+    "kcal_100": 270,
+    "p_100": 8,
+    "c_100": 50,
+    "g_100": 4
+  },
+  {
+    "nome": "Pão de centeio",
+    "aliases": [
+      "pao de centeio",
+      "pão centeio"
+    ],
+    "porcao": {
+      "descricao": "2 fatias",
+      "g": 56
+    },
+    "kcal_100": 259,
+    "p_100": 9,
+    "c_100": 48,
+    "g_100": 3.3
+  },
+  {
+    "nome": "Baguete",
+    "aliases": [
+      "baguete",
+      "baguette"
+    ],
+    "porcao": {
+      "descricao": "1 pedaço",
+      "g": 70
+    },
+    "kcal_100": 274,
+    "p_100": 9,
+    "c_100": 55,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Croissant",
+    "aliases": [
+      "croissant",
+      "croasan"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 60
+    },
+    "kcal_100": 406,
+    "p_100": 8,
+    "c_100": 45,
+    "g_100": 21
+  },
+  {
+    "nome": "Pão de hambúrguer",
+    "aliases": [
+      "pao de hamburguer",
+      "pão de burger"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 290,
+    "p_100": 9,
+    "c_100": 50,
+    "g_100": 5
+  },
+  {
+    "nome": "Pão de hot dog",
+    "aliases": [
+      "pao de hot dog",
+      "pão de cachorro quente"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 285,
+    "p_100": 9,
+    "c_100": 51,
+    "g_100": 4
+  },
+  {
+    "nome": "Bisnaguinha",
+    "aliases": [
+      "bisnaguinha",
+      "pão bisnaga"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 45
+    },
+    "kcal_100": 300,
+    "p_100": 8,
+    "c_100": 53,
+    "g_100": 6
+  },
+  {
+    "nome": "Torrada",
+    "aliases": [
+      "torrada",
+      "torradas"
+    ],
+    "porcao": {
+      "descricao": "4 torradas",
+      "g": 30
+    },
+    "kcal_100": 400,
+    "p_100": 11,
+    "c_100": 72,
+    "g_100": 7
+  },
+  {
+    "nome": "Pão de batata",
+    "aliases": [
+      "pao de batata",
+      "pão de batata recheado"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 280,
+    "p_100": 8,
+    "c_100": 45,
+    "g_100": 7
+  },
+  {
+    "nome": "Sonho",
+    "aliases": [
+      "sonho",
+      "sonho de padaria"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 90
+    },
+    "kcal_100": 340,
+    "p_100": 6,
+    "c_100": 48,
+    "g_100": 14
+  },
+  {
+    "nome": "Rosca doce",
+    "aliases": [
+      "rosca",
+      "rosca doce"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 60
+    },
+    "kcal_100": 330,
+    "p_100": 7,
+    "c_100": 55,
+    "g_100": 9
+  },
+  {
+    "nome": "Bolo de cenoura com chocolate",
+    "aliases": [
+      "bolo de cenoura",
+      "bolo de cenoura com brigadeiro"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 80
+    },
+    "kcal_100": 360,
+    "p_100": 5,
+    "c_100": 52,
+    "g_100": 15
+  },
+  {
+    "nome": "Bolo de fubá",
+    "aliases": [
+      "bolo de fuba",
+      "bolo de fubá"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 80
+    },
+    "kcal_100": 310,
+    "p_100": 5,
+    "c_100": 48,
+    "g_100": 11
+  },
+  {
+    "nome": "Bolo de chocolate",
+    "aliases": [
+      "bolo de chocolate"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 80
+    },
+    "kcal_100": 370,
+    "p_100": 5,
+    "c_100": 53,
+    "g_100": 16
+  },
+  {
+    "nome": "Pão de mel",
+    "aliases": [
+      "pao de mel",
+      "pão de mel"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 360,
+    "p_100": 4,
+    "c_100": 62,
+    "g_100": 11
+  },
+  {
+    "nome": "Empada de frango",
+    "aliases": [
+      "empada",
+      "empadinha"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 330,
+    "p_100": 8,
+    "c_100": 30,
+    "g_100": 20
+  },
+  {
+    "nome": "Quiche",
+    "aliases": [
+      "quiche",
+      "torta francesa"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 280,
+    "p_100": 9,
+    "c_100": 18,
+    "g_100": 19
+  },
+  {
+    "nome": "Folhado",
+    "aliases": [
+      "folhado",
+      "massa folhada"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 70
+    },
+    "kcal_100": 380,
+    "p_100": 7,
+    "c_100": 35,
+    "g_100": 24
+  },
+  {
+    "nome": "Biscoito de polvilho",
+    "aliases": [
+      "biscoito de polvilho",
+      "polvilho",
+      "peta"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 30
+    },
+    "kcal_100": 440,
+    "p_100": 3,
+    "c_100": 62,
+    "g_100": 20
+  },
+  {
+    "nome": "Rosquinha de coco",
+    "aliases": [
+      "rosquinha",
+      "biscoito rosquinha"
+    ],
+    "porcao": {
+      "descricao": "5 unidades",
+      "g": 30
+    },
+    "kcal_100": 460,
+    "p_100": 6,
+    "c_100": 68,
+    "g_100": 18
+  },
+  {
+    "nome": "Torta de frango",
+    "aliases": [
+      "torta de frango",
+      "torta salgada"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 150
+    },
+    "kcal_100": 250,
+    "p_100": 8,
+    "c_100": 22,
+    "g_100": 15
+  },
+  {
+    "nome": "Batata baroa cozida",
+    "aliases": [
+      "batata baroa",
+      "mandioquinha",
+      "batata salsa"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 80,
+    "p_100": 1,
+    "c_100": 18,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Purê de batata",
+    "aliases": [
+      "pure de batata",
+      "purê"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 120
+    },
+    "kcal_100": 110,
+    "p_100": 2,
+    "c_100": 15,
+    "g_100": 4.5
+  },
+  {
+    "nome": "Mandioca frita",
+    "aliases": [
+      "mandioca frita",
+      "aipim frito"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 230,
+    "p_100": 1.5,
+    "c_100": 35,
+    "g_100": 9
+  },
+  {
+    "nome": "Batata doce assada",
+    "aliases": [
+      "batata doce assada"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 120
+    },
+    "kcal_100": 90,
+    "p_100": 1.6,
+    "c_100": 21,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Batata rústica assada",
+    "aliases": [
+      "batata rustica",
+      "batata assada"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 120
+    },
+    "kcal_100": 120,
+    "p_100": 2.5,
+    "c_100": 20,
+    "g_100": 3.5
+  },
+  {
+    "nome": "Acerola",
+    "aliases": [
+      "acerola"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 100
+    },
+    "kcal_100": 32,
+    "p_100": 0.4,
+    "c_100": 8,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Amora",
+    "aliases": [
+      "amora",
+      "amoras"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 100
+    },
+    "kcal_100": 43,
+    "p_100": 1.4,
+    "c_100": 10,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Framboesa",
+    "aliases": [
+      "framboesa",
+      "framboesas"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 100
+    },
+    "kcal_100": 52,
+    "p_100": 1.2,
+    "c_100": 12,
+    "g_100": 0.7
+  },
+  {
+    "nome": "Mirtilo",
+    "aliases": [
+      "mirtilo",
+      "blueberry",
+      "blueberries"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 100
+    },
+    "kcal_100": 57,
+    "p_100": 0.7,
+    "c_100": 14,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Cereja",
+    "aliases": [
+      "cereja",
+      "cerejas"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 100
+    },
+    "kcal_100": 63,
+    "p_100": 1,
+    "c_100": 16,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Damasco",
+    "aliases": [
+      "damasco",
+      "damasco seco"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 60
+    },
+    "kcal_100": 48,
+    "p_100": 1.4,
+    "c_100": 11,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Figo",
+    "aliases": [
+      "figo",
+      "figos"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 100
+    },
+    "kcal_100": 74,
+    "p_100": 0.8,
+    "c_100": 19,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Jaca",
+    "aliases": [
+      "jaca"
+    ],
+    "porcao": {
+      "descricao": "3 bagos",
+      "g": 100
+    },
+    "kcal_100": 95,
+    "p_100": 1.7,
+    "c_100": 23,
+    "g_100": 0.6
+  },
+  {
+    "nome": "Lichia",
+    "aliases": [
+      "lichia",
+      "lichias"
+    ],
+    "porcao": {
+      "descricao": "5 unidades",
+      "g": 80
+    },
+    "kcal_100": 66,
+    "p_100": 0.8,
+    "c_100": 17,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Nectarina",
+    "aliases": [
+      "nectarina"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 130
+    },
+    "kcal_100": 44,
+    "p_100": 1.1,
+    "c_100": 11,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Romã",
+    "aliases": [
+      "roma",
+      "romã"
+    ],
+    "porcao": {
+      "descricao": "1/2 unidade",
+      "g": 100
+    },
+    "kcal_100": 83,
+    "p_100": 1.7,
+    "c_100": 19,
+    "g_100": 1.2
+  },
+  {
+    "nome": "Uva passa",
+    "aliases": [
+      "uva passa",
+      "passas"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 30
+    },
+    "kcal_100": 299,
+    "p_100": 3.1,
+    "c_100": 79,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Banana da terra cozida",
+    "aliases": [
+      "banana da terra",
+      "banana frita",
+      "banana nanica frita"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 120
+    },
+    "kcal_100": 122,
+    "p_100": 1.3,
+    "c_100": 32,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Banana passa",
+    "aliases": [
+      "banana passa",
+      "banana seca"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 40
+    },
+    "kcal_100": 290,
+    "p_100": 3.5,
+    "c_100": 74,
+    "g_100": 1
+  },
+  {
+    "nome": "Coco verde (água e polpa)",
+    "aliases": [
+      "coco verde",
+      "polpa de coco"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 68,
+    "p_100": 1,
+    "c_100": 7,
+    "g_100": 4
+  },
+  {
+    "nome": "Caqui",
+    "aliases": [
+      "caqui",
+      "caquis"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 120
+    },
+    "kcal_100": 70,
+    "p_100": 0.6,
+    "c_100": 18,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Seriguela",
+    "aliases": [
+      "seriguela",
+      "ciriguela"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 80
+    },
+    "kcal_100": 76,
+    "p_100": 1,
+    "c_100": 19,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Sapoti",
+    "aliases": [
+      "sapoti"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 83,
+    "p_100": 0.4,
+    "c_100": 20,
+    "g_100": 1.1
+  },
+  {
+    "nome": "Salada de frutas",
+    "aliases": [
+      "salada de frutas"
+    ],
+    "porcao": {
+      "descricao": "1 taça",
+      "g": 200
+    },
+    "kcal_100": 60,
+    "p_100": 0.8,
+    "c_100": 15,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Abóbora cozida",
+    "aliases": [
+      "abobora",
+      "moranga",
+      "jerimum"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 100
+    },
+    "kcal_100": 40,
+    "p_100": 1,
+    "c_100": 10,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Aspargo cozido",
+    "aliases": [
+      "aspargo",
+      "aspargos"
+    ],
+    "porcao": {
+      "descricao": "5 talos",
+      "g": 80
+    },
+    "kcal_100": 22,
+    "p_100": 2.4,
+    "c_100": 4,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Acelga",
+    "aliases": [
+      "acelga"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 80
+    },
+    "kcal_100": 19,
+    "p_100": 1.8,
+    "c_100": 3.7,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Almeirão",
+    "aliases": [
+      "almeirao"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 60
+    },
+    "kcal_100": 23,
+    "p_100": 1.8,
+    "c_100": 4,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Broto de feijão",
+    "aliases": [
+      "broto de feijao",
+      "moyashi"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 60
+    },
+    "kcal_100": 30,
+    "p_100": 3,
+    "c_100": 6,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Cebolinha",
+    "aliases": [
+      "cebolinha",
+      "cebolinha verde"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 10
+    },
+    "kcal_100": 32,
+    "p_100": 1.8,
+    "c_100": 7,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Salsinha",
+    "aliases": [
+      "salsa",
+      "salsinha"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 10
+    },
+    "kcal_100": 36,
+    "p_100": 3,
+    "c_100": 6,
+    "g_100": 0.8
+  },
+  {
+    "nome": "Coentro",
+    "aliases": [
+      "coentro"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 10
+    },
+    "kcal_100": 23,
+    "p_100": 2.1,
+    "c_100": 3.7,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Escarola refogada",
+    "aliases": [
+      "escarola",
+      "escarola refogada"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 80
+    },
+    "kcal_100": 40,
+    "p_100": 1.6,
+    "c_100": 4,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Mostarda (folha)",
+    "aliases": [
+      "mostarda folha",
+      "folha de mostarda"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 60
+    },
+    "kcal_100": 27,
+    "p_100": 2.9,
+    "c_100": 4.7,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Nabo cozido",
+    "aliases": [
+      "nabo"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 80
+    },
+    "kcal_100": 28,
+    "p_100": 0.9,
+    "c_100": 6,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Rabanete",
+    "aliases": [
+      "rabanete",
+      "rabanetes"
+    ],
+    "porcao": {
+      "descricao": "4 unidades",
+      "g": 60
+    },
+    "kcal_100": 16,
+    "p_100": 0.7,
+    "c_100": 3.4,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Repolho roxo",
+    "aliases": [
+      "repolho roxo"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 80
+    },
+    "kcal_100": 31,
+    "p_100": 1.4,
+    "c_100": 7,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Tomate cereja",
+    "aliases": [
+      "tomate cereja",
+      "tomatinho"
+    ],
+    "porcao": {
+      "descricao": "6 unidades",
+      "g": 90
+    },
+    "kcal_100": 18,
+    "p_100": 0.9,
+    "c_100": 3.9,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Salsão",
+    "aliases": [
+      "salsao",
+      "aipo",
+      "talo de aipo"
+    ],
+    "porcao": {
+      "descricao": "2 talos",
+      "g": 80
+    },
+    "kcal_100": 16,
+    "p_100": 0.7,
+    "c_100": 3,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Alho-poró",
+    "aliases": [
+      "alho poro",
+      "alho-poró"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 61,
+    "p_100": 1.5,
+    "c_100": 14,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Tomate seco",
+    "aliases": [
+      "tomate seco"
+    ],
+    "porcao": {
+      "descricao": "4 pedaços",
+      "g": 30
+    },
+    "kcal_100": 213,
+    "p_100": 5,
+    "c_100": 24,
+    "g_100": 11
+  },
+  {
+    "nome": "Azeitona verde",
+    "aliases": [
+      "azeitona",
+      "azeitonas",
+      "azeitona verde"
+    ],
+    "porcao": {
+      "descricao": "6 unidades",
+      "g": 30
+    },
+    "kcal_100": 145,
+    "p_100": 1,
+    "c_100": 4,
+    "g_100": 15
+  },
+  {
+    "nome": "Azeitona preta",
+    "aliases": [
+      "azeitona preta"
+    ],
+    "porcao": {
+      "descricao": "6 unidades",
+      "g": 30
+    },
+    "kcal_100": 115,
+    "p_100": 0.8,
+    "c_100": 6,
+    "g_100": 11
+  },
+  {
+    "nome": "Cogumelo shiitake",
+    "aliases": [
+      "shiitake",
+      "cogumelo shiitake"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 39,
+    "p_100": 2.2,
+    "c_100": 7,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Couve de bruxelas",
+    "aliases": [
+      "couve de bruxelas"
+    ],
+    "porcao": {
+      "descricao": "5 unidades",
+      "g": 80
+    },
+    "kcal_100": 43,
+    "p_100": 3.4,
+    "c_100": 9,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Pimenta dedo de moça",
+    "aliases": [
+      "pimenta",
+      "pimenta dedo de moca"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 10
+    },
+    "kcal_100": 40,
+    "p_100": 1.9,
+    "c_100": 9,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Salada verde",
+    "aliases": [
+      "salada verde",
+      "mix de folhas",
+      "salada"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 100
+    },
+    "kcal_100": 20,
+    "p_100": 1.5,
+    "c_100": 3.5,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Picles",
+    "aliases": [
+      "picles",
+      "conserva"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 50
+    },
+    "kcal_100": 20,
+    "p_100": 0.6,
+    "c_100": 4,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Avelã",
+    "aliases": [
+      "avela",
+      "avelã",
+      "avelãs"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 30
+    },
+    "kcal_100": 628,
+    "p_100": 15,
+    "c_100": 17,
+    "g_100": 61
+  },
+  {
+    "nome": "Macadâmia",
+    "aliases": [
+      "macadamia",
+      "noz macadâmia"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 30
+    },
+    "kcal_100": 718,
+    "p_100": 8,
+    "c_100": 14,
+    "g_100": 76
+  },
+  {
+    "nome": "Pistache",
+    "aliases": [
+      "pistache",
+      "pistaches"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 30
+    },
+    "kcal_100": 562,
+    "p_100": 20,
+    "c_100": 28,
+    "g_100": 45
+  },
+  {
+    "nome": "Semente de girassol",
+    "aliases": [
+      "semente de girassol",
+      "girassol"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 30
+    },
+    "kcal_100": 584,
+    "p_100": 21,
+    "c_100": 20,
+    "g_100": 51
+  },
+  {
+    "nome": "Semente de abóbora",
+    "aliases": [
+      "semente de abobora",
+      "semente de jerimum"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 30
+    },
+    "kcal_100": 559,
+    "p_100": 30,
+    "c_100": 11,
+    "g_100": 49
+  },
+  {
+    "nome": "Gergelim",
+    "aliases": [
+      "gergelim",
+      "sesamo"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 10
+    },
+    "kcal_100": 573,
+    "p_100": 18,
+    "c_100": 23,
+    "g_100": 50
+  },
+  {
+    "nome": "Pinhão cozido",
+    "aliases": [
+      "pinhao",
+      "pinhão"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 50
+    },
+    "kcal_100": 174,
+    "p_100": 3,
+    "c_100": 34,
+    "g_100": 1
+  },
+  {
+    "nome": "Pudim de leite",
+    "aliases": [
+      "pudim",
+      "pudim de leite condensado"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 210,
+    "p_100": 5,
+    "c_100": 34,
+    "g_100": 6
+  },
+  {
+    "nome": "Mousse de chocolate",
+    "aliases": [
+      "mousse de chocolate",
+      "mousse"
+    ],
+    "porcao": {
+      "descricao": "1 taça",
+      "g": 100
+    },
+    "kcal_100": 250,
+    "p_100": 4,
+    "c_100": 30,
+    "g_100": 13
+  },
+  {
+    "nome": "Beijinho",
+    "aliases": [
+      "beijinho",
+      "branquinho"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 20
+    },
+    "kcal_100": 380,
+    "p_100": 4,
+    "c_100": 58,
+    "g_100": 15
+  },
+  {
+    "nome": "Cocada",
+    "aliases": [
+      "cocada",
+      "cocada branca"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 40
+    },
+    "kcal_100": 420,
+    "p_100": 3,
+    "c_100": 62,
+    "g_100": 18
+  },
+  {
+    "nome": "Pé de moleque",
+    "aliases": [
+      "pe de moleque",
+      "pé de moleque"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 40
+    },
+    "kcal_100": 460,
+    "p_100": 12,
+    "c_100": 52,
+    "g_100": 23
+  },
+  {
+    "nome": "Quindim",
+    "aliases": [
+      "quindim"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 300,
+    "p_100": 5,
+    "c_100": 40,
+    "g_100": 13
+  },
+  {
+    "nome": "Gelatina",
+    "aliases": [
+      "gelatina",
+      "gelatina colorida"
+    ],
+    "porcao": {
+      "descricao": "1 taça",
+      "g": 120
+    },
+    "kcal_100": 62,
+    "p_100": 1.2,
+    "c_100": 14,
+    "g_100": 0
+  },
+  {
+    "nome": "Manjar branco",
+    "aliases": [
+      "manjar",
+      "manjar de coco"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 160,
+    "p_100": 3,
+    "c_100": 28,
+    "g_100": 4
+  },
+  {
+    "nome": "Arroz doce",
+    "aliases": [
+      "arroz doce"
+    ],
+    "porcao": {
+      "descricao": "1 taça",
+      "g": 150
+    },
+    "kcal_100": 140,
+    "p_100": 3,
+    "c_100": 26,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Canjica doce",
+    "aliases": [
+      "canjica",
+      "mungunzá",
+      "munguza"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 200
+    },
+    "kcal_100": 120,
+    "p_100": 2.5,
+    "c_100": 21,
+    "g_100": 3
+  },
+  {
+    "nome": "Pavê",
+    "aliases": [
+      "pave",
+      "pavê"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 260,
+    "p_100": 5,
+    "c_100": 34,
+    "g_100": 12
+  },
+  {
+    "nome": "Torta de limão",
+    "aliases": [
+      "torta de limao",
+      "torta de limão"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 300,
+    "p_100": 4,
+    "c_100": 40,
+    "g_100": 14
+  },
+  {
+    "nome": "Sorvete de chocolate",
+    "aliases": [
+      "sorvete de chocolate"
+    ],
+    "porcao": {
+      "descricao": "2 bolas",
+      "g": 100
+    },
+    "kcal_100": 216,
+    "p_100": 3.8,
+    "c_100": 28,
+    "g_100": 11
+  },
+  {
+    "nome": "Picolé de fruta",
+    "aliases": [
+      "picole de fruta",
+      "picolé",
+      "sacolé"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 70
+    },
+    "kcal_100": 90,
+    "p_100": 0.3,
+    "c_100": 22,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Açaí na tigela",
+    "aliases": [
+      "acai na tigela",
+      "açaí com granola",
+      "açaí tigela"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 300
+    },
+    "kcal_100": 150,
+    "p_100": 2,
+    "c_100": 24,
+    "g_100": 6
+  },
+  {
+    "nome": "Cookie",
+    "aliases": [
+      "cookie",
+      "biscoito americano"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 40
+    },
+    "kcal_100": 470,
+    "p_100": 6,
+    "c_100": 64,
+    "g_100": 21
+  },
+  {
+    "nome": "Churros",
+    "aliases": [
+      "churros",
+      "churro"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 380,
+    "p_100": 5,
+    "c_100": 48,
+    "g_100": 19
+  },
+  {
+    "nome": "Goiabada",
+    "aliases": [
+      "goiabada"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 40
+    },
+    "kcal_100": 280,
+    "p_100": 0.5,
+    "c_100": 70,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Brownie",
+    "aliases": [
+      "brownie",
+      "browne"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 70
+    },
+    "kcal_100": 420,
+    "p_100": 5,
+    "c_100": 55,
+    "g_100": 20
+  },
+  {
+    "nome": "Bombom",
+    "aliases": [
+      "bombom",
+      "chocolate bombom"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 20
+    },
+    "kcal_100": 520,
+    "p_100": 6,
+    "c_100": 58,
+    "g_100": 29
+  },
+  {
+    "nome": "Suspiro",
+    "aliases": [
+      "suspiro",
+      "merengue"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 20
+    },
+    "kcal_100": 390,
+    "p_100": 3,
+    "c_100": 94,
+    "g_100": 0
+  },
+  {
+    "nome": "Petit gateau",
+    "aliases": [
+      "petit gateau",
+      "petit gâteau"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 380,
+    "p_100": 5,
+    "c_100": 45,
+    "g_100": 20
+  },
+  {
+    "nome": "Pastel de carne",
+    "aliases": [
+      "pastel",
+      "pastel de carne",
+      "pastel de feira"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 290,
+    "p_100": 9,
+    "c_100": 28,
+    "g_100": 16
+  },
+  {
+    "nome": "Pastel de queijo",
+    "aliases": [
+      "pastel de queijo"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 300,
+    "p_100": 9,
+    "c_100": 28,
+    "g_100": 17
+  },
+  {
+    "nome": "Kibe frito",
+    "aliases": [
+      "kibe",
+      "quibe"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 250,
+    "p_100": 11,
+    "c_100": 18,
+    "g_100": 14
+  },
+  {
+    "nome": "Bolinho de bacalhau",
+    "aliases": [
+      "bolinho de bacalhau",
+      "bolinha de bacalhau"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 80
+    },
+    "kcal_100": 230,
+    "p_100": 10,
+    "c_100": 18,
+    "g_100": 13
+  },
+  {
+    "nome": "Croquete de carne",
+    "aliases": [
+      "croquete"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 80
+    },
+    "kcal_100": 260,
+    "p_100": 10,
+    "c_100": 22,
+    "g_100": 15
+  },
+  {
+    "nome": "Enroladinho de salsicha",
+    "aliases": [
+      "enroladinho",
+      "salsichinha"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 60
+    },
+    "kcal_100": 290,
+    "p_100": 8,
+    "c_100": 28,
+    "g_100": 16
+  },
+  {
+    "nome": "X-burguer",
+    "aliases": [
+      "x burguer",
+      "xis burguer",
+      "cheeseburger caseiro"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 180
+    },
+    "kcal_100": 260,
+    "p_100": 12,
+    "c_100": 22,
+    "g_100": 14
+  },
+  {
+    "nome": "X-salada",
+    "aliases": [
+      "x salada",
+      "xis salada"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 220
+    },
+    "kcal_100": 230,
+    "p_100": 11,
+    "c_100": 20,
+    "g_100": 12
+  },
+  {
+    "nome": "X-bacon",
+    "aliases": [
+      "x bacon",
+      "xis bacon"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 230
+    },
+    "kcal_100": 270,
+    "p_100": 13,
+    "c_100": 19,
+    "g_100": 16
+  },
+  {
+    "nome": "Cheeseburger (lanchonete)",
+    "aliases": [
+      "cheeseburger",
+      "hamburguer com queijo"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 115
+    },
+    "kcal_100": 260,
+    "p_100": 13,
+    "c_100": 27,
+    "g_100": 11
+  },
+  {
+    "nome": "Hot dog completo",
+    "aliases": [
+      "hot dog",
+      "cachorro quente",
+      "dogão"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 180
+    },
+    "kcal_100": 230,
+    "p_100": 8,
+    "c_100": 24,
+    "g_100": 11
+  },
+  {
+    "nome": "Misto quente",
+    "aliases": [
+      "misto quente",
+      "misto",
+      "sanduiche de queijo e presunto"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 120
+    },
+    "kcal_100": 290,
+    "p_100": 13,
+    "c_100": 28,
+    "g_100": 14
+  },
+  {
+    "nome": "Bauru",
+    "aliases": [
+      "bauru",
+      "sanduiche bauru"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 200
+    },
+    "kcal_100": 250,
+    "p_100": 13,
+    "c_100": 24,
+    "g_100": 11
+  },
+  {
+    "nome": "Tapioca recheada",
+    "aliases": [
+      "tapioca recheada",
+      "tapioca com queijo"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 150
+    },
+    "kcal_100": 210,
+    "p_100": 6,
+    "c_100": 32,
+    "g_100": 7
+  },
+  {
+    "nome": "Crepe",
+    "aliases": [
+      "crepe",
+      "crepe salgado"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 150
+    },
+    "kcal_100": 200,
+    "p_100": 7,
+    "c_100": 24,
+    "g_100": 9
+  },
+  {
+    "nome": "Espetinho de frango",
+    "aliases": [
+      "espetinho de frango",
+      "espeto de frango"
+    ],
+    "porcao": {
+      "descricao": "1 espeto",
+      "g": 80
+    },
+    "kcal_100": 180,
+    "p_100": 25,
+    "c_100": 1,
+    "g_100": 8
+  },
+  {
+    "nome": "Escondidinho de carne",
+    "aliases": [
+      "escondidinho",
+      "escondidinho de carne seca"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 160,
+    "p_100": 8,
+    "c_100": 15,
+    "g_100": 8
+  },
+  {
+    "nome": "Sanduíche natural",
+    "aliases": [
+      "sanduiche natural",
+      "sanduíche natural"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 150
+    },
+    "kcal_100": 190,
+    "p_100": 9,
+    "c_100": 22,
+    "g_100": 7
+  },
+  {
+    "nome": "Pizza calabresa",
+    "aliases": [
+      "pizza calabresa",
+      "pizza de calabresa"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 265,
+    "p_100": 11,
+    "c_100": 28,
+    "g_100": 12
+  },
+  {
+    "nome": "Pizza portuguesa",
+    "aliases": [
+      "pizza portuguesa"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 250,
+    "p_100": 11,
+    "c_100": 27,
+    "g_100": 11
+  },
+  {
+    "nome": "Wrap de frango",
+    "aliases": [
+      "wrap",
+      "rap10 de frango"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 180
+    },
+    "kcal_100": 200,
+    "p_100": 11,
+    "c_100": 22,
+    "g_100": 8
+  },
+  {
+    "nome": "Strogonoff de carne",
+    "aliases": [
+      "estrogonofe de carne",
+      "strogonoff",
+      "estrogonofe de carne"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 150
+    },
+    "kcal_100": 170,
+    "p_100": 11,
+    "c_100": 6,
+    "g_100": 11
+  },
+  {
+    "nome": "Baião de dois",
+    "aliases": [
+      "baiao de dois",
+      "baião de dois"
+    ],
+    "porcao": {
+      "descricao": "1 escumadeira",
+      "g": 180
+    },
+    "kcal_100": 160,
+    "p_100": 7,
+    "c_100": 22,
+    "g_100": 5
+  },
+  {
+    "nome": "Virado à paulista",
+    "aliases": [
+      "virado a paulista",
+      "virado de feijao"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 175,
+    "p_100": 8,
+    "c_100": 20,
+    "g_100": 7
+  },
+  {
+    "nome": "Bobó de camarão",
+    "aliases": [
+      "bobo de camarao",
+      "bobó de camarão"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 200
+    },
+    "kcal_100": 130,
+    "p_100": 7,
+    "c_100": 10,
+    "g_100": 7
+  },
+  {
+    "nome": "Vatapá",
+    "aliases": [
+      "vatapa",
+      "vatapá"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 150
+    },
+    "kcal_100": 190,
+    "p_100": 7,
+    "c_100": 12,
+    "g_100": 13
+  },
+  {
+    "nome": "Acarajé",
+    "aliases": [
+      "acaraje",
+      "acarajé"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 120
+    },
+    "kcal_100": 280,
+    "p_100": 8,
+    "c_100": 20,
+    "g_100": 19
+  },
+  {
+    "nome": "Galinhada",
+    "aliases": [
+      "galinhada",
+      "arroz com frango"
+    ],
+    "porcao": {
+      "descricao": "1 escumadeira",
+      "g": 180
+    },
+    "kcal_100": 165,
+    "p_100": 11,
+    "c_100": 18,
+    "g_100": 5
+  },
+  {
+    "nome": "Cuscuz paulista",
+    "aliases": [
+      "cuscuz paulista",
+      "cuscuz recheado"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 150
+    },
+    "kcal_100": 150,
+    "p_100": 5,
+    "c_100": 26,
+    "g_100": 3
+  },
+  {
+    "nome": "Tutu de feijão",
+    "aliases": [
+      "tutu de feijao",
+      "tutu",
+      "tutu à mineira"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 150
+    },
+    "kcal_100": 135,
+    "p_100": 6,
+    "c_100": 20,
+    "g_100": 3.5
+  },
+  {
+    "nome": "Feijão tropeiro",
+    "aliases": [
+      "feijao tropeiro",
+      "tropeiro"
+    ],
+    "porcao": {
+      "descricao": "1 escumadeira",
+      "g": 150
+    },
+    "kcal_100": 200,
+    "p_100": 10,
+    "c_100": 20,
+    "g_100": 9
+  },
+  {
+    "nome": "Frango com quiabo",
+    "aliases": [
+      "frango com quiabo"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 130,
+    "p_100": 14,
+    "c_100": 4,
+    "g_100": 6
+  },
+  {
+    "nome": "Picadinho de carne",
+    "aliases": [
+      "picadinho",
+      "picadinho de carne"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 150
+    },
+    "kcal_100": 160,
+    "p_100": 15,
+    "c_100": 3,
+    "g_100": 9
+  },
+  {
+    "nome": "Caldo verde",
+    "aliases": [
+      "caldo verde",
+      "sopa de couve"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 250
+    },
+    "kcal_100": 65,
+    "p_100": 3,
+    "c_100": 8,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Sopa de legumes",
+    "aliases": [
+      "sopa de legumes",
+      "sopa de verduras"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 300
+    },
+    "kcal_100": 40,
+    "p_100": 2,
+    "c_100": 7,
+    "g_100": 0.6
+  },
+  {
+    "nome": "Sopa de feijão",
+    "aliases": [
+      "sopa de feijao",
+      "caldo de feijão"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 300
+    },
+    "kcal_100": 75,
+    "p_100": 4,
+    "c_100": 11,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Macarronada",
+    "aliases": [
+      "macarronada",
+      "macarrao ao molho"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 250
+    },
+    "kcal_100": 150,
+    "p_100": 5,
+    "c_100": 24,
+    "g_100": 4
+  },
+  {
+    "nome": "Escondidinho de frango",
+    "aliases": [
+      "escondidinho de frango"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 150,
+    "p_100": 9,
+    "c_100": 15,
+    "g_100": 6
+  },
+  {
+    "nome": "Suco de uva (em pó)",
+    "aliases": [
+      "suco de uva em po",
+      "suco de uva de pó",
+      "suco em po"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 40,
+    "p_100": 0,
+    "c_100": 10,
+    "g_100": 0
+  },
+  {
+    "nome": "Café com leite",
+    "aliases": [
+      "cafe com leite",
+      "pingado",
+      "media"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 200
+    },
+    "kcal_100": 40,
+    "p_100": 2,
+    "c_100": 4,
+    "g_100": 1.7
+  },
+  {
+    "nome": "Achocolatado com leite",
+    "aliases": [
+      "nescau",
+      "achocolatado",
+      "toddy",
+      "leite com nescau"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 85,
+    "p_100": 3,
+    "c_100": 13,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Cerveja (lata)",
+    "aliases": [
+      "cerveja lata",
+      "latinha de cerveja"
+    ],
+    "porcao": {
+      "descricao": "1 lata 350ml",
+      "g": 350
+    },
+    "kcal_100": 42,
+    "p_100": 0.5,
+    "c_100": 3.5,
+    "g_100": 0
+  },
+  {
+    "nome": "Vinho tinto",
+    "aliases": [
+      "vinho tinto",
+      "taça de vinho",
+      "vinho"
+    ],
+    "porcao": {
+      "descricao": "1 taça 150ml",
+      "g": 150
+    },
+    "kcal_100": 85,
+    "p_100": 0.1,
+    "c_100": 2.6,
+    "g_100": 0
+  },
+  {
+    "nome": "Vinho branco",
+    "aliases": [
+      "vinho branco"
+    ],
+    "porcao": {
+      "descricao": "1 taça 150ml",
+      "g": 150
+    },
+    "kcal_100": 82,
+    "p_100": 0.1,
+    "c_100": 2.6,
+    "g_100": 0
+  },
+  {
+    "nome": "Caipirinha",
+    "aliases": [
+      "caipirinha"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 120,
+    "p_100": 0,
+    "c_100": 12,
+    "g_100": 0
+  },
+  {
+    "nome": "Suco de maracujá",
+    "aliases": [
+      "suco de maracuja",
+      "suco de maracujá"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 55,
+    "p_100": 0.6,
+    "c_100": 13,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Suco de manga",
+    "aliases": [
+      "suco de manga"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 54,
+    "p_100": 0.3,
+    "c_100": 13,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Suco de abacaxi",
+    "aliases": [
+      "suco de abacaxi"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 50,
+    "p_100": 0.4,
+    "c_100": 12,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Limonada",
+    "aliases": [
+      "limonada",
+      "suco de limao"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 40,
+    "p_100": 0.1,
+    "c_100": 10,
+    "g_100": 0
+  },
+  {
+    "nome": "Chá mate",
+    "aliases": [
+      "cha mate",
+      "mate",
+      "mate gelado"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 25,
+    "p_100": 0,
+    "c_100": 6,
+    "g_100": 0
+  },
+  {
+    "nome": "Capuccino",
+    "aliases": [
+      "capuccino",
+      "cappuccino"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 200
+    },
+    "kcal_100": 60,
+    "p_100": 2,
+    "c_100": 9,
+    "g_100": 2
+  },
+  {
+    "nome": "Chocolate quente",
+    "aliases": [
+      "chocolate quente"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 200
+    },
+    "kcal_100": 90,
+    "p_100": 3,
+    "c_100": 13,
+    "g_100": 3
+  },
+  {
+    "nome": "Smoothie de frutas",
+    "aliases": [
+      "smoothie",
+      "smoothie de frutas"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 75,
+    "p_100": 1.5,
+    "c_100": 16,
+    "g_100": 1
+  },
+  {
+    "nome": "Energético",
+    "aliases": [
+      "energetico",
+      "energy drink",
+      "red bull"
+    ],
+    "porcao": {
+      "descricao": "1 lata",
+      "g": 250
+    },
+    "kcal_100": 45,
+    "p_100": 0,
+    "c_100": 11,
+    "g_100": 0
+  },
+  {
+    "nome": "Isotônico",
+    "aliases": [
+      "isotonico",
+      "gatorade"
+    ],
+    "porcao": {
+      "descricao": "1 garrafa",
+      "g": 500
+    },
+    "kcal_100": 26,
+    "p_100": 0,
+    "c_100": 6,
+    "g_100": 0
+  },
+  {
+    "nome": "Suco de melancia",
+    "aliases": [
+      "suco de melancia"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 30,
+    "p_100": 0.6,
+    "c_100": 7.5,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Suco verde",
+    "aliases": [
+      "suco verde",
+      "suco detox"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 35,
+    "p_100": 1,
+    "c_100": 7,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Dose de destilado",
+    "aliases": [
+      "cachaca",
+      "vodka",
+      "whisky",
+      "dose",
+      "destilado"
+    ],
+    "porcao": {
+      "descricao": "1 dose 50ml",
+      "g": 50
+    },
+    "kcal_100": 231,
+    "p_100": 0,
+    "c_100": 0,
+    "g_100": 0
+  },
+  {
+    "nome": "Leite de amêndoas",
+    "aliases": [
+      "leite de amendoas",
+      "leite vegetal de amêndoas"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 24,
+    "p_100": 0.5,
+    "c_100": 3,
+    "g_100": 1.1
+  },
+  {
+    "nome": "Leite de aveia",
+    "aliases": [
+      "leite de aveia",
+      "bebida de aveia"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 47,
+    "p_100": 0.8,
+    "c_100": 7,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Whey protein isolado",
+    "aliases": [
+      "whey isolado",
+      "whey protein isolado"
+    ],
+    "porcao": {
+      "descricao": "1 scoop",
+      "g": 30
+    },
+    "kcal_100": 360,
+    "p_100": 85,
+    "c_100": 5,
+    "g_100": 1
+  },
+  {
+    "nome": "Creatina",
+    "aliases": [
+      "creatina"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 5
+    },
+    "kcal_100": 0,
+    "p_100": 0,
+    "c_100": 0,
+    "g_100": 0
+  },
+  {
+    "nome": "BCAA",
+    "aliases": [
+      "bcaa",
+      "aminoacidos"
+    ],
+    "porcao": {
+      "descricao": "1 dose",
+      "g": 10
+    },
+    "kcal_100": 350,
+    "p_100": 80,
+    "c_100": 4,
+    "g_100": 0
+  },
+  {
+    "nome": "Albumina",
+    "aliases": [
+      "albumina"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 30
+    },
+    "kcal_100": 376,
+    "p_100": 81,
+    "c_100": 4,
+    "g_100": 1
+  },
+  {
+    "nome": "Barra de proteína",
+    "aliases": [
+      "barra de proteina",
+      "protein bar"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 40
+    },
+    "kcal_100": 350,
+    "p_100": 30,
+    "c_100": 40,
+    "g_100": 10
+  },
+  {
+    "nome": "Colágeno",
+    "aliases": [
+      "colageno",
+      "colágeno hidrolisado"
+    ],
+    "porcao": {
+      "descricao": "1 dose",
+      "g": 10
+    },
+    "kcal_100": 350,
+    "p_100": 88,
+    "c_100": 0,
+    "g_100": 0
+  },
+  {
+    "nome": "Pasta de amendoim integral",
+    "aliases": [
+      "pasta de amendoim integral",
+      "manteiga de amendoim"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 20
+    },
+    "kcal_100": 590,
+    "p_100": 25,
+    "c_100": 20,
+    "g_100": 48
+  },
+  {
+    "nome": "Açúcar mascavo",
+    "aliases": [
+      "acucar mascavo",
+      "açúcar mascavo"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 12
+    },
+    "kcal_100": 369,
+    "p_100": 0,
+    "c_100": 95,
+    "g_100": 0
+  },
+  {
+    "nome": "Geleia de frutas",
+    "aliases": [
+      "geleia",
+      "geleia de morango"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 20
+    },
+    "kcal_100": 250,
+    "p_100": 0.4,
+    "c_100": 62,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Molho barbecue",
+    "aliases": [
+      "barbecue",
+      "molho bbq"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 17
+    },
+    "kcal_100": 170,
+    "p_100": 0.8,
+    "c_100": 40,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Molho branco",
+    "aliases": [
+      "molho branco",
+      "bechamel"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 40
+    },
+    "kcal_100": 130,
+    "p_100": 3,
+    "c_100": 9,
+    "g_100": 9
+  },
+  {
+    "nome": "Molho pesto",
+    "aliases": [
+      "pesto",
+      "molho pesto"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 20
+    },
+    "kcal_100": 450,
+    "p_100": 5,
+    "c_100": 6,
+    "g_100": 45
+  },
+  {
+    "nome": "Vinagre",
+    "aliases": [
+      "vinagre"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 15
+    },
+    "kcal_100": 18,
+    "p_100": 0,
+    "c_100": 0.6,
+    "g_100": 0
+  },
+  {
+    "nome": "Caldo de galinha (cubo)",
+    "aliases": [
+      "caldo de galinha",
+      "caldo knorr",
+      "tablete de caldo"
+    ],
+    "porcao": {
+      "descricao": "1 cubo",
+      "g": 10
+    },
+    "kcal_100": 230,
+    "p_100": 11,
+    "c_100": 18,
+    "g_100": 13
+  },
+  {
+    "nome": "Adoçante",
+    "aliases": [
+      "adocante",
+      "adoçante líquido"
+    ],
+    "porcao": {
+      "descricao": "5 gotas",
+      "g": 1
+    },
+    "kcal_100": 0,
+    "p_100": 0,
+    "c_100": 0,
+    "g_100": 0
+  },
+  {
+    "nome": "Sushi (niguiri)",
+    "aliases": [
+      "sushi",
+      "niguiri",
+      "nigiri"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 50
+    },
+    "kcal_100": 150,
+    "p_100": 7,
+    "c_100": 24,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Sashimi de salmão",
+    "aliases": [
+      "sashimi",
+      "sashimi de salmao"
+    ],
+    "porcao": {
+      "descricao": "5 fatias",
+      "g": 80
+    },
+    "kcal_100": 140,
+    "p_100": 20,
+    "c_100": 0,
+    "g_100": 6.5
+  },
+  {
+    "nome": "Temaki de salmão",
+    "aliases": [
+      "temaki",
+      "temaki de salmao"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 150
+    },
+    "kcal_100": 170,
+    "p_100": 8,
+    "c_100": 22,
+    "g_100": 6
+  },
+  {
+    "nome": "Hot roll",
+    "aliases": [
+      "hot roll",
+      "hot philadelphia"
+    ],
+    "porcao": {
+      "descricao": "4 peças",
+      "g": 100
+    },
+    "kcal_100": 220,
+    "p_100": 7,
+    "c_100": 24,
+    "g_100": 11
+  },
+  {
+    "nome": "Uramaki (califórnia)",
+    "aliases": [
+      "uramaki",
+      "california roll",
+      "sushi california"
+    ],
+    "porcao": {
+      "descricao": "4 peças",
+      "g": 90
+    },
+    "kcal_100": 160,
+    "p_100": 5,
+    "c_100": 26,
+    "g_100": 4
+  },
+  {
+    "nome": "Gohan (arroz japonês)",
+    "aliases": [
+      "gohan",
+      "arroz japones"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 120
+    },
+    "kcal_100": 140,
+    "p_100": 2.7,
+    "c_100": 31,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Missoshiru",
+    "aliases": [
+      "missoshiru",
+      "sopa de missô",
+      "sopa miso"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 200
+    },
+    "kcal_100": 40,
+    "p_100": 3,
+    "c_100": 4,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Gyoza",
+    "aliases": [
+      "gyoza",
+      "guioza",
+      "pastel japones"
+    ],
+    "porcao": {
+      "descricao": "4 unidades",
+      "g": 80
+    },
+    "kcal_100": 210,
+    "p_100": 8,
+    "c_100": 24,
+    "g_100": 9
+  },
+  {
+    "nome": "Harumaki",
+    "aliases": [
+      "harumaki",
+      "rolinho primavera"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 80
+    },
+    "kcal_100": 230,
+    "p_100": 6,
+    "c_100": 26,
+    "g_100": 11
+  },
+  {
+    "nome": "Tempurá de legumes",
+    "aliases": [
+      "tempura",
+      "tempurá"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 210,
+    "p_100": 4,
+    "c_100": 22,
+    "g_100": 12
+  },
+  {
+    "nome": "Yakitori",
+    "aliases": [
+      "yakitori",
+      "espetinho japones"
+    ],
+    "porcao": {
+      "descricao": "2 espetos",
+      "g": 80
+    },
+    "kcal_100": 180,
+    "p_100": 20,
+    "c_100": 6,
+    "g_100": 8
+  },
+  {
+    "nome": "Edamame com sal",
+    "aliases": [
+      "edamame cozido"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 122,
+    "p_100": 11,
+    "c_100": 10,
+    "g_100": 5
+  },
+  {
+    "nome": "Tabule",
+    "aliases": [
+      "tabule",
+      "tabbouleh"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 120
+    },
+    "kcal_100": 120,
+    "p_100": 2.5,
+    "c_100": 18,
+    "g_100": 4.5
+  },
+  {
+    "nome": "Charuto de folha de uva",
+    "aliases": [
+      "charuto",
+      "charuto de uva",
+      "niguiri arabe"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 90
+    },
+    "kcal_100": 140,
+    "p_100": 3,
+    "c_100": 18,
+    "g_100": 6
+  },
+  {
+    "nome": "Kafta",
+    "aliases": [
+      "kafta",
+      "kefta",
+      "espetinho de kafta"
+    ],
+    "porcao": {
+      "descricao": "1 espeto",
+      "g": 90
+    },
+    "kcal_100": 240,
+    "p_100": 17,
+    "c_100": 3,
+    "g_100": 18
+  },
+  {
+    "nome": "Babaganuche",
+    "aliases": [
+      "babaganuche",
+      "baba ganoush",
+      "pasta de berinjela"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 40
+    },
+    "kcal_100": 150,
+    "p_100": 3,
+    "c_100": 9,
+    "g_100": 12
+  },
+  {
+    "nome": "Coalhada seca",
+    "aliases": [
+      "coalhada",
+      "coalhada seca",
+      "labneh"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 40
+    },
+    "kcal_100": 110,
+    "p_100": 6,
+    "c_100": 4,
+    "g_100": 8
+  },
+  {
+    "nome": "Taco",
+    "aliases": [
+      "taco",
+      "tacos"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 225,
+    "p_100": 9,
+    "c_100": 20,
+    "g_100": 12
+  },
+  {
+    "nome": "Burrito",
+    "aliases": [
+      "burrito"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 220
+    },
+    "kcal_100": 210,
+    "p_100": 9,
+    "c_100": 24,
+    "g_100": 9
+  },
+  {
+    "nome": "Guacamole",
+    "aliases": [
+      "guacamole"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 50
+    },
+    "kcal_100": 160,
+    "p_100": 2,
+    "c_100": 9,
+    "g_100": 14
+  },
+  {
+    "nome": "Nachos com queijo",
+    "aliases": [
+      "nachos",
+      "doritos com queijo"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 340,
+    "p_100": 7,
+    "c_100": 38,
+    "g_100": 18
+  },
+  {
+    "nome": "Quesadilla",
+    "aliases": [
+      "quesadilla",
+      "quesadila"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 150
+    },
+    "kcal_100": 280,
+    "p_100": 12,
+    "c_100": 28,
+    "g_100": 14
+  },
+  {
+    "nome": "Pequi",
+    "aliases": [
+      "pequi"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 205,
+    "p_100": 3,
+    "c_100": 13,
+    "g_100": 16
+  },
+  {
+    "nome": "Umbu",
+    "aliases": [
+      "umbu",
+      "imbu"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 90
+    },
+    "kcal_100": 44,
+    "p_100": 0.6,
+    "c_100": 11,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Jambo",
+    "aliases": [
+      "jambo"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 100
+    },
+    "kcal_100": 45,
+    "p_100": 0.6,
+    "c_100": 11,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Mangaba",
+    "aliases": [
+      "mangaba"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 90
+    },
+    "kcal_100": 43,
+    "p_100": 0.7,
+    "c_100": 10,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Buriti",
+    "aliases": [
+      "buriti"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 60
+    },
+    "kcal_100": 140,
+    "p_100": 2,
+    "c_100": 12,
+    "g_100": 9
+  },
+  {
+    "nome": "Abiu",
+    "aliases": [
+      "abiu"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 95,
+    "p_100": 1.5,
+    "c_100": 22,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Pitomba",
+    "aliases": [
+      "pitomba"
+    ],
+    "porcao": {
+      "descricao": "5 unidades",
+      "g": 80
+    },
+    "kcal_100": 68,
+    "p_100": 0.8,
+    "c_100": 17,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Jenipapo",
+    "aliases": [
+      "jenipapo"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 113,
+    "p_100": 5.2,
+    "c_100": 25,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Tamarindo",
+    "aliases": [
+      "tamarindo"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 40
+    },
+    "kcal_100": 239,
+    "p_100": 2.8,
+    "c_100": 63,
+    "g_100": 0.6
+  },
+  {
+    "nome": "Goiaba branca",
+    "aliases": [
+      "goiaba branca"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 130
+    },
+    "kcal_100": 52,
+    "p_100": 1.1,
+    "c_100": 12,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Taioba refogada",
+    "aliases": [
+      "taioba"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 80
+    },
+    "kcal_100": 50,
+    "p_100": 4,
+    "c_100": 7,
+    "g_100": 1
+  },
+  {
+    "nome": "Ora-pro-nóbis",
+    "aliases": [
+      "ora pro nobis",
+      "ora-pro-nóbis"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 80
+    },
+    "kcal_100": 36,
+    "p_100": 3.5,
+    "c_100": 4,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Caruru (folha)",
+    "aliases": [
+      "caruru",
+      "bredo"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 80
+    },
+    "kcal_100": 30,
+    "p_100": 3,
+    "c_100": 4,
+    "g_100": 0.4
+  },
+  {
+    "nome": "Abóbora cabotiá",
+    "aliases": [
+      "cabotia",
+      "abobora japonesa",
+      "kabocha"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 100
+    },
+    "kcal_100": 48,
+    "p_100": 1.5,
+    "c_100": 11,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Batata yacon",
+    "aliases": [
+      "yacon",
+      "batata yacon"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 54,
+    "p_100": 0.5,
+    "c_100": 13,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Cogumelo paris",
+    "aliases": [
+      "cogumelo paris",
+      "cogumelo branco"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 80
+    },
+    "kcal_100": 22,
+    "p_100": 3.1,
+    "c_100": 3.3,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Pimentão amarelo",
+    "aliases": [
+      "pimentao amarelo"
+    ],
+    "porcao": {
+      "descricao": "1/2 unidade",
+      "g": 60
+    },
+    "kcal_100": 27,
+    "p_100": 1,
+    "c_100": 6,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Rapadura",
+    "aliases": [
+      "rapadura"
+    ],
+    "porcao": {
+      "descricao": "1 pedaço",
+      "g": 30
+    },
+    "kcal_100": 352,
+    "p_100": 0.6,
+    "c_100": 90,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Melado de cana",
+    "aliases": [
+      "melado",
+      "melaco",
+      "melaço"
+    ],
+    "porcao": {
+      "descricao": "1 colher",
+      "g": 20
+    },
+    "kcal_100": 297,
+    "p_100": 0,
+    "c_100": 75,
+    "g_100": 0
+  },
+  {
+    "nome": "Curau",
+    "aliases": [
+      "curau",
+      "canjica cremosa",
+      "papa de milho"
+    ],
+    "porcao": {
+      "descricao": "1 taça",
+      "g": 150
+    },
+    "kcal_100": 120,
+    "p_100": 3,
+    "c_100": 20,
+    "g_100": 3
+  },
+  {
+    "nome": "Ambrosia",
+    "aliases": [
+      "ambrosia"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 250,
+    "p_100": 6,
+    "c_100": 40,
+    "g_100": 7
+  },
+  {
+    "nome": "Cajuzinho",
+    "aliases": [
+      "cajuzinho",
+      "docinho de amendoim"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 20
+    },
+    "kcal_100": 450,
+    "p_100": 9,
+    "c_100": 55,
+    "g_100": 22
+  },
+  {
+    "nome": "Maria-mole",
+    "aliases": [
+      "maria mole",
+      "maria-mole"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 40
+    },
+    "kcal_100": 330,
+    "p_100": 3,
+    "c_100": 78,
+    "g_100": 1
+  },
+  {
+    "nome": "Bananada",
+    "aliases": [
+      "bananada",
+      "doce de banana"
+    ],
+    "porcao": {
+      "descricao": "1 pedaço",
+      "g": 40
+    },
+    "kcal_100": 270,
+    "p_100": 1,
+    "c_100": 68,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Doce de abóbora",
+    "aliases": [
+      "doce de abobora",
+      "doce de jerimum"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 60
+    },
+    "kcal_100": 200,
+    "p_100": 1,
+    "c_100": 50,
+    "g_100": 0.3
+  },
+  {
+    "nome": "Fios de ovos",
+    "aliases": [
+      "fios de ovos"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 40
+    },
+    "kcal_100": 320,
+    "p_100": 7,
+    "c_100": 55,
+    "g_100": 8
+  },
+  {
+    "nome": "Bolo no pote",
+    "aliases": [
+      "bolo no pote"
+    ],
+    "porcao": {
+      "descricao": "1 pote",
+      "g": 200
+    },
+    "kcal_100": 300,
+    "p_100": 4,
+    "c_100": 42,
+    "g_100": 13
+  },
+  {
+    "nome": "Palha italiana",
+    "aliases": [
+      "palha italiana"
+    ],
+    "porcao": {
+      "descricao": "1 pedaço",
+      "g": 50
+    },
+    "kcal_100": 430,
+    "p_100": 5,
+    "c_100": 55,
+    "g_100": 21
+  },
+  {
+    "nome": "Alfajor",
+    "aliases": [
+      "alfajor"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 50
+    },
+    "kcal_100": 420,
+    "p_100": 5,
+    "c_100": 60,
+    "g_100": 18
+  },
+  {
+    "nome": "Cuca",
+    "aliases": [
+      "cuca",
+      "cuca alemã"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 80
+    },
+    "kcal_100": 330,
+    "p_100": 6,
+    "c_100": 52,
+    "g_100": 11
+  },
+  {
+    "nome": "Pão doce",
+    "aliases": [
+      "pao doce",
+      "pão doce"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 60
+    },
+    "kcal_100": 300,
+    "p_100": 7,
+    "c_100": 52,
+    "g_100": 7
+  },
+  {
+    "nome": "Bolo de laranja",
+    "aliases": [
+      "bolo de laranja"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 80
+    },
+    "kcal_100": 320,
+    "p_100": 5,
+    "c_100": 50,
+    "g_100": 11
+  },
+  {
+    "nome": "Bolo de coco",
+    "aliases": [
+      "bolo de coco"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 80
+    },
+    "kcal_100": 350,
+    "p_100": 5,
+    "c_100": 48,
+    "g_100": 15
+  },
+  {
+    "nome": "Waffle",
+    "aliases": [
+      "waffle"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 290,
+    "p_100": 7,
+    "c_100": 40,
+    "g_100": 11
+  },
+  {
+    "nome": "Panqueca americana",
+    "aliases": [
+      "panqueca americana",
+      "panqueca doce",
+      "pancake"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 120
+    },
+    "kcal_100": 227,
+    "p_100": 6,
+    "c_100": 38,
+    "g_100": 6
+  },
+  {
+    "nome": "Crepioca",
+    "aliases": [
+      "crepioca",
+      "tapioca com ovo"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 120
+    },
+    "kcal_100": 160,
+    "p_100": 9,
+    "c_100": 18,
+    "g_100": 6
+  },
+  {
+    "nome": "Mingau de aveia",
+    "aliases": [
+      "mingau de aveia",
+      "aveia cozida",
+      "oatmeal"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 200
+    },
+    "kcal_100": 90,
+    "p_100": 3.5,
+    "c_100": 15,
+    "g_100": 2
+  },
+  {
+    "nome": "Pão na chapa",
+    "aliases": [
+      "pao na chapa",
+      "pão na chapa com manteiga"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 60
+    },
+    "kcal_100": 340,
+    "p_100": 8,
+    "c_100": 48,
+    "g_100": 13
+  },
+  {
+    "nome": "Iogurte com granola",
+    "aliases": [
+      "iogurte com granola"
+    ],
+    "porcao": {
+      "descricao": "1 pote",
+      "g": 200
+    },
+    "kcal_100": 120,
+    "p_100": 5,
+    "c_100": 18,
+    "g_100": 3.5
+  },
+  {
+    "nome": "Sequilho",
+    "aliases": [
+      "sequilho",
+      "sequilhos"
+    ],
+    "porcao": {
+      "descricao": "5 unidades",
+      "g": 30
+    },
+    "kcal_100": 440,
+    "p_100": 5,
+    "c_100": 66,
+    "g_100": 17
+  },
+  {
+    "nome": "Biscoito champagne",
+    "aliases": [
+      "biscoito champagne",
+      "biscoito champanhe"
+    ],
+    "porcao": {
+      "descricao": "4 unidades",
+      "g": 30
+    },
+    "kcal_100": 390,
+    "p_100": 8,
+    "c_100": 76,
+    "g_100": 6
+  },
+  {
+    "nome": "Amendoim japonês",
+    "aliases": [
+      "amendoim japones",
+      "amendoim crocante"
+    ],
+    "porcao": {
+      "descricao": "1 punhado",
+      "g": 30
+    },
+    "kcal_100": 480,
+    "p_100": 17,
+    "c_100": 44,
+    "g_100": 26
+  },
+  {
+    "nome": "Biscoito wafer",
+    "aliases": [
+      "wafer",
+      "bolacha wafer"
+    ],
+    "porcao": {
+      "descricao": "1 pacote",
+      "g": 30
+    },
+    "kcal_100": 500,
+    "p_100": 4,
+    "c_100": 66,
+    "g_100": 24
+  },
+  {
+    "nome": "Torrada com requeijão",
+    "aliases": [
+      "torrada com requeijao"
+    ],
+    "porcao": {
+      "descricao": "2 torradas",
+      "g": 50
+    },
+    "kcal_100": 330,
+    "p_100": 9,
+    "c_100": 50,
+    "g_100": 11
+  },
+  {
+    "nome": "Suco de caixinha",
+    "aliases": [
+      "suco de caixinha",
+      "nectar",
+      "suco néctar"
+    ],
+    "porcao": {
+      "descricao": "1 caixinha",
+      "g": 200
+    },
+    "kcal_100": 48,
+    "p_100": 0.2,
+    "c_100": 12,
+    "g_100": 0
+  },
+  {
+    "nome": "Milk shake",
+    "aliases": [
+      "milk shake",
+      "milkshake"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 300
+    },
+    "kcal_100": 120,
+    "p_100": 3,
+    "c_100": 18,
+    "g_100": 4
+  },
+  {
+    "nome": "Bombom de chocolate (caixa)",
+    "aliases": [
+      "bombom sonho de valsa",
+      "bombom ouro branco"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 22
+    },
+    "kcal_100": 520,
+    "p_100": 7,
+    "c_100": 54,
+    "g_100": 30
+  },
+  {
+    "nome": "Dobradinha",
+    "aliases": [
+      "dobradinha",
+      "bucho"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 200
+    },
+    "kcal_100": 120,
+    "p_100": 13,
+    "c_100": 3,
+    "g_100": 6
+  },
+  {
+    "nome": "Rabada",
+    "aliases": [
+      "rabada",
+      "rabo de boi"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 250,
+    "p_100": 21,
+    "c_100": 1,
+    "g_100": 18
+  },
+  {
+    "nome": "Mocotó",
+    "aliases": [
+      "mocoto",
+      "mocotó"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 250
+    },
+    "kcal_100": 150,
+    "p_100": 13,
+    "c_100": 3,
+    "g_100": 10
+  },
+  {
+    "nome": "Buchada",
+    "aliases": [
+      "buchada",
+      "buchada de bode"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 170,
+    "p_100": 15,
+    "c_100": 2,
+    "g_100": 11
+  },
+  {
+    "nome": "Costela no bafo",
+    "aliases": [
+      "costela no bafo",
+      "costela bovina assada"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 150
+    },
+    "kcal_100": 280,
+    "p_100": 24,
+    "c_100": 0,
+    "g_100": 20
+  },
+  {
+    "nome": "Chorizo",
+    "aliases": [
+      "chorizo",
+      "chouriço"
+    ],
+    "porcao": {
+      "descricao": "1 gomo",
+      "g": 60
+    },
+    "kcal_100": 330,
+    "p_100": 17,
+    "c_100": 2,
+    "g_100": 29
+  },
+  {
+    "nome": "Bacalhau à brás",
+    "aliases": [
+      "bacalhau a bras",
+      "bacalhau à brás"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 160,
+    "p_100": 11,
+    "c_100": 9,
+    "g_100": 9
+  },
+  {
+    "nome": "Peixe assado",
+    "aliases": [
+      "peixe assado",
+      "peixe ao forno"
+    ],
+    "porcao": {
+      "descricao": "1 posta",
+      "g": 150
+    },
+    "kcal_100": 130,
+    "p_100": 22,
+    "c_100": 1,
+    "g_100": 4.5
+  },
+  {
+    "nome": "Kombucha",
+    "aliases": [
+      "kombucha"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 13,
+    "p_100": 0,
+    "c_100": 3,
+    "g_100": 0
+  },
+  {
+    "nome": "Frappuccino",
+    "aliases": [
+      "frappuccino",
+      "cafe gelado doce"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 350
+    },
+    "kcal_100": 80,
+    "p_100": 2,
+    "c_100": 13,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Suco de acerola",
+    "aliases": [
+      "suco de acerola"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 30,
+    "p_100": 0.4,
+    "c_100": 7,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Refresco em pó",
+    "aliases": [
+      "refresco em po",
+      "tang",
+      "suco de pó"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 200
+    },
+    "kcal_100": 38,
+    "p_100": 0,
+    "c_100": 9.5,
+    "g_100": 0
+  },
+  {
+    "nome": "Champanhe",
+    "aliases": [
+      "champanhe",
+      "espumante",
+      "prosecco"
+    ],
+    "porcao": {
+      "descricao": "1 taça",
+      "g": 150
+    },
+    "kcal_100": 83,
+    "p_100": 0.2,
+    "c_100": 3,
+    "g_100": 0
+  },
+  {
+    "nome": "Lasanha de frango",
+    "aliases": [
+      "lasanha de frango"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 250
+    },
+    "kcal_100": 140,
+    "p_100": 9,
+    "c_100": 13,
+    "g_100": 6
+  },
+  {
+    "nome": "Strogonoff de camarão",
+    "aliases": [
+      "estrogonofe de camarao",
+      "strogonoff de camarao"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 150
+    },
+    "kcal_100": 150,
+    "p_100": 9,
+    "c_100": 6,
+    "g_100": 10
+  },
+  {
+    "nome": "Risoto de camarão",
+    "aliases": [
+      "risoto de camarao",
+      "risotto de camarão"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 150
+    },
+    "kcal_100": 160,
+    "p_100": 8,
+    "c_100": 23,
+    "g_100": 4
+  },
+  {
+    "nome": "Arroz à piamontese",
+    "aliases": [
+      "arroz a piamontese",
+      "piamontese"
+    ],
+    "porcao": {
+      "descricao": "1 escumadeira",
+      "g": 150
+    },
+    "kcal_100": 175,
+    "p_100": 4,
+    "c_100": 24,
+    "g_100": 7
+  },
+  {
+    "nome": "Salada caesar",
+    "aliases": [
+      "salada caesar",
+      "salada cesar"
+    ],
+    "porcao": {
+      "descricao": "1 prato",
+      "g": 200
+    },
+    "kcal_100": 130,
+    "p_100": 7,
+    "c_100": 7,
+    "g_100": 8
+  },
+  {
+    "nome": "Salada de maionese",
+    "aliases": [
+      "salada de maionese",
+      "maionese de batata"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 120
+    },
+    "kcal_100": 170,
+    "p_100": 2,
+    "c_100": 14,
+    "g_100": 12
+  },
+  {
+    "nome": "Vinagrete",
+    "aliases": [
+      "vinagrete",
+      "molho a campanha"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 60
+    },
+    "kcal_100": 45,
+    "p_100": 1,
+    "c_100": 5,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Farofa de ovo",
+    "aliases": [
+      "farofa de ovo",
+      "farofa rica"
+    ],
+    "porcao": {
+      "descricao": "2 colheres",
+      "g": 50
+    },
+    "kcal_100": 380,
+    "p_100": 7,
+    "c_100": 45,
+    "g_100": 19
+  },
+  {
+    "nome": "Quibe assado",
+    "aliases": [
+      "quibe assado",
+      "kibe assado"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 190,
+    "p_100": 11,
+    "c_100": 18,
+    "g_100": 8
+  },
+  {
+    "nome": "Pão de alho",
+    "aliases": [
+      "pao de alho",
+      "pão de alho"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 50
+    },
+    "kcal_100": 330,
+    "p_100": 7,
+    "c_100": 42,
+    "g_100": 15
+  },
+  {
+    "nome": "Bruschetta",
+    "aliases": [
+      "bruschetta",
+      "brusqueta"
+    ],
+    "porcao": {
+      "descricao": "2 fatias",
+      "g": 80
+    },
+    "kcal_100": 200,
+    "p_100": 6,
+    "c_100": 28,
+    "g_100": 7
+  },
+  {
+    "nome": "Polenta frita",
+    "aliases": [
+      "polenta frita"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 120
+    },
+    "kcal_100": 180,
+    "p_100": 3,
+    "c_100": 26,
+    "g_100": 7
+  },
+  {
+    "nome": "Canelone",
+    "aliases": [
+      "canelone",
+      "cannelloni"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 200
+    },
+    "kcal_100": 165,
+    "p_100": 8,
+    "c_100": 20,
+    "g_100": 6
+  },
+  {
+    "nome": "Rondelli",
+    "aliases": [
+      "rondelli",
+      "rondele"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 200
+    },
+    "kcal_100": 175,
+    "p_100": 8,
+    "c_100": 20,
+    "g_100": 7
+  },
+  {
+    "nome": "Escondidinho de camarão",
+    "aliases": [
+      "escondidinho de camarao"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 150,
+    "p_100": 7,
+    "c_100": 15,
+    "g_100": 7
+  },
+  {
+    "nome": "Frango à parmegiana",
+    "aliases": [
+      "frango a parmegiana",
+      "file de frango a parmegiana"
+    ],
+    "porcao": {
+      "descricao": "1 filé",
+      "g": 200
+    },
+    "kcal_100": 200,
+    "p_100": 15,
+    "c_100": 12,
+    "g_100": 10
+  },
+  {
+    "nome": "Carne louca",
+    "aliases": [
+      "carne louca",
+      "carne desfiada ao molho"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 120
+    },
+    "kcal_100": 175,
+    "p_100": 18,
+    "c_100": 4,
+    "g_100": 9
+  },
+  {
+    "nome": "Pirão",
+    "aliases": [
+      "pirao",
+      "pirão de peixe"
+    ],
+    "porcao": {
+      "descricao": "1 concha",
+      "g": 120
+    },
+    "kcal_100": 110,
+    "p_100": 3,
+    "c_100": 22,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Arroz de forno",
+    "aliases": [
+      "arroz de forno"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 170,
+    "p_100": 7,
+    "c_100": 22,
+    "g_100": 6
+  },
+  {
+    "nome": "Creme de abóbora",
+    "aliases": [
+      "creme de abobora",
+      "sopa creme de abóbora"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 250
+    },
+    "kcal_100": 55,
+    "p_100": 1.5,
+    "c_100": 9,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Risoles",
+    "aliases": [
+      "risoles",
+      "risolis",
+      "risole"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 80
+    },
+    "kcal_100": 270,
+    "p_100": 8,
+    "c_100": 26,
+    "g_100": 15
+  },
+  {
+    "nome": "Bolinho de chuva",
+    "aliases": [
+      "bolinho de chuva"
+    ],
+    "porcao": {
+      "descricao": "3 unidades",
+      "g": 60
+    },
+    "kcal_100": 350,
+    "p_100": 6,
+    "c_100": 50,
+    "g_100": 14
+  },
+  {
+    "nome": "Bolinho de arroz",
+    "aliases": [
+      "bolinho de arroz"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 80
+    },
+    "kcal_100": 220,
+    "p_100": 5,
+    "c_100": 28,
+    "g_100": 10
+  },
+  {
+    "nome": "Pastel de palmito",
+    "aliases": [
+      "pastel de palmito"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 100
+    },
+    "kcal_100": 280,
+    "p_100": 5,
+    "c_100": 30,
+    "g_100": 15
+  },
+  {
+    "nome": "Empada de palmito",
+    "aliases": [
+      "empada de palmito"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 320,
+    "p_100": 5,
+    "c_100": 32,
+    "g_100": 19
+  },
+  {
+    "nome": "X-tudo",
+    "aliases": [
+      "x tudo",
+      "xis tudo"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 300
+    },
+    "kcal_100": 260,
+    "p_100": 12,
+    "c_100": 18,
+    "g_100": 16
+  },
+  {
+    "nome": "X-egg",
+    "aliases": [
+      "x egg",
+      "xis egg"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 220
+    },
+    "kcal_100": 255,
+    "p_100": 13,
+    "c_100": 20,
+    "g_100": 13
+  },
+  {
+    "nome": "X-frango",
+    "aliases": [
+      "x frango",
+      "xis frango"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 230
+    },
+    "kcal_100": 230,
+    "p_100": 13,
+    "c_100": 21,
+    "g_100": 10
+  },
+  {
+    "nome": "X-calabresa",
+    "aliases": [
+      "x calabresa",
+      "xis calabresa"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 230
+    },
+    "kcal_100": 270,
+    "p_100": 12,
+    "c_100": 20,
+    "g_100": 16
+  },
+  {
+    "nome": "Beirute",
+    "aliases": [
+      "beirute",
+      "sanduiche beirute"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 250
+    },
+    "kcal_100": 240,
+    "p_100": 13,
+    "c_100": 22,
+    "g_100": 11
+  },
+  {
+    "nome": "Sanduíche de pernil",
+    "aliases": [
+      "sanduiche de pernil",
+      "pernil no pao"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 200
+    },
+    "kcal_100": 250,
+    "p_100": 15,
+    "c_100": 24,
+    "g_100": 10
+  },
+  {
+    "nome": "Bolinho de mandioca",
+    "aliases": [
+      "bolinho de mandioca",
+      "bolinho de aipim"
+    ],
+    "porcao": {
+      "descricao": "2 unidades",
+      "g": 80
+    },
+    "kcal_100": 230,
+    "p_100": 4,
+    "c_100": 30,
+    "g_100": 10
+  },
+  {
+    "nome": "Pão de queijo recheado",
+    "aliases": [
+      "pao de queijo recheado"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 320,
+    "p_100": 9,
+    "c_100": 30,
+    "g_100": 18
+  },
+  {
+    "nome": "Pão com requeijão",
+    "aliases": [
+      "pao com requeijao",
+      "pão com requeijão"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 70
+    },
+    "kcal_100": 290,
+    "p_100": 8,
+    "c_100": 44,
+    "g_100": 9
+  },
+  {
+    "nome": "Pão com ovo",
+    "aliases": [
+      "pao com ovo",
+      "pão com ovo"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 110
+    },
+    "kcal_100": 250,
+    "p_100": 11,
+    "c_100": 28,
+    "g_100": 11
+  },
+  {
+    "nome": "Tapioca com coco",
+    "aliases": [
+      "tapioca com coco",
+      "tapioca doce"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 120
+    },
+    "kcal_100": 230,
+    "p_100": 2,
+    "c_100": 42,
+    "g_100": 6
+  },
+  {
+    "nome": "Vitamina de abacate",
+    "aliases": [
+      "vitamina de abacate",
+      "creme de abacate"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 120,
+    "p_100": 2,
+    "c_100": 12,
+    "g_100": 7
+  },
+  {
+    "nome": "Vitamina de mamão",
+    "aliases": [
+      "vitamina de mamao",
+      "vitamina de mamão com aveia"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 75,
+    "p_100": 2.5,
+    "c_100": 13,
+    "g_100": 1.5
+  },
+  {
+    "nome": "Açaí com leite ninho",
+    "aliases": [
+      "acai com leite ninho",
+      "açaí com leite em pó"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 300
+    },
+    "kcal_100": 190,
+    "p_100": 3,
+    "c_100": 28,
+    "g_100": 8
+  },
+  {
+    "nome": "Ovo com bacon",
+    "aliases": [
+      "ovo com bacon",
+      "ovos com bacon"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 260,
+    "p_100": 15,
+    "c_100": 1,
+    "g_100": 22
+  },
+  {
+    "nome": "Cereal com leite",
+    "aliases": [
+      "cereal com leite",
+      "sucrilhos com leite"
+    ],
+    "porcao": {
+      "descricao": "1 tigela",
+      "g": 200
+    },
+    "kcal_100": 95,
+    "p_100": 3.5,
+    "c_100": 16,
+    "g_100": 2.2
+  },
+  {
+    "nome": "Brigadeiro gourmet",
+    "aliases": [
+      "brigadeiro gourmet",
+      "brigadeiro de colher"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 20
+    },
+    "kcal_100": 390,
+    "p_100": 5,
+    "c_100": 55,
+    "g_100": 17
+  },
+  {
+    "nome": "Trufa de chocolate",
+    "aliases": [
+      "trufa",
+      "trufa de chocolate"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 30
+    },
+    "kcal_100": 480,
+    "p_100": 5,
+    "c_100": 50,
+    "g_100": 29
+  },
+  {
+    "nome": "Cheesecake",
+    "aliases": [
+      "cheesecake",
+      "torta de cream cheese"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 320,
+    "p_100": 6,
+    "c_100": 34,
+    "g_100": 18
+  },
+  {
+    "nome": "Banoffee",
+    "aliases": [
+      "banoffee",
+      "torta banoffee"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 340,
+    "p_100": 4,
+    "c_100": 42,
+    "g_100": 18
+  },
+  {
+    "nome": "Mousse de maracujá",
+    "aliases": [
+      "mousse de maracuja",
+      "mousse de maracujá"
+    ],
+    "porcao": {
+      "descricao": "1 taça",
+      "g": 100
+    },
+    "kcal_100": 210,
+    "p_100": 3,
+    "c_100": 28,
+    "g_100": 10
+  },
+  {
+    "nome": "Sorvete de morango",
+    "aliases": [
+      "sorvete de morango"
+    ],
+    "porcao": {
+      "descricao": "2 bolas",
+      "g": 100
+    },
+    "kcal_100": 195,
+    "p_100": 3.2,
+    "c_100": 27,
+    "g_100": 8.5
+  },
+  {
+    "nome": "Sagu de vinho",
+    "aliases": [
+      "sagu",
+      "sagu de vinho"
+    ],
+    "porcao": {
+      "descricao": "1 taça",
+      "g": 150
+    },
+    "kcal_100": 110,
+    "p_100": 0.5,
+    "c_100": 26,
+    "g_100": 0.1
+  },
+  {
+    "nome": "Banana split",
+    "aliases": [
+      "banana split"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 250
+    },
+    "kcal_100": 180,
+    "p_100": 2.5,
+    "c_100": 26,
+    "g_100": 8
+  },
+  {
+    "nome": "Pudim de chocolate",
+    "aliases": [
+      "pudim de chocolate",
+      "chandelle"
+    ],
+    "porcao": {
+      "descricao": "1 pote",
+      "g": 120
+    },
+    "kcal_100": 140,
+    "p_100": 3,
+    "c_100": 22,
+    "g_100": 4
+  },
+  {
+    "nome": "Apresuntado",
+    "aliases": [
+      "apresuntado",
+      "apresuntado fatiado"
+    ],
+    "porcao": {
+      "descricao": "3 fatias",
+      "g": 45
+    },
+    "kcal_100": 150,
+    "p_100": 13,
+    "c_100": 3,
+    "g_100": 9
+  },
+  {
+    "nome": "Peito de peru defumado",
+    "aliases": [
+      "peito de peru defumado",
+      "peru defumado"
+    ],
+    "porcao": {
+      "descricao": "3 fatias",
+      "g": 45
+    },
+    "kcal_100": 105,
+    "p_100": 18,
+    "c_100": 2,
+    "g_100": 2.5
+  },
+  {
+    "nome": "Linguiça de frango",
+    "aliases": [
+      "linguica de frango"
+    ],
+    "porcao": {
+      "descricao": "1 gomo",
+      "g": 60
+    },
+    "kcal_100": 210,
+    "p_100": 17,
+    "c_100": 1,
+    "g_100": 15
+  },
+  {
+    "nome": "Hambúrguer de frango",
+    "aliases": [
+      "hamburguer de frango",
+      "burguer de frango"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 80
+    },
+    "kcal_100": 215,
+    "p_100": 15,
+    "c_100": 8,
+    "g_100": 13
+  },
+  {
+    "nome": "Nuggets de peixe",
+    "aliases": [
+      "nuggets de peixe",
+      "empanado de peixe"
+    ],
+    "porcao": {
+      "descricao": "6 unidades",
+      "g": 100
+    },
+    "kcal_100": 230,
+    "p_100": 12,
+    "c_100": 18,
+    "g_100": 12
+  },
+  {
+    "nome": "Pizza congelada (mussarela)",
+    "aliases": [
+      "pizza congelada"
+    ],
+    "porcao": {
+      "descricao": "1 fatia",
+      "g": 120
+    },
+    "kcal_100": 250,
+    "p_100": 11,
+    "c_100": 29,
+    "g_100": 10
+  },
+  {
+    "nome": "Legumes no vapor",
+    "aliases": [
+      "legumes no vapor",
+      "mix de legumes"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 120
+    },
+    "kcal_100": 45,
+    "p_100": 2,
+    "c_100": 8,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Brócolis gratinado",
+    "aliases": [
+      "brocolis gratinado",
+      "brócolis com queijo"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 120
+    },
+    "kcal_100": 110,
+    "p_100": 6,
+    "c_100": 7,
+    "g_100": 7
+  },
+  {
+    "nome": "Berinjela à parmegiana",
+    "aliases": [
+      "berinjela a parmegiana"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 200
+    },
+    "kcal_100": 120,
+    "p_100": 5,
+    "c_100": 9,
+    "g_100": 7
+  },
+  {
+    "nome": "Abobrinha recheada",
+    "aliases": [
+      "abobrinha recheada"
+    ],
+    "porcao": {
+      "descricao": "1 unidade",
+      "g": 150
+    },
+    "kcal_100": 90,
+    "p_100": 5,
+    "c_100": 7,
+    "g_100": 5
+  },
+  {
+    "nome": "Salada de beterraba",
+    "aliases": [
+      "salada de beterraba"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 55,
+    "p_100": 1.7,
+    "c_100": 11,
+    "g_100": 0.5
+  },
+  {
+    "nome": "Salada de repolho",
+    "aliases": [
+      "salada de repolho",
+      "coleslaw"
+    ],
+    "porcao": {
+      "descricao": "1 porção",
+      "g": 100
+    },
+    "kcal_100": 90,
+    "p_100": 1.2,
+    "c_100": 7,
+    "g_100": 6
+  },
+  {
+    "nome": "Suco de morango",
+    "aliases": [
+      "suco de morango"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 40,
+    "p_100": 0.6,
+    "c_100": 9,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Caldo de cana",
+    "aliases": [
+      "caldo de cana",
+      "garapa"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 58,
+    "p_100": 0,
+    "c_100": 15,
+    "g_100": 0
+  },
+  {
+    "nome": "Chá de hortelã",
+    "aliases": [
+      "cha de hortela",
+      "chá de hortelã"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 200
+    },
+    "kcal_100": 1,
+    "p_100": 0,
+    "c_100": 0.2,
+    "g_100": 0
+  },
+  {
+    "nome": "Chá de gengibre",
+    "aliases": [
+      "cha de gengibre",
+      "chá de gengibre com limão"
+    ],
+    "porcao": {
+      "descricao": "1 xícara",
+      "g": 200
+    },
+    "kcal_100": 4,
+    "p_100": 0,
+    "c_100": 1,
+    "g_100": 0
+  },
+  {
+    "nome": "Suco de beterraba",
+    "aliases": [
+      "suco de beterraba",
+      "suco de beterraba com laranja"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 45,
+    "p_100": 1,
+    "c_100": 10,
+    "g_100": 0.2
+  },
+  {
+    "nome": "Café gelado",
+    "aliases": [
+      "cafe gelado",
+      "ice coffee"
+    ],
+    "porcao": {
+      "descricao": "1 copo",
+      "g": 250
+    },
+    "kcal_100": 45,
+    "p_100": 1.5,
+    "c_100": 7,
+    "g_100": 1.2
+  }
 ]
