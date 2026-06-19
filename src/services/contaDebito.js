@@ -19,7 +19,7 @@ async function debitarConta({ grupoId, walletId, valor, categoria, observacao, u
   if (!wallet) throw new Error('Conta não encontrada');
 
   const idCurto = Math.random().toString(36).substring(2, 8).toUpperCase();
-  const { data: tx, error } = await supabase.from('transacoes').insert({
+  const base = {
     id_curto:      idCurto,
     grupo_id:      grupoId,
     criado_por:    userId || null,
@@ -30,7 +30,18 @@ async function debitarConta({ grupoId, walletId, valor, categoria, observacao, u
     carteira_nome: wallet.nome,
     pago:          true,
     data:          data || new Date().toISOString(),
-  }).select().single();
+  };
+  // Pagamento de fatura = transferência (quitação de dívida), não consumo.
+  // Marca a flag pra sair dos relatórios de gasto (migration 046).
+  const ehTransferencia = categoria === 'Fatura cartão';
+  let { data: tx, error } = await supabase.from('transacoes')
+    .insert(ehTransferencia ? { ...base, transferencia: true } : base)
+    .select().single();
+  // Tolerante: se a coluna `transferencia` ainda não existe (046 não rodou),
+  // insere sem ela — o filtro por categoria 'Fatura cartão' já cobre o caso.
+  if (error && ehTransferencia && /transferencia/i.test(error.message || '')) {
+    ({ data: tx, error } = await supabase.from('transacoes').insert(base).select().single());
+  }
   if (error) throw error;
 
   await supabase.from('wallets')
