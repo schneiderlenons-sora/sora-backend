@@ -50,4 +50,37 @@ async function debitarConta({ grupoId, walletId, valor, categoria, observacao, u
   return { tx, conta: { id: wallet.id, nome: wallet.nome } };
 }
 
-module.exports = { debitarConta };
+// =============================================================================
+// registrarTransferencia — grava UMA transação representando a transferência
+// entre contas (marcada com transferencia=true pra ficar fora dos relatórios
+// de gasto). NÃO mexe em saldo (quem chama já ajustou origem e destino).
+// =============================================================================
+async function registrarTransferencia({ grupoId, origemNome, destinoNome, valor, userId }) {
+  const v = parseFloat(valor);
+  if (!grupoId || !v || v <= 0) return null;
+
+  const idCurto = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const base = {
+    id_curto:      idCurto,
+    grupo_id:      grupoId,
+    criado_por:    userId || null,
+    tipo:          'Transferência',
+    categoria:     'Transferências',
+    valor:         v,
+    observacao:    `${origemNome} → ${destinoNome}`,
+    carteira_nome: origemNome,
+    pago:          true,
+    data:          new Date().toISOString(),
+  };
+  let { data: tx, error } = await supabase.from('transacoes')
+    .insert({ ...base, transferencia: true }).select().single();
+  // Tolerante: se a coluna `transferencia` não existe (migration 046 não rodou),
+  // grava sem ela (o tipo 'Transferência' já a mantém fora dos relatórios).
+  if (error && /transferencia/i.test(error.message || '')) {
+    ({ data: tx, error } = await supabase.from('transacoes').insert(base).select().single());
+  }
+  if (error) throw error;
+  return tx;
+}
+
+module.exports = { debitarConta, registrarTransferencia };

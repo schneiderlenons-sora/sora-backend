@@ -3,7 +3,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
-const { debitarConta } = require('../services/contaDebito');
+const { debitarConta, registrarTransferencia } = require('../services/contaDebito');
 const norm     = p => p?.replace(/\D/g, '');
 
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
@@ -80,6 +80,35 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
       userId: req.userId,
     });
     res.json({ ok: true, debito });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// POST /api/wallets/transferir — move valor entre duas contas (ajusta os dois
+// saldos) e grava UM registro de transferência (fora dos relatórios de gasto).
+router.post('/transferir', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { origem_id, destino_id, valor } = req.body;
+    const grupoId = req.grupoId;
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+    if (!origem_id || !destino_id) return res.status(400).json({ erro: 'Escolha as contas de origem e destino.' });
+    if (origem_id === destino_id)  return res.status(400).json({ erro: 'Origem e destino devem ser diferentes.' });
+    const v = parseFloat(valor);
+    if (!v || v <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
+
+    const { data: contas } = await supabase.from('wallets')
+      .select('id, nome, saldo').eq('grupo_id', grupoId).in('id', [origem_id, destino_id]);
+    const origem  = (contas || []).find(c => c.id === origem_id);
+    const destino = (contas || []).find(c => c.id === destino_id);
+    if (!origem || !destino) return res.status(404).json({ erro: 'Conta não encontrada.' });
+    if ((origem.saldo || 0) < v) return res.status(400).json({ erro: `Saldo insuficiente em ${origem.nome}.` });
+
+    await supabase.from('wallets').update({ saldo: (origem.saldo || 0) - v }).eq('id', origem.id);
+    await supabase.from('wallets').update({ saldo: (destino.saldo || 0) + v }).eq('id', destino.id);
+
+    const tx = await registrarTransferencia({
+      grupoId, origemNome: origem.nome, destinoNome: destino.nome, valor: v, userId: req.userId,
+    });
+    res.json({ ok: true, tx });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

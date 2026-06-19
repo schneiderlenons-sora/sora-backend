@@ -287,6 +287,11 @@ module.exports = async function handleWallets(data, ctx) {
       });
     }
 
+    // Grava no histórico (transferencia=true → fora dos relatórios de gasto).
+    const { registrarTransferencia } = require('../services/contaDebito');
+    await registrarTransferencia({ grupoId, origemNome: nomeOrigem, destinoNome: nomeDestino, valor })
+      .catch(() => {});
+
     await enviarTexto(phone,
       `💸 *Transferência realizada!*\n\n` +
       `📤 Saída: *${nomeOrigem}*\n` +
