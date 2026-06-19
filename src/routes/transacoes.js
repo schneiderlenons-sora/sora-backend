@@ -3,13 +3,9 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
+const { calcularResumo } = require('../services/resumoTransacoes');
 
 const norm = p => p?.replace(/\D/g, '');
-
-// Categoria usada nos pagamentos de fatura (routes/wallets.js + handlers/parcelas.js).
-// Pagar a fatura é quitação de dívida (transferência), não consumo — fica fora
-// dos relatórios de gasto por categoria pra não duplicar as compras do cartão.
-const CATEGORIA_FATURA = 'Fatura cartão';
 
 // Primeiro dia do mês seguinte (YYYY-MM-01) — usado como limite exclusivo.
 // Evita usar `${mes}-31` que é data inválida em meses de 30/28/29 dias
@@ -253,51 +249,12 @@ router.get('/:phone/resumo', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
 
     const mes = req.query.mes || new Date().toISOString().slice(0, 7);
-    let q = supabase.from('transacoes')
-      .select('tipo, categoria, valor, criado_por, transferencia')
-      .eq('grupo_id', user.grupo_ativo)
-      .gte("data", `${mes}-01`).lt("data", proximoMesPrimeiroDia(mes));
-    if (req.query.criado_por_me === 'true') q = q.eq('criado_por', user.id);
-    const { data: rows } = await q;
-
-    let receitas = 0, gastos = 0;
-    const porCategoria = {};
-    const porMembro    = {};
-
-    (rows || []).forEach(r => {
-      // Transferências (ex: pagamento de fatura = quitação de dívida) não são
-      // consumo nem receita — ficam fora dos relatórios, senão dobram as
-      // compras do cartão já contabilizadas nas categorias reais. O match por
-      // categoria é rede de segurança pra linhas sem a flag.
-      if (r.transferencia || r.categoria === CATEGORIA_FATURA) return;
-      if (r.tipo === 'Gasto') {
-        gastos += r.valor;
-        porCategoria[r.categoria] = (porCategoria[r.categoria] || 0) + r.valor;
-        if (r.criado_por) porMembro[r.criado_por] = (porMembro[r.criado_por] || 0) + r.valor;
-      } else {
-        receitas += r.valor;
-      }
+    // Fonte única (services/resumoTransacoes) — mesma regra do dashboard.
+    const resumo = await calcularResumo({
+      grupoId: user.grupo_ativo, mes,
+      criadoPorId: req.query.criado_por_me === 'true' ? user.id : undefined,
     });
-
-    // Resolve nomes dos membros via JOIN simples
-    const ids = Object.keys(porMembro);
-    let nomes = {};
-    if (ids.length) {
-      const { data: usrs } = await supabase.from('users')
-        .select('id, name, phone').in('id', ids);
-      (usrs || []).forEach(u => { nomes[u.id] = { name: u.name, phone: u.phone }; });
-    }
-
-    res.json({
-      receitas, gastos,
-      saldo: receitas - gastos,
-      por_categoria: Object.entries(porCategoria)
-        .map(([categoria, total]) => ({ categoria, total }))
-        .sort((a, b) => b.total - a.total),
-      por_membro: Object.entries(porMembro)
-        .map(([user_id, total]) => ({ user_id, total, name: nomes[user_id]?.name || 'Desconhecido', phone: nomes[user_id]?.phone }))
-        .sort((a, b) => b.total - a.total),
-    });
+    res.json(resumo);
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }

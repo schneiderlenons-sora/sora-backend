@@ -15,6 +15,7 @@ const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
+const { calcularResumo } = require('../services/resumoTransacoes');
 
 // Primeiro dia do mês seguinte (YYYY-MM-01) — limite exclusivo seguro
 // (evita datas inválidas tipo `-31`). Idêntico ao de transacoes.js.
@@ -24,49 +25,9 @@ function proximoMesPrimeiroDia(mes) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
-// Resumo de um mês — mesma lógica de GET /api/transacoes/:phone/resumo.
-async function calcResumo(grupoId, mes) {
-  const { data: rows } = await supabase.from('transacoes')
-    .select('tipo, categoria, valor, criado_por, transferencia')
-    .eq('grupo_id', grupoId)
-    .gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
-
-  let receitas = 0, gastos = 0;
-  const porCategoria = {};
-  const porMembro    = {};
-  (rows || []).forEach(r => {
-    // Transferências (ex: pagamento de fatura = quitação de dívida) não são
-    // consumo nem receita — ficam fora do resumo. Match por categoria é rede
-    // de segurança pra linhas sem a flag. (Igual ao /resumo de transacoes.js)
-    if (r.transferencia || r.categoria === 'Fatura cartão') return;
-    if (r.tipo === 'Gasto') {
-      gastos += r.valor;
-      porCategoria[r.categoria] = (porCategoria[r.categoria] || 0) + r.valor;
-      if (r.criado_por) porMembro[r.criado_por] = (porMembro[r.criado_por] || 0) + r.valor;
-    } else {
-      receitas += r.valor;
-    }
-  });
-
-  const ids = Object.keys(porMembro);
-  let nomes = {};
-  if (ids.length) {
-    const { data: usrs } = await supabase.from('users')
-      .select('id, name, phone').in('id', ids);
-    (usrs || []).forEach(u => { nomes[u.id] = { name: u.name, phone: u.phone }; });
-  }
-
-  return {
-    receitas, gastos,
-    saldo: receitas - gastos,
-    por_categoria: Object.entries(porCategoria)
-      .map(([categoria, total]) => ({ categoria, total }))
-      .sort((a, b) => b.total - a.total),
-    por_membro: Object.entries(porMembro)
-      .map(([user_id, total]) => ({ user_id, total, name: nomes[user_id]?.name || 'Desconhecido', phone: nomes[user_id]?.phone }))
-      .sort((a, b) => b.total - a.total),
-  };
-}
+// Resumo de um mês — FONTE ÚNICA compartilhada com GET /api/transacoes/:phone/resumo
+// (services/resumoTransacoes). Garante que dashboard e relatórios nunca divirjam.
+const calcResumo = (grupoId, mes) => calcularResumo({ grupoId, mes });
 
 // Lista de transações — mesma lógica de GET /api/transacoes/:phone
 // (com o mesmo fallback caso a FK do join não exista no schema).
