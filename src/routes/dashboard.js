@@ -27,7 +27,7 @@ function proximoMesPrimeiroDia(mes) {
 // Resumo de um mês — mesma lógica de GET /api/transacoes/:phone/resumo.
 async function calcResumo(grupoId, mes) {
   const { data: rows } = await supabase.from('transacoes')
-    .select('tipo, categoria, valor, criado_por')
+    .select('tipo, categoria, valor, criado_por, transferencia')
     .eq('grupo_id', grupoId)
     .gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
 
@@ -35,6 +35,10 @@ async function calcResumo(grupoId, mes) {
   const porCategoria = {};
   const porMembro    = {};
   (rows || []).forEach(r => {
+    // Transferências (ex: pagamento de fatura = quitação de dívida) não são
+    // consumo nem receita — ficam fora do resumo. Match por categoria é rede
+    // de segurança pra linhas sem a flag. (Igual ao /resumo de transacoes.js)
+    if (r.transferencia || r.categoria === 'Fatura cartão') return;
     if (r.tipo === 'Gasto') {
       gastos += r.valor;
       porCategoria[r.categoria] = (porCategoria[r.categoria] || 0) + r.valor;
