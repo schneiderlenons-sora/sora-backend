@@ -24,6 +24,10 @@ async function resumoPeriodo(grupoId, inicio, fim) {
   for (const r of rows || []) {
     count++;
     if (r.tipo === 'Gasto') {
+      // Pagamento de fatura = quitação de dívida (transferência), não consumo.
+      // As compras do cartão já entram nas categorias reais — contar a fatura
+      // dobraria os valores.
+      if (r.categoria === 'Fatura cartão') continue;
       gastos += r.valor || 0;
       const nome = limpaCat(r.categoria);
       cats[nome] = (cats[nome] || 0) + (r.valor || 0);

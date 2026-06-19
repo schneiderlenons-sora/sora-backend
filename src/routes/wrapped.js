@@ -82,6 +82,10 @@ router.get('/financas/:phone', auth, async (req, res) => {
     for (const t of lista) {
       const v = Number(t.valor) || 0;
       const ehGasto = /gasto/i.test(t.tipo || '');
+      // Pagamento de fatura = quitação de dívida (transferência), não consumo.
+      // As compras do cartão já contam nas categorias reais — incluir a fatura
+      // dobraria os valores (movimentado, gastos, vilão, maior gasto).
+      if (t.categoria === 'Fatura cartão') { if (t.data) diasSet.add(t.data.slice(0, 10)); continue; }
       if (ehGasto) {
         gastos += v;
         const c = t.categoria || 'Outros';
