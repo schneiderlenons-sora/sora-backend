@@ -6,6 +6,11 @@ const { exigirPermissao } = require('../middlewares/permissao');
 
 const norm = p => p?.replace(/\D/g, '');
 
+// Categoria usada nos pagamentos de fatura (routes/wallets.js + handlers/parcelas.js).
+// Pagar a fatura é quitação de dívida (transferência), não consumo — fica fora
+// dos relatórios de gasto por categoria pra não duplicar as compras do cartão.
+const CATEGORIA_FATURA = 'Fatura cartão';
+
 // Primeiro dia do mês seguinte (YYYY-MM-01) — usado como limite exclusivo.
 // Evita usar `${mes}-31` que é data inválida em meses de 30/28/29 dias
 // (Postgres rejeita e a query falha → fatura aparece vazia).
@@ -261,6 +266,11 @@ router.get('/:phone/resumo', auth, async (req, res) => {
 
     (rows || []).forEach(r => {
       if (r.tipo === 'Gasto') {
+        // Pagar a fatura do cartão NÃO é um gasto novo: as compras já foram
+        // contabilizadas nas categorias reais (iFood, Mercado…). Contar a
+        // fatura por cima dobraria esses valores. É quitação de dívida
+        // (transferência), então fica fora dos relatórios de consumo.
+        if (r.categoria === CATEGORIA_FATURA) return;
         gastos += r.valor;
         porCategoria[r.categoria] = (porCategoria[r.categoria] || 0) + r.valor;
         if (r.criado_por) porMembro[r.criado_por] = (porMembro[r.criado_por] || 0) + r.valor;
