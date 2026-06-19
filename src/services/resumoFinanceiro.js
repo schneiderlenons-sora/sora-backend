@@ -15,7 +15,7 @@ const limpaCat = (s) => (s || '').replace(/\p{Emoji}/gu, '').trim() || 'Outros';
 /** Soma gastos/receitas/categorias de um grupo no intervalo [inicio, fim). Datas YYYY-MM-DD. */
 async function resumoPeriodo(grupoId, inicio, fim) {
   const { data: rows } = await supabase
-    .from('transacoes').select('tipo, categoria, valor')
+    .from('transacoes').select('tipo, categoria, valor, transferencia')
     .eq('grupo_id', grupoId)
     .gte('data', inicio).lt('data', fim);
 
@@ -23,11 +23,10 @@ async function resumoPeriodo(grupoId, inicio, fim) {
   const cats = {};
   for (const r of rows || []) {
     count++;
+    // Transferência (ex: pagamento de fatura = quitação de dívida) não é
+    // consumo. Match por categoria é rede de segurança pra linhas sem a flag.
+    if (r.transferencia || r.categoria === 'Fatura cartão') continue;
     if (r.tipo === 'Gasto') {
-      // Pagamento de fatura = quitação de dívida (transferência), não consumo.
-      // As compras do cartão já entram nas categorias reais — contar a fatura
-      // dobraria os valores.
-      if (r.categoria === 'Fatura cartão') continue;
       gastos += r.valor || 0;
       const nome = limpaCat(r.categoria);
       cats[nome] = (cats[nome] || 0) + (r.valor || 0);

@@ -70,7 +70,7 @@ router.get('/financas/:phone', auth, async (req, res) => {
 
     const P = resolverPeriodo(req.query.periodo);
     const { data: txs } = await supabase.from('transacoes')
-      .select('tipo, valor, categoria, data')
+      .select('tipo, valor, categoria, data, transferencia')
       .eq('grupo_id', user.grupo_ativo)
       .gte('data', P.inicio).lt('data', P.fim);
 
@@ -82,10 +82,11 @@ router.get('/financas/:phone', auth, async (req, res) => {
     for (const t of lista) {
       const v = Number(t.valor) || 0;
       const ehGasto = /gasto/i.test(t.tipo || '');
-      // Pagamento de fatura = quitação de dívida (transferência), não consumo.
-      // As compras do cartão já contam nas categorias reais — incluir a fatura
-      // dobraria os valores (movimentado, gastos, vilão, maior gasto).
-      if (t.categoria === 'Fatura cartão') { if (t.data) diasSet.add(t.data.slice(0, 10)); continue; }
+      // Transferência (ex: pagamento de fatura = quitação de dívida) não é
+      // consumo: as compras do cartão já contam nas categorias reais — incluir
+      // dobraria os valores (movimentado, gastos, vilão, maior gasto). Match
+      // por categoria é rede de segurança pra linhas sem a flag.
+      if (t.transferencia || t.categoria === 'Fatura cartão') { if (t.data) diasSet.add(t.data.slice(0, 10)); continue; }
       if (ehGasto) {
         gastos += v;
         const c = t.categoria || 'Outros';

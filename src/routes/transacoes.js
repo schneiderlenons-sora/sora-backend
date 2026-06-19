@@ -254,7 +254,7 @@ router.get('/:phone/resumo', auth, async (req, res) => {
 
     const mes = req.query.mes || new Date().toISOString().slice(0, 7);
     let q = supabase.from('transacoes')
-      .select('tipo, categoria, valor, criado_por')
+      .select('tipo, categoria, valor, criado_por, transferencia')
       .eq('grupo_id', user.grupo_ativo)
       .gte("data", `${mes}-01`).lt("data", proximoMesPrimeiroDia(mes));
     if (req.query.criado_por_me === 'true') q = q.eq('criado_por', user.id);
@@ -265,12 +265,12 @@ router.get('/:phone/resumo', auth, async (req, res) => {
     const porMembro    = {};
 
     (rows || []).forEach(r => {
+      // Transferências (ex: pagamento de fatura = quitação de dívida) não são
+      // consumo nem receita — ficam fora dos relatórios, senão dobram as
+      // compras do cartão já contabilizadas nas categorias reais. O match por
+      // categoria é rede de segurança pra linhas sem a flag.
+      if (r.transferencia || r.categoria === CATEGORIA_FATURA) return;
       if (r.tipo === 'Gasto') {
-        // Pagar a fatura do cartão NÃO é um gasto novo: as compras já foram
-        // contabilizadas nas categorias reais (iFood, Mercado…). Contar a
-        // fatura por cima dobraria esses valores. É quitação de dívida
-        // (transferência), então fica fora dos relatórios de consumo.
-        if (r.categoria === CATEGORIA_FATURA) return;
         gastos += r.valor;
         porCategoria[r.categoria] = (porCategoria[r.categoria] || 0) + r.valor;
         if (r.criado_por) porMembro[r.criado_por] = (porMembro[r.criado_por] || 0) + r.valor;
