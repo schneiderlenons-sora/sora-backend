@@ -920,3 +920,16 @@ console.log('   • Todo dia 1º  — reset de alertas de limite');
 console.log('   • Todo dia 03h — atualização Yahoo Finance');
 console.log('   • Todo dia 23h59 — snapshot de patrimônio');
 console.log('   • Todo dia 00h05 — snapshot de DRE Negócios');
+
+// ─────────────────────────────────────────────────────────────────
+// JOB 1O — RECUPERAÇÃO de pagamento recusado. A cada 15 min, manda o
+// WhatsApp de recuperação (login + cupom SORA15) pra quem o checkout
+// falhou e ainda não pagou. Dedup à prova de restart (recuperacao_*_em).
+// Migration 047. Tolerante caso a migration não tenha rodado.
+// ─────────────────────────────────────────────────────────────────
+const { processarRecuperacoes } = require('../services/recuperacaoPagamento');
+cron.schedule('*/15 * * * *', async () => {
+  try { await processarRecuperacoes(); }
+  catch (e) { console.log('💸 Recuperação de pagamento falhou:', e.message); }
+});
+console.log('   • A cada 15min — recuperação de pagamento recusado');
