@@ -21,14 +21,27 @@ router.get('/:phone', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.post('/convidar', auth, exigirPermissao('admin'), async (req, res) => {
+router.post('/convidar', auth, async (req, res) => {
   try {
-    const { phone, grupo_id } = req.body;
-    const user = await getUser(phone);
-    const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', grupo_id).single();
-    if (grupo.dono_id !== user.id) return res.status(403).json({ erro: 'Sem permissão' });
+    const { grupo_id } = req.body;
+    // Usa SEMPRE o usuário autenticado (JWT) — nunca body.phone (anti-IDOR:
+    // antes dava pra passar o telefone do dono de outro grupo e mintar convite).
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ erro: 'Não autenticado.' });
+    if (!grupo_id) return res.status(400).json({ erro: 'Grupo não informado.' });
+
+    // Só admin (ou dono) do GRUPO-ALVO pode convidar.
+    const { data: membro } = await supabase.from('grupo_membros')
+      .select('papel').eq('grupo_id', grupo_id).eq('user_id', userId).maybeSingle();
+    let ehAdmin = membro?.papel === 'admin';
+    if (!ehAdmin) {
+      const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', grupo_id).maybeSingle();
+      ehAdmin = grupo?.dono_id === userId;
+    }
+    if (!ehAdmin) return res.status(403).json({ erro: 'Apenas admins do grupo podem convidar.' });
+
     const codigo = nanoid(6).toUpperCase();
-    await supabase.from('convites').insert({ grupo_id, codigo, criado_por: user.id,
+    await supabase.from('convites').insert({ grupo_id, codigo, criado_por: userId,
       expira_em: new Date(Date.now() + 7*24*60*60*1000).toISOString() });
     res.json({ codigo });
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -42,6 +55,22 @@ router.post('/aceitar', auth, async (req, res) => {
       .select('*, grupos(dono_id)').eq('codigo', codigo)
       .eq('usado', false).gte('expira_em', new Date().toISOString()).single();
     if (!convite) return res.status(400).json({ erro: 'Código inválido ou expirado' });
+
+    // Limite de membros pelo plano do DONO do grupo (não deixa estourar o
+    // limite do plano — antes não era checado e o grupo crescia sem limite).
+    const { data: jaMembro } = await supabase.from('grupo_membros')
+      .select('id').eq('grupo_id', convite.grupo_id).eq('user_id', user.id).maybeSingle();
+    if (!jaMembro) {
+      const { data: grupo } = await supabase.from('grupos')
+        .select('users:dono_id(plano)').eq('id', convite.grupo_id).maybeSingle();
+      const limite = LIMITE_MEMBROS[grupo?.users?.plano || 'inativo'] || 1;
+      const { count } = await supabase.from('grupo_membros')
+        .select('id', { count: 'exact', head: true }).eq('grupo_id', convite.grupo_id);
+      if ((count || 0) >= limite) {
+        return res.status(403).json({ erro: `Este grupo já atingiu o limite de ${limite} membro(s) do plano.` });
+      }
+    }
+
     await supabase.from('grupo_membros')
       .upsert({ grupo_id: convite.grupo_id, user_id: user.id, papel:'escrita' }, { onConflict:'grupo_id,user_id' });
     await supabase.from('convites').update({ usado: true }).eq('id', convite.id);

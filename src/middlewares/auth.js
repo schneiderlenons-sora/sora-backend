@@ -41,7 +41,9 @@ async function auth(req, res, next) {
     // resolvem grupo por body.phone). Exceções: rotas onde o telefone é DADO
     // legítimo de outra pessoa — vincular WhatsApp e convite de grupo.
     const url = req.originalUrl || '';
-    const phoneEhDado = url.includes('/user/welcome') || url.includes('/grupos/convidar');
+    // /user/welcome: vincular WhatsApp de outra pessoa é dado legítimo.
+    // (convite NÃO está mais aqui — agora usa o usuário autenticado, não body.phone)
+    const phoneEhDado = url.includes('/user/welcome');
     if (!phoneEhDado && req.body && req.body.phone !== undefined) {
       req.body.phone = phoneDoUsuario;
     }
