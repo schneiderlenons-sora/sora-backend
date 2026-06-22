@@ -283,6 +283,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     let carteiraNome   = data.carteira_nome;
     let precisaPerguntar = false;
     let contasAtivas   = [];
+    let receitaRedirecionada = false; // recebimento que ia pra cartão → mandado p/ conta
 
     if (!carteiraNome) {
       // Caso 1: conta citada no texto (ex: "...na shein nubank" → Nubank)
@@ -299,27 +300,41 @@ module.exports = async function handleTransacoes(data, ctx) {
 
       // Caso 2: wallet padrão do usuário
       if (!carteiraNome) carteiraNome = await buscarWalletPadrao(user?.id);
+    }
 
-      if (!carteiraNome) {
-        contasAtivas = await listarContasAtivas(grupoId);
+    // REGRA: recebimento NÃO cai em cartão de crédito (não dá pra receber num
+    // cartão). Se a carteira resolvida (informada/texto/padrão) for um cartão,
+    // descarta pra escolher uma conta bancária abaixo.
+    if (data.tipo === 'Recebimento' && carteiraNome) {
+      contasAtivas = await listarContasAtivas(grupoId);
+      const atual = contasAtivas.find(c => normTxt(c.nome) === normTxt(carteiraNome));
+      if (atual?.tipo === 'Crédito') { carteiraNome = null; receitaRedirecionada = true; }
+    }
 
-        if (contasAtivas.length === 1) {
-          // Caso 3: auto-elege a única conta como principal
-          carteiraNome = contasAtivas[0].nome;
-          if (user?.id) {
-            await supabase.from('users')
-              .update({ wallet_padrao_id: contasAtivas[0].id })
-              .eq('id', user.id);
-          }
-        } else if (contasAtivas.length === 0) {
-          // Caso 4: sem contas — registra em "Dinheiro" e orienta criar
-          carteiraNome = 'Dinheiro';
-        } else {
-          // Caso 5: múltiplas, sem padrão — vai PERGUNTAR depois de salvar
-          precisaPerguntar = true;
-          // Salva temporariamente em "Dinheiro" — será movido após escolha
-          carteiraNome = 'Dinheiro';
+    if (!carteiraNome) {
+      if (!contasAtivas.length) contasAtivas = await listarContasAtivas(grupoId);
+      // Recebimento só considera contas bancárias (exclui cartões de crédito).
+      const elegiveis = data.tipo === 'Recebimento'
+        ? contasAtivas.filter(c => c.tipo !== 'Crédito')
+        : contasAtivas;
+
+      if (elegiveis.length === 1) {
+        // Caso 3: auto-elege a única conta elegível
+        carteiraNome = elegiveis[0].nome;
+        // Não força conta padrão (de gastos) por causa de um recebimento.
+        if (data.tipo !== 'Recebimento' && user?.id) {
+          await supabase.from('users')
+            .update({ wallet_padrao_id: elegiveis[0].id })
+            .eq('id', user.id);
         }
+      } else if (elegiveis.length === 0) {
+        // Caso 4: sem conta elegível — registra em "Dinheiro" e orienta criar
+        carteiraNome = 'Dinheiro';
+      } else {
+        // Caso 5: múltiplas — PERGUNTA depois de salvar (menu só com elegíveis)
+        precisaPerguntar = true;
+        carteiraNome = 'Dinheiro';
+        contasAtivas = elegiveis;
       }
     }
 
@@ -420,6 +435,9 @@ module.exports = async function handleTransacoes(data, ctx) {
     }
 
     // ── CASO PADRÃO: tudo normal ──────────────────────────────────
+    const notaReceita = receitaRedirecionada
+      ? `\n\n💡 Recebimento não entra em cartão de crédito — registrei em *${carteiraNome}*.`
+      : '';
     const msg =
       `✅ *Transação registrada!*\n\n` +
       `🔑 ID: \`${idCurto}\`\n` +
@@ -427,7 +445,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       `💸 Valor: R$ ${valor.toFixed(2)}\n` +
       `🔄 Tipo: ${tipo}\n` +
       `🏦 Conta: ${carteiraNome}\n` +
-      `📅 Data: ${dataFmt}\n\n` +
+      `📅 Data: ${dataFmt}${notaReceita}\n\n` +
       `❌ Para desfazer: *excluir transação ${idCurto}*`;
 
     await enviarMenu(phone, msg);
