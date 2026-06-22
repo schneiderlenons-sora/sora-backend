@@ -37,7 +37,12 @@ router.get('/:phone', auth, async (req, res) => {
       .select('*, dono:users!wallets_criado_por_fkey(id, name, phone, avatar_url, avatar_preset, avatar_cor)')
       .eq('grupo_id', grupoId).order('nome');
     if (error) {
-      const r = await supabase.from('wallets').select('*').eq('grupo_id', grupoId).order('nome');
+      // Sem a migration 048 (preset/cor): tenta o join só com colunas seguras
+      // pra não perder o dono; se a 049 (FK) também faltar, cai pro '*' puro.
+      let r = await supabase.from('wallets')
+        .select('*, dono:users!wallets_criado_por_fkey(id, name, phone, avatar_url)')
+        .eq('grupo_id', grupoId).order('nome');
+      if (r.error) r = await supabase.from('wallets').select('*').eq('grupo_id', grupoId).order('nome');
       data = r.data;
     }
     res.json(data || []);

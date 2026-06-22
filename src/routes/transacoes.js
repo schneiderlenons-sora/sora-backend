@@ -52,17 +52,23 @@ router.get('/:phone', auth, async (req, res) => {
 
     let { data, count, error } = await query;
     if (error) {
-      // Fallback se a FK ainda não foi criada: refaz sem o embed
+      // Fallback: mantém o criador com colunas seguras (sem preset/cor da
+      // migration 048) pra o avatar do autor não sumir. Só cai pro '*' puro
+      // se nem isso funcionar (FK ausente).
       console.warn('[transacoes] join fallback:', error.message);
-      let q2 = supabase.from('transacoes').select('*', { count: 'exact' })
-        .eq('grupo_id', grupoId)
-        .order('data', { ascending: false })
-        .range(Number(offset), Number(offset) + Number(limit) - 1);
-      if (mes)       q2 = q2.gte("data", `${mes}-01`).lt("data", proximoMesPrimeiroDia(mes));
-      if (tipo)      q2 = q2.eq('tipo', tipo);
-      if (categoria) q2 = q2.eq('categoria', categoria);
-      if (criado_por_me === 'true') q2 = q2.eq('criado_por', user.id);
-      const r = await q2;
+      const baseQ2 = (embed) => {
+        let q = supabase.from('transacoes').select(embed, { count: 'exact' })
+          .eq('grupo_id', grupoId)
+          .order('data', { ascending: false })
+          .range(Number(offset), Number(offset) + Number(limit) - 1);
+        if (mes)       q = q.gte("data", `${mes}-01`).lt("data", proximoMesPrimeiroDia(mes));
+        if (tipo)      q = q.eq('tipo', tipo);
+        if (categoria) q = q.eq('categoria', categoria);
+        if (criado_por_me === 'true') q = q.eq('criado_por', user.id);
+        return q;
+      };
+      let r = await baseQ2('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url)');
+      if (r.error) r = await baseQ2('*');
       data = r.data; count = r.count;
     }
     // Alias wallet_nome → o frontend lê esse campo; no banco a coluna é carteira_nome

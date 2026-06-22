@@ -42,13 +42,24 @@ async function listarTransacoes(grupoId, { mes, tipo, limit }) {
 
   let { data, count, error } = await query;
   if (error) {
-    let q2 = supabase.from('transacoes').select('*', { count: 'exact' })
+    // Fallback: mantém o criador, mas só com colunas que existem sem a
+    // migration 048 (preset/cor). Assim o avatar do autor não some.
+    let q2 = supabase.from('transacoes')
+      .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url)', { count: 'exact' })
       .eq('grupo_id', grupoId)
       .order('data', { ascending: false })
       .range(0, Number(limit) - 1);
     if (mes)  q2 = q2.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
     if (tipo) q2 = q2.eq('tipo', tipo);
-    const r = await q2; data = r.data; count = r.count;
+    let r = await q2;
+    if (r.error) { // último recurso: sem embed nenhum
+      let q3 = supabase.from('transacoes').select('*', { count: 'exact' })
+        .eq('grupo_id', grupoId).order('data', { ascending: false }).range(0, Number(limit) - 1);
+      if (mes)  q3 = q3.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
+      if (tipo) q3 = q3.eq('tipo', tipo);
+      r = await q3;
+    }
+    data = r.data; count = r.count;
   }
   const transacoes = (data || []).map(t => ({ ...t, wallet_nome: t.carteira_nome }));
   return { transacoes, total: count || 0 };
