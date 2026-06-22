@@ -327,6 +327,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     const { data: txCriada } = await supabase.from('transacoes').insert({
       id_curto:     idCurto,
       grupo_id:     grupoId,
+      criado_por:   user?.id || null,   // quem lançou (avatar em grupos)
       tipo:         data.tipo,
       categoria:    data.categoria || 'Outros',
       valor,
