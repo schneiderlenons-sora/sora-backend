@@ -5,12 +5,29 @@ module.exports = async function handleRecorrencias(data, ctx) {
   const { phone, grupoId } = ctx;
 
   if (data.acao === 'set_recorrente') {
+    const valorNum = parseFloat(data.valor);
+    const temValor = !isNaN(valorNum) && valorNum > 0;
+    const diaOk = Number.isInteger(data.dia) && data.dia >= 1 && data.dia <= 31;
+
+    // Sem dia (ou valor) válido NÃO salva — senão vira "todo dia null" / "R$ NaN".
+    // Pede o que falta, como já faz o fluxo de lembrete.
+    if (!diaOk || !temValor) {
+      const desc = data.descricao || 'a recorrência';
+      const exVal = temValor ? valorNum.toFixed(2).replace('.', ',') : '72,80';
+      const exDesc = data.descricao || 'Netflix';
+      await enviarTexto(phone,
+        `🔁 Quase! Pra agendar *${desc}* todo mês eu preciso ${!temValor ? 'do *valor* e ' : ''}do *dia* em que cai.\n\n` +
+        `Manda assim, por exemplo:\n*todo mês ${exVal} ${exDesc} dia 10*`);
+      return;
+    }
+
     await supabase.from('recorrencias').insert({
       grupo_id: grupoId, tipo: data.tipo || 'Gasto',
-      valor: data.valor, dia_vencimento: data.dia,
+      valor: valorNum, dia_vencimento: data.dia,
       descricao: data.descricao, carteira: data.carteira || 'Dinheiro', ativa: true
     });
-    await enviarTexto(phone, `📌 *Agendado!* R$ ${parseFloat(data.valor).toFixed(2)} - ${data.descricao} todo dia *${data.dia}*.`);
+    const ondeTxt = data.carteira ? ` no *${data.carteira}*` : '';
+    await enviarTexto(phone, `📌 *Agendado!* R$ ${valorNum.toFixed(2)} — ${data.descricao} todo dia *${data.dia}*${ondeTxt}.`);
     return;
   }
 
