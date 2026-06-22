@@ -74,6 +74,10 @@ module.exports = async function handleWallets(data, ctx) {
       tipo,
       saldo:    parseFloat(data.valor)
     }, { onConflict: 'grupo_id,nome' }).select().single();
+    // Dono da conta (só na criação) — tolerante se a migration 049 não rodou.
+    if (walletCriada?.id && !walletCriada.criado_por && user?.id) {
+      await supabase.from('wallets').update({ criado_por: user.id }).eq('id', walletCriada.id);
+    }
 
     const emojiTipo = tipo === 'Poupança' ? '🐷'
                     : tipo === 'Vale Alimentação' ? '🍔'
@@ -133,6 +137,9 @@ module.exports = async function handleWallets(data, ctx) {
       dia_vencimento: data.dia_vencimento || null,
       bandeira:      data.bandeira && BANDEIRAS.includes(data.bandeira) ? data.bandeira : null,
     }, { onConflict: 'grupo_id,nome' }).select().single();
+    if (walletCartao?.id && !walletCartao.criado_por && user?.id) {
+      await supabase.from('wallets').update({ criado_por: user.id }).eq('id', walletCartao.id);
+    }
 
     // Verifica quais campos faltam pra iniciar o wizard
     const faltam = [];
@@ -280,11 +287,14 @@ module.exports = async function handleWallets(data, ctx) {
     if (destino) {
       await supabase.from('wallets').update({ saldo: destino.saldo + valor }).eq('id', destino.id);
     } else {
-      await supabase.from('wallets').insert({
+      const { data: novoDest } = await supabase.from('wallets').insert({
         grupo_id: grupoId, nome: nomeDestino,
         tipo: nomeDestino.includes('Crédito') ? 'Crédito' : 'Corrente',
         saldo: valor
-      });
+      }).select('id').single();
+      if (novoDest?.id && user?.id) {
+        await supabase.from('wallets').update({ criado_por: user.id }).eq('id', novoDest.id);
+      }
     }
 
     // Grava no histórico (transferencia=true → fora dos relatórios de gasto).

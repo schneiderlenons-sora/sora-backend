@@ -15,9 +15,24 @@ router.get('/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req.params.phone);
     if (!user) return res.status(404).json({ erro: 'Não encontrado' });
-    const { data } = await supabase.from('grupo_membros')
-      .select('grupo_id, papel, grupos(id, nome, dono_id)').eq('user_id', user.id);
-    res.json(data || []);
+
+    // Grupos via membership.
+    const { data: viaMembros } = await supabase.from('grupo_membros')
+      .select('grupo_id, papel, grupos(id, nome, dono_id, emoji)').eq('user_id', user.id);
+    // Grupos que o usuário é DONO — inclui o "Pessoal" (criado pelo trigger
+    // sem linha em grupo_membros). Sem isso, o Pessoal não aparecia na lista e
+    // não dava pra trocar de volta pra ele.
+    const { data: viaDono } = await supabase.from('grupos')
+      .select('id, nome, dono_id, emoji').eq('dono_id', user.id);
+
+    const mapa = new Map();
+    for (const m of viaMembros || []) {
+      mapa.set(m.grupo_id, { grupo_id: m.grupo_id, papel: m.papel, grupos: m.grupos });
+    }
+    for (const g of viaDono || []) {
+      if (!mapa.has(g.id)) mapa.set(g.id, { grupo_id: g.id, papel: 'admin', grupos: g });
+    }
+    res.json([...mapa.values()]);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
