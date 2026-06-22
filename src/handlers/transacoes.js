@@ -87,6 +87,19 @@ function limpaCat(s) {
 // IMPORTANTE: gasto em subcategoria conta pro limite da categoria-pai
 // (ex: gasto em "Shein" conta pro limite de "Vestuário").
 // A transação JÁ está salva quando isso roda, então a soma já a inclui.
+// Avisa TODOS os membros do grupo (em grupo compartilhado, o alerta de limite
+// não pode ir só pra quem lançou). Cai no fallbackPhone se não achar membros.
+async function avisarGrupo(grupoId, fallbackPhone, msg) {
+  let phones = [];
+  try {
+    const { data } = await supabase.from('grupo_membros')
+      .select('users(phone)').eq('grupo_id', grupoId);
+    phones = [...new Set((data || []).map(m => m.users?.phone).filter(Boolean))];
+  } catch { /* tolerante */ }
+  const destinos = phones.length ? phones : [fallbackPhone];
+  for (const p of destinos) { try { await enviarTexto(p, msg); } catch {} }
+}
+
 async function verificarLimite(grupoId, phone, user) {
   const mesRef = new Date().toISOString().slice(0, 7);
   // Primeiro dia do mês seguinte (limite exclusivo) — evita `${mes}-31`
@@ -125,9 +138,9 @@ async function verificarLimite(grupoId, phone, user) {
 
       const pct = (total / limite.limite_mensal) * 100;
       if (pct >= (limite.percentual_alerta || 80)) {
-        await enviarTexto(phone,
-          `⚠️ *Atenção!* Você atingiu *${pct.toFixed(0)}%* do limite de *${limite.categoria}*.\n` +
-          `Limite: R$ ${limite.limite_mensal.toFixed(2)} | Gasto atual: R$ ${total.toFixed(2)}`
+        await avisarGrupo(grupoId, phone,
+          `⚠️ *Limite de ${limite.categoria}*: os gastos chegaram a *${pct.toFixed(0)}%* do teto do mês.\n` +
+          `Teto: R$ ${limite.limite_mensal.toFixed(2)} | Gasto atual: R$ ${total.toFixed(2)}`
         );
         await supabase.from('category_limits')
           .update({ alerta_enviado: true }).eq('id', limite.id);
@@ -163,8 +176,8 @@ async function verificarLimiteGeral(grupoId, phone, user, mesRef, gastos) {
   const pct = (total / meta) * 100;
   if (pct < pctAlerta) return;
 
-  await enviarTexto(phone,
-    `🚨 *Limite geral!* Você atingiu *${pct.toFixed(0)}%* da sua meta de gastos do mês.\n` +
+  await avisarGrupo(grupoId, phone,
+    `🚨 *Limite geral do mês*: os gastos chegaram a *${pct.toFixed(0)}%* da meta.\n` +
     `Meta: R$ ${meta.toFixed(2)} | Gasto total: R$ ${total.toFixed(2)}`
   );
   // Marca como avisado neste mês (defensivo: coluna pode não existir ainda)
