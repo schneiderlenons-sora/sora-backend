@@ -1,8 +1,15 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/zapi');
 
+// Insert tolerante a coluna criado_por ausente (pré-migration 052): tenta com
+// o dono; se a coluna ainda não existe, refaz sem ela (não quebra a criação).
+async function inserirComDono(tabela, base, donoId) {
+  const { error } = await supabase.from(tabela).insert({ ...base, criado_por: donoId || null });
+  if (error) await supabase.from(tabela).insert(base);
+}
+
 module.exports = async function handleRecorrencias(data, ctx) {
-  const { phone, grupoId } = ctx;
+  const { phone, grupoId, user } = ctx;
 
   if (data.acao === 'set_recorrente') {
     const valorNum = parseFloat(data.valor);
@@ -21,11 +28,11 @@ module.exports = async function handleRecorrencias(data, ctx) {
       return;
     }
 
-    await supabase.from('recorrencias').insert({
+    await inserirComDono('recorrencias', {
       grupo_id: grupoId, tipo: data.tipo || 'Gasto',
       valor: valorNum, dia_vencimento: data.dia,
       descricao: data.descricao, carteira: data.carteira || 'Dinheiro', ativa: true
-    });
+    }, user?.id);
     const ondeTxt = data.carteira ? ` no *${data.carteira}*` : '';
     await enviarTexto(phone, `📌 *Agendado!* R$ ${valorNum.toFixed(2)} — ${data.descricao} todo dia *${data.dia}*${ondeTxt}.`);
     return;
@@ -59,10 +66,10 @@ module.exports = async function handleRecorrencias(data, ctx) {
     const mes = Number.isInteger(data.mes) ? data.mes : new Date().getMonth();
     const dataVenc = new Date(new Date().getFullYear(), mes, data.dia);
     if (dataVenc < new Date()) dataVenc.setFullYear(dataVenc.getFullYear() + 1);
-    await supabase.from('lembretes').insert({
+    await inserirComDono('lembretes', {
       grupo_id: grupoId, descricao: data.descricao, valor: temValor ? valorNum : null,
       tipo: data.tipo, data_vencimento: dataVenc.toISOString()
-    });
+    }, user?.id);
     await enviarTexto(phone, `🔔 Lembrete criado: ${data.tipo === 'pagar' ? '💸' : '💰'} *${data.descricao}*${temValor ? ` - R$ ${valorNum.toFixed(2)}` : ''} em ${dataVenc.toLocaleDateString('pt-BR')}`);
   }
 };

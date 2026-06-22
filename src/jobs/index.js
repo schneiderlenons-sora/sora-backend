@@ -33,6 +33,16 @@ async function donoDoGrupo(grupoId) {
   return user || null;
 }
 
+// Dono real de um item (cartão/recorrência) — {id, phone}. Cai pro dono do
+// grupo se o item não tiver criado_por (linhas antigas / pré-migration).
+async function donoDoItem(userId, grupoId) {
+  if (userId) {
+    const { data: u } = await supabase.from('users').select('id, phone').eq('id', userId).maybeSingle();
+    if (u?.phone) return u;
+  }
+  return donoDoGrupo(grupoId);
+}
+
 // Envia o aviso de fatura (fechamento ou vencimento) e, se houver contas
 // bancárias, cria um pendente pra Sora pagar quando o user responder o número.
 async function avisarFatura({ titulo, venc, total, emAberto, contasAtivas, dono, nomeCartao }) {
@@ -70,7 +80,7 @@ async function processarFaturas(hoje, diaHoje, fimHoje) {
   const hojeStr = hoje.toISOString().slice(0, 10);
 
   const { data: cartoes } = await supabase.from('wallets')
-    .select('id, nome, grupo_id, dia_fechamento, dia_vencimento, ultimo_aviso_fechamento, ultimo_aviso_vencimento')
+    .select('id, nome, grupo_id, criado_por, dia_fechamento, dia_vencimento, ultimo_aviso_fechamento, ultimo_aviso_vencimento')
     .eq('tipo', 'Crédito')
     .or(`dia_fechamento.eq.${diaHoje},dia_vencimento.eq.${diaHoje}`);
 
@@ -93,7 +103,8 @@ async function processarFaturas(hoje, diaHoje, fimHoje) {
     const total = emAberto.reduce((s, t) => s + (t.valor || 0), 0);
     if (total <= 0) continue;
 
-    const dono = await donoDoGrupo(c.grupo_id);
+    // Aviso/cobrança da fatura vai pro DONO do cartão (não pro dono do grupo).
+    const dono = await donoDoItem(c.criado_por, c.grupo_id);
     if (!dono?.phone) continue;
 
     const { data: contas } = await supabase.from('wallets')
@@ -172,7 +183,7 @@ cron.schedule('0 * * * *', async () => {
       await supabase.from('wallets').update({ saldo: wallet.saldo + (rec.valor * mult) }).eq('id', wallet.id);
     }
 
-    const phone = await phoneDono(rec.grupo_id);
+    const phone = await phoneDoUser(rec.criado_por, rec.grupo_id);
     if (phone) {
       await enviarTexto(phone,
         `🔁 *Lançamento automático:*\n${rec.tipo === 'Gasto' ? '🔴' : '🟢'} ${rec.descricao} — R$ ${rec.valor.toFixed(2)}\nID: \`${idCurto}\``
@@ -189,7 +200,7 @@ cron.schedule('0 * * * *', async () => {
     .lte('data_vencimento', fimHoje.toISOString());
 
   for (const lem of lembretes || []) {
-    const phone = await phoneDono(lem.grupo_id);
+    const phone = await phoneDoUser(lem.criado_por, lem.grupo_id);
     if (phone) {
       await enviarTexto(phone,
         `🔔 *LEMBRETE:*\n` +
@@ -210,7 +221,7 @@ cron.schedule('0 * * * *', async () => {
 
   for (const p of parcelas || []) {
     if (p.parcelas_pagas >= p.total_parcelas) continue;
-    const phone = await phoneDono(p.grupo_id);
+    const phone = await phoneDoUser(p.criado_por, p.grupo_id);
     if (phone) {
       await enviarTexto(phone,
         `🔔 *PARCELA VENCE HOJE:*\n` +

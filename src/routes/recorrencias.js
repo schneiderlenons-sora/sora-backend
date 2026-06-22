@@ -33,7 +33,7 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
   try {
     const { tipo, categoria, valor, dia_vencimento, descricao, carteira } = req.body;
     const ehReceita = tipo === 'Recebimento';
-    const { data, error } = await supabase.from('recorrencias').insert({
+    const base = {
       grupo_id:       req.grupoId,
       tipo:           ehReceita ? 'Recebimento' : 'Gasto',
       categoria:      categoria || (ehReceita ? '💼 Salário' : 'Outros'),
@@ -42,7 +42,12 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       descricao:      (descricao || '').toString().slice(0, 120),
       carteira:       carteira || 'Dinheiro',
       ativa:          true,
-    }).select().single();
+    };
+    // criado_por = usuário logado (dono do lembrete). Tolerante à coluna ausente
+    // (pré-migration 052): refaz sem ela se o insert falhar.
+    const dono = req.authUser?.id || req.userId || null;
+    let { data, error } = await supabase.from('recorrencias').insert({ ...base, criado_por: dono }).select().single();
+    if (error) ({ data, error } = await supabase.from('recorrencias').insert(base).select().single());
     if (error) throw error;
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
