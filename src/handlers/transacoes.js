@@ -267,6 +267,21 @@ async function listarContasAtivas(grupoId) {
   return (data || []).filter(w => !w.arquivada);
 }
 
+// Grupo é compartilhado? Mesma convenção do painel: o grupo "Pessoal de X" é
+// individual; qualquer outro nome é gestão compartilhada.
+async function grupoCompartilhado(grupoId) {
+  const { data } = await supabase.from('grupos').select('nome').eq('id', grupoId).maybeSingle();
+  return !/pessoal/i.test(data?.nome || '');
+}
+
+// Primeiro nome de cada userId (pra mostrar "de quem" em grupo). Tolerante.
+async function nomesPorId(ids) {
+  const lista = [...new Set((ids || []).filter(Boolean))];
+  if (!lista.length) return new Map();
+  const { data } = await supabase.from('users').select('id, name').in('id', lista);
+  return new Map((data || []).map(u => [u.id, (u.name || '').trim().split(' ')[0] || 'Membro']));
+}
+
 // ── HANDLER PRINCIPAL ─────────────────────────────────────────────
 module.exports = async function handleTransacoes(data, ctx) {
   const { phone, grupoId, user } = ctx;
@@ -591,12 +606,18 @@ module.exports = async function handleTransacoes(data, ctx) {
       return;
     }
 
+    // Em grupo compartilhado, mostra de quem foi cada lançamento.
+    const ehGrupo = await grupoCompartilhado(grupoId);
+    const nomes = ehGrupo ? await nomesPorId(rows.map(r => r.criado_por)) : new Map();
+
     let total = 0;
     const lista = rows.map(r => {
       total += r.valor;
       const dt = new Date(r.data).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
       const emoji = emojiDaCat(r.categoria);
-      return `${emoji} ${dt} - R$ ${r.valor.toFixed(2)} (${r.categoria})`;
+      const autor = ehGrupo && r.criado_por && nomes.get(r.criado_por)
+        ? ` · ${nomes.get(r.criado_por)}` : '';
+      return `${emoji} ${dt} - R$ ${r.valor.toFixed(2)} (${r.categoria})${autor}`;
     }).join('\n');
 
     await enviarTexto(phone,
@@ -611,16 +632,18 @@ module.exports = async function handleTransacoes(data, ctx) {
     inicioMes.setDate(1); inicioMes.setHours(0,0,0,0);
 
     const { data: rows } = await supabase
-      .from('transacoes').select('tipo, categoria, valor')
+      .from('transacoes').select('tipo, categoria, valor, criado_por')
       .eq('grupo_id', grupoId)
       .gte('data', inicioMes.toISOString());
 
     let gastos = 0, receitas = 0;
     const cats = {};
+    const porMembro = {};
     (rows || []).forEach(r => {
       if (r.tipo === 'Gasto') {
         gastos += r.valor;
         cats[r.categoria] = (cats[r.categoria] || 0) + r.valor;
+        if (r.criado_por) porMembro[r.criado_por] = (porMembro[r.criado_por] || 0) + r.valor;
       } else {
         receitas += r.valor;
       }
@@ -640,8 +663,19 @@ module.exports = async function handleTransacoes(data, ctx) {
       ? `\n🎯 Meta: R$ ${metaMensal.toFixed(2)} (${((gastos/metaMensal)*100).toFixed(0)}% usado)`
       : '';
 
+    // Em grupo compartilhado, mostra o gasto de cada membro.
+    let blocoMembros = '';
+    if (await grupoCompartilhado(grupoId) && Object.keys(porMembro).length) {
+      const nomes = await nomesPorId(Object.keys(porMembro));
+      const linhas = Object.entries(porMembro)
+        .sort((a, b) => b[1] - a[1])
+        .map(([id, val]) => `👤 *${nomes.get(id) || 'Membro'}:* R$ ${val.toFixed(2)}`)
+        .join('\n');
+      if (linhas) blocoMembros = `\n\n*Por membro:*\n${linhas}`;
+    }
+
     await enviarTexto(phone,
-      `📊 *RESUMO DO MÊS*\n\n${catOrdenadas}\n\n` +
+      `📊 *RESUMO DO MÊS*\n\n${catOrdenadas}${blocoMembros}\n\n` +
       `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
       `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
       `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}\n\n` +
