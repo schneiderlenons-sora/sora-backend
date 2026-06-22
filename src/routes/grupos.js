@@ -134,8 +134,11 @@ router.post('/criar', auth, async (req, res) => {
       await copiarDadosGrupo(grupoAnterior, grupo.id, user.id)
         .catch(e => console.warn('[grupos/criar] copiar dados:', e.message));
     } else {
-      // Popula categorias padrão no novo grupo
+      // Popula categorias padrão + extras (Encomendas/iFood/Uber e os subs
+      // Nike/Shein/Adidas em Vestuário) — igual ao trigger de signup. Antes só
+      // chamava a padrão, então grupos novos ficavam sem as subcategorias.
       try { await supabase.rpc('criar_categorias_padrao', { p_grupo_id: grupo.id }); } catch {}
+      try { await supabase.rpc('criar_categorias_extra',  { p_grupo_id: grupo.id }); } catch {}
     }
 
     res.json({ ok: true, grupo });
