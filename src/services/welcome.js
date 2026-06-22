@@ -47,7 +47,18 @@ function montarMensagem({ nome, primeiroAcesso, onboardingCompleto }) {
         `Quando terminar, é só me mandar mensagem aqui mesmo pra registrar gastos por *texto*, *áudio*, *foto* ou até *PDF* 😉`,
       );
     }
-    linhas.push(``, `Digite *ajuda* a qualquer momento pra ver tudo que eu sei fazer.`);
+    linhas.push(
+      ``,
+      `*Alguns comandos que eu entendo:*`,
+      `• _gastei 50 no mercado_`,
+      `• _saldo_ — lista o saldo de todas as suas contas`,
+      `• _ajustar nubank 850_ — atualiza o saldo manual quando estiver diferente do real`,
+      `• _todo mês 1000 aluguel dia 5_ — cria uma recorrência mensal`,
+      `• _resumo_ — relatório completo: receitas, gastos, saldo e top categorias`,
+      `• _almocei arroz, feijão e frango_ — eu calculo calorias, proteínas, carbs e gorduras`,
+      ``,
+      `Pra ver tudo que sei fazer, digite *ajuda* a qualquer momento — ou abra a *Central da Sora* no painel pra ver todos os comandos detalhados. 🙌`,
+    );
     return linhas.join('\n');
   }
 
