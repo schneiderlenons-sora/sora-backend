@@ -93,13 +93,15 @@ const LIMITE_MEMBROS = { inativo: 1, basico: 1, premium: 3, black: 5 };
 // POST /criar — cria um novo grupo (somente premium/black)
 router.post('/criar', auth, async (req, res) => {
   try {
-    const { phone, nome, emoji } = req.body;
+    const { phone, nome, emoji, copiar_dados } = req.body;
     const user = await getUser(phone);
     if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (user.plano !== 'premium' && user.plano !== 'black') {
       return res.status(403).json({ erro: 'Recurso disponível apenas nos planos Premium e Black.' });
     }
     if (!nome?.trim()) return res.status(400).json({ erro: 'Informe o nome do grupo.' });
+
+    const grupoAnterior = user.grupo_ativo; // de onde copiar (o grupo atual do usuário)
 
     const { data: grupo, error: erroGrupo } = await supabase.from('grupos')
       .insert({ nome: nome.trim(), emoji: emoji || '👨‍👩‍👧', dono_id: user.id })
@@ -111,8 +113,15 @@ router.post('/criar', auth, async (req, res) => {
     });
     await supabase.from('users').update({ grupo_ativo: grupo.id }).eq('id', user.id);
 
-    // Popula categorias padrão no novo grupo
-    try { await supabase.rpc('criar_categorias_padrao', { p_grupo_id: grupo.id }); } catch {}
+    if (copiar_dados && grupoAnterior) {
+      // Traz as finanças atuais (cópia) — categorias copiadas substituem as padrão.
+      const { copiarDadosGrupo } = require('../services/copiarGrupo');
+      await copiarDadosGrupo(grupoAnterior, grupo.id, user.id)
+        .catch(e => console.warn('[grupos/criar] copiar dados:', e.message));
+    } else {
+      // Popula categorias padrão no novo grupo
+      try { await supabase.rpc('criar_categorias_padrao', { p_grupo_id: grupo.id }); } catch {}
+    }
 
     res.json({ ok: true, grupo });
   } catch (err) { res.status(500).json({ erro: err.message }); }
