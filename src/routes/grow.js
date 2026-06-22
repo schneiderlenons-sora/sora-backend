@@ -457,17 +457,32 @@ router.post('/lista-compras/limpar', auth, requirePremiumGrow, async (req, res) 
 // Envia a lista de compras (itens pendentes, agrupados por categoria) pro WhatsApp
 router.post('/lista-compras/enviar', auth, requirePremiumGrow, async (req, res) => {
   try {
-    const phone = req.authUser?.phone;
-    if (!phone) return res.status(400).json({ erro: 'Nenhum WhatsApp vinculado à sua conta.' });
-    const cfg = await growShareCfg(req.userRow.grupo_ativo);
-    const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
+    const grupoId = req.userRow.grupo_ativo;
+    const cfg = await growShareCfg(grupoId);
+    const listaId = await getOrCreateLista(grupoId);
     let qe = supabase.from('itens_lista_compras').select('nome, quantidade, categoria, comprado').eq('lista_id', listaId);
     if (!cfg.casa) qe = qe.eq('user_id', req.userRow.id);
     const { data: itens } = await qe;
     const pendentes = (itens || []).filter(i => !i.comprado);
+
+    // Destinatários: IDs de membros do grupo escolhidos no painel. Valida contra
+    // os membros reais (ninguém manda pra telefone arbitrário). Default = só eu.
+    const { data: membros } = await supabase.from('grupo_membros')
+      .select('user_id, users(phone)').eq('grupo_id', grupoId);
+    const phonePorId = new Map((membros || [])
+      .filter(m => m.users?.phone).map(m => [m.user_id, m.users.phone]));
+    if (req.authUser?.phone) phonePorId.set(req.userRow.id, req.authUser.phone); // garante o próprio
+
+    const pedidos = Array.isArray(req.body?.destinatarios) ? req.body.destinatarios : [];
+    let phones = pedidos.length
+      ? pedidos.map(id => phonePorId.get(id)).filter(Boolean)
+      : [req.authUser?.phone].filter(Boolean);
+    phones = [...new Set(phones)];
+    if (!phones.length) return res.status(400).json({ erro: 'Nenhum WhatsApp válido pra enviar.' });
+
     if (!pendentes.length) {
-      await enviarTexto(phone, '🛒 Sua lista de compras está vazia — não há nada pendente. 🎉');
-      return res.json({ ok: true, enviados: 0 });
+      for (const p of phones) await enviarTexto(p, '🛒 A lista de compras está vazia — não há nada pendente. 🎉');
+      return res.json({ ok: true, enviados: 0, destinatarios: phones.length });
     }
     // Agrupa por categoria
     const grupos = {};
@@ -476,12 +491,12 @@ router.post('/lista-compras/enviar', auth, requirePremiumGrow, async (req, res) 
       (grupos[c] = grupos[c] || []).push(i);
     }
     const blocos = Object.entries(grupos).map(([cat, lista]) => {
-      const linhas = lista.map(i => `⬜ ${i.nome}${i.quantidade && i.quantidade !== '1' ? ` (${i.quantidade})` : ''}`);
+      const linhas = lista.map(i => `• ${i.nome}${i.quantidade && i.quantidade !== '1' ? ` (${i.quantidade})` : ''}`);
       return `*${cat}*\n${linhas.join('\n')}`;
     });
     const msg = `🛒 *Lista de compras*\n\n${blocos.join('\n\n')}\n\n_${pendentes.length} item${pendentes.length === 1 ? '' : 's'} pra comprar_`;
-    await enviarTexto(phone, msg);
-    res.json({ ok: true, enviados: pendentes.length });
+    for (const p of phones) await enviarTexto(p, msg);
+    res.json({ ok: true, enviados: pendentes.length, destinatarios: phones.length });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
