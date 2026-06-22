@@ -33,7 +33,7 @@ router.get('/:phone', auth, async (req, res) => {
 
     // Tenta com JOIN — se a FK não existir no schema, cai para SELECT * sem join
     let query = supabase.from('transacoes')
-      .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone)', { count: 'exact' })
+      .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url, avatar_preset, avatar_cor)', { count: 'exact' })
       .eq('grupo_id', grupoId)
       .order('data', { ascending: false })
       .range(Number(offset), Number(offset) + Number(limit) - 1);

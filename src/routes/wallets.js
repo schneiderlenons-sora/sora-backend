@@ -31,8 +31,15 @@ router.get('/:phone', auth, async (req, res) => {
   try {
     const grupoId = await getGrupoId(req.params.phone);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
-    const { data } = await supabase.from('wallets')
-      .select('*').eq('grupo_id', grupoId).order('nome');
+    // Join do dono (pra mostrar de quem é a conta em grupos). Fallback sem o
+    // embed caso a FK ainda não exista (migration 049 não rodada).
+    let { data, error } = await supabase.from('wallets')
+      .select('*, dono:users!wallets_criado_por_fkey(id, name, phone, avatar_url, avatar_preset, avatar_cor)')
+      .eq('grupo_id', grupoId).order('nome');
+    if (error) {
+      const r = await supabase.from('wallets').select('*').eq('grupo_id', grupoId).order('nome');
+      data = r.data;
+    }
     res.json(data || []);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -56,6 +63,14 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       .upsert(row, { onConflict: 'grupo_id,nome' })
       .select().single();
     if (error) throw error;
+
+    // Define o dono SÓ na criação (não sobrescreve em edições/ajustes de saldo).
+    // Tolerante: se a coluna criado_por não existe (migration 049), ignora.
+    if (data && !data.criado_por && req.userId) {
+      const { error: e2 } = await supabase.from('wallets')
+        .update({ criado_por: req.userId }).eq('id', data.id);
+      if (!e2) data.criado_por = req.userId;
+    }
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

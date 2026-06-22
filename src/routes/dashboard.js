@@ -33,7 +33,7 @@ const calcResumo = (grupoId, mes) => calcularResumo({ grupoId, mes });
 // (com o mesmo fallback caso a FK do join não exista no schema).
 async function listarTransacoes(grupoId, { mes, tipo, limit }) {
   let query = supabase.from('transacoes')
-    .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone)', { count: 'exact' })
+    .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url, avatar_preset, avatar_cor)', { count: 'exact' })
     .eq('grupo_id', grupoId)
     .order('data', { ascending: false })
     .range(0, Number(limit) - 1);
