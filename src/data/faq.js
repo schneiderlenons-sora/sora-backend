@@ -78,6 +78,39 @@ Se você ainda não escolheu uma e tiver várias contas, eu *pergunto* de qual s
 E você sempre pode especificar: "gastei 50 no mercado *pelo nubank*". Pra corrigir o último, diga: "*na verdade foi no inter*".`,
   },
 
+  // ── INSTALAR O APP (PWA) ───────────────────────────────────────────
+  {
+    id: 'instalar-app',
+    gatilhos: [
+      /\binstal\w*\b.{0,15}\b(app|aplicativo|sora|celular)\b/,
+      /\b(app|aplicativo)\b.{0,15}\binstal\w*/,
+      /\b(baix\w*|download)\b.{0,15}\b(app|aplicativo|sora)\b/,
+      /\b(tem|teem|ha|existe|voce[s]? tem|voces tem)\b.{0,12}\b(app|aplicativo)\b/,
+      /\bapp(licativo)? da sora\b/,
+      /\b(play ?store|app ?store|google play|apple store|loja de aplicativ)/,
+      /\badicionar (a|na) tela (inicial|de inicio)/,
+      /\b(onde|como)\b.{0,20}\b(app|aplicativo)\b/,
+      /\binstalar (a sora |o app )?no celular\b/,
+    ],
+    resposta:
+`Ótima pergunta! 📲 A Sora ainda *não está nas lojas* (Play Store / App Store) — mas você instala em segundos direto pelo navegador, e fica igual a um app (ícone na tela inicial + tela cheia). É grátis e leva uns 30 segundos:
+
+📱 *No Android (Chrome)*
+1️⃣ Abra *forsora.com* no Chrome e entre na sua conta
+2️⃣ Toque no menu *⋮* (3 pontinhos, canto superior direito)
+3️⃣ Toque em *"Instalar app"* (ou *"Adicionar à tela inicial"*)
+4️⃣ Confirme em *Instalar* ✅
+
+🍎 *No iPhone (Safari)*
+1️⃣ Abra *forsora.com* no *Safari* (precisa ser o Safari)
+2️⃣ Entre na sua conta
+3️⃣ Toque no botão *Compartilhar* (quadradinho com a setinha pra cima, na barra de baixo)
+4️⃣ Role e toque em *"Adicionar à Tela de Início"*
+5️⃣ Toque em *Adicionar* ✅
+
+Pronto! Vai aparecer o ícone da Sora 🐳 na sua tela inicial, abrindo igual a um aplicativo normal. Qualquer dúvida, é só me chamar! 💚`,
+  },
+
   // ── CONTA / WHATSAPP ───────────────────────────────────────────────
   {
     id: 'vincular-whatsapp',

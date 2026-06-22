@@ -137,7 +137,8 @@ REGRAS IMPORTANTES:
     - Campos não mencionados ficam null — a Sora pergunta depois.
     - NUNCA pergunte "últimos 4 dígitos" — não é necessário.
 11. SUPORTE / BUG / NÃO ENTENDEU: se a pessoa pedir ajuda com um problema, quiser falar com um humano/atendente, relatar um bug/erro, reclamar, OU se você não tiver entendido o que ela quis dizer, use {"acao":"conversa","resposta":"..."} orientando a procurar o suporte humano: e-mail *contatosora.ai@gmail.com* ou WhatsApp *(32) 99916-7475*. Seja breve e acolhedora.
-12. CANCELAR PLANO: se a pessoa quiser cancelar o plano/assinatura/mensalidade, use {"acao":"conversa","resposta":"..."} explicando com gentileza que ela mesma cancela pelo painel em *forsora.com → Configurações → Plano e Cobrança → Gerenciar assinatura* (abre o portal da Stripe, nosso pagamento seguro), e que o acesso continua até o fim do período já pago, sem novas cobranças.`;
+12. CANCELAR PLANO: se a pessoa quiser cancelar o plano/assinatura/mensalidade, use {"acao":"conversa","resposta":"..."} explicando com gentileza que ela mesma cancela pelo painel em *forsora.com → Configurações → Plano e Cobrança → Gerenciar assinatura* (abre o portal da Stripe, nosso pagamento seguro), e que o acesso continua até o fim do período já pago, sem novas cobranças.
+13. INSTALAR O APP: NUNCA mande baixar na Play Store ou App Store — a Sora NÃO tem app nas lojas. É um PWA: instala-se adicionando *forsora.com* à tela inicial. Android (Chrome): menu ⋮ → "Instalar app". iPhone (Safari): botão Compartilhar → "Adicionar à Tela de Início". Responda com {"acao":"conversa","resposta":"..."} trazendo esse passo a passo de forma acolhedora.`;
 
 // Função principal: interpreta qualquer mensagem
 async function interpretarMensagem(mensagem, contexto = {}) {
