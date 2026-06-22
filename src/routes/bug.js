@@ -19,9 +19,11 @@ router.post('/', auth, async (req, res) => {
     const user_id = req.authUser?.id;
     const mensagem = (req.body?.mensagem || '').trim();
     const imagem   = req.body?.imagem;
+    const tipo     = req.body?.tipo === 'melhoria' ? 'melhoria' : 'problema';
+    const ehMelhoria = tipo === 'melhoria';
 
     if (!mensagem) {
-      return res.status(400).json({ erro: 'Descreva o problema antes de enviar.' });
+      return res.status(400).json({ erro: ehMelhoria ? 'Escreva sua sugestão antes de enviar.' : 'Descreva o problema antes de enviar.' });
     }
     if (mensagem.length > 4000) {
       return res.status(400).json({ erro: 'Mensagem muito longa (máx. 4000 caracteres).' });
@@ -39,11 +41,12 @@ router.post('/', auth, async (req, res) => {
     }
 
     // 1) Histórico (backup — não depende do WhatsApp entregar).
+    // Insert tolerante à coluna `tipo` ausente (pré-migration 053): refaz sem.
     let id = null;
     try {
-      const { data: row } = await supabase.from('bug_reports').insert({
-        user_id, nome, phone, email, mensagem, tem_imagem: temImagem,
-      }).select('id').single();
+      const base = { user_id, nome, phone, email, mensagem, tem_imagem: temImagem };
+      let { data: row, error } = await supabase.from('bug_reports').insert({ ...base, tipo }).select('id').single();
+      if (error) ({ data: row } = await supabase.from('bug_reports').insert(base).select('id').single());
       id = row?.id || null;
     } catch (e) {
       console.warn('[/api/bug] insert falhou (segue pro WhatsApp):', e.message);
@@ -51,7 +54,7 @@ router.post('/', auth, async (req, res) => {
 
     // 2) Encaminha pro WhatsApp de suporte.
     const cabecalho = [
-      '🐞 *Novo relato de bug*',
+      ehMelhoria ? '💡 *Nova sugestão de melhoria*' : '🐞 *Novo relato de bug*',
       '',
       `👤 ${nome || '—'}${phone ? ` · ${phone}` : ''}`,
       email ? `✉️ ${email}` : null,
