@@ -46,6 +46,8 @@ app.use('/api/saude',        require('./routes/saude'));
 app.use('/api/estudos',      require('./routes/estudos'));
 app.use('/api/user',         require('./routes/users'));
 app.use('/api/bug',          require('./routes/bug'));
+app.use('/api/pluggy',       require('./routes/pluggy'));
+app.use('/api/webhooks/pluggy', require('./routes/webhookPluggy'));
 
 // --- 404 ---
 app.use((req, res) => {
