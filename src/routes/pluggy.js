@@ -60,6 +60,21 @@ router.post('/item', auth, exigirPermissao('admin', 'escrita'), async (req, res)
   }
 });
 
+// Re-sincroniza uma conexão sob demanda (botão "Sincronizar agora").
+router.post('/connections/:itemId/sync', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const itemId = req.params.itemId;
+    const { data: item } = await supabase.from('pluggy_items')
+      .select('item_id').eq('item_id', itemId).eq('grupo_id', req.grupoId).maybeSingle();
+    if (!item) return res.status(404).json({ erro: 'Conexão não encontrada.' });
+    const total = await pluggySync.sincronizarItem(itemId);
+    res.json({ ok: true, novas: total || 0 });
+  } catch (err) {
+    console.error('[pluggy/sync]', err.message);
+    res.status(500).json({ erro: 'Não consegui sincronizar agora.' });
+  }
+});
+
 // Conexões do grupo ativo.
 router.get('/connections', auth, async (req, res) => {
   try {

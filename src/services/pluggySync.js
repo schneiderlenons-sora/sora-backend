@@ -11,30 +11,63 @@ const { categorizar } = require('./categorizar');
 const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 const ymd = (d) => new Date(d).toISOString().slice(0, 10);
 
+// Dia do mês de uma data ISO, clampado em 1..28 (constraint da migration 023).
+function diaClamp(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  return Math.min(28, Math.max(1, d.getUTCDate()));
+}
+
+// Bandeira do Pluggy ("MASTERCARD") → conjunto aceito pela Sora (migration 023).
+function mapBandeira(brand) {
+  const m = { MASTERCARD: 'Mastercard', VISA: 'Visa', ELO: 'Elo', AMEX: 'Amex',
+              'AMERICAN EXPRESS': 'Amex', HIPERCARD: 'Hipercard' };
+  return m[(brand || '').toString().toUpperCase()] || null;
+}
+
+// Campos extras de cartão de crédito a partir de account.creditData.
+function camposCredito(account) {
+  const cd = account.creditData || {};
+  const out = {};
+  if (cd.creditLimit != null) out.limite = Number(cd.creditLimit);
+  const fech = diaClamp(cd.balanceCloseDate); if (fech) out.dia_fechamento = fech;
+  const venc = diaClamp(cd.balanceDueDate);  if (venc) out.dia_vencimento = venc;
+  const band = mapBandeira(cd.brand);         if (band) out.bandeira = band;
+  return out;
+}
+
 // Conta Pluggy → carteira da Sora. Reusa a carteira já mapeada; senão adota uma
-// manual de mesmo nome; senão cria. Atualiza o saldo com o valor real do Pluggy.
-async function upsertWallet(grupoId, userId, account) {
-  const tipo = account.type === 'CREDIT' ? 'Crédito'
+// manual de mesmo nome; senão cria. Saldo = valor real do Pluggy (cartão = 0,
+// pois a fatura vem das transações). Cartão recebe limite/fechamento/vencimento.
+async function upsertWallet(grupoId, userId, account, connectorNome) {
+  const ehCredito = account.type === 'CREDIT';
+  const tipo = ehCredito ? 'Crédito'
              : account.subtype === 'SAVINGS_ACCOUNT' ? 'Poupança' : 'Corrente';
-  const nome = (account.name || account.marketingName || 'Conta').toString().trim().slice(0, 60);
-  const saldo = Number(account.balance || 0);
+  // Cartão: usa o nome do banco ("Nubank Crédito") — o account.name vem como o
+  // nível do cartão ("Platinum"). Isso ainda adota um cartão manual homônimo.
+  const nome = (ehCredito
+    ? `${connectorNome || account.name || 'Cartão'} Crédito`
+    : (connectorNome || account.name || account.marketingName || 'Conta')
+  ).toString().trim().slice(0, 60);
+  const saldo = ehCredito ? 0 : Number(account.balance || 0);
+  const extras = ehCredito ? camposCredito(account) : {};
 
   // 1) já mapeada a esta conta Pluggy?
   const { data: jaMapeada } = await supabase.from('wallets')
     .select('id, nome').eq('grupo_id', grupoId).eq('pluggy_account_id', account.id).maybeSingle();
   if (jaMapeada) {
-    await supabase.from('wallets').update({ saldo, tipo }).eq('id', jaMapeada.id);
+    await supabase.from('wallets').update({ saldo, tipo, ...extras }).eq('id', jaMapeada.id);
     return jaMapeada.nome;
   }
   // 2) adota uma carteira manual de mesmo nome (ainda sem Pluggy)
   const { data: mesmoNome } = await supabase.from('wallets')
     .select('id, nome').eq('grupo_id', grupoId).ilike('nome', nome).maybeSingle();
   if (mesmoNome) {
-    await supabase.from('wallets').update({ saldo, tipo, pluggy_account_id: account.id }).eq('id', mesmoNome.id);
+    await supabase.from('wallets').update({ saldo, tipo, pluggy_account_id: account.id, ...extras }).eq('id', mesmoNome.id);
     return mesmoNome.nome;
   }
   // 3) cria nova
-  const row = { grupo_id: grupoId, nome, tipo, saldo, pluggy_account_id: account.id };
+  const row = { grupo_id: grupoId, nome, tipo, saldo, pluggy_account_id: account.id, ...extras };
   if (userId) row.criado_por = userId;
   let { data: nova, error } = await supabase.from('wallets').insert(row).select('nome').single();
   if (error) { // colisão de nome (unique grupo_id,nome) → desambígua
@@ -108,11 +141,13 @@ async function sincronizarItem(itemId) {
     let total = 0;
     for (const acc of contas) {
       try {
-        const walletNome = await upsertWallet(item.grupo_id, item.user_id, acc);
+        const walletNome = await upsertWallet(item.grupo_id, item.user_id, acc, connectorNome);
         const txs = await pluggy.listarTransacoes(acc.id, from);
-        total += await inserirNovas(item.grupo_id, item.user_id, walletNome, txs);
+        const novas = await inserirNovas(item.grupo_id, item.user_id, walletNome, txs);
+        total += novas;
+        console.log(`[pluggy] conta ${acc.type}/${acc.subtype || '-'} "${walletNome}": ${txs.length} txs, +${novas} novas (from ${from})`);
       } catch (e) {
-        console.warn(`[pluggy] conta ${acc.id} falhou:`, e.message);
+        console.warn(`[pluggy] conta ${acc.id} (${acc.type}) falhou:`, e.message);
       }
     }
 
