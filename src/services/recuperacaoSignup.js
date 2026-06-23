@@ -21,7 +21,7 @@ function RECUPERACAO_SIGNUP_TEXT(nome) {
     ``,
     `Imagina mandar *"gastei 50 no mercado"* aqui no WhatsApp e pronto: eu lanço, categorizo e te mostro exatamente pra onde seu dinheiro tá indo 📊 Sem planilha, sem app complicado. Só conversa.`,
     ``,
-    `🎁 E pra te dar um empurrãozinho, separei um presente: *15% OFF* com o cupom *SORA15* no checkout — mas é por *tempo limitado*, viu? ⏳`,
+    `🎁 E pra te dar um empurrãozinho, separei um presente: *15% OFF* com o cupom *SORA15* no checkout — válido por *24 horas* ⏳😉`,
     ``,
     `É 2 minutinhos. Finaliza aqui:`,
     `🌐 ${APP}/login`,
