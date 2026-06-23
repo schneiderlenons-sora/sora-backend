@@ -17,9 +17,10 @@ function proximoMesPrimeiroDia(mes) {
 
 // Transferência / quitação de dívida (não é consumo nem receita).
 // `transferencia` é a flag canônica (migration 046); o match por categoria é
-// rede de segurança pra linhas antigas que não tenham a flag.
+// rede de segurança (linhas sem a flag): pagamento de fatura e movimentações
+// (Pix/TED do Open Finance caem em "Transferências").
 function ehTransferencia(r) {
-  return r.transferencia === true || r.categoria === 'Fatura cartão';
+  return r.transferencia === true || r.categoria === 'Fatura cartão' || r.categoria === 'Transferências';
 }
 
 // Resumo do mês: { receitas, gastos, saldo, por_categoria[], por_membro[] }.

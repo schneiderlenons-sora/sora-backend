@@ -29,7 +29,7 @@ router.get('/:phone', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
     const grupoId = user.grupo_ativo;
 
-    const { mes, tipo, categoria, limit = 50, offset = 0, criado_por_me, criado_por_phone } = req.query;
+    const { mes, tipo, categoria, limit = 50, offset = 0, criado_por_me, criado_por_phone, ate } = req.query;
 
     // Tenta com JOIN — se a FK não existir no schema, cai para SELECT * sem join
     let query = supabase.from('transacoes')
@@ -39,6 +39,7 @@ router.get('/:phone', auth, async (req, res) => {
       .range(Number(offset), Number(offset) + Number(limit) - 1);
 
     if (mes)       query = query.gte("data", `${mes}-01`).lt("data", proximoMesPrimeiroDia(mes));
+    if (ate)       query = query.lte('data', ate); // exclui lançamentos futuros (ex.: parcelas)
     if (tipo)      query = query.eq('tipo', tipo);
     if (categoria) query = query.eq('categoria', categoria);
 
@@ -62,6 +63,7 @@ router.get('/:phone', auth, async (req, res) => {
           .order('data', { ascending: false })
           .range(Number(offset), Number(offset) + Number(limit) - 1);
         if (mes)       q = q.gte("data", `${mes}-01`).lt("data", proximoMesPrimeiroDia(mes));
+        if (ate)       q = q.lte('data', ate);
         if (tipo)      q = q.eq('tipo', tipo);
         if (categoria) q = q.eq('categoria', categoria);
         if (criado_por_me === 'true') q = q.eq('criado_por', user.id);

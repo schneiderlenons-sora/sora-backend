@@ -31,13 +31,14 @@ const calcResumo = (grupoId, mes) => calcularResumo({ grupoId, mes });
 
 // Lista de transações — mesma lógica de GET /api/transacoes/:phone
 // (com o mesmo fallback caso a FK do join não exista no schema).
-async function listarTransacoes(grupoId, { mes, tipo, limit }) {
+async function listarTransacoes(grupoId, { mes, tipo, limit, ate }) {
   let query = supabase.from('transacoes')
     .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url, avatar_preset, avatar_cor)', { count: 'exact' })
     .eq('grupo_id', grupoId)
     .order('data', { ascending: false })
     .range(0, Number(limit) - 1);
   if (mes)  query = query.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
+  if (ate)  query = query.lte('data', ate); // exclui lançamentos futuros (parcelas)
   if (tipo) query = query.eq('tipo', tipo);
 
   let { data, count, error } = await query;
@@ -50,12 +51,14 @@ async function listarTransacoes(grupoId, { mes, tipo, limit }) {
       .order('data', { ascending: false })
       .range(0, Number(limit) - 1);
     if (mes)  q2 = q2.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
+    if (ate)  q2 = q2.lte('data', ate);
     if (tipo) q2 = q2.eq('tipo', tipo);
     let r = await q2;
     if (r.error) { // último recurso: sem embed nenhum
       let q3 = supabase.from('transacoes').select('*', { count: 'exact' })
         .eq('grupo_id', grupoId).order('data', { ascending: false }).range(0, Number(limit) - 1);
       if (mes)  q3 = q3.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
+      if (ate)  q3 = q3.lte('data', ate);
       if (tipo) q3 = q3.eq('tipo', tipo);
       r = await q3;
     }
@@ -84,7 +87,7 @@ router.get('/:phone', auth, async (req, res) => {
       calcResumo(grupoId, mes),
       calcResumo(grupoId, mesAnt),
       supabase.from('wallets').select('*').eq('grupo_id', grupoId).order('nome'),
-      listarTransacoes(grupoId, { limit: 8 }),
+      listarTransacoes(grupoId, { limit: 8, ate: new Date().toISOString() }), // recentes: nada de futuro (parcelas)
       listarTransacoes(grupoId, { mes, tipo: 'Gasto', limit: 500 }),
       supabase.from('categorias').select('*, parent:parent_id(id,nome)').eq('grupo_id', grupoId).eq('ativa', true).order('nome'),
     ]);
