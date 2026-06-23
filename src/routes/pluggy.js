@@ -14,18 +14,17 @@ const { exigirPermissao } = require('../middlewares/permissao');
 const pluggy     = require('../services/pluggy');
 const pluggySync = require('../services/pluggySync');
 
-// Gate de plano: Open Finance é Premium+.
-async function exigirPlanoPago(req, res, next) {
-  const { data: u } = await supabase.from('users')
-    .select('plano').eq('id', req.authUser?.id).maybeSingle();
-  if (!['premium', 'black'].includes(u?.plano)) {
-    return res.status(403).json({ erro: 'sem_acesso', mensagem: 'Open Finance disponível nos planos Premium e Black.' });
+// Gate de acesso: Open Finance em rollout fechado (allowlist).
+const { liberadoOpenFinance } = require('../config/openFinanceAccess');
+async function exigirAcessoOpenFinance(req, res, next) {
+  if (!(await liberadoOpenFinance(req.authUser?.id))) {
+    return res.status(403).json({ erro: 'sem_acesso', mensagem: 'Open Finance ainda não está disponível na sua conta.' });
   }
   next();
 }
 
 // Token pro widget. itemId opcional = reconectar/atualizar uma conexão existente.
-router.post('/connect-token', auth, exigirPlanoPago, async (req, res) => {
+router.post('/connect-token', auth, exigirAcessoOpenFinance, async (req, res) => {
   try {
     if (!pluggy.configurado()) return res.status(503).json({ erro: 'Pluggy não configurado no servidor.' });
     const token = await pluggy.criarConnectToken(req.body?.itemId);
@@ -37,7 +36,7 @@ router.post('/connect-token', auth, exigirPlanoPago, async (req, res) => {
 });
 
 // Registra o item criado pelo widget e dispara a 1ª sincronização (em background).
-router.post('/item', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+router.post('/item', auth, exigirAcessoOpenFinance, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const itemId = (req.body?.itemId || '').toString().trim();
     if (!itemId) return res.status(400).json({ erro: 'itemId obrigatório.' });
