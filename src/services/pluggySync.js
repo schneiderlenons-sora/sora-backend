@@ -125,43 +125,49 @@ async function inserirNovas(grupoId, userId, walletNome, txs) {
 }
 
 // Sincroniza um item inteiro (todas as contas + transações).
-async function sincronizarItem(itemId) {
+// `dias` = janela de busca de transações (default 90). Retorna diagnóstico:
+// { novas, statusPluggy, contas: [{tipo, nome, txs, novas, erro}], erro }.
+async function sincronizarItem(itemId, { dias = 90 } = {}) {
   const { data: item } = await supabase.from('pluggy_items').select('*').eq('item_id', itemId).maybeSingle();
-  if (!item) { console.warn('[pluggy] webhook de item desconhecido:', itemId); return; }
+  if (!item) { console.warn('[pluggy] item desconhecido:', itemId); return { erro: 'item desconhecido' }; }
 
   try {
     const info = await pluggy.getItem(itemId);
     const connectorNome = info?.connector?.name || item.connector_nome || null;
+    const statusPluggy = info?.status || null; // UPDATED | LOGIN_ERROR | WAITING_USER_INPUT...
 
     const contas = await pluggy.listarContas(itemId);
-    const from = item.ultima_sync
-      ? ymd(new Date(item.ultima_sync).getTime() - 3 * 864e5)  // overlap 3 dias
-      : ymd(Date.now() - 90 * 864e5);                          // 1ª vez: 90 dias
+    const from = ymd(Date.now() - dias * 864e5);
 
     let total = 0;
+    const detalhe = [];
     for (const acc of contas) {
       try {
         const walletNome = await upsertWallet(item.grupo_id, item.user_id, acc, connectorNome);
         const txs = await pluggy.listarTransacoes(acc.id, from);
         const novas = await inserirNovas(item.grupo_id, item.user_id, walletNome, txs);
         total += novas;
+        detalhe.push({ tipo: acc.type, nome: walletNome, txs: txs.length, novas });
         console.log(`[pluggy] conta ${acc.type}/${acc.subtype || '-'} "${walletNome}": ${txs.length} txs, +${novas} novas (from ${from})`);
       } catch (e) {
+        detalhe.push({ tipo: acc.type, erro: e.message });
         console.warn(`[pluggy] conta ${acc.id} (${acc.type}) falhou:`, e.message);
       }
     }
 
     await supabase.from('pluggy_items').update({
-      status: 'updated', connector_nome: connectorNome,
+      status: statusPluggy === 'UPDATED' ? 'updated' : (item.status || 'updated'),
+      connector_nome: connectorNome,
       ultima_sync: new Date().toISOString(), ultimo_erro: null,
     }).eq('item_id', itemId);
-    console.log(`[pluggy] item ${itemId} sincronizado: +${total} transações`);
-    return total;
+    console.log(`[pluggy] item ${itemId} (${statusPluggy}): ${contas.length} conta(s), +${total} novas`);
+    return { novas: total, statusPluggy, contas: detalhe };
   } catch (e) {
     console.warn('[pluggy] sync falhou', itemId, e.message);
     await supabase.from('pluggy_items').update({
       status: 'error', ultimo_erro: String(e.message).slice(0, 300),
     }).eq('item_id', itemId);
+    return { erro: e.message };
   }
 }
 

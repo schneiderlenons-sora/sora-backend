@@ -67,8 +67,9 @@ router.post('/connections/:itemId/sync', auth, exigirPermissao('admin', 'escrita
     const { data: item } = await supabase.from('pluggy_items')
       .select('item_id').eq('item_id', itemId).eq('grupo_id', req.grupoId).maybeSingle();
     if (!item) return res.status(404).json({ erro: 'Conexão não encontrada.' });
-    const total = await pluggySync.sincronizarItem(itemId);
-    res.json({ ok: true, novas: total || 0 });
+    // Re-sync manual: janela ampla (180 dias) pra não perder a fatura aberta.
+    const r = await pluggySync.sincronizarItem(itemId, { dias: 180 });
+    res.json({ ok: !r?.erro, ...r });
   } catch (err) {
     console.error('[pluggy/sync]', err.message);
     res.status(500).json({ erro: 'Não consegui sincronizar agora.' });
