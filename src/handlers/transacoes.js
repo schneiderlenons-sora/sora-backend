@@ -92,10 +92,19 @@ function limpaCat(s) {
 async function avisarGrupo(grupoId, fallbackPhone, msg) {
   let phones = [];
   try {
+    // Só membros com avisos ligados (kill-switch users.avisos_ativos).
     const { data } = await supabase.from('grupo_membros')
-      .select('users(phone)').eq('grupo_id', grupoId);
-    phones = [...new Set((data || []).map(m => m.users?.phone).filter(Boolean))];
-  } catch { /* tolerante */ }
+      .select('users(phone, avisos_ativos)').eq('grupo_id', grupoId);
+    phones = [...new Set((data || [])
+      .filter(m => m.users?.phone && m.users.avisos_ativos !== false)
+      .map(m => m.users.phone))];
+  } catch {
+    // Pré-migration 055 (sem a coluna) → cai pro comportamento antigo.
+    try {
+      const { data } = await supabase.from('grupo_membros').select('users(phone)').eq('grupo_id', grupoId);
+      phones = [...new Set((data || []).map(m => m.users?.phone).filter(Boolean))];
+    } catch { /* tolerante */ }
+  }
   const destinos = phones.length ? phones : [fallbackPhone];
   for (const p of destinos) { try { await enviarTexto(p, msg); } catch {} }
 }

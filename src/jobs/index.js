@@ -2,6 +2,7 @@ const cron      = require('node-cron');
 const supabase  = require('../db/supabase');
 const { enviarTexto, enviarLink, enviarImagem } = require('../services/zapi');
 const { criarPendente } = require('../services/pendentes');
+const { avisosLigados } = require('../services/avisos');
 const yahooFinance    = require('yahoo-finance2').default;
 
 // Gera ID curto de 6 caracteres
@@ -106,6 +107,7 @@ async function processarFaturas(hoje, diaHoje, fimHoje) {
     // Aviso/cobrança da fatura vai pro DONO do cartão (não pro dono do grupo).
     const dono = await donoDoItem(c.criado_por, c.grupo_id);
     if (!dono?.phone) continue;
+    if (!(await avisosLigados(dono.id))) continue; // kill-switch de avisos
 
     const { data: contas } = await supabase.from('wallets')
       .select('id, nome, saldo, arquivada')
@@ -184,7 +186,7 @@ cron.schedule('0 * * * *', async () => {
     }
 
     const phone = await phoneDoUser(rec.criado_por, rec.grupo_id);
-    if (phone) {
+    if (phone && await avisosLigados(rec.criado_por)) {
       await enviarTexto(phone,
         `🔁 *Lançamento automático:*\n${rec.tipo === 'Gasto' ? '🔴' : '🟢'} ${rec.descricao} — R$ ${rec.valor.toFixed(2)}\nID: \`${idCurto}\``
       );
@@ -201,7 +203,7 @@ cron.schedule('0 * * * *', async () => {
 
   for (const lem of lembretes || []) {
     const phone = await phoneDoUser(lem.criado_por, lem.grupo_id);
-    if (phone) {
+    if (phone && await avisosLigados(lem.criado_por)) {
       await enviarTexto(phone,
         `🔔 *LEMBRETE:*\n` +
         `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} *${lem.descricao}*\n` +
@@ -222,7 +224,7 @@ cron.schedule('0 * * * *', async () => {
   for (const p of parcelas || []) {
     if (p.parcelas_pagas >= p.total_parcelas) continue;
     const phone = await phoneDoUser(p.criado_por, p.grupo_id);
-    if (phone) {
+    if (phone && await avisosLigados(p.criado_por)) {
       await enviarTexto(phone,
         `🔔 *PARCELA VENCE HOJE:*\n` +
         `📦 ${p.descricao} — ${p.parcelas_pagas + 1}/${p.total_parcelas}\n` +
@@ -281,6 +283,7 @@ cron.schedule('*/15 * * * *', async () => {
 
       const { data: user } = await supabase.from('users').select('phone').eq('id', med.user_id).single();
       if (!user?.phone) continue;
+      if (!(await avisosLigados(med.user_id))) continue; // kill-switch
 
       const estoqueAviso = med.estoque_atual != null && med.estoque_atual <= (med.estoque_alerta || 5)
         ? `\n⚠️ Estoque baixo: ${med.estoque_atual} restantes`
@@ -336,6 +339,7 @@ cron.schedule('*/15 * * * *', async () => {
     const [hh, mm] = String(u.habito_lembrete_horario).split(':').map(Number);
     if (isNaN(hh)) continue;
     if (sp.minutos < hh * 60 + mm) continue; // ainda não chegou o horário
+    if (!(await avisosLigados(u.id))) continue; // kill-switch de avisos
 
     // Marca como processado ANTES de enviar — evita duplicar se reiniciar.
     await supabase.from('users').update({ habito_lembrete_ultimo: sp.dataStr }).eq('id', u.id);
@@ -393,6 +397,7 @@ cron.schedule('0 9 * * *', async () => {
 
     const phone = await phoneDoUser(m.user_id, m.grupo_id);
     if (!phone) continue;
+    if (!(await avisosLigados(m.user_id))) continue; // kill-switch
 
     const diasAtraso = Math.round((hoje - proxima) / 86400000);
     const quando = diasAtraso <= 0 ? 'hoje' : `há ${diasAtraso} dia${diasAtraso === 1 ? '' : 's'}`;
@@ -444,6 +449,7 @@ cron.schedule('*/15 * * * *', async () => {
 
     const phone = await phoneDoUser(c.user_id, c.grupo_id);
     if (!phone) continue;
+    if (!(await avisosLigados(c.user_id))) continue; // kill-switch (não marca enviado p/ reativar depois)
 
     await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
     const quando = c.hora ? `hoje às ${c.hora}` : 'hoje';
@@ -480,6 +486,7 @@ cron.schedule('*/15 * * * *', async () => {
     const [hh, mm] = String(u.agenda_briefing_horario).split(':').map(Number);
     if (isNaN(hh)) continue;
     if (sp.minutos < hh * 60 + mm) continue; // ainda não chegou o horário
+    if (!(await avisosLigados(u.id))) continue; // kill-switch de avisos
 
     // Marca ANTES de enviar — evita duplicar em restart
     await supabase.from('users').update({ agenda_briefing_ultimo: sp.dataStr }).eq('id', u.id);
@@ -522,6 +529,7 @@ cron.schedule('0 9 * * *', async () => {
   for (const c of consultas || []) {
     const { data: user } = await supabase.from('users').select('phone').eq('id', c.user_id).single();
     if (!user?.phone) continue;
+    if (!(await avisosLigados(c.user_id))) continue; // kill-switch
     const partes = [
       `📅 *Lembrete: consulta amanhã*`,
       ``,
@@ -541,6 +549,7 @@ cron.schedule('0 9 * * *', async () => {
   for (const r of retornos || []) {
     const { data: user } = await supabase.from('users').select('phone').eq('id', r.user_id).single();
     if (!user?.phone) continue;
+    if (!(await avisosLigados(r.user_id))) continue; // kill-switch
     await enviarTexto(user.phone,
       `📆 *Retorno em 7 dias*\n\nSeu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana.\nQuer agendar pelo painel?`);
   }
@@ -609,6 +618,7 @@ cron.schedule('0 9 * * *', async () => {
     if (!grupo) continue;
     const { data: user } = await supabase.from('users').select('phone, lembretes_dividas').eq('id', grupo.dono_id).single();
     if (!user?.phone || user.lembretes_dividas === false) continue;
+    if (!(await avisosLigados(grupo.dono_id))) continue; // kill-switch
 
     await enviarTexto(user.phone, mensagem);
     await supabase.from('dividas').update({ ultimo_lembrete_em: hojeStr }).eq('id', d.id);
@@ -870,6 +880,7 @@ cron.schedule('*/15 * * * *', async () => {
     for (const u of usuarios || []) {
       try {
         if (u.resumo_semanal_em === sp.dataStr) continue;                 // já enviou hoje
+        if (!(await avisosLigados(u.id))) continue;                       // kill-switch
         await supabase.from('users').update({ resumo_semanal_em: sp.dataStr }).eq('id', u.id); // marca ANTES
         const atual = await resumoPeriodo(u.grupo_ativo, ini, fim);
         if (atual.count === 0) continue;                                  // semana sem movimento
@@ -908,6 +919,7 @@ cron.schedule('*/15 * * * *', async () => {
     for (const u of usuarios || []) {
       try {
         if (u.resumo_mensal_em === mesCorrente) continue;
+        if (!(await avisosLigados(u.id))) continue;                       // kill-switch
         await supabase.from('users').update({ resumo_mensal_em: mesCorrente }).eq('id', u.id);
         const atual = await resumoPeriodo(u.grupo_ativo, ini, fim);
         if (atual.count === 0) continue;

@@ -100,4 +100,61 @@ router.post('/resumos', auth, async (req, res) => {
   }
 });
 
+// =====================================================================
+// GET  /api/user/avisos → todas as preferências de aviso (central de avisos)
+// POST /api/user/avisos { ...campos } → atualiza as enviadas
+// =====================================================================
+const COLS_AVISOS = [
+  'avisos_ativos', 'resumo_semanal', 'resumo_mensal',
+  'habito_lembrete_ativo', 'habito_lembrete_horario',
+  'agenda_briefing_ativo', 'agenda_briefing_horario',
+  'lembretes_ativos', 'lembretes_dividas',
+];
+const DEFAULTS_AVISOS = {
+  avisos_ativos: true, resumo_semanal: true, resumo_mensal: true,
+  habito_lembrete_ativo: false, habito_lembrete_horario: '21:00',
+  agenda_briefing_ativo: false, agenda_briefing_horario: '07:00',
+  lembretes_ativos: true, lembretes_dividas: true,
+};
+const horarioOk = (h) => typeof h === 'string' && /^\d{2}:\d{2}$/.test(h);
+
+router.get('/avisos', auth, async (req, res) => {
+  try {
+    const user_id = req.authUser?.id;
+    const { data, error } = await supabase
+      .from('users').select(COLS_AVISOS.join(', ')).eq('id', user_id).maybeSingle();
+    if (error) throw error;
+    const out = { ...DEFAULTS_AVISOS };
+    for (const c of COLS_AVISOS) if (data?.[c] != null) out[c] = data[c];
+    res.json(out);
+  } catch {
+    res.json({ ...DEFAULTS_AVISOS }); // tolerante a colunas ausentes
+  }
+});
+
+router.post('/avisos', auth, async (req, res) => {
+  try {
+    const user_id = req.authUser?.id;
+    const b = req.body || {};
+    const patch = {};
+    for (const c of ['avisos_ativos', 'resumo_semanal', 'resumo_mensal',
+                     'habito_lembrete_ativo', 'agenda_briefing_ativo',
+                     'lembretes_ativos', 'lembretes_dividas']) {
+      if (typeof b[c] === 'boolean') patch[c] = b[c];
+    }
+    if (horarioOk(b.habito_lembrete_horario)) patch.habito_lembrete_horario = b.habito_lembrete_horario;
+    if (horarioOk(b.agenda_briefing_horario)) patch.agenda_briefing_horario = b.agenda_briefing_horario;
+    if (!Object.keys(patch).length) return res.json({ ok: true });
+
+    let { error } = await supabase.from('users').update(patch).eq('id', user_id);
+    if (error && 'avisos_ativos' in patch) { // pré-migration 055: salva o resto
+      const { avisos_ativos, ...resto } = patch;
+      if (Object.keys(resto).length) await supabase.from('users').update(resto).eq('id', user_id);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 module.exports = router;
