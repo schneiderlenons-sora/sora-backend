@@ -12,7 +12,9 @@ const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 const ymd = (d) => new Date(d).toISOString().slice(0, 10);
 
 // Dia do mês de uma data ISO, clampado em 1..28 (constraint da migration 023).
+// `new Date(null)` é válido (vira dia 1) — por isso o guard de falsy primeiro.
 function diaClamp(iso) {
+  if (!iso) return null;
   const d = new Date(iso);
   if (isNaN(d)) return null;
   return Math.min(28, Math.max(1, d.getUTCDate()));
