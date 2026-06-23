@@ -5,17 +5,6 @@ const auth     = require('../middlewares/auth');
 const { enviarBoasVindas } = require('../services/welcome');
 const norm     = p => p?.replace(/\D/g, '');
 
-// GET /api/user/:phone
-router.get('/:phone', auth, async (req, res) => {
-  try {
-    const { data: user } = await supabase.from('users')
-      .select('*, grupos!users_grupo_ativo_fkey(id, nome)')
-      .eq('phone', norm(req.params.phone)).single();
-    if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
-    res.json(user);
-  } catch (err) { res.status(500).json({ erro: err.message }); }
-});
-
 // POST /api/user/update-plan — chamado pelo Stripe webhook
 router.post('/update-plan', auth, async (req, res) => {
   try {
@@ -155,6 +144,18 @@ router.post('/avisos', auth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
+});
+
+// GET /api/user/:phone — POR ÚLTIMO: rota curinga (:phone casa qualquer
+// segmento). Se vier antes, captura /resumos, /avisos, etc. e quebra tudo.
+router.get('/:phone', auth, async (req, res) => {
+  try {
+    const { data: user } = await supabase.from('users')
+      .select('*, grupos!users_grupo_ativo_fkey(id, nome)')
+      .eq('phone', norm(req.params.phone)).single();
+    if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
+    res.json(user);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 module.exports = router;
