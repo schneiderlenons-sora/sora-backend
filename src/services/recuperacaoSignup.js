@@ -15,16 +15,18 @@ const APP = 'https://www.forsora.com';
 function RECUPERACAO_SIGNUP_TEXT(nome) {
   const ola = nome ? `Oi, ${String(nome).trim().split(' ')[0]}!` : 'Oi!';
   return [
-    `${ola} 👋 Aqui é a Sora.`,
+    `${ola} 👋 Aqui é a *Sora* 💚`,
     ``,
-    `Vi que você criou sua conta mas ainda não ativou seu plano — falta só um passo pra eu começar a organizar suas finanças direto no WhatsApp 💚`,
+    `Você deu o primeiro passo e criou sua conta — mas parou bem na reta final. Bora terminar agora?`,
     ``,
-    `🎁 Pra te dar um empurrãozinho: use o cupom *SORA15* no checkout e ganhe *15% de desconto*.`,
+    `Imagina mandar *"gastei 50 no mercado"* aqui no WhatsApp e pronto: eu lanço, categorizo e te mostro exatamente pra onde seu dinheiro tá indo 📊 Sem planilha, sem app complicado. Só conversa.`,
     ``,
-    `É rapidinho, é só entrar e finalizar:`,
+    `🎁 E pra te dar um empurrãozinho, separei um presente: *15% OFF* com o cupom *SORA15* no checkout — mas é por *tempo limitado*, viu? ⏳`,
+    ``,
+    `É 2 minutinhos. Finaliza aqui:`,
     `🌐 ${APP}/login`,
     ``,
-    `Qualquer dúvida, pode me chamar por aqui 🙌`,
+    `Te espero do outro lado pra organizar essa vida financeira! 🙌`,
   ].join('\n');
 }
 
