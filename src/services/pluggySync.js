@@ -80,7 +80,10 @@ async function upsertWallet(grupoId, userId, account, connectorNome) {
 // Mapeia uma transação Pluggy pro formato da Sora.
 function mapTx(tx, grupoId, userId, walletNome) {
   const amount = Number(tx.amount || 0);
-  const ehGasto = amount < 0; // Pluggy: negativo = saída, positivo = entrada
+  // Sinal confiável = tx.type ('DEBIT' = saída, 'CREDIT' = entrada). O `amount`
+  // inverte em cartão de crédito, então só usamos o sinal como fallback.
+  const t = (tx.type || '').toUpperCase();
+  const ehGasto = t === 'DEBIT' ? true : t === 'CREDIT' ? false : amount < 0;
   const descricao = (tx.description || tx.descriptionRaw || '').toString();
   // Categoriza pela descrição (mesma engine do OFX); fallback na categoria do Pluggy.
   const categoria = categorizar({ descricao, pluggyCategoria: tx.category });
@@ -99,18 +102,31 @@ function mapTx(tx, grupoId, userId, walletNome) {
   };
 }
 
-// Insere só as transações ainda não importadas (dedup por pluggy_tx_id).
+// Insere as novas (dedup por pluggy_tx_id) e CORRIGE as já existentes cujo
+// tipo/valor divergem (ex.: imports antigos com o sinal errado). Não mexe em
+// categoria/observação das existentes — preserva edições manuais do usuário.
 async function inserirNovas(grupoId, userId, walletNome, txs) {
   if (!txs.length) return 0;
   const ids = txs.map(t => t.id).filter(Boolean);
-  const existentes = new Set();
+  const existentes = new Map(); // pluggy_tx_id → { id, tipo, valor }
   for (let i = 0; i < ids.length; i += 300) {
     const { data } = await supabase.from('transacoes')
-      .select('pluggy_tx_id').in('pluggy_tx_id', ids.slice(i, i + 300));
-    (data || []).forEach(d => existentes.add(d.pluggy_tx_id));
+      .select('id, pluggy_tx_id, tipo, valor').in('pluggy_tx_id', ids.slice(i, i + 300));
+    (data || []).forEach(d => existentes.set(d.pluggy_tx_id, d));
   }
-  const novas = txs.filter(t => t.id && !existentes.has(t.id))
-                   .map(t => mapTx(t, grupoId, userId, walletNome));
+
+  const novas = [];
+  for (const t of txs) {
+    if (!t.id) continue;
+    const m = mapTx(t, grupoId, userId, walletNome);
+    const ex = existentes.get(t.id);
+    if (!ex) { novas.push(m); continue; }
+    // Corrige tipo/valor se mudaram (sinal DEBIT/CREDIT agora correto).
+    if (ex.tipo !== m.tipo || Number(ex.valor) !== m.valor) {
+      await supabase.from('transacoes').update({ tipo: m.tipo, valor: m.valor }).eq('id', ex.id);
+    }
+  }
+
   if (!novas.length) return 0;
   const { error } = await supabase.from('transacoes').insert(novas);
   if (error) { // fallback: uma a uma (a única em pluggy_tx_id ignora corridas)
