@@ -30,6 +30,23 @@ function RECUPERACAO_SIGNUP_TEXT(nome) {
   ].join('\n');
 }
 
+// 2º lembrete — mais agressivo (cupom SORA25, 25% OFF, 5h). "Última chance".
+function RECUPERACAO_SIGNUP2_TEXT(nome) {
+  const ola = nome ? `Oi, ${String(nome).trim().split(' ')[0]}!` : 'Oi!';
+  return [
+    `${ola} 👋 É a *Sora* de novo 💚`,
+    ``,
+    `Não quero que você perca isso — então vou de tudo ou nada: liberei *25% OFF* com o cupom *SORA25* no checkout, mas vale só pelas próximas *5 horas* ⏳`,
+    ``,
+    `É a sua chance de começar a organizar suas finanças no automático, direto no WhatsApp, pagando bem menos.`,
+    ``,
+    `Finaliza aqui antes que expire:`,
+    `🌐 ${APP}/login`,
+    ``,
+    `Depois disso o desconto some 😬 Bora? 🙌`,
+  ].join('\n');
+}
+
 // Manda a recuperação pra quem cadastrou e nunca pagou. `limite` = quantos por
 // rodada (evita rajada no Z-API; o cron repete e drena o acúmulo aos poucos).
 async function processarRecuperacaoSignup(limite = 50) {
@@ -66,4 +83,42 @@ async function processarRecuperacaoSignup(limite = 50) {
   return enviados;
 }
 
-module.exports = { RECUPERACAO_SIGNUP_TEXT, processarRecuperacaoSignup };
+// 2º lembrete: quem recebeu o 1º há >= 3 dias e ainda não pagou. Cupom SORA25.
+async function processarRecuperacaoSignup2(limite = 50) {
+  const agora = Date.now();
+  const apos1o = new Date(agora - 3 * 24 * 60 * 60 * 1000).toISOString();    // 1º foi há >= 3 dias
+  const desde  = new Date(agora - 120 * 24 * 60 * 60 * 1000).toISOString();  // não cutuca cadastros muito antigos
+
+  const { data: users, error } = await supabase.from('users')
+    .select('id, name, phone')
+    .eq('plano', 'inativo')
+    .is('plano_intervalo', null)                  // continua sem assinatura
+    .not('phone', 'is', null)
+    .not('recuperacao_signup_em', 'is', null)     // já recebeu o 1º
+    .is('recuperacao_signup2_em', null)           // ainda não recebeu o 2º
+    .lte('recuperacao_signup_em', apos1o)         // e o 1º foi há >= 3 dias
+    .gte('created_at', desde)
+    .order('recuperacao_signup_em', { ascending: true })
+    .limit(limite);
+
+  if (error) { console.log('[recuperacao signup 2] rode a migration 057:', error.message); return; }
+
+  let enviados = 0;
+  for (const u of users || []) {
+    if (!u.phone) continue;
+    await supabase.from('users').update({ recuperacao_signup2_em: new Date().toISOString() }).eq('id', u.id);
+    try {
+      await enviarTexto(u.phone, RECUPERACAO_SIGNUP2_TEXT(u.name));
+      enviados++;
+    } catch (e) {
+      console.warn('[recuperacao signup 2] envio falhou', u.id, e.message);
+    }
+  }
+  if (enviados) console.log(`💸 Recuperação de cadastro (2º): ${enviados} enviado(s).`);
+  return enviados;
+}
+
+module.exports = {
+  RECUPERACAO_SIGNUP_TEXT, processarRecuperacaoSignup,
+  RECUPERACAO_SIGNUP2_TEXT, processarRecuperacaoSignup2,
+};

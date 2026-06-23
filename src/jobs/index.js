@@ -962,9 +962,11 @@ console.log('   • A cada 15min — recuperação de pagamento recusado');
 // A cada 30 min, manda WhatsApp (login + cupom SORA15) pra quem criou conta,
 // nunca ativou plano e tem WhatsApp. Drena em lotes de 50. Migration 056.
 // ─────────────────────────────────────────────────────────────────
-const { processarRecuperacaoSignup } = require('../services/recuperacaoSignup');
+const { processarRecuperacaoSignup, processarRecuperacaoSignup2 } = require('../services/recuperacaoSignup');
 cron.schedule('*/30 * * * *', async () => {
   try { await processarRecuperacaoSignup(50); }
-  catch (e) { console.log('💸 Recuperação de cadastro falhou:', e.message); }
+  catch (e) { console.log('💸 Recuperação de cadastro (1º) falhou:', e.message); }
+  try { await processarRecuperacaoSignup2(50); }
+  catch (e) { console.log('💸 Recuperação de cadastro (2º) falhou:', e.message); }
 });
-console.log('   • A cada 30min — recuperação de cadastro sem pagamento');
+console.log('   • A cada 30min — recuperação de cadastro sem pagamento (1º + 2º lembrete)');
