@@ -61,28 +61,24 @@ async function listarContas(itemId) {
   return j.results || [];
 }
 
-// Pega só o path+query de uma URL absoluta (o cursor `next` do Pluggy vem
-// como URL completa; api() já prefixa o BASE).
-function relativizar(u) {
-  try { const url = new URL(u); return url.pathname + url.search; }
-  catch { return u; }
-}
-
-// Transações de uma conta a partir de `from` (YYYY-MM-DD).
+// Transações de uma conta a partir de `dateFrom` (YYYY-MM-DD).
 // Usa GET /v2/transactions com paginação por CURSOR — o /transactions antigo
-// (paginação por página) foi descontinuado (410 ENDPOINT_DEPRECATED).
-// A resposta traz { results, next }; segue `next` até ser null.
-async function listarTransacoes(accountId, from) {
+// (paginação por página) foi descontinuado (410). O v2 NÃO aceita `pageSize`
+// nem `from`: usa `dateFrom` e o cursor `after` (extraído da URL `next`).
+// Resposta: { results, next }; segue até next == null.
+async function listarTransacoes(accountId, dateFrom) {
   const out = [];
-  const qs = new URLSearchParams({ accountId, pageSize: '500' });
-  if (from) qs.set('from', from);
-  let path = `/v2/transactions?${qs.toString()}`;
+  let after = null;
   for (let i = 0; i < 200; i++) { // teto de segurança (200 páginas)
-    const j = await api(path);
+    const qs = new URLSearchParams({ accountId });
+    if (dateFrom) qs.set('dateFrom', dateFrom);
+    if (after) qs.set('after', after);
+    const j = await api(`/v2/transactions?${qs.toString()}`);
     out.push(...(j.results || []));
     if (!j.next) break;
-    path = relativizar(j.next);
-    if (!path) break;
+    try { after = new URL(j.next, BASE).searchParams.get('after'); }
+    catch { after = null; }
+    if (!after) break;
   }
   return out;
 }
