@@ -12,6 +12,22 @@ async function getUser(phone) {
   return data;
 }
 
+// GET /api/recorrencias/sugestoes — gastos/receitas fixas detectados nas
+// transações (Open Finance/OFX) que ainda não viraram recorrência.
+// ANTES de /:phone (curinga) pra não ser capturado por ele.
+router.get('/sugestoes', auth, async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo;
+    if (!grupoId) return res.json({ sugestoes: [] });
+    const { detectarRecorrencias } = require('../services/detectarRecorrencias');
+    const sugestoes = await detectarRecorrencias(grupoId);
+    res.json({ sugestoes });
+  } catch (err) {
+    console.error('[recorrencias/sugestoes]', err.message);
+    res.json({ sugestoes: [] }); // tolerante — nunca quebra a aba
+  }
+});
+
 // GET /api/recorrencias/:phone — lista as recorrências ativas do grupo
 router.get('/:phone', auth, async (req, res) => {
   try {
