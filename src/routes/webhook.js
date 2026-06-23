@@ -4,6 +4,7 @@ const supabase = require('../db/supabase');
 const { enviarTexto, enviarMenu, enviarLink, enviarBotaoLink, enviarImagem } = require('../services/zapi');
 const { responderFaq } = require('../services/faq');
 const { emRecuperacao, RECUPERACAO_TEXT } = require('../services/recuperacaoPagamento');
+const { emRecuperacaoCadastro, respostaRecuperacaoCadastro, notaIaRecuperacaoCadastro } = require('../services/recuperacaoSignup');
 const APP_URL_WH = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA = process.env.SORA_CAPA_URL || `${APP_URL_WH}/sora-capa.png`;
 const { interpretarMensagem, classificarIntencao } = require('../services/ia');
@@ -283,10 +284,13 @@ router.post('/', async (req, res) => {
     // preço/planos → responde como vendedora (local-first), em vez de cair na
     // "conversa" genérica da IA. Não intercepta quem já é assinante.
     if (!temAcessoGrow(user) && pareceVenda(mensagem)) {
-      // Lead em recuperação (já tem conta, pagamento falhou) → CTA pro login +
-      // cupom, em vez do pitch de cadastro.
-      await enviarTexto(phone, emRecuperacao(user) ? RECUPERACAO_TEXT(user.name) : VENDAS_TEXT(user.name));
-      console.log(`💚 [${phone}] ${emRecuperacao(user) ? 'recuperação' : 'pré-venda'} (lead sem plano): "${mensagem}"`);
+      // Lead que já tem conta (pagamento falhou OU cadastro não finalizado) →
+      // CTA pro login + cupom, em vez do pitch de criar conta.
+      const txtVenda = emRecuperacao(user)        ? RECUPERACAO_TEXT(user.name)
+                     : emRecuperacaoCadastro(user) ? respostaRecuperacaoCadastro(user)
+                     : VENDAS_TEXT(user.name);
+      await enviarTexto(phone, txtVenda);
+      console.log(`💚 [${phone}] ${emRecuperacao(user) || emRecuperacaoCadastro(user) ? 'recuperação' : 'pré-venda'} (lead sem plano): "${mensagem}"`);
       return;
     }
 
@@ -388,6 +392,8 @@ router.post('/', async (req, res) => {
         ctxIA.resumo = (ctxIA.resumo ? ctxIA.resumo + '\n' : '')
           + (emRecuperacao(user)
               ? 'OBS: este lead JÁ tem conta criada, mas o pagamento da assinatura falhou. Responda a dúvida de forma útil e SEMPRE convide a FINALIZAR a assinatura entrando em forsora.com/login (NÃO mande criar conta nova). Mencione que tem o cupom SORA15 = 15% de desconto, válido por 24h. Tom acolhedor e persuasivo.'
+              : emRecuperacaoCadastro(user)
+              ? notaIaRecuperacaoCadastro(user)
               : 'OBS: usuário ainda SEM plano ativo (lead). Responda a dúvida de forma útil e, se fizer sentido, convide a conhecer a demo e os planos em forsora.com.');
       }
       data = await interpretarMensagem(mensagem, ctxIA);
@@ -410,8 +416,12 @@ router.post('/', async (req, res) => {
     // pedir ajuda ou querer cancelar não pode esbarrar no paywall.
     const ACOES_LIVRES = ['conversa', 'suporte', 'cancelar_plano', 'config_resumos'];
     if (!temAcessoGrow(user) && data?.acao && !ACOES_LIVRES.includes(data.acao)) {
-      // Em recuperação → empurra pro login + cupom em vez do paywall genérico.
-      await enviarTexto(phone, emRecuperacao(user) ? RECUPERACAO_TEXT(user.name) : PAYWALL_TEXT);
+      // Já tem conta (pagamento falhou ou cadastro não finalizado) → empurra
+      // pro login + cupom em vez do paywall genérico de "crie sua conta".
+      const txtBloqueio = emRecuperacao(user)        ? RECUPERACAO_TEXT(user.name)
+                        : emRecuperacaoCadastro(user) ? respostaRecuperacaoCadastro(user)
+                        : PAYWALL_TEXT;
+      await enviarTexto(phone, txtBloqueio);
       console.log(`🔒 [${phone}] lead bloqueado na ação "${data.acao}"`);
       return;
     }

@@ -118,7 +118,37 @@ async function processarRecuperacaoSignup2(limite = 50) {
   return enviados;
 }
 
+// ── Quando o lead RESPONDE no WhatsApp (já recebeu recuperação de cadastro) ──
+// Está em recuperação de cadastro? (criou conta, recebeu o nudge, nunca pagou)
+function emRecuperacaoCadastro(user) {
+  return !!(user && user.recuperacao_signup_em);
+}
+
+// Resposta no tom certo: "você JÁ tem conta, finalize no login + cupom".
+// Cupom acompanha o estágio: quem já recebeu o 2º vê SORA25; senão SORA15.
+function respostaRecuperacaoCadastro(user) {
+  const ola = user?.name ? `Oi, ${String(user.name).trim().split(' ')[0]}!` : 'Oi!';
+  const cupom = user?.recuperacao_signup2_em ? '*SORA25* (25% OFF)' : '*SORA15* (15% OFF)';
+  return [
+    `${ola} 💚 Que bom te ver por aqui!`,
+    ``,
+    `Sua conta já está criada — falta só *ativar o plano* pra eu começar a organizar suas finanças aqui no WhatsApp. Não precisa criar de novo, é só entrar e finalizar:`,
+    `🌐 ${APP}/login`,
+    ``,
+    `🎁 E aproveita o cupom ${cupom} no checkout 😉`,
+    ``,
+    `Qualquer dúvida sobre os planos ou sobre o que eu faço, é só perguntar! 🙌`,
+  ].join('\n');
+}
+
+// Nota pra IA responder a dúvida no tom de recuperação de cadastro.
+function notaIaRecuperacaoCadastro(user) {
+  const cupom = user?.recuperacao_signup2_em ? 'SORA25 = 25% de desconto' : 'SORA15 = 15% de desconto';
+  return `OBS: este lead JÁ tem conta criada, mas nunca ativou o plano. Responda a dúvida de forma útil e SEMPRE convide a FINALIZAR a assinatura entrando em forsora.com/login (NÃO mande criar conta nova). Mencione o cupom ${cupom}. Tom acolhedor e persuasivo.`;
+}
+
 module.exports = {
   RECUPERACAO_SIGNUP_TEXT, processarRecuperacaoSignup,
   RECUPERACAO_SIGNUP2_TEXT, processarRecuperacaoSignup2,
+  emRecuperacaoCadastro, respostaRecuperacaoCadastro, notaIaRecuperacaoCadastro,
 };
