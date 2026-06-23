@@ -6,6 +6,7 @@
 // =====================================================================
 const supabase = require('../db/supabase');
 const pluggy   = require('./pluggy');
+const { categorizar } = require('./categorizar');
 
 const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 const ymd = (d) => new Date(d).toISOString().slice(0, 10);
@@ -47,14 +48,17 @@ async function upsertWallet(grupoId, userId, account) {
 function mapTx(tx, grupoId, userId, walletNome) {
   const amount = Number(tx.amount || 0);
   const ehGasto = amount < 0; // Pluggy: negativo = saída, positivo = entrada
+  const descricao = (tx.description || tx.descriptionRaw || '').toString();
+  // Categoriza pela descrição (mesma engine do OFX); fallback na categoria do Pluggy.
+  const categoria = categorizar({ descricao, pluggyCategoria: tx.category });
   return {
     id_curto:      idCurto(),
     grupo_id:      grupoId,
     criado_por:    userId || null,
     tipo:          ehGasto ? 'Gasto' : 'Recebimento',
-    categoria:     'Outros', // TODO: mapear tx.category → categorias da Sora
+    categoria,
     valor:         Math.abs(amount),
-    observacao:    (tx.description || tx.descriptionRaw || '').toString().slice(0, 200),
+    observacao:    descricao.slice(0, 200),
     carteira_nome: walletNome,
     pago:          true,
     data:          tx.date || new Date().toISOString(),
