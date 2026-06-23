@@ -77,16 +77,31 @@ async function upsertWallet(grupoId, userId, account, connectorNome) {
   return nova?.nome || nome;
 }
 
+// Pagamento de fatura do cartão? (lado conta — detecta pela descrição/categoria)
+function ehPagamentoFatura(descricao, pluggyCat) {
+  const s = `${descricao || ''} ${pluggyCat || ''}`
+    .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return /(pagamento\s+de\s+fatura|pagamento\s+fatura|fatura\s+cart|credit\s*card\s*payment|pagamento\s+de\s+cart|pagamento\s+cart)/.test(s);
+}
+
 // Mapeia uma transação Pluggy pro formato da Sora.
-function mapTx(tx, grupoId, userId, walletNome) {
+function mapTx(tx, grupoId, userId, walletNome, ehCredito) {
   const amount = Number(tx.amount || 0);
   // Sinal confiável = tx.type ('DEBIT' = saída, 'CREDIT' = entrada). O `amount`
   // inverte em cartão de crédito, então só usamos o sinal como fallback.
   const t = (tx.type || '').toUpperCase();
   const ehGasto = t === 'DEBIT' ? true : t === 'CREDIT' ? false : amount < 0;
   const descricao = (tx.description || tx.descriptionRaw || '').toString();
-  // Categoriza pela descrição (mesma engine do OFX); fallback na categoria do Pluggy.
-  const categoria = categorizar({ descricao, pluggyCategoria: tx.category });
+
+  // Pagamento de fatura / quitação = TRANSFERÊNCIA (não entra em receitas/gastos).
+  // No cartão, todo CREDIT (pagamento da fatura / estorno) é transferência;
+  // na conta, detecta o pagamento da fatura pela descrição.
+  const ehTransferencia = (ehCredito && t === 'CREDIT') || ehPagamentoFatura(descricao, tx.category);
+
+  const categoria = ehTransferencia
+    ? 'Fatura cartão'
+    : categorizar({ descricao, pluggyCategoria: tx.category });
+
   return {
     id_curto:      idCurto(),
     grupo_id:      grupoId,
@@ -97,6 +112,7 @@ function mapTx(tx, grupoId, userId, walletNome) {
     observacao:    descricao.slice(0, 200),
     carteira_nome: walletNome,
     pago:          true,
+    transferencia: ehTransferencia,
     data:          tx.date || new Date().toISOString(),
     pluggy_tx_id:  tx.id,
   };
@@ -105,25 +121,29 @@ function mapTx(tx, grupoId, userId, walletNome) {
 // Insere as novas (dedup por pluggy_tx_id) e CORRIGE as já existentes cujo
 // tipo/valor divergem (ex.: imports antigos com o sinal errado). Não mexe em
 // categoria/observação das existentes — preserva edições manuais do usuário.
-async function inserirNovas(grupoId, userId, walletNome, txs) {
+async function inserirNovas(grupoId, userId, walletNome, txs, ehCredito) {
   if (!txs.length) return 0;
   const ids = txs.map(t => t.id).filter(Boolean);
-  const existentes = new Map(); // pluggy_tx_id → { id, tipo, valor }
+  const existentes = new Map(); // pluggy_tx_id → { id, tipo, valor, transferencia }
   for (let i = 0; i < ids.length; i += 300) {
     const { data } = await supabase.from('transacoes')
-      .select('id, pluggy_tx_id, tipo, valor').in('pluggy_tx_id', ids.slice(i, i + 300));
+      .select('id, pluggy_tx_id, tipo, valor, transferencia').in('pluggy_tx_id', ids.slice(i, i + 300));
     (data || []).forEach(d => existentes.set(d.pluggy_tx_id, d));
   }
 
   const novas = [];
   for (const t of txs) {
     if (!t.id) continue;
-    const m = mapTx(t, grupoId, userId, walletNome);
+    const m = mapTx(t, grupoId, userId, walletNome, ehCredito);
     const ex = existentes.get(t.id);
     if (!ex) { novas.push(m); continue; }
-    // Corrige tipo/valor se mudaram (sinal DEBIT/CREDIT agora correto).
-    if (ex.tipo !== m.tipo || Number(ex.valor) !== m.valor) {
-      await supabase.from('transacoes').update({ tipo: m.tipo, valor: m.valor }).eq('id', ex.id);
+    // Corrige tipo/valor (sinal) e marca transferência (pagamento de fatura)
+    // em linhas já importadas. Não toca categoria/observação salvo virar fatura.
+    const virouTransf = m.transferencia && !ex.transferencia;
+    if (ex.tipo !== m.tipo || Number(ex.valor) !== m.valor || virouTransf) {
+      const patch = { tipo: m.tipo, valor: m.valor };
+      if (virouTransf) { patch.transferencia = true; patch.categoria = m.categoria; }
+      await supabase.from('transacoes').update(patch).eq('id', ex.id);
     }
   }
 
@@ -161,7 +181,7 @@ async function sincronizarItem(itemId, { dias = 90 } = {}) {
       try {
         const walletNome = await upsertWallet(item.grupo_id, item.user_id, acc, connectorNome);
         const txs = await pluggy.listarTransacoes(acc.id, from);
-        const novas = await inserirNovas(item.grupo_id, item.user_id, walletNome, txs);
+        const novas = await inserirNovas(item.grupo_id, item.user_id, walletNome, txs, acc.type === 'CREDIT');
         total += novas;
         detalhe.push({ tipo: acc.type, nome: walletNome, txs: txs.length, novas });
         console.log(`[pluggy] conta ${acc.type}/${acc.subtype || '-'} "${walletNome}": ${txs.length} txs, +${novas} novas (from ${from})`);
