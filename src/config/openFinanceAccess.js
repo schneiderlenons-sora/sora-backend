@@ -7,6 +7,7 @@ const supabase = require('../db/supabase');
 
 const EMAILS = [
   'schneider.lenon.s@gmail.com',
+  'schineiderlenon@gmail.com',
   'cassiopellegrim@gmail.com',
 ];
 const PHONES = [
