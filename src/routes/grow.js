@@ -425,7 +425,9 @@ router.patch('/lista-compras/item/:id', auth, requirePremiumGrow, async (req, re
     const allowed = ['comprado','nome','quantidade','unidade','categoria','preco_estimado'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
-    const { data } = await supabase.from('itens_lista_compras').update(patch).eq('id', req.params.id).select().single();
+    const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
+    const { data } = await supabase.from('itens_lista_compras').update(patch)
+      .eq('id', req.params.id).eq('lista_id', listaId).select().single();
     // Loop: comprou um item que veio da despensa → repõe (volta status 'tem')
     if (data && data.despensa_item_id && patch.comprado === true) {
       await supabase.from('despensa_itens')
@@ -438,7 +440,9 @@ router.patch('/lista-compras/item/:id', auth, requirePremiumGrow, async (req, re
 
 router.delete('/lista-compras/item/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
-    await supabase.from('itens_lista_compras').delete().eq('id', req.params.id);
+    const listaId = await getOrCreateLista(req.userRow.grupo_ativo);
+    await supabase.from('itens_lista_compras').delete()
+      .eq('id', req.params.id).eq('lista_id', listaId);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -555,9 +559,13 @@ router.put('/despensa/:id', auth, requirePremiumGrow, async (req, res) => {
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     if (patch.status && !['tem','acabando','acabou'].includes(patch.status))
       return res.status(400).json({ erro: 'status invalido' });
-    const { data, error } = await supabase.from('despensa_itens')
-      .update(patch).eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
-      .select().single();
+    // Escopo de escrita = mesmo da leitura (compartilhado→grupo_id, privado→
+    // user_id). Antes filtrava só por grupo_id e itens criados em outro grupo
+    // davam "Item nao encontrado" / não deletavam.
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    const { data, error } = await escopoLeitura(
+      supabase.from('despensa_itens').update(patch).eq('id', req.params.id), req, cfg.casa
+    ).select().single();
     if (error || !data) return res.status(404).json({ erro: 'Item nao encontrado' });
     if ('status' in patch) await sincronizarDespensaLista(req.userRow.grupo_ativo, data);
     res.json(data);
@@ -566,9 +574,14 @@ router.put('/despensa/:id', auth, requirePremiumGrow, async (req, res) => {
 
 router.delete('/despensa/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
-    await supabase.from('despensa_itens').delete()
-      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
-    res.json({ ok: true });
+    // Mesmo escopo da leitura (senão item de outro grupo não some).
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    const { data: del } = await escopoLeitura(
+      supabase.from('despensa_itens').delete().eq('id', req.params.id), req, cfg.casa
+    ).select('id');
+    // Remove também o item ligado na lista de compras (evita "fantasma").
+    await supabase.from('itens_lista_compras').delete().eq('despensa_item_id', req.params.id);
+    res.json({ ok: true, removidos: del?.length || 0 });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -607,9 +620,10 @@ router.put('/manutencoes/:id', auth, requirePremiumGrow, async (req, res) => {
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     if ('frequencia_dias' in patch) patch.frequencia_dias = parseInt(patch.frequencia_dias) || 90;
     if ('lembrete_ativo' in patch) patch.lembrete_ultimo = null; // reabilita o aviso
-    const { data, error } = await supabase.from('manutencoes')
-      .update(patch).eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
-      .select().single();
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    const { data, error } = await escopoLeitura(
+      supabase.from('manutencoes').update(patch).eq('id', req.params.id), req, cfg.casa
+    ).select().single();
     if (error || !data) return res.status(404).json({ erro: 'Manutencao nao encontrada' });
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -619,10 +633,12 @@ router.put('/manutencoes/:id', auth, requirePremiumGrow, async (req, res) => {
 router.post('/manutencoes/:id/feito', auth, requirePremiumGrow, async (req, res) => {
   try {
     const hoje = new Date().toISOString().slice(0, 10);
-    const { data, error } = await supabase.from('manutencoes')
-      .update({ ultima_data: req.body.data || hoje, lembrete_ultimo: null })
-      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
-      .select().single();
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    const { data, error } = await escopoLeitura(
+      supabase.from('manutencoes')
+        .update({ ultima_data: req.body.data || hoje, lembrete_ultimo: null })
+        .eq('id', req.params.id), req, cfg.casa
+    ).select().single();
     if (error || !data) return res.status(404).json({ erro: 'Manutencao nao encontrada' });
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -630,8 +646,10 @@ router.post('/manutencoes/:id/feito', auth, requirePremiumGrow, async (req, res)
 
 router.delete('/manutencoes/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
-    await supabase.from('manutencoes').delete()
-      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    await escopoLeitura(
+      supabase.from('manutencoes').delete().eq('id', req.params.id), req, cfg.casa
+    );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -688,9 +706,10 @@ router.put('/receitas/:id', auth, requirePremiumGrow, async (req, res) => {
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     if ('porcoes' in patch)   patch.porcoes   = patch.porcoes ? parseInt(patch.porcoes) : null;
     if ('tempo_min' in patch) patch.tempo_min = patch.tempo_min ? parseInt(patch.tempo_min) : null;
-    const { data: receita, error } = await supabase.from('receitas')
-      .update(patch).eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo)
-      .select().single();
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    const { data: receita, error } = await escopoLeitura(
+      supabase.from('receitas').update(patch).eq('id', req.params.id), req, cfg.casa
+    ).select().single();
     if (error || !receita) return res.status(404).json({ erro: 'Receita nao encontrada' });
     // Substitui ingredientes inteiros quando vierem no body
     if (Array.isArray(req.body.ingredientes)) {
@@ -709,8 +728,10 @@ router.put('/receitas/:id', auth, requirePremiumGrow, async (req, res) => {
 
 router.delete('/receitas/:id', auth, requirePremiumGrow, async (req, res) => {
   try {
-    await supabase.from('receitas').delete()
-      .eq('id', req.params.id).eq('grupo_id', req.userRow.grupo_ativo);
+    const cfg = await growShareCfg(req.userRow.grupo_ativo);
+    await escopoLeitura(
+      supabase.from('receitas').delete().eq('id', req.params.id), req, cfg.casa
+    );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
