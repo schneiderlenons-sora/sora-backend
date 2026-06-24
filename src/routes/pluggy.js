@@ -105,4 +105,41 @@ router.delete('/connections/:itemId', auth, exigirPermissao('admin', 'escrita'),
   }
 });
 
+// Diagnóstico: quais cartões (final mascarado) aparecem nas transações de
+// crédito? Mostra se o banco expõe cada cartão virtual separadamente
+// (creditCardMetadata.cardNumber) — base pra decidir se dá pra separar.
+router.get('/debug-cartoes', auth, exigirAcessoOpenFinance, async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo;
+    const { data: items } = await supabase.from('pluggy_items').select('item_id').eq('grupo_id', grupoId);
+    const desde = new Date(Date.now() - 180 * 864e5).toISOString().slice(0, 10);
+    const contas = [];
+    for (const it of items || []) {
+      let accs = [];
+      try { accs = await pluggy.listarContas(it.item_id); } catch {}
+      for (const acc of accs) {
+        if (acc.type !== 'CREDIT') continue;
+        let txs = [];
+        try { txs = await pluggy.listarTransacoes(acc.id, desde); } catch {}
+        const mapa = new Map();
+        let semId = 0;
+        for (const t of txs) {
+          const cn = t.creditCardMetadata && t.creditCardMetadata.cardNumber;
+          if (cn) mapa.set(cn, (mapa.get(cn) || 0) + 1);
+          else semId++;
+        }
+        contas.push({
+          conta: acc.name || acc.marketingName || 'Cartão',
+          total: txs.length,
+          cartoes: [...mapa.entries()].map(([numero, qtd]) => ({ numero, qtd })).sort((a, b) => b.qtd - a.qtd),
+          sem_identificacao: semId,
+        });
+      }
+    }
+    res.json({ contas });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 module.exports = router;
