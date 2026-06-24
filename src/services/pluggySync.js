@@ -38,17 +38,27 @@ function camposCredito(account) {
   return out;
 }
 
+// Nome ÚNICO por cartão — vários cartões do mesmo banco não podem virar a mesma
+// carteira. Usa banco + nível/nome do cartão + últimos 4 dígitos (quando vêm).
+function nomeCartao(connectorNome, account) {
+  const cd = account.creditData || {};
+  const banco = (connectorNome || '').trim();
+  const base = (account.name || account.marketingName || cd.level || 'Crédito').toString().trim();
+  let nome = banco && !base.toLowerCase().includes(banco.toLowerCase()) ? `${banco} ${base}` : base;
+  const last4 = (account.number || '').toString().replace(/\D/g, '').slice(-4);
+  if (last4) nome += ` ••${last4}`;
+  return nome.slice(0, 60);
+}
+
 // Conta Pluggy → carteira da Sora. Reusa a carteira já mapeada; senão adota uma
-// manual de mesmo nome; senão cria. Saldo = valor real do Pluggy (cartão = 0,
-// pois a fatura vem das transações). Cartão recebe limite/fechamento/vencimento.
+// manual de mesmo nome (sem Pluggy); senão cria. Saldo = valor real do Pluggy
+// (cartão = 0, fatura vem das transações). Cartão recebe limite/datas.
 async function upsertWallet(grupoId, userId, account, connectorNome) {
   const ehCredito = account.type === 'CREDIT';
   const tipo = ehCredito ? 'Crédito'
              : account.subtype === 'SAVINGS_ACCOUNT' ? 'Poupança' : 'Corrente';
-  // Cartão: usa o nome do banco ("Nubank Crédito") — o account.name vem como o
-  // nível do cartão ("Platinum"). Isso ainda adota um cartão manual homônimo.
   const nome = (ehCredito
-    ? `${connectorNome || account.name || 'Cartão'} Crédito`
+    ? nomeCartao(connectorNome, account)
     : (connectorNome || account.name || account.marketingName || 'Conta')
   ).toString().trim().slice(0, 60);
   const saldo = ehCredito ? 0 : Number(account.balance || 0);
@@ -61,9 +71,12 @@ async function upsertWallet(grupoId, userId, account, connectorNome) {
     await supabase.from('wallets').update({ saldo, tipo, ...extras }).eq('id', jaMapeada.id);
     return jaMapeada.nome;
   }
-  // 2) adota uma carteira manual de mesmo nome (ainda sem Pluggy)
+  // 2) adota uma carteira MANUAL de mesmo nome — só se ainda não for de outra
+  // conta Pluggy (.is pluggy_account_id null), senão um cartão "roubava" a
+  // carteira de outro e os dois mesclavam num só.
   const { data: mesmoNome } = await supabase.from('wallets')
-    .select('id, nome').eq('grupo_id', grupoId).ilike('nome', nome).maybeSingle();
+    .select('id, nome').eq('grupo_id', grupoId).ilike('nome', nome)
+    .is('pluggy_account_id', null).maybeSingle();
   if (mesmoNome) {
     await supabase.from('wallets').update({ saldo, tipo, pluggy_account_id: account.id, ...extras }).eq('id', mesmoNome.id);
     return mesmoNome.nome;

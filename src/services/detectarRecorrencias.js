@@ -37,6 +37,13 @@ async function detectarRecorrencias(grupoId) {
     .select('descricao').eq('grupo_id', grupoId).eq('ativa', true);
   const existentes = new Set((jaTem || []).map(r => chaveDe(r.descricao)));
 
+  // Sugestões que o usuário JÁ dispensou — não trazer de volta.
+  try {
+    const { data: disp } = await supabase.from('recorrencias_dispensadas')
+      .select('chave').eq('grupo_id', grupoId);
+    for (const d of disp || []) existentes.add(d.chave);
+  } catch { /* migration 058 pode não ter rodado ainda */ }
+
   const grupos = new Map();
   for (const t of txs || []) {
     if (t.transferencia || t.categoria === 'Fatura cartão' || t.categoria === 'Transferências') continue;
@@ -56,14 +63,16 @@ async function detectarRecorrencias(grupoId) {
   for (const [chave, itens] of grupos) {
     if (existentes.has(chave)) continue;
     const meses = new Set(itens.map(i => i.mes));
-    if (meses.size < 2 || itens.length < 2) continue; // tem que repetir em >=2 meses
+    // Critério rígido (evita falso positivo): tem que cair em >=3 meses
+    // DIFERENTES e ter >=3 ocorrências — cadência mensal de verdade.
+    if (meses.size < 3 || itens.length < 3) continue;
 
-    // Valor estável = assinatura. Gasto variável (mercado, iFood) é descartado.
+    // Valor MUITO estável = assinatura (gasto variável tipo mercado/iFood sai).
     const valores = itens.map(i => i.valor).sort((a, b) => a - b);
     const mediana = valores[Math.floor(valores.length / 2)];
     if (mediana <= 0) continue;
     const desvioMax = Math.max(...valores.map(v => Math.abs(v - mediana)));
-    if (desvioMax > Math.max(2, mediana * 0.2)) continue; // varia demais → não é fixo
+    if (desvioMax > Math.max(2, mediana * 0.08)) continue; // varia >8% → não é fixo
 
     const dias = itens.map(i => i.dia).sort((a, b) => a - b);
     const dia = Math.min(28, Math.max(1, dias[Math.floor(dias.length / 2)]));
@@ -84,4 +93,4 @@ async function detectarRecorrencias(grupoId) {
   return sugestoes.slice(0, 20);
 }
 
-module.exports = { detectarRecorrencias };
+module.exports = { detectarRecorrencias, chaveDe };

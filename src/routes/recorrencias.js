@@ -28,6 +28,23 @@ router.get('/sugestoes', auth, async (req, res) => {
   }
 });
 
+// POST /api/recorrencias/dispensar { descricao } — marca uma sugestão como
+// dispensada (não volta a aparecer). ANTES de /:phone.
+router.post('/dispensar', auth, async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo;
+    const { chaveDe } = require('../services/detectarRecorrencias');
+    const chave = chaveDe(req.body?.descricao || '');
+    if (!grupoId || !chave) return res.json({ ok: false });
+    await supabase.from('recorrencias_dispensadas')
+      .upsert({ grupo_id: grupoId, chave }, { onConflict: 'grupo_id,chave' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[recorrencias/dispensar]', err.message);
+    res.json({ ok: false }); // tolerante (ex.: migration 058 não rodou)
+  }
+});
+
 // GET /api/recorrencias/:phone — lista as recorrências ativas do grupo
 router.get('/:phone', auth, async (req, res) => {
   try {
