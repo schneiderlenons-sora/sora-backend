@@ -33,10 +33,25 @@ router.get('/buscar-cripto', auth, async (req, res) => {
   const q = (req.query.q || '').toString().toLowerCase().trim();
   if (q.length < 2) return res.json([]);
   const lista = await listarCriptos();
+  // Ranking: símbolo/nome exato → começa com → contém. Sem isso, buscar
+  // "bitcoin" trazia "anime-bitcoin" etc. antes do Bitcoin de verdade.
+  const score = (c) => {
+    const n = (c.name || '').toLowerCase(), s = (c.symbol || '').toLowerCase();
+    if (s === q) return 100;
+    if (n === q) return 90;
+    if (s.startsWith(q)) return 70;
+    if (n.startsWith(q)) return 60;
+    if (s.includes(q)) return 30;
+    if (n.includes(q)) return 20;
+    return -1;
+  };
   res.json(
     lista
-      .filter(c => c.name?.toLowerCase().includes(q) || c.symbol?.toLowerCase().includes(q))
+      .map(c => ({ c, s: score(c) }))
+      .filter(x => x.s >= 0)
+      .sort((a, b) => b.s - a.s)
       .slice(0, 10)
+      .map(x => x.c)
   );
 });
 

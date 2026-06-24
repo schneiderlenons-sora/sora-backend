@@ -656,7 +656,9 @@ cron.schedule('0 3 * * *', async () => {
   let atualizados = 0;
   for (const inv of invs || []) {
     try {
-      const quote = await yahooFinance.quote(inv.ticker);
+      // validateResult:false → o Yahoo mudou campos e a lib rejeitava a
+      // resposta por schema, derrubando a atualização de preços.
+      const quote = await yahooFinance.quote(inv.ticker, {}, { validateResult: false });
       const precoAtual  = quote.regularMarketPrice;
       const novoValor   = precoAtual * inv.quantidade;
 
@@ -665,7 +667,7 @@ cron.schedule('0 3 * * *', async () => {
       try {
         const hist = await yahooFinance.historical(inv.ticker, {
           period1: inv.data_compra, events: 'dividends'
-        });
+        }, { validateResult: false });
         dividendos = (hist || []).reduce((s, h) => s + (h.dividends || 0), 0) * inv.quantidade;
       } catch { /* sem dividendos para esse ativo */ }
 

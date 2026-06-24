@@ -8,9 +8,14 @@ const yahooFinance = new YahooFinance();
 try { yahooFinance.suppressNotices(['yahooSurvey']); } catch {}
 
 // ─── Yahoo Finance (ações, FIIs, ETFs) ──────────────────────────────
+// validateResult:false → o Yahoo às vezes muda campos (ex.: typeDisp "equity"→
+// "Equity") e a lib rejeita a resposta inteira por schema. Sem validar, usamos
+// os dados que vieram (que estão certos).
+const SEM_VALIDACAO = { validateResult: false };
+
 async function buscarCotacaoAcao(ticker) {
   try {
-    const quote = await yahooFinance.quote(ticker);
+    const quote = await yahooFinance.quote(ticker, {}, SEM_VALIDACAO);
     if (!quote) return null;
     return {
       precoAtual:   quote.regularMarketPrice ?? null,
@@ -28,7 +33,7 @@ async function buscarCotacaoAcao(ticker) {
 async function buscarDividendos(ticker, dataInicio) {
   try {
     const d = dataInicio ? new Date(dataInicio) : new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
-    const historico = await yahooFinance.historical(ticker, { period1: d, events: 'dividends' });
+    const historico = await yahooFinance.historical(ticker, { period1: d, events: 'dividends' }, SEM_VALIDACAO);
     return (historico || []).reduce((acc, h) => acc + (h.dividends || 0), 0);
   } catch {
     return 0;
@@ -37,7 +42,7 @@ async function buscarDividendos(ticker, dataInicio) {
 
 async function buscarTickers(query) {
   try {
-    const results = await yahooFinance.search(query, { quotesCount: 10, newsCount: 0 });
+    const results = await yahooFinance.search(query, { quotesCount: 10, newsCount: 0 }, SEM_VALIDACAO);
     return (results.quotes || []).slice(0, 10).map(r => ({
       ticker:   r.symbol,
       nome:     r.longname || r.shortname || r.symbol,
@@ -79,7 +84,9 @@ async function listarCriptos() {
   }
   try {
     const resp = await axios.get('https://api.coingecko.com/api/v3/coins/list', { timeout: 10000 });
-    CRIPTO_LIST_CACHE = (resp.data || []).slice(0, 800);
+    // Lista completa (cacheada 24h) — antes cortava em 800 e moedas populares
+    // como Bitcoin ficavam de fora da busca.
+    CRIPTO_LIST_CACHE = resp.data || [];
     CRIPTO_LIST_CACHE_AT = Date.now();
     return CRIPTO_LIST_CACHE;
   } catch (err) {
