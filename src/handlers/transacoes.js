@@ -4,6 +4,7 @@ const { analisarGastos } = require('../services/ia');
 const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
 const { criarPendente } = require('../services/pendentes');
+const { categorizarDescricao } = require('../services/categorizar');
 
 // Mapa de emoji por categoria/subcategoria (chave normalizada: sem emoji, sem acento, lowercase)
 const EMOJIS_MAP = {
@@ -310,6 +311,13 @@ module.exports = async function handleTransacoes(data, ctx) {
     // (ex: subcategoria "Shein"). Só sobrescreve se achar algo melhor que Outros.
     const catRefinada = await refinarCategoria(grupoId, ctx.mensagem || data.observacao);
     if (catRefinada) data.categoria = catRefinada;
+
+    // Fallback local-first: se ainda ficou vazio/"Outros", tenta pelo motor de
+    // descrição (mesmo do OFX/Pluggy) — ex.: "paguei a enel" → Contas.
+    if (!data.categoria || /^outros$/i.test(limpaCat(data.categoria))) {
+      const sugestao = categorizarDescricao(ctx.mensagem || data.observacao || '');
+      if (sugestao) data.categoria = sugestao;
+    }
 
     // Estratégia de escolha de carteira:
     //   1) Se a mensagem cita banco → usa esse
