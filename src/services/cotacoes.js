@@ -95,10 +95,45 @@ async function listarCriptos() {
   }
 }
 
+// Busca cripto pelo endpoint /search do CoinGecko (leve e já ranqueado por
+// relevância/market cap) — mais confiável que baixar a lista inteira (~3MB).
+async function buscarCriptos(q) {
+  try {
+    const resp = await axios.get(
+      `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`,
+      { timeout: 7000 }
+    );
+    return (resp.data?.coins || []).slice(0, 12).map(c => ({
+      id: c.id, symbol: c.symbol, name: c.name, market_cap_rank: c.market_cap_rank,
+    }));
+  } catch (err) {
+    console.warn('[cotacoes] coingecko search:', err.message);
+    // fallback: filtra a lista completa (cacheada)
+    try {
+      const ql = q.toLowerCase();
+      return (await listarCriptos())
+        .filter(c => c.name?.toLowerCase().includes(ql) || c.symbol?.toLowerCase().includes(ql))
+        .slice(0, 12);
+    } catch { return []; }
+  }
+}
+
+// Taxa de conversão de uma moeda estrangeira → BRL (1 se já for BRL).
+// Usa o par cambial do Yahoo (ex.: USDBRL=X).
+async function taxaParaBRL(moeda) {
+  if (!moeda || moeda === 'BRL') return 1;
+  try {
+    const q = await yahooFinance.quote(`${moeda}BRL=X`, {}, SEM_VALIDACAO);
+    return q?.regularMarketPrice || null;
+  } catch { return null; }
+}
+
 module.exports = {
   buscarCotacaoAcao,
   buscarDividendos,
   buscarTickers,
   buscarCotacaoCripto,
+  buscarCriptos,
   listarCriptos,
+  taxaParaBRL,
 };

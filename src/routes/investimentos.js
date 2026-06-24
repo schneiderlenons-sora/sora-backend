@@ -6,7 +6,7 @@ const { exigirPlano } = require('../middlewares/plano');
 const { exigirPermissao } = require('../middlewares/permissao');
 const {
   buscarCotacaoAcao, buscarDividendos, buscarTickers,
-  buscarCotacaoCripto, listarCriptos,
+  buscarCotacaoCripto, buscarCriptos, listarCriptos, taxaParaBRL,
 } = require('../services/cotacoes');
 const { debitarConta } = require('../services/contaDebito');
 
@@ -30,29 +30,42 @@ router.get('/buscar-ticker', auth, async (req, res) => {
 
 // GET /api/investimentos/buscar-cripto?q=bit
 router.get('/buscar-cripto', auth, async (req, res) => {
-  const q = (req.query.q || '').toString().toLowerCase().trim();
+  const q = (req.query.q || '').toString().trim();
   if (q.length < 2) return res.json([]);
-  const lista = await listarCriptos();
-  // Ranking: símbolo/nome exato → começa com → contém. Sem isso, buscar
-  // "bitcoin" trazia "anime-bitcoin" etc. antes do Bitcoin de verdade.
-  const score = (c) => {
-    const n = (c.name || '').toLowerCase(), s = (c.symbol || '').toLowerCase();
-    if (s === q) return 100;
-    if (n === q) return 90;
-    if (s.startsWith(q)) return 70;
-    if (n.startsWith(q)) return 60;
-    if (s.includes(q)) return 30;
-    if (n.includes(q)) return 20;
-    return -1;
-  };
-  res.json(
-    lista
-      .map(c => ({ c, s: score(c) }))
-      .filter(x => x.s >= 0)
-      .sort((a, b) => b.s - a.s)
-      .slice(0, 10)
-      .map(x => x.c)
-  );
+  res.json(await buscarCriptos(q));
+});
+
+// GET /api/investimentos/cotacao?ticker=AAPL&tipo=acao|cripto
+// Retorna o preço atual JÁ em reais (converte moeda estrangeira via câmbio).
+router.get('/cotacao', auth, async (req, res) => {
+  try {
+    const ticker = (req.query.ticker || '').toString().trim();
+    const tipo   = (req.query.tipo || '').toString().toLowerCase();
+    if (!ticker) return res.json({});
+
+    if (tipo === 'cripto') {
+      const c = await buscarCotacaoCripto(ticker.toLowerCase());
+      if (c?.precoAtual == null) return res.json({});
+      return res.json({ precoBRL: c.precoAtual, moeda: 'BRL', variacaoDia: c.variacaoDia ?? 0 });
+    }
+
+    const c = await buscarCotacaoAcao(ticker);
+    if (c?.precoAtual == null) return res.json({});
+    const moeda = c.moeda || 'BRL';
+    if (moeda === 'BRL') {
+      return res.json({ precoBRL: c.precoAtual, moeda: 'BRL', variacaoDia: c.variacaoDia ?? 0 });
+    }
+    // Moeda estrangeira → converte pra real.
+    const taxa = await taxaParaBRL(moeda);
+    if (!taxa) return res.json({ precoOriginal: c.precoAtual, moeda }); // sem câmbio
+    return res.json({
+      precoBRL: c.precoAtual * taxa, moeda: 'BRL',
+      precoOriginal: c.precoAtual, moedaOriginal: moeda, taxa,
+      variacaoDia: c.variacaoDia ?? 0,
+    });
+  } catch (err) {
+    res.json({});
+  }
 });
 
 // ── INVESTIMENTOS ────────────────────────────────────────────────
