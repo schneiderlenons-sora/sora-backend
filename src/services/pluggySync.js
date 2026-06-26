@@ -130,6 +130,8 @@ function mapTx(tx, grupoId, userId, walletNome, ehCredito) {
     transferencia: ehTransferencia,
     data:          tx.date || new Date().toISOString(),
     pluggy_tx_id:  tx.id,
+    // Final do cartão virtual (Nubank expõe via creditCardMetadata.cardNumber).
+    pluggy_card:   (tx.creditCardMetadata && tx.creditCardMetadata.cardNumber) || null,
   };
 }
 
@@ -139,10 +141,14 @@ function mapTx(tx, grupoId, userId, walletNome, ehCredito) {
 async function inserirNovas(grupoId, userId, walletNome, txs, ehCredito) {
   if (!txs.length) return 0;
   const ids = txs.map(t => t.id).filter(Boolean);
-  const existentes = new Map(); // pluggy_tx_id → { id, tipo, valor, transferencia }
+  const existentes = new Map(); // pluggy_tx_id → { id, tipo, valor, transferencia, pluggy_card }
   for (let i = 0; i < ids.length; i += 300) {
-    const { data } = await supabase.from('transacoes')
-      .select('id, pluggy_tx_id, tipo, valor, transferencia').in('pluggy_tx_id', ids.slice(i, i + 300));
+    const chunk = ids.slice(i, i + 300);
+    // Tolerante à coluna pluggy_card ausente (pré-migration 059).
+    let { data, error } = await supabase.from('transacoes')
+      .select('id, pluggy_tx_id, tipo, valor, transferencia, pluggy_card').in('pluggy_tx_id', chunk);
+    if (error) ({ data } = await supabase.from('transacoes')
+      .select('id, pluggy_tx_id, tipo, valor, transferencia').in('pluggy_tx_id', chunk));
     (data || []).forEach(d => existentes.set(d.pluggy_tx_id, d));
   }
 
@@ -152,21 +158,31 @@ async function inserirNovas(grupoId, userId, walletNome, txs, ehCredito) {
     const m = mapTx(t, grupoId, userId, walletNome, ehCredito);
     const ex = existentes.get(t.id);
     if (!ex) { novas.push(m); continue; }
-    // Corrige tipo/valor (sinal) e marca transferência (pagamento de fatura)
-    // em linhas já importadas. Não toca categoria/observação salvo virar fatura.
+    // Corrige tipo/valor (sinal), marca transferência (pagamento de fatura) e
+    // faz backfill do cartão virtual em linhas já importadas.
     const virouTransf = m.transferencia && !ex.transferencia;
-    if (ex.tipo !== m.tipo || Number(ex.valor) !== m.valor || virouTransf) {
+    const faltaCard = m.pluggy_card && !ex.pluggy_card;
+    if (ex.tipo !== m.tipo || Number(ex.valor) !== m.valor || virouTransf || faltaCard) {
       const patch = { tipo: m.tipo, valor: m.valor };
       if (virouTransf) { patch.transferencia = true; patch.categoria = m.categoria; }
-      await supabase.from('transacoes').update(patch).eq('id', ex.id);
+      if (faltaCard)   patch.pluggy_card = m.pluggy_card;
+      const { error: eUp } = await supabase.from('transacoes').update(patch).eq('id', ex.id);
+      if (eUp && patch.pluggy_card) { // coluna ausente → corrige sem o card
+        const { pluggy_card, ...semCard } = patch;
+        await supabase.from('transacoes').update(semCard).eq('id', ex.id);
+      }
     }
   }
 
   if (!novas.length) return 0;
-  const { error } = await supabase.from('transacoes').insert(novas);
-  if (error) { // fallback: uma a uma (a única em pluggy_tx_id ignora corridas)
+  let { error } = await supabase.from('transacoes').insert(novas);
+  if (error) { // pode ser a coluna pluggy_card ausente (pré-059) → tenta sem ela
+    const semCard = novas.map(({ pluggy_card, ...r }) => r);
+    ({ error } = await supabase.from('transacoes').insert(semCard));
+  }
+  if (error) { // fallback final: uma a uma (a única em pluggy_tx_id ignora corridas)
     let n = 0;
-    for (const row of novas) {
+    for (const { pluggy_card, ...row } of novas) {
       const { error: e } = await supabase.from('transacoes').insert(row);
       if (!e) n++;
     }
