@@ -4,10 +4,43 @@
 // o inbound aqui, que conseguimos parsear o payload e responder via Cloud API.
 // Na fase 2, plugamos o cérebro real da Sora (mesmo pipeline do webhook.js).
 const express = require('express');
+const axios   = require('axios');
 const router  = express.Router();
 const wa      = require('../services/whatsapp');
 
 const norm = (p) => (p ? String(p).replace(/\D/g, '') : p);
+
+// Guarda a última entrada recebida (memória) — só pra diagnóstico da migração.
+let lastInbound = null;
+
+// ── GET /diag: diagnóstico de envio (isola token x assinatura) ───────────────
+// Uso: /webhook/meta/diag?key=<verify_token>&to=55DDDNUMERO
+//  - sem ?to  → mostra config + última mensagem que o webhook recebeu
+//  - com ?to  → tenta ENVIAR direto pelo token e devolve o erro CRU da Meta
+router.get('/diag', async (req, res) => {
+  if (req.query.key !== process.env.WHATSAPP_VERIFY_TOKEN) return res.sendStatus(403);
+  const version = process.env.WHATSAPP_API_VERSION || 'v21.0';
+  const env = {
+    provider: process.env.WHATSAPP_PROVIDER || 'zapi',
+    hasToken: !!process.env.WHATSAPP_TOKEN,
+    tokenLen: (process.env.WHATSAPP_TOKEN || '').length,
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
+    version,
+    lastInbound,
+  };
+  const to = norm(req.query.to);
+  if (!to) return res.json({ env, hint: 'passe &to=55DDDNUMERO pra testar o ENVIO direto' });
+  try {
+    const { data } = await axios.post(
+      `https://graph.facebook.com/${version}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      { messaging_product: 'whatsapp', to, type: 'text', text: { body: '🔧 Diagnóstico Sora — Cloud API funcionando ✅' } },
+      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' } },
+    );
+    return res.json({ env, sent: true, data });
+  } catch (e) {
+    return res.json({ env, sent: false, status: e.response?.status, error: e.response?.data || e.message });
+  }
+});
 
 // ── GET: verificação do webhook (handshake da Meta) ──────────────────────────
 router.get('/', (req, res) => {
@@ -55,6 +88,7 @@ router.post('/', async (req, res) => {
     const m = parseInbound(req.body);
     if (!m || m.tipo === 'status' || !m.from) return;
 
+    lastInbound = { ...m, em: new Date().toISOString() };
     console.log(`📩 [webhook-meta] ${m.tipo} de ${m.from}${m.nome ? ` (${m.nome})` : ''}: ${m.texto || m.raw || m.mediaId || ''}`);
 
     if (m.tipo === 'texto') {
