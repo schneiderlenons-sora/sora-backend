@@ -232,6 +232,14 @@ router.post('/', async (req, res) => {
   const legendaImg = String(image?.caption || mensagem || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   if (imageUrl) mensagem = '__imagem__'; // placeholder pra passar a validação abaixo
 
+  await processarMensagem({ phone, mensagem, imageUrl, legendaImg });
+});
+
+// ── Núcleo de processamento — COMPARTILHADO entre /webhook (Z-API) e
+// /webhook/meta (Cloud API). Recebe a mensagem já normalizada pelo provedor
+// (texto / áudio transcrito / URL de imagem) e roda toda a lógica da Sora.
+// Envia via mensageiro — o flag WHATSAPP_PROVIDER decide Z-API ou Meta.
+async function processarMensagem({ phone, mensagem, imageUrl, legendaImg }) {
   if (!mensagem || !phone) return;
 
   try {
@@ -554,6 +562,7 @@ router.post('/', async (req, res) => {
     console.error('❌ Erro no webhook:', err.message);
     await enviarTexto(phone, '⚠️ Ocorreu um erro interno. Tente novamente.');
   }
-});
+}
 
 module.exports = router;
+module.exports.processarMensagem = processarMensagem;

@@ -113,13 +113,25 @@ router.post('/', async (req, res) => {
     lastInbound = { ...m, em: new Date().toISOString() };
     console.log(`📩 [webhook-meta] ${m.tipo} de ${m.from}${m.nome ? ` (${m.nome})` : ''}: ${m.texto || m.raw || m.mediaId || ''}`);
 
+    // Trava: só processa de verdade quando a Meta é o provedor ATIVO. Enquanto
+    // WHATSAPP_PROVIDER=zapi, o /webhook/meta fica DORMENTE — não responde via
+    // Z-API a quem chegou pela Meta. (lastInbound acima ainda alimenta o /diag.)
+    if ((process.env.WHATSAPP_PROVIDER || 'zapi') !== 'meta') {
+      console.log('💤 [webhook-meta] dormente (provedor ativo = zapi)');
+      return;
+    }
+
     if (m.tipo === 'texto') {
-      await wa.enviarTexto(m.from, `🤖 *Sora (Cloud API)* recebeu: "${m.texto}"\n\nMigração em teste ✅`);
+      // Cérebro real da Sora (mesmo pipeline do /webhook do Z-API). Envia via
+      // mensageiro → como o flag é 'meta' aqui, sai pela Cloud API.
+      const { processarMensagem } = require('./webhook');
+      await processarMensagem({ phone: m.from, mensagem: m.texto, imageUrl: null, legendaImg: '' });
     } else if (m.tipo === 'audio' || m.tipo === 'imagem') {
-      const mid = await wa.baixarMidia(m.mediaId);
-      await wa.enviarTexto(m.from, `🤖 Recebi seu ${m.tipo} via Cloud API (${mid ? `${(mid.buffer.length / 1024).toFixed(0)} KB, ${mid.mime}` : 'download falhou'}).`);
+      // TODO fase 2.2: baixarMidia(m.mediaId) → buffer → Whisper/OCR (hoje
+      // esperam URL pública). Por ora, pede texto.
+      await wa.enviarTexto(m.from, `🚧 Recebi seu ${m.tipo}, mas o processamento de mídia pela Cloud API ainda está sendo migrado. Por enquanto, manda por texto. 🙏`);
     } else {
-      await wa.enviarTexto(m.from, `🤖 Recebi um conteúdo do tipo "${m.raw}" (ainda não tratado no teste).`);
+      await wa.enviarTexto(m.from, '🤖 Esse tipo de mensagem ainda não é suportado.');
     }
   } catch (e) {
     console.error('❌ [webhook-meta] erro:', e.message);
