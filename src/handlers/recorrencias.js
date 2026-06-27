@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto } = require('../services/mensageiro');
 
 // Insert tolerante a coluna criado_por ausente (pré-migration 052): tenta com
 // o dono; se a coluna ainda não existe, refaz sem ela (não quebra a criação).

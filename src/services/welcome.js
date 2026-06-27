@@ -5,7 +5,7 @@
 // =====================================================================
 
 const supabase = require('../db/supabase');
-const { enviarTexto, enviarImagem } = require('./zapi');
+const { enviarTexto, enviarImagem } = require('./mensageiro');
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 // Capa da marca (mesma usada nos resumos). Acompanha a boas-vindas como imagem

@@ -7,7 +7,7 @@
 // Se não houver conta cadastrada, não pergunta nada.
 // =============================================================================
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('./zapi');
+const { enviarTexto } = require('./mensageiro');
 const { criarPendente } = require('./pendentes');
 
 const fmt = (v) => `R$ ${Number(v || 0).toFixed(2)}`;

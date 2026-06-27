@@ -11,7 +11,7 @@
 // (allow_promotion_codes), então SORA15 funciona direto no checkout.
 // =====================================================================
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('./zapi');
+const { enviarTexto } = require('./mensageiro');
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 

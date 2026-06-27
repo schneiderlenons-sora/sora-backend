@@ -4,7 +4,7 @@
 // Chamado de dentro do handlers/grow.js, retorna true se tratou.
 // ─────────────────────────────────────────────────────────────────
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto } = require('../services/mensageiro');
 const nutricao = require('../services/nutricao');
 
 const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();

@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto } = require('../services/mensageiro');
 const norm = p => p?.replace(/\D/g, '');
 
 async function getUser(phone) {

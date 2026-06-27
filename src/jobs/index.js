@@ -1,6 +1,6 @@
 const cron      = require('node-cron');
 const supabase  = require('../db/supabase');
-const { enviarTexto, enviarLink, enviarImagem } = require('../services/zapi');
+const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { avisosLigados } = require('../services/avisos');
 const yahooFinance    = require('yahoo-finance2').default;

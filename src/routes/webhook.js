@@ -1,7 +1,7 @@
 const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
-const { enviarTexto, enviarMenu, enviarLink, enviarBotaoLink, enviarImagem } = require('../services/zapi');
+const { enviarTexto, enviarMenu, enviarLink, enviarBotaoLink, enviarImagem } = require('../services/mensageiro');
 const { responderFaq } = require('../services/faq');
 const { emRecuperacao, RECUPERACAO_TEXT } = require('../services/recuperacaoPagamento');
 const { emRecuperacaoCadastro, respostaRecuperacaoCadastro, notaIaRecuperacaoCadastro } = require('../services/recuperacaoSignup');

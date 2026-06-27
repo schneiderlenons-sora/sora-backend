@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto } = require('../services/mensageiro');
 const { nanoid } = require('nanoid');
 
 const LIMITE_MEMBROS = { inativo:1, basico:1, premium:3, black:5 };

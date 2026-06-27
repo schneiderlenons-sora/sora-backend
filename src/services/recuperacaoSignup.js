@@ -8,7 +8,7 @@
 // supabase_user_id), então NÃO mandamos link cru do Stripe.
 // =====================================================================
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('./zapi');
+const { enviarTexto } = require('./mensageiro');
 
 const APP = 'https://www.forsora.com';
 

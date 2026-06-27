@@ -4,7 +4,7 @@
 // Registra o aporte, atualiza o valor guardado e oferece descontar de uma conta.
 // =============================================================================
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto } = require('../services/mensageiro');
 const { oferecerDesconto } = require('../services/descontoConta');
 
 const fmt = (v) => `R$ ${Number(v || 0).toFixed(2)}`;

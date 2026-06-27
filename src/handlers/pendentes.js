@@ -14,7 +14,7 @@
 // =============================================================================
 
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto } = require('../services/mensageiro');
 const { criarPendente, removerPendente } = require('../services/pendentes');
 
 const TIPOS_CONTA = ['Corrente', 'Poupança', 'Vale Alimentação', 'Dinheiro'];

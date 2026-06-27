@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto, enviarImagem } = require('../services/zapi');
+const { enviarTexto, enviarImagem } = require('../services/mensageiro');
 const { growShareCfg } = require('../services/growShare');
 const APP_URL_GROW = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_GROW = process.env.SORA_CAPA_URL || `${APP_URL_GROW}/sora-capa.png`;

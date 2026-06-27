@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto } = require('../services/mensageiro');
 const { oferecerDesconto } = require('../services/descontoConta');
 
 const fmt = v => `R$ ${(parseFloat(v) || 0).toFixed(2).replace('.', ',')}`;

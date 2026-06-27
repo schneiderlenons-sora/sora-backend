@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto } = require('../services/mensageiro');
 
 module.exports = async function handleLimites(data, ctx) {
   const { phone, grupoId, user } = ctx;

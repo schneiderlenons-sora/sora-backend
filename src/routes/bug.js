@@ -2,7 +2,7 @@ const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
-const { enviarTexto, enviarImagem } = require('../services/zapi');
+const { enviarTexto, enviarImagem } = require('../services/mensageiro');
 
 // WhatsApp que recebe os relatos (configurável; fallback = suporte da Sora).
 const SUPORTE_PHONE = (process.env.SUPORTE_PHONE || '5532999167475').replace(/\D/g, '');

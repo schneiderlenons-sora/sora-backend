@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/zapi');
+const { enviarTexto } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { oferecerDesconto } = require('../services/descontoConta');
 
