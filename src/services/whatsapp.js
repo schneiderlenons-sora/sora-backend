@@ -138,6 +138,28 @@ async function enviarLink(phone, { message, image, linkUrl, title, linkDescripti
   await enviarBotaoLink(phone, { message, image, title, label: linkDescription || 'Abrir', url: linkUrl });
 }
 
+// ── Template (mensagem PROATIVA fora da janela de 24h) ───────────────────────
+// Fora da janela só template aprovado passa. bodyParams preenchem {{1}}, {{2}}…
+// do corpo; opts.urlButtonParam preenche o sufixo dinâmico de um botão de URL.
+// Ver o catálogo do que criar na Meta em docs/MIGRACAO-WHATSAPP-TEMPLATES.md.
+async function enviarTemplate(phone, name, bodyParams = [], lang = 'pt_BR', opts = {}) {
+  try {
+    const components = [];
+    if (bodyParams.length) {
+      components.push({ type: 'body', parameters: bodyParams.map((t) => ({ type: 'text', text: String(t) })) });
+    }
+    if (opts.urlButtonParam != null) {
+      components.push({
+        type: 'button', sub_type: 'url', index: opts.urlButtonIndex ?? 0,
+        parameters: [{ type: 'text', text: String(opts.urlButtonParam) }],
+      });
+    }
+    const template = { name, language: { code: lang } };
+    if (components.length) template.components = components;
+    await postMessage({ to: to(phone), type: 'template', template });
+  } catch {/* já logado em postMessage */}
+}
+
 // ── Download de mídia recebida (áudio/imagem) ────────────────────────────────
 // A Meta entrega um media id; resolvemos a URL e baixamos COM o token.
 // Retorna { buffer, mime } (ou null). Whisper/OCR consumirão isso na fase 2.
@@ -154,4 +176,4 @@ async function baixarMidia(mediaId) {
   }
 }
 
-module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink, enviarBotaoLink, baixarMidia };
+module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink, enviarBotaoLink, baixarMidia, enviarTemplate };

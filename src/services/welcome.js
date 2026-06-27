@@ -144,11 +144,21 @@ async function enviarBoasVindas({ user_id, phone, nome, force = false }) {
   const mensagem = montarMensagem({ nome, primeiroAcesso, onboardingCompleto });
 
   try {
-    // Boas-vindas com a capa como banner no topo + a mensagem (que já tem os
-    // links) na legenda. enviarImagem cai pra texto se a imagem falhar.
-    await enviarImagem(phone, CAPA, mensagem);
+    if ((process.env.WHATSAPP_PROVIDER || 'zapi').toLowerCase() === 'meta') {
+      // Cloud API: o usuário pode estar FORA da janela de 24h → template
+      // aprovado 'boas_vindas' ({{1}} = primeiro nome, botão URL → painel).
+      const { enviarTemplate } = require('./whatsapp');
+      const primeiroNome = (nome || 'tudo bem').split(' ')[0];
+      await enviarTemplate(phone, 'boas_vindas', [primeiroNome], 'pt_BR', {
+        urlButtonParam: onboardingCompleto ? 'dashboard' : 'onboarding',
+      });
+    } else {
+      // Z-API: capa como banner no topo + a mensagem rica (com os links) na
+      // legenda. enviarImagem cai pra texto se a imagem falhar.
+      await enviarImagem(phone, CAPA, mensagem);
+    }
   } catch (e) {
-    console.error('[welcome] erro ao enviar Z-API:', e.message);
+    console.error('[welcome] erro ao enviar boas-vindas:', e.message);
     return { enviado: false, motivo: e.message };
   }
 
