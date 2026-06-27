@@ -19,12 +19,20 @@
 - **Nome:** `boas_vindas`  ·  **Categoria:** Utilidade  ·  **Idioma:** pt_BR
 - **Corpo:**
   ```
-  Oi {{1}}! 👋 Sou a Sora, sua assistente financeira. Seu plano está ativo 🎉
-  Me manda seus gastos por texto, áudio ou foto aqui mesmo que eu organizo tudo.
+  Oi {{1}}! 👋 Sou a Sora, sua assistente financeira no WhatsApp. Seu plano está ativo 🎉
+
+  Me manda seus gastos por *texto*, *áudio* ou *foto* que eu organizo tudo. Alguns exemplos:
+  • _gastei 50 no mercado_
+  • _saldo_ — vê o saldo das suas contas
+  • _resumo_ — receitas, gastos e categorias do mês
+
+  Pra ver tudo que sei fazer, digite *ajuda* a qualquer momento. 🙌
   ```
 - **Botão:** tipo **URL dinâmica** · texto `Abrir painel` ·
   URL base `https://forsora.com/` + `{{1}}`  (o código manda `dashboard` ou `onboarding`).
 - **Params do código:** body `[primeiroNome]`, `opts.urlButtonParam = 'dashboard'|'onboarding'`.
+- **Exemplos que a Meta pede:** corpo `{{1}}` = `Lenon` · botão `{{1}}` = `dashboard`.
+- **Formatação:** no corpo, `*negrito*` e `_itálico_` funcionam no template (igual WhatsApp).
 
 ---
 
