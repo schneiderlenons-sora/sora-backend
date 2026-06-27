@@ -7,20 +7,27 @@
 // Docs: https://developers.facebook.com/docs/whatsapp/cloud-api
 const axios = require('axios');
 
-const VERSION = process.env.WHATSAPP_API_VERSION || 'v21.0';
-const TOKEN   = process.env.WHATSAPP_TOKEN;
-const PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const GRAPH = 'https://graph.facebook.com';
+// Lidos em tempo de chamada (não no boot) — token pode mudar sem reiniciar.
+const VERSION  = () => process.env.WHATSAPP_API_VERSION || 'v21.0';
+const TOKEN    = () => process.env.WHATSAPP_TOKEN;
+const PHONE_ID = () => process.env.WHATSAPP_PHONE_NUMBER_ID;
 
 const HEADERS = () => ({
-  Authorization: `Bearer ${TOKEN}`,
+  Authorization: `Bearer ${TOKEN()}`,
   'Content-Type': 'application/json',
 });
 
-const MSG_URL = () => `${GRAPH}/${VERSION}/${PHONE_ID}/messages`;
+const MSG_URL = () => `${GRAPH}/${VERSION()}/${PHONE_ID()}/messages`;
 
-// Telefone no formato da Meta: só dígitos, com DDI (ex.: 5511999999999).
-const to = (phone) => String(phone || '').replace(/\D/g, '');
+// Telefone no formato da Meta: só dígitos, com DDI. A Meta normaliza celular BR
+// removendo o 9º dígito no wa_id (55+DDD+8). Ao ENVIAR, reinserimos o 9 (vira
+// 55+DDD+9+8 = 13 díg) — necessário p/ a allowlist de teste e correto em prod.
+function to(phone) {
+  let n = String(phone || '').replace(/\D/g, '');
+  if (/^55\d{10}$/.test(n)) n = n.slice(0, 4) + '9' + n.slice(4);
+  return n;
+}
 
 // Helper base de POST /messages com log de erro detalhado da Meta.
 async function postMessage(body) {
@@ -77,8 +84,8 @@ async function uploadImagemDataUri(dataUri) {
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
   form.append('file', Buffer.from(m[2], 'base64'), { filename: 'imagem.png', contentType: m[1] });
-  const { data } = await axios.post(`${GRAPH}/${VERSION}/${PHONE_ID}/media`, form, {
-    headers: { Authorization: `Bearer ${TOKEN}`, ...form.getHeaders() },
+  const { data } = await axios.post(`${GRAPH}/${VERSION()}/${PHONE_ID()}/media`, form, {
+    headers: { Authorization: `Bearer ${TOKEN()}`, ...form.getHeaders() },
   });
   return data?.id || null;
 }
@@ -136,10 +143,10 @@ async function enviarLink(phone, { message, image, linkUrl, title, linkDescripti
 // Retorna { buffer, mime } (ou null). Whisper/OCR consumirão isso na fase 2.
 async function baixarMidia(mediaId) {
   try {
-    const meta = await axios.get(`${GRAPH}/${VERSION}/${mediaId}`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+    const meta = await axios.get(`${GRAPH}/${VERSION()}/${mediaId}`, { headers: { Authorization: `Bearer ${TOKEN()}` } });
     const url = meta.data?.url;
     if (!url) return null;
-    const bin = await axios.get(url, { headers: { Authorization: `Bearer ${TOKEN}` }, responseType: 'arraybuffer' });
+    const bin = await axios.get(url, { headers: { Authorization: `Bearer ${TOKEN()}` }, responseType: 'arraybuffer' });
     return { buffer: Buffer.from(bin.data), mime: meta.data?.mime_type || bin.headers['content-type'] || 'application/octet-stream' };
   } catch (e) {
     console.error('❌ [whatsapp] baixarMidia falhou:', e.response?.status || e.message);
