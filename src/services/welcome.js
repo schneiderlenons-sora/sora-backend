@@ -146,12 +146,11 @@ async function enviarBoasVindas({ user_id, phone, nome, force = false }) {
   try {
     if ((process.env.WHATSAPP_PROVIDER || 'zapi').toLowerCase() === 'meta') {
       // Cloud API: o usuário pode estar FORA da janela de 24h → template
-      // aprovado 'boas_vindas' ({{1}} = primeiro nome, botão URL → painel).
+      // aprovado 'boas_vindas' ({{1}} = primeiro nome). O botão é ESTÁTICO
+      // (→ /dashboard); a app redireciona pra /onboarding quem ainda não fez.
       const { enviarTemplate } = require('./whatsapp');
       const primeiroNome = (nome || 'tudo bem').split(' ')[0];
-      await enviarTemplate(phone, 'boas_vindas', [primeiroNome], 'pt_BR', {
-        urlButtonParam: onboardingCompleto ? 'dashboard' : 'onboarding',
-      });
+      await enviarTemplate(phone, 'boas_vindas', [primeiroNome]);
     } else {
       // Z-API: capa como banner no topo + a mensagem rica (com os links) na
       // legenda. enviarImagem cai pra texto se a imagem falhar.

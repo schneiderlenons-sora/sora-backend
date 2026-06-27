@@ -28,10 +28,10 @@
 
   Pra ver tudo que sei fazer, digite *ajuda* a qualquer momento. 🙌
   ```
-- **Botão:** tipo **URL dinâmica** · texto `Abrir painel` ·
-  URL base `https://forsora.com/` + `{{1}}`  (o código manda `dashboard` ou `onboarding`).
-- **Params do código:** body `[primeiroNome]`, `opts.urlButtonParam = 'dashboard'|'onboarding'`.
-- **Exemplos que a Meta pede:** corpo `{{1}}` = `Lenon` · botão `{{1}}` = `dashboard`.
+- **Botão:** tipo **URL estática** · texto `Acessar Painel` ·
+  URL `https://forsora.com/dashboard` (a app redireciona pra /onboarding quem ainda não fez).
+- **Params do código:** body `[primeiroNome]` apenas (botão estático, sem variável).
+- **Exemplo que a Meta pede:** corpo `{{1}}` = `Lenon`.
 - **Formatação:** no corpo, `*negrito*` e `_itálico_` funcionam no template (igual WhatsApp).
 
 ---
