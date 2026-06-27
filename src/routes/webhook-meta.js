@@ -13,32 +13,54 @@ const norm = (p) => (p ? String(p).replace(/\D/g, '') : p);
 // Guarda a última entrada recebida (memória) — só pra diagnóstico da migração.
 let lastInbound = null;
 
-// ── GET /diag: diagnóstico de envio (isola token x assinatura) ───────────────
-// Uso: /webhook/meta/diag?key=<verify_token>&to=55DDDNUMERO
-//  - sem ?to  → mostra config + última mensagem que o webhook recebeu
-//  - com ?to  → tenta ENVIAR direto pelo token e devolve o erro CRU da Meta
+// ── GET /diag: diagnóstico (isola token x assinatura x inbound) ───────────────
+// Uso: /webhook/meta/diag?key=<verify_token>[&to=55DDD][&subscribe=1]
+//  - sem nada    → config + lastInbound + status de assinatura do WABA no app
+//  - &subscribe=1→ INSCREVE o app na WABA (POST subscribed_apps) — fix do inbound
+//  - &to=55...   → tenta ENVIAR direto e devolve o erro cru da Meta
 router.get('/diag', async (req, res) => {
   if (req.query.key !== process.env.WHATSAPP_VERIFY_TOKEN) return res.sendStatus(403);
   const version = process.env.WHATSAPP_API_VERSION || 'v21.0';
+  const TOKEN   = process.env.WHATSAPP_TOKEN;
+  const wabaId  = process.env.WHATSAPP_WABA_ID;
+  const auth    = { headers: { Authorization: `Bearer ${TOKEN}` } };
   const env = {
     provider: process.env.WHATSAPP_PROVIDER || 'zapi',
-    hasToken: !!process.env.WHATSAPP_TOKEN,
-    tokenLen: (process.env.WHATSAPP_TOKEN || '').length,
+    hasToken: !!TOKEN,
+    tokenLen: (TOKEN || '').length,
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
+    wabaId: wabaId || null,
     version,
     lastInbound,
   };
+
+  // Assinatura do WABA ↔ app (é o que faz a Meta ENTREGAR o inbound).
+  let subscribed = null;
+  if (wabaId) {
+    try {
+      if (req.query.subscribe === '1') {
+        const r = await axios.post(`https://graph.facebook.com/${version}/${wabaId}/subscribed_apps`, {}, auth);
+        subscribed = { acaoInscrever: r.data };
+      } else {
+        const r = await axios.get(`https://graph.facebook.com/${version}/${wabaId}/subscribed_apps`, auth);
+        subscribed = r.data;
+      }
+    } catch (e) {
+      subscribed = { error: e.response?.data || e.message };
+    }
+  }
+
   const to = norm(req.query.to);
-  if (!to) return res.json({ env, hint: 'passe &to=55DDDNUMERO pra testar o ENVIO direto' });
+  if (!to) return res.json({ env, subscribed, hint: '&subscribe=1 inscreve o app no WABA · &to=55DDD testa o envio' });
   try {
     const { data } = await axios.post(
       `https://graph.facebook.com/${version}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       { messaging_product: 'whatsapp', to, type: 'text', text: { body: '🔧 Diagnóstico Sora — Cloud API funcionando ✅' } },
-      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' } },
+      { headers: { ...auth.headers, 'Content-Type': 'application/json' } },
     );
-    return res.json({ env, sent: true, data });
+    return res.json({ env, subscribed, sent: true, data });
   } catch (e) {
-    return res.json({ env, sent: false, status: e.response?.status, error: e.response?.data || e.message });
+    return res.json({ env, subscribed, sent: false, status: e.response?.status, error: e.response?.data || e.message });
   }
 });
 
