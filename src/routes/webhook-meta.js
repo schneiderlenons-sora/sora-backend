@@ -7,6 +7,7 @@ const express = require('express');
 const axios   = require('axios');
 const router  = express.Router();
 const wa      = require('../services/whatsapp');
+const { transcreverAudio } = require('../services/whisper');
 
 const norm = (p) => (p ? String(p).replace(/\D/g, '') : p);
 
@@ -121,15 +122,30 @@ router.post('/', async (req, res) => {
       return;
     }
 
+    // Cérebro real da Sora (mesmo pipeline do /webhook do Z-API). Envia via
+    // mensageiro → como o flag é 'meta' aqui, sai pela Cloud API.
+    const { processarMensagem } = require('./webhook');
+
     if (m.tipo === 'texto') {
-      // Cérebro real da Sora (mesmo pipeline do /webhook do Z-API). Envia via
-      // mensageiro → como o flag é 'meta' aqui, sai pela Cloud API.
-      const { processarMensagem } = require('./webhook');
       await processarMensagem({ phone: m.from, mensagem: m.texto, imageUrl: null, legendaImg: '' });
-    } else if (m.tipo === 'audio' || m.tipo === 'imagem') {
-      // TODO fase 2.2: baixarMidia(m.mediaId) → buffer → Whisper/OCR (hoje
-      // esperam URL pública). Por ora, pede texto.
-      await wa.enviarTexto(m.from, `🚧 Recebi seu ${m.tipo}, mas o processamento de mídia pela Cloud API ainda está sendo migrado. Por enquanto, manda por texto. 🙏`);
+
+    } else if (m.tipo === 'audio') {
+      // Mídia da Meta vem como ID → baixa com o token e passa o BUFFER ao Whisper.
+      const mid = await wa.baixarMidia(m.mediaId);
+      if (!mid) return wa.enviarTexto(m.from, '🎤 Não consegui baixar seu áudio. Tenta de novo?');
+      let texto;
+      try { texto = await transcreverAudio(mid.buffer, m.from); }
+      catch { return wa.enviarTexto(m.from, '🎤 Não consegui entender o áudio. Pode repetir?'); }
+      await processarMensagem({ phone: m.from, mensagem: texto, imageUrl: null, legendaImg: '' });
+
+    } else if (m.tipo === 'imagem') {
+      // Buffer → data URI (o OpenAI vision/OCR aceitam data URI no image_url).
+      const mid = await wa.baixarMidia(m.mediaId);
+      if (!mid) return wa.enviarTexto(m.from, '📷 Não consegui baixar sua imagem. Tenta de novo?');
+      const imageUrl = `data:${mid.mime};base64,${mid.buffer.toString('base64')}`;
+      const legendaImg = String(m.caption || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      await processarMensagem({ phone: m.from, mensagem: '__imagem__', imageUrl, legendaImg });
+
     } else {
       await wa.enviarTexto(m.from, '🤖 Esse tipo de mensagem ainda não é suportado.');
     }

@@ -12,13 +12,16 @@ const VOCAB_BASE =
   'Mercado Livre, AliExpress, Netflix, Spotify, Magalu. ' +
   'Termos: gastei, paguei, recebi, crédito, débito, reais, parcelado.';
 
-async function transcreverAudio(audioUrl, phone, vocab = '') {
+async function transcreverAudio(audioSrc, phone, vocab = '') {
   let fileName = null;
   try {
-    // Baixa o áudio
-    const resp = await axios.get(audioUrl, { responseType: 'arraybuffer' });
+    // audioSrc pode ser URL (Z-API, pública) OU Buffer (Cloud API/Meta — a
+    // mídia já vem baixada com o token, pois a URL da Meta exige Authorization).
+    const buf = Buffer.isBuffer(audioSrc)
+      ? audioSrc
+      : Buffer.from((await axios.get(audioSrc, { responseType: 'arraybuffer' })).data);
     fileName = `./tmp_${phone}_${Date.now()}.ogg`;
-    fs.writeFileSync(fileName, Buffer.from(resp.data));
+    fs.writeFileSync(fileName, buf);
 
     // Envia para o Whisper (OpenAI)
     const form = new FormData();
