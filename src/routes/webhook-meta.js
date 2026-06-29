@@ -11,8 +11,10 @@ const { transcreverAudio } = require('../services/whisper');
 
 const norm = (p) => (p ? String(p).replace(/\D/g, '') : p);
 
-// Guarda a última entrada recebida (memória) — só pra diagnóstico da migração.
+// Guarda a última entrada recebida + último status de entrega (memória) — só
+// pra diagnóstico da migração.
 let lastInbound = null;
+let lastStatus = null;
 
 // ── GET /diag: diagnóstico (isola token x assinatura x inbound) ───────────────
 // Uso: /webhook/meta/diag?key=<verify_token>[&to=55DDD][&subscribe=1]
@@ -33,6 +35,7 @@ router.get('/diag', async (req, res) => {
     wabaId: wabaId || null,
     version,
     lastInbound,
+    lastStatus,
   };
 
   // Assinatura do WABA ↔ app (é o que faz a Meta ENTREGAR o inbound).
@@ -100,7 +103,7 @@ router.get('/', (req, res) => {
 function parseInbound(body) {
   const value = body?.entry?.[0]?.changes?.[0]?.value;
   if (!value) return null;
-  if (value.statuses) return { tipo: 'status' };          // entregue/lido — ignorar
+  if (value.statuses) return { tipo: 'status', status: value.statuses[0] }; // entrega/falha
   const msg = value.messages?.[0];
   if (!msg) return null;
   const from = norm(msg.from);
@@ -127,7 +130,14 @@ router.post('/', async (req, res) => {
   res.sendStatus(200); // ACK imediato (a Meta reenvia se não receber 200 rápido)
   try {
     const m = parseInbound(req.body);
-    if (!m || m.tipo === 'status' || !m.from) return;
+    if (!m) return;
+    // Status de entrega (sent/delivered/read/failed) — guarda pra diagnóstico.
+    if (m.tipo === 'status') {
+      lastStatus = { ...m.status, em: new Date().toISOString() };
+      if (m.status?.status === 'failed') console.warn('⚠️ [webhook-meta] FALHA de entrega:', JSON.stringify(m.status.errors || m.status));
+      return;
+    }
+    if (!m.from) return;
 
     lastInbound = { ...m, em: new Date().toISOString() };
     console.log(`📩 [webhook-meta] ${m.tipo} de ${m.from}${m.nome ? ` (${m.nome})` : ''}: ${m.texto || m.raw || m.mediaId || ''}`);
