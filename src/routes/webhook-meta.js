@@ -54,8 +54,23 @@ router.get('/diag', async (req, res) => {
     }
   }
 
+  // &status=1 → pergunta à Meta o status real da WABA + do número (health_status
+  // diz QUAL entidade bloqueia o envio e por quê — ex.: business locked).
+  if (req.query.status) {
+    const out = {};
+    try {
+      const w = await axios.get(`https://graph.facebook.com/${version}/${wabaId}?fields=id,name,account_review_status,health_status,country,owner_business_info`, auth);
+      out.waba = w.data;
+    } catch (e) { out.wabaError = e.response?.data || e.message; }
+    try {
+      const p = await axios.get(`https://graph.facebook.com/${version}/${process.env.WHATSAPP_PHONE_NUMBER_ID}?fields=verified_name,display_phone_number,code_verification_status,quality_rating,name_status,status,platform_type,health_status`, auth);
+      out.phone = p.data;
+    } catch (e) { out.phoneError = e.response?.data || e.message; }
+    return res.json({ env: { provider: env.provider, wabaId: env.wabaId, phoneNumberId: env.phoneNumberId }, status: out });
+  }
+
   const to = norm(req.query.to);
-  if (!to) return res.json({ env, subscribed, hint: '&subscribe=1 inscreve · &to=55DDD testa texto · &to=..&template=boas_vindas testa template' });
+  if (!to) return res.json({ env, subscribed, hint: '&subscribe=1 inscreve · &to=55DDD testa texto · &template=boas_vindas testa template · &status=1 status da conta' });
 
   const MSG = `https://graph.facebook.com/${version}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
   const headers = { ...auth.headers, 'Content-Type': 'application/json' };
