@@ -52,13 +52,31 @@ router.get('/diag', async (req, res) => {
   }
 
   const to = norm(req.query.to);
-  if (!to) return res.json({ env, subscribed, hint: '&subscribe=1 inscreve o app no WABA · &to=55DDD testa o envio' });
+  if (!to) return res.json({ env, subscribed, hint: '&subscribe=1 inscreve · &to=55DDD testa texto · &to=..&template=boas_vindas testa template' });
+
+  const MSG = `https://graph.facebook.com/${version}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+  const headers = { ...auth.headers, 'Content-Type': 'application/json' };
+
+  // Teste de TEMPLATE: &template=boas_vindas (param {{1}} = &p1 ou "Lenon").
+  if (req.query.template) {
+    const body = {
+      messaging_product: 'whatsapp', to, type: 'template',
+      template: {
+        name: req.query.template,
+        language: { code: req.query.lang || 'pt_BR' },
+        components: [{ type: 'body', parameters: [{ type: 'text', text: req.query.p1 || 'Lenon' }] }],
+      },
+    };
+    try {
+      const { data } = await axios.post(MSG, body, { headers });
+      return res.json({ env, subscribed, templateSent: true, template: req.query.template, data });
+    } catch (e) {
+      return res.json({ env, subscribed, templateSent: false, template: req.query.template, status: e.response?.status, error: e.response?.data || e.message });
+    }
+  }
+
   try {
-    const { data } = await axios.post(
-      `https://graph.facebook.com/${version}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-      { messaging_product: 'whatsapp', to, type: 'text', text: { body: '🔧 Diagnóstico Sora — Cloud API funcionando ✅' } },
-      { headers: { ...auth.headers, 'Content-Type': 'application/json' } },
-    );
+    const { data } = await axios.post(MSG, { messaging_product: 'whatsapp', to, type: 'text', text: { body: '🔧 Diagnóstico Sora — Cloud API funcionando ✅' } }, { headers });
     return res.json({ env, subscribed, sent: true, data });
   } catch (e) {
     return res.json({ env, subscribed, sent: false, status: e.response?.status, error: e.response?.data || e.message });
