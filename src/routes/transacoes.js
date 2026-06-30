@@ -16,16 +16,19 @@ function proximoMesPrimeiroDia(mes) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
-async function getUser(phone) {
-  const { data } = await supabase.from('users')
-    .select('id, grupo_ativo').eq('phone', norm(phone)).maybeSingle();
-  return data;
+// Identidade pelo usuário AUTENTICADO (JWT/e-mail), não pelo telefone — assim
+// quem tem só e-mail (sem WhatsApp) também acessa. O middleware `auth` já
+// resolveu o grupo ativo a partir do user.id do login.
+function usuarioReq(req) {
+  return req.authUser?.grupoAtivo
+    ? { id: req.authUser.id, grupo_ativo: req.authUser.grupoAtivo }
+    : null;
 }
 
 // GET /api/transacoes/:phone?mes=2026-05&tipo=Gasto&categoria=Mercado&limit=50&offset=0&criado_por_me=true&criado_por_phone=XX
 router.get('/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = usuarioReq(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
     const grupoId = user.grupo_ativo;
 
@@ -253,7 +256,7 @@ router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res
 // GET /api/transacoes/:phone/resumo?mes=2026-05&criado_por_me=true
 router.get('/:phone/resumo', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = usuarioReq(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
 
     const mes = req.query.mes || new Date().toISOString().slice(0, 7);
