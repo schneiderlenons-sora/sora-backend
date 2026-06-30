@@ -17,19 +17,17 @@ function variantesPhone(phone) {
   return variantes;
 }
 
-async function getGrupoId(phone) {
-  for (const variante of variantesPhone(phone)) {
-    const { data } = await supabase.from('users')
-      .select('grupo_ativo').eq('phone', variante).maybeSingle();
-    if (data?.grupo_ativo) return data.grupo_ativo;
-  }
-  return null;
+// Identidade pelo usuário autenticado (JWT/e-mail), não por telefone.
+async function getGrupoId(req) {
+  const { data } = await supabase.from('users')
+    .select('grupo_ativo').eq('id', req.authUser?.id || '__none__').maybeSingle();
+  return data?.grupo_ativo || null;
 }
 
 // GET /api/wallets/:phone
 router.get('/:phone', auth, async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     // Join do dono (pra mostrar de quem é a conta em grupos). Fallback sem o
     // embed caso a FK ainda não exista (migration 049 não rodada).

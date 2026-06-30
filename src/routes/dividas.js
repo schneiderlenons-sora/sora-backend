@@ -260,7 +260,7 @@ router.patch('/lembretes/:phone', auth, async (req, res) => {
     const { ativo } = req.body;
     const { data, error } = await supabase.from('users')
       .update({ lembretes_dividas: !!ativo })
-      .eq('phone', norm(req.params.phone)).select('phone, lembretes_dividas').single();
+      .eq('id', req.authUser?.id || '__none__').select('phone, lembretes_dividas').single();
     if (error) throw error;
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }

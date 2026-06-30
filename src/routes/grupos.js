@@ -6,14 +6,14 @@ const { exigirPermissao } = require('../middlewares/permissao');
 const { nanoid } = require('nanoid');
 const norm     = p => p?.replace(/\D/g, '');
 
-async function getUser(phone) {
-  const { data } = await supabase.from('users').select('*').eq('phone', norm(phone)).single();
+async function getUser(req) {
+  const { data } = await supabase.from('users').select('*').eq('id', req.authUser?.id || '__none__').single();
   return data;
 }
 
 router.get('/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user) return res.status(404).json({ erro: 'Não encontrado' });
 
     // Grupos via membership.
@@ -65,7 +65,7 @@ router.post('/convidar', auth, async (req, res) => {
 router.post('/aceitar', auth, async (req, res) => {
   try {
     const { phone, codigo } = req.body;
-    const user = await getUser(phone);
+    const user = await getUser(req);
     const { data: convite } = await supabase.from('convites')
       .select('*, grupos(dono_id)').eq('codigo', codigo)
       .eq('usado', false).gte('expira_em', new Date().toISOString()).single();
@@ -97,7 +97,7 @@ router.post('/aceitar', auth, async (req, res) => {
 router.post('/trocar', auth, async (req, res) => {
   try {
     const { phone, grupo_id } = req.body;
-    await supabase.from('users').update({ grupo_ativo: grupo_id }).eq('phone', norm(phone));
+    await supabase.from('users').update({ grupo_ativo: grupo_id }).eq('id', req.authUser?.id || '__none__');
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -109,7 +109,7 @@ const LIMITE_MEMBROS = { inativo: 1, basico: 1, premium: 3, black: 5 };
 router.post('/criar', auth, async (req, res) => {
   try {
     const { phone, nome, emoji, copiar_dados } = req.body;
-    const user = await getUser(phone);
+    const user = await getUser(req);
     if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (user.plano !== 'premium' && user.plano !== 'black') {
       return res.status(403).json({ erro: 'Recurso disponível apenas nos planos Premium e Black.' });
@@ -149,7 +149,7 @@ router.post('/criar', auth, async (req, res) => {
 router.delete('/sair/:grupo_id', auth, async (req, res) => {
   try {
     const { phone } = req.body;
-    const user = await getUser(phone);
+    const user = await getUser(req);
     if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const grupoId = req.params.grupo_id;
 
@@ -198,7 +198,7 @@ router.patch('/membro/:membro_id', auth, async (req, res) => {
     if (!['admin','escrita','leitura'].includes(papel)) {
       return res.status(400).json({ erro: 'Papel inválido.' });
     }
-    const user = await getUser(phone);
+    const user = await getUser(req);
     const { data: membro } = await supabase.from('grupo_membros')
       .select('grupo_id').eq('id', req.params.membro_id).single();
     if (!membro) return res.status(404).json({ erro: 'Membro não encontrado.' });
@@ -217,7 +217,7 @@ router.patch('/membro/:membro_id', auth, async (req, res) => {
 router.delete('/membro/:membro_id', auth, async (req, res) => {
   try {
     const { phone } = req.body;
-    const user = await getUser(phone);
+    const user = await getUser(req);
     const { data: membro } = await supabase.from('grupo_membros')
       .select('grupo_id, user_id').eq('id', req.params.membro_id).single();
     if (!membro) return res.status(404).json({ erro: 'Membro não encontrado.' });

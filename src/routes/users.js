@@ -152,7 +152,7 @@ router.get('/:phone', auth, async (req, res) => {
   try {
     const { data: user } = await supabase.from('users')
       .select('*, grupos!users_grupo_ativo_fkey(id, nome)')
-      .eq('phone', norm(req.params.phone)).single();
+      .eq('id', req.authUser?.id || '__none__').single();
     if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
     res.json(user);
   } catch (err) { res.status(500).json({ erro: err.message }); }

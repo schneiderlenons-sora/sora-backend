@@ -103,7 +103,7 @@ router.post('/ativar-trial/:phone', auth, async (req, res) => {
       grow_trial_inicio: inicio.toISOString(),
       grow_trial_fim:    fim.toISOString(),
       painel_ativo:      'grow',
-    }).eq('phone', norm(req.params.phone));
+    }).eq('id', req.authUser?.id || '__none__');
     res.json({ ok: true, fim: fim.toISOString(), diasRestantes: 7 });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -112,7 +112,7 @@ router.post('/trocar-painel/:phone', auth, async (req, res) => {
   try {
     const { painel } = req.body;
     if (!['finance','grow'].includes(painel)) return res.status(400).json({ erro: 'Painel invalido' });
-    await supabase.from('users').update({ painel_ativo: painel }).eq('phone', norm(req.params.phone));
+    await supabase.from('users').update({ painel_ativo: painel }).eq('id', req.authUser?.id || '__none__');
     res.json({ ok: true, painelAtivo: painel });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

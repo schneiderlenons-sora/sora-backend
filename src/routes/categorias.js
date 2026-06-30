@@ -5,15 +5,15 @@ const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const norm     = p => p?.replace(/\D/g, '');
 
-async function getGrupoId(phone) {
+async function getGrupoId(req) {
   const { data } = await supabase.from('users')
-    .select('grupo_ativo').eq('phone', norm(phone)).single();
+    .select('grupo_ativo').eq('id', req.authUser?.id || '__none__').single();
   return data?.grupo_ativo || null;
 }
 
 router.get('/:phone', auth, async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     const { tipo } = req.query;
     let q = supabase.from('categorias')
@@ -60,7 +60,7 @@ router.delete('/:id', auth, async (req, res) => {
 // Restaura categorias padrão para o grupo do usuário (chama RPC criar_categorias_padrao)
 router.post('/restaurar-padrao/:phone', auth, async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Grupo ativo não encontrado para este telefone.' });
 
     const { error: rpcErr } = await supabase.rpc('criar_categorias_padrao', { p_grupo_id: grupoId });

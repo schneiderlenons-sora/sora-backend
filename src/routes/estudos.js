@@ -12,9 +12,9 @@ const norm = p => p?.replace(/\D/g, '');
 
 // Verifica acesso ao Grow (Black auto / Premium-trial / Grow pago)
 // Estudos é Premium+ (não faz parte do Grow base do Básico).
-async function temAcessoGrow(phone) {
+async function temAcessoGrow(id) {
   const { data: u } = await supabase.from('users')
-    .select('plano, plano_grow').eq('phone', norm(phone)).maybeSingle();
+    .select('plano, plano_grow').eq('id', id).maybeSingle();
   if (!u) return false;
   if (['premium', 'black'].includes(u.plano)) return true;
   if (u.plano_grow === 'grow_premium') return true; // legado
@@ -22,11 +22,13 @@ async function temAcessoGrow(phone) {
 }
 
 async function requireGrow(req, res, next) {
-  const phone = norm(req.params.phone || req.body.phone || req.query.phone);
-  if (!phone) return res.status(400).json({ erro: 'phone obrigatorio' });
-  if (!(await temAcessoGrow(phone))) return res.status(403).json({ erro: 'sem_acesso_grow' });
-  const { data: u } = await supabase.from('users').select('id, grupo_ativo').eq('phone', phone).single();
-  req._user = { id: u.id, grupo_ativo: u.grupo_ativo, phone };
+  // Identidade pelo usuário autenticado (JWT/e-mail), não por telefone.
+  const id = req.authUser?.id;
+  if (!id) return res.status(401).json({ erro: 'nao_autenticado' });
+  if (!(await temAcessoGrow(id))) return res.status(403).json({ erro: 'sem_acesso_grow' });
+  const { data: u } = await supabase.from('users').select('id, grupo_ativo').eq('id', id).maybeSingle();
+  if (!u?.grupo_ativo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
+  req._user = { id: u.id, grupo_ativo: u.grupo_ativo, phone: req.authUser.phone };
   next();
 }
 

@@ -12,9 +12,9 @@ const { debitarConta } = require('../services/contaDebito');
 
 const norm = p => p?.replace(/\D/g, '');
 
-async function getGrupoId(phone) {
+async function getGrupoId(req) {
   const { data } = await supabase.from('users')
-    .select('grupo_ativo').eq('phone', norm(phone)).single();
+    .select('grupo_ativo').eq('id', req.authUser?.id || '__none__').single();
   return data?.grupo_ativo || null;
 }
 
@@ -73,7 +73,7 @@ router.get('/cotacao', auth, async (req, res) => {
 // GET /api/investimentos/:phone
 router.get('/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     const { data } = await supabase.from('investimentos')
       .select('*').eq('grupo_id', grupoId).order('created_at');
@@ -84,7 +84,7 @@ router.get('/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('ad
 // GET /api/investimentos/:phone/distribuicao
 router.get('/:phone/distribuicao', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     const { data: invs } = await supabase.from('investimentos')
       .select('tipo, valor_atual').eq('grupo_id', grupoId);
@@ -108,7 +108,7 @@ router.get('/:phone/distribuicao', auth, exigirPlano('premium', 'black'), exigir
 router.post('/', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { phone, tipo, nome, ticker, quantidade, preco_unitario, valor_aportado, data_compra } = req.body;
-    const grupoId = await getGrupoId(phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
     const qtd   = parseFloat(quantidade) || 1;
@@ -152,7 +152,7 @@ router.delete('/:id', auth, exigirPlano('premium', 'black'), exigirPermissao('ad
 // GET /api/investimentos/:phone/aportes
 router.get('/:phone/aportes', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     const { data } = await supabase.from('aportes')
       .select('*, investimentos(nome)').eq('grupo_id', grupoId)
@@ -165,7 +165,7 @@ router.get('/:phone/aportes', auth, exigirPlano('premium', 'black'), exigirPermi
 router.post('/aportes', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { phone, valor, investimento_id, descricao } = req.body;
-    const grupoId = await getGrupoId(phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
     const { data: aporte } = await supabase.from('aportes').insert({
@@ -209,7 +209,7 @@ router.post('/aportes', auth, exigirPlano('premium', 'black'), exigirPermissao('
 // GET /api/investimentos/:phone/metas
 router.get('/:phone/metas', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     const { data } = await supabase.from('metas')
       .select('*').eq('grupo_id', grupoId);
@@ -221,7 +221,7 @@ router.get('/:phone/metas', auth, exigirPlano('premium', 'black'), exigirPermiss
 router.post('/metas', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { phone, nome, valor_objetivo, prazo_anos, taxa_anual, investimento_id } = req.body;
-    const grupoId = await getGrupoId(phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
     const taxa = parseFloat(taxa_anual) || 10;
@@ -256,7 +256,7 @@ router.delete('/metas/:id', auth, exigirPlano('premium', 'black'), exigirPermiss
 // POST /api/investimentos/atualizar-precos/:phone
 router.post('/atualizar-precos/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Grupo não encontrado.' });
 
     const { data: invs } = await supabase.from('investimentos').select('*').eq('grupo_id', grupoId);
@@ -298,7 +298,7 @@ router.post('/atualizar-precos/:phone', auth, exigirPlano('premium', 'black'), e
 // GET /api/investimentos/reserva/:phone
 router.get('/reserva/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Grupo não encontrado.' });
 
     const { data: config } = await supabase.from('reserva_emergencia_config')
@@ -336,7 +336,7 @@ router.get('/reserva/:phone', auth, exigirPlano('premium', 'black'), exigirPermi
 router.post('/reserva/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { meses_objetivo } = req.body;
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Grupo não encontrado.' });
 
     await supabase.from('reserva_emergencia_config').upsert(
@@ -350,7 +350,7 @@ router.post('/reserva/:phone', auth, exigirPlano('premium', 'black'), exigirPerm
 // GET /api/investimentos/:phone/patrimonio — evolução histórica
 router.get('/:phone/patrimonio', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     const { data } = await supabase.from('patrimonio_historico')
       .select('*').eq('grupo_id', grupoId)

@@ -5,19 +5,19 @@ const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const norm     = p => p?.replace(/\D/g, '');
 
-async function getGrupoId(phone) {
+async function getGrupoId(req) {
   const { data } = await supabase.from('users')
-    .select('grupo_ativo').eq('phone', norm(phone)).single();
+    .select('grupo_ativo').eq('id', req.authUser?.id || '__none__').single();
   return data?.grupo_ativo || null;
 }
 
 router.get('/:phone', auth, async (req, res) => {
   try {
-    const grupoId = await getGrupoId(req.params.phone);
+    const grupoId = await getGrupoId(req);
     const mes = req.query.mes || new Date().toISOString().slice(0,7);
     const { data: user } = await supabase.from('users')
       .select('meta_mensal, meta_mensal_ativo, meta_mensal_alerta_ativo, meta_mensal_alerta_pct')
-      .eq('phone', norm(req.params.phone)).single();
+      .eq('id', req.authUser?.id || '__none__').single();
     const { data: limites } = await supabase.from('category_limits')
       .select('*').eq('grupo_id', grupoId).eq('mes_referencia', mes);
     res.json({
@@ -37,7 +37,7 @@ router.post('/geral', auth, exigirPermissao('admin', 'escrita'), async (req, res
     if (typeof ativo === 'boolean')         patch.meta_mensal_ativo = ativo;
     if (typeof alerta_ativo === 'boolean')  patch.meta_mensal_alerta_ativo = alerta_ativo;
     if (typeof alerta_pct === 'number')     patch.meta_mensal_alerta_pct = alerta_pct;
-    await supabase.from('users').update(patch).eq('phone', norm(phone));
+    await supabase.from('users').update(patch).eq('id', req.authUser?.id || '__none__');
     res.json({ ok: true, ...patch });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -45,7 +45,7 @@ router.post('/geral', auth, exigirPermissao('admin', 'escrita'), async (req, res
 router.post('/categoria', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { phone, categoria, limite_mensal, percentual_alerta, ativo, mes_referencia } = req.body;
-    const grupoId = await getGrupoId(phone);
+    const grupoId = await getGrupoId(req);
     const mes = mes_referencia || new Date().toISOString().slice(0,7);
     const payload = {
       grupo_id: grupoId, categoria, limite_mensal,
