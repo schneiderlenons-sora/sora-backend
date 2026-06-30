@@ -7,16 +7,16 @@ const { debitarConta } = require('../services/contaDebito');
 
 const norm = p => p?.replace(/\D/g, '');
 
-async function getUser(phone) {
+async function getUser(req) {
   const { data } = await supabase.from('users')
-    .select('id, grupo_ativo').eq('phone', norm(phone)).maybeSingle();
+    .select('id, grupo_ativo').eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
 
 // GET /api/metas/:phone — lista todas as metas + aportes dos últimos 12 meses pra gráfico
 router.get('/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const { data: metas, error } = await supabase.from('metas')

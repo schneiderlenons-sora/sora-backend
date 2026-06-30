@@ -6,9 +6,9 @@ const { exigirPermissao } = require('../middlewares/permissao');
 
 const norm = p => p?.replace(/\D/g, '');
 
-async function getUser(phone) {
+async function getUser(req) {
   const { data } = await supabase.from('users')
-    .select('id, grupo_ativo').eq('phone', norm(phone)).maybeSingle();
+    .select('id, grupo_ativo').eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
 
@@ -48,7 +48,7 @@ router.post('/dispensar', auth, async (req, res) => {
 // GET /api/recorrencias/:phone — lista as recorrências ativas do grupo
 router.get('/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
     const { data, error } = await supabase.from('recorrencias')
       .select('id, tipo, categoria, valor, dia_vencimento, descricao, carteira, ativa')

@@ -17,9 +17,9 @@ const MIN_ATIVIDADE_GROW = 15; // checks de hábito + tarefas
 
 function norm(phone) { return String(phone || '').replace(/\D/g, ''); }
 
-async function getUser(phone) {
+async function getUser(req) {
   const { data } = await supabase.from('users')
-    .select('id, grupo_ativo, created_at').eq('phone', norm(phone)).maybeSingle();
+    .select('id, grupo_ativo, created_at').eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
 
@@ -65,7 +65,7 @@ function maiorSequencia(datasSet) {
 // ─── FINANCE ──────────────────────────────────────────────────────────────
 router.get('/financas/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const P = resolverPeriodo(req.query.periodo);
@@ -134,7 +134,7 @@ router.get('/financas/:phone', auth, async (req, res) => {
 // ─── GROW ───────────────────────────────────────────────────────────────────
 router.get('/grow/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const P = resolverPeriodo(req.query.periodo);

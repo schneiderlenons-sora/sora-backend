@@ -9,9 +9,9 @@ const { gerarInsights } = require('./../handlers/insights-negocio');
 
 const norm = p => p?.replace(/\D/g, '');
 
-async function getUser(phone) {
+async function getUser(req) {
   const { data } = await supabase.from('users')
-    .select('id, grupo_ativo, plano').eq('phone', norm(phone)).maybeSingle();
+    .select('id, grupo_ativo, plano').eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
 
@@ -27,7 +27,7 @@ function exigirBlack(user) {
 // GET /api/negocios/integracoes/:phone
 router.get('/integracoes/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível apenas no plano Black.' });
 
@@ -47,7 +47,7 @@ router.get('/integracoes/:phone', auth, async (req, res) => {
 router.post('/integracoes', auth, async (req, res) => {
   try {
     const { phone, plataforma, credenciais, apelido } = req.body;
-    const user = await getUser(phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
     if (!['hotmart','kiwify','eduzz','stripe','mercadopago','asaas','pagseguro','shopify','woocommerce'].includes(plataforma))
@@ -138,7 +138,7 @@ router.post('/integracoes/:id/importar-historico', auth, async (req, res) => {
 // GET /api/negocios/dre/:phone?periodo=YYYY-MM
 router.get('/dre/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
 
@@ -200,7 +200,7 @@ router.get('/dre/:phone', auth, async (req, res) => {
 // Quebra cada linha do DRE por plataforma + lista custos por categoria
 router.get('/dre-detalhado/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
 
@@ -330,7 +330,7 @@ router.get('/dre-detalhado/:phone', auth, async (req, res) => {
 // Algoritmo: EMA (exponential moving average) + ajuste de tendência linear.
 router.get('/forecast/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
 
@@ -443,7 +443,7 @@ router.get('/forecast/:phone', auth, async (req, res) => {
 router.post('/dre/recalcular', auth, async (req, res) => {
   try {
     const { phone, periodo } = req.body;
-    const user = await getUser(phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const mes = (periodo || new Date().toISOString().slice(0, 7)) + '-01';
     await supabase.from('dre_snapshots').delete().eq('user_id', user.id).eq('periodo', mes);
@@ -461,7 +461,7 @@ router.post('/dre/recalcular', auth, async (req, res) => {
 // GET /api/negocios/eventos/:phone?limit=50&offset=0&tipo=venda
 router.get('/eventos/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const limit  = Math.min(parseInt(req.query.limit || '50'), 200);
@@ -492,7 +492,7 @@ router.get('/eventos/:phone', auth, async (req, res) => {
 
 router.get('/custos/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const mes = req.query.periodo || new Date().toISOString().slice(0, 7);
     const inicio = mes + '-01';
@@ -513,7 +513,7 @@ router.get('/custos/:phone', auth, async (req, res) => {
 router.post('/custos', auth, async (req, res) => {
   try {
     const { phone, categoria, descricao, valor, data, fornecedor, recorrente, recorrencia, observacao } = req.body;
-    const user = await getUser(phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const valorCentavos = typeof valor === 'number' && valor > 10000 ? valor : Math.round((parseFloat(valor) || 0) * 100);
@@ -562,7 +562,7 @@ router.delete('/custos/:id', auth, async (req, res) => {
 
 router.get('/config/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const { data } = await supabase.from('config_negocio').select('*').eq('user_id', user.id).maybeSingle();
     res.json(data || {
@@ -581,7 +581,7 @@ router.get('/config/:phone', auth, async (req, res) => {
 router.put('/config', auth, async (req, res) => {
   try {
     const { phone, ...payload } = req.body;
-    const user = await getUser(phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const upd = {
@@ -610,7 +610,7 @@ router.put('/config', auth, async (req, res) => {
 
 router.get('/insights/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const { data, error } = await supabase
       .from('insights_negocio')
@@ -648,7 +648,7 @@ router.post('/insights/:id/dispensar', auth, async (req, res) => {
 // Retorna pacote de dados curado pros slides do Wrapped
 router.get('/wrapped/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
 
@@ -728,7 +728,7 @@ router.get('/wrapped/:phone', auth, async (req, res) => {
 // POST /api/negocios/insights/gerar — { phone } — força regeneração agora
 router.post('/insights/gerar', auth, async (req, res) => {
   try {
-    const user = await getUser(req.body.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
 
@@ -745,7 +745,7 @@ router.post('/insights/gerar', auth, async (req, res) => {
 
 router.get('/conciliacao/sugerir/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const sugestoes = await sugerirConciliacao(user.id, user.grupo_ativo);
 
@@ -771,7 +771,7 @@ router.get('/conciliacao/sugerir/:phone', auth, async (req, res) => {
 // GET /api/negocios/conciliacao/conciliadas/:phone — já conciliados
 router.get('/conciliacao/conciliadas/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const { data, error } = await supabase
@@ -810,7 +810,7 @@ router.delete('/conciliacao/:id', auth, async (req, res) => {
 router.post('/conciliacao', auth, async (req, res) => {
   try {
     const { phone, evento_id, transacao_id, match_tipo } = req.body;
-    const user = await getUser(phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     await supabase.from('conciliacao_negocio').insert({
       user_id: user.id, evento_id, transacao_id, match_tipo: match_tipo || 'manual',

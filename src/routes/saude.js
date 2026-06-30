@@ -11,10 +11,10 @@ const nutricao = require('../services/nutricao');
 
 const norm = p => p?.replace(/\D/g, '');
 
-async function getUser(phone) {
+async function getUser(req) {
   const { data } = await supabase.from('users')
     .select('id, grupo_ativo, plano, plano_grow, grow_trial_fim')
-    .eq('phone', norm(phone)).maybeSingle();
+    .eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
 
@@ -29,7 +29,7 @@ function temAcessoGrow(u) {
 async function requireGrow(req, res, next) {
   const phone = req.params.phone || req.body.phone || req.query.phone;
   if (!phone) return res.status(400).json({ erro: 'phone obrigatório' });
-  const user = await getUser(phone);
+  const user = await getUser(req);
   if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
   if (!temAcessoGrow(user)) return res.status(403).json({ erro: 'sem_acesso_grow' });
   req._user = user;

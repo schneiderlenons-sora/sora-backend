@@ -6,10 +6,10 @@ const auth     = require('../middlewares/auth');
 
 const norm = p => p?.replace(/\D/g, '');
 
-async function getUser(phone) {
+async function getUser(req) {
   const { data } = await supabase.from('users')
     .select('id, plano, plano_grow, grow_trial_fim, grow_pin_hash, grow_pin_ativo, grow_pin_erros, grow_pin_travado_ate')
-    .eq('phone', norm(phone)).maybeSingle();
+    .eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
 
@@ -25,7 +25,7 @@ function temAcessoGrow(u) {
 async function requireGrow(req, res, next) {
   const phone = req.params.phone || req.body.phone || req.query.phone;
   if (!phone) return res.status(400).json({ erro: 'phone obrigatorio' });
-  const user = await getUser(phone);
+  const user = await getUser(req);
   if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
   if (!temAcessoGrow(user)) return res.status(403).json({ erro: 'sem_acesso_grow' });
   req.userRow = user;

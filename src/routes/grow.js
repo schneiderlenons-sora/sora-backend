@@ -5,10 +5,10 @@ const auth     = require('../middlewares/auth');
 const { enviarTexto } = require('../services/mensageiro');
 const norm = p => p?.replace(/\D/g, '');
 
-async function getUser(phone) {
+async function getUser(req) {
   const { data } = await supabase.from('users')
     .select('id, grupo_ativo, plano, plano_grow, grow_trial_inicio, grow_trial_fim, painel_ativo')
-    .eq('phone', norm(phone)).maybeSingle();
+    .eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
 
@@ -33,7 +33,7 @@ function temGrowPremium(user) {
 async function requireGrow(req, res, next) {
   const phone = req.params.phone || req.body.phone || req.query.phone;
   if (!phone) return res.status(400).json({ erro: 'phone obrigatorio' });
-  const user = await getUser(phone);
+  const user = await getUser(req);
   if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
   if (!temAcessoGrow(user)) return res.status(403).json({ erro: 'sem_acesso_grow', mensagem: 'Acesso ao Sora Grow indisponivel no seu plano.' });
   req.userRow = user;
@@ -44,7 +44,7 @@ async function requireGrow(req, res, next) {
 async function requirePremiumGrow(req, res, next) {
   const phone = req.params.phone || req.body.phone || req.query.phone;
   if (!phone) return res.status(400).json({ erro: 'phone obrigatorio' });
-  const user = await getUser(phone);
+  const user = await getUser(req);
   if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
   if (!temGrowPremium(user)) return res.status(403).json({ erro: 'sem_acesso_premium', mensagem: 'Disponivel no plano Premium.' });
   req.userRow = user;
@@ -67,7 +67,7 @@ function escopoLeitura(query, req, compartilhado) {
 // ─── STATUS ──────────────────────────────────────────────────────────
 router.get('/status/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
     const agora = new Date();
     const diasTrial = user.grow_trial_fim
@@ -89,7 +89,7 @@ router.get('/status/:phone', auth, async (req, res) => {
 
 router.post('/ativar-trial/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
     // Premium e Black JÁ incluem o Sora Grow — o trial de 7 dias é do Básico.
     if (['premium','black'].includes(user.plano))

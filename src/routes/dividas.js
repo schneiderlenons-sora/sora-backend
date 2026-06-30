@@ -7,9 +7,9 @@ const { debitarConta } = require('../services/contaDebito');
 
 const norm = p => p?.replace(/\D/g, '');
 
-async function getUser(phone) {
+async function getUser(req) {
   const { data } = await supabase.from('users')
-    .select('id, grupo_ativo, lembretes_dividas').eq('phone', norm(phone)).maybeSingle();
+    .select('id, grupo_ativo, lembretes_dividas').eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
 
@@ -18,7 +18,7 @@ async function getUser(phone) {
 // ─────────────────────────────────────────────────────────────────
 router.get('/:phone', auth, async (req, res) => {
   try {
-    const user = await getUser(req.params.phone);
+    const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const { data: dividas, error } = await supabase.from('dividas')
