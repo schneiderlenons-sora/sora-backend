@@ -288,6 +288,15 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg }) {
     }
     const grupoId = user.grupo_ativo;
 
+    // ── 2.1. KIT (vitalício SEM WhatsApp): não atende pelo zap — empurra upgrade.
+    if (user.plano === 'kit') {
+      await enviarTexto(phone,
+        '🔒 *Usar a Sora pelo WhatsApp é do plano Completo!*\n\n' +
+        'No seu *Kit* você organiza tudo pelo painel 💚 Pra lançar por aqui — texto, áudio e até foto da nota — e desbloquear Open Finance, painel do casal e o Sora Grow, é só fazer o upgrade:\n\n' +
+        `👉 ${APP_URL_WH}/kit`);
+      return;
+    }
+
     // ── 2.4. PRÉ-VENDA: lead sem plano pago perguntando sobre testar/comprar/
     // preço/planos → responde como vendedora (local-first), em vez de cair na
     // "conversa" genérica da IA. Não intercepta quem já é assinante.

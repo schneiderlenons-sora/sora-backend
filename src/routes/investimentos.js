@@ -71,7 +71,7 @@ router.get('/cotacao', auth, async (req, res) => {
 // ── INVESTIMENTOS ────────────────────────────────────────────────
 
 // GET /api/investimentos/:phone
-router.get('/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
+router.get('/:phone', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
@@ -82,7 +82,7 @@ router.get('/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('ad
 });
 
 // GET /api/investimentos/:phone/distribuicao
-router.get('/:phone/distribuicao', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
+router.get('/:phone/distribuicao', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
@@ -105,7 +105,7 @@ router.get('/:phone/distribuicao', auth, exigirPlano('premium', 'black'), exigir
 });
 
 // POST /api/investimentos
-router.post('/', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+router.post('/', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { phone, tipo, nome, ticker, quantidade, preco_unitario, valor_aportado, data_compra } = req.body;
     const grupoId = await getGrupoId(req);
@@ -128,7 +128,7 @@ router.post('/', auth, exigirPlano('premium', 'black'), exigirPermissao('admin',
 });
 
 // PUT /api/investimentos/:id
-router.put('/:id', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+router.put('/:id', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const campos = ['nome','ticker','quantidade','preco_unitario','valor_atual','valor_aportado'];
     const update = {};
@@ -140,7 +140,7 @@ router.put('/:id', auth, exigirPlano('premium', 'black'), exigirPermissao('admin
 });
 
 // DELETE /api/investimentos/:id
-router.delete('/:id', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+router.delete('/:id', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     await supabase.from('investimentos').delete().eq('id', req.params.id).eq('grupo_id', req.grupoId);
     res.json({ ok: true });
@@ -150,7 +150,7 @@ router.delete('/:id', auth, exigirPlano('premium', 'black'), exigirPermissao('ad
 // ── APORTES ──────────────────────────────────────────────────────
 
 // GET /api/investimentos/:phone/aportes
-router.get('/:phone/aportes', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
+router.get('/:phone/aportes', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
@@ -162,7 +162,7 @@ router.get('/:phone/aportes', auth, exigirPlano('premium', 'black'), exigirPermi
 });
 
 // POST /api/investimentos/aportes
-router.post('/aportes', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+router.post('/aportes', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { phone, valor, investimento_id, descricao } = req.body;
     const grupoId = await getGrupoId(req);
@@ -207,7 +207,7 @@ router.post('/aportes', auth, exigirPlano('premium', 'black'), exigirPermissao('
 // ── METAS ────────────────────────────────────────────────────────
 
 // GET /api/investimentos/:phone/metas
-router.get('/:phone/metas', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
+router.get('/:phone/metas', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
@@ -218,7 +218,7 @@ router.get('/:phone/metas', auth, exigirPlano('premium', 'black'), exigirPermiss
 });
 
 // POST /api/investimentos/metas
-router.post('/metas', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+router.post('/metas', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { phone, nome, valor_objetivo, prazo_anos, taxa_anual, investimento_id } = req.body;
     const grupoId = await getGrupoId(req);
@@ -244,7 +244,7 @@ router.post('/metas', auth, exigirPlano('premium', 'black'), exigirPermissao('ad
 });
 
 // DELETE /api/investimentos/metas/:id
-router.delete('/metas/:id', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+router.delete('/metas/:id', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     await supabase.from('metas').delete().eq('id', req.params.id);
     res.json({ ok: true });
@@ -254,7 +254,7 @@ router.delete('/metas/:id', auth, exigirPlano('premium', 'black'), exigirPermiss
 // ── COTAÇÕES + RESERVA DE EMERGÊNCIA ─────────────────────────────
 
 // POST /api/investimentos/atualizar-precos/:phone
-router.post('/atualizar-precos/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+router.post('/atualizar-precos/:phone', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Grupo não encontrado.' });
@@ -296,7 +296,7 @@ router.post('/atualizar-precos/:phone', auth, exigirPlano('premium', 'black'), e
 });
 
 // GET /api/investimentos/reserva/:phone
-router.get('/reserva/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
+router.get('/reserva/:phone', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Grupo não encontrado.' });
@@ -333,7 +333,7 @@ router.get('/reserva/:phone', auth, exigirPlano('premium', 'black'), exigirPermi
 });
 
 // POST /api/investimentos/reserva/:phone
-router.post('/reserva/:phone', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+router.post('/reserva/:phone', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { meses_objetivo } = req.body;
     const grupoId = await getGrupoId(req);
@@ -348,7 +348,7 @@ router.post('/reserva/:phone', auth, exigirPlano('premium', 'black'), exigirPerm
 });
 
 // GET /api/investimentos/:phone/patrimonio — evolução histórica
-router.get('/:phone/patrimonio', auth, exigirPlano('premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
+router.get('/:phone/patrimonio', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
