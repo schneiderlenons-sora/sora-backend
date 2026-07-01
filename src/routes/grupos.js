@@ -276,4 +276,25 @@ router.get('/:grupo_id/stats', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// PATCH /api/grupos/:grupo_id — edita nome/ícone do grupo (só o dono).
+router.patch('/:grupo_id', auth, async (req, res) => {
+  try {
+    const grupoId = req.params.grupo_id;
+    const { nome, emoji } = req.body;
+    const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', grupoId).maybeSingle();
+    if (!grupo) return res.status(404).json({ erro: 'Grupo não encontrado.' });
+    if (grupo.dono_id !== req.authUser.id) return res.status(403).json({ erro: 'Só o dono do grupo pode editar.' });
+
+    const patch = {};
+    if (typeof nome === 'string' && nome.trim()) patch.nome = nome.trim().slice(0, 40);
+    if (typeof emoji === 'string' && emoji) patch.emoji = emoji;
+    if (!Object.keys(patch).length) return res.status(400).json({ erro: 'Nada para atualizar.' });
+
+    const { data, error } = await supabase.from('grupos')
+      .update(patch).eq('id', grupoId).select('id, nome, emoji').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 module.exports = router;
