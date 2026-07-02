@@ -15,9 +15,10 @@ async function getUser(req) {
   return data;
 }
 
-// Apenas Black tem acesso à aba Negócios
+// Acesso à aba Negócios — Premium e Black (o Black foi descontinuado; suas
+// features passaram pro Premium).
 function exigirBlack(user) {
-  return user?.plano === 'black';
+  return user?.plano === 'premium' || user?.plano === 'black';
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ router.get('/integracoes/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível apenas no plano Black.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
 
     const { data, error } = await supabase
       .from('integracoes')
@@ -49,7 +50,7 @@ router.post('/integracoes', auth, async (req, res) => {
     const { phone, plataforma, credenciais, apelido } = req.body;
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
     if (!['hotmart','kiwify','eduzz','stripe','mercadopago','asaas','pagseguro','shopify','woocommerce'].includes(plataforma))
       return res.status(400).json({ erro: 'Plataforma inválida.' });
 
@@ -140,7 +141,7 @@ router.get('/dre/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
 
     const mesParam = req.query.periodo || new Date().toISOString().slice(0, 7);
     const periodo = `${mesParam}-01`;
@@ -202,7 +203,7 @@ router.get('/dre-detalhado/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
 
     const mesParam = req.query.periodo || new Date().toISOString().slice(0, 7);
     const inicio = `${mesParam}-01`;
@@ -332,7 +333,7 @@ router.get('/forecast/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
 
     // Pega últimos 6 meses de snapshots
     const meses = [];
@@ -650,7 +651,7 @@ router.get('/wrapped/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
 
     const mesParam = req.query.periodo || new Date().toISOString().slice(0, 7);
     const inicio = `${mesParam}-01`;
@@ -730,7 +731,7 @@ router.post('/insights/gerar', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Apenas plano Black.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
 
     const insights = await gerarInsights(user.id, user.grupo_ativo);
     res.json({ ok: true, gerados: insights.length, insights });

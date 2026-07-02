@@ -103,7 +103,7 @@ router.post('/trocar', auth, async (req, res) => {
 });
 
 // Limite de membros por plano
-const LIMITE_MEMBROS = { inativo: 1, basico: 1, premium: 3, black: 5 };
+const LIMITE_MEMBROS = { inativo: 1, basico: 1, premium: 5, black: 5 };
 
 // POST /criar — cria um novo grupo (somente premium/black)
 router.post('/criar', auth, async (req, res) => {

@@ -2,7 +2,7 @@ const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/mensageiro');
 const { nanoid } = require('nanoid');
 
-const LIMITE_MEMBROS = { inativo:1, basico:1, premium:3, black:5 };
+const LIMITE_MEMBROS = { inativo:1, basico:1, premium:5, black:5 };
 
 module.exports = async function handleGrupos(data, ctx) {
   const { phone, grupoId, user } = ctx;
