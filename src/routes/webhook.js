@@ -14,6 +14,7 @@ const { analisarFotoComida }      = require('../services/nutricao');
 const { interpretarRapido }       = require('../handlers/interpretador');
 const { buscarPendente }          = require('../services/pendentes');
 const { resolverPendente }        = require('../handlers/pendentes');
+const { salvarArquivoDrive, buscarArquivosDrive, urlAssinada, intentoBuscaArquivo } = require('../services/drive');
 
 // Verifica acesso ao Grow BASE (hábitos, tarefas, bem-estar, lista de compras,
 // agenda). Modelo novo: TODOS os planos têm o Grow base. Saúde/Estudos/Casa-
@@ -187,7 +188,7 @@ async function isBlack(phone) {
 
 // ─── WEBHOOK PRINCIPAL ────────────────────────────────────────────
 router.post('/', async (req, res) => {
-  let { phone, text, listResponseMessage, audio, image, fromMe } = req.body;
+  let { phone, text, listResponseMessage, audio, image, document, fromMe } = req.body;
   phone = norm(phone);
   res.sendStatus(200); // responde imediatamente ao Z-API
 
@@ -228,18 +229,27 @@ router.post('/', async (req, res) => {
   // Só guarda a URL aqui; o OCR roda depois de carregar o usuário (pra
   // checar plano e ter o contexto do grupo).
   const imageUrl = image?.url || image?.imageUrl || null;
-  // Legenda da foto (pra rotear: comida → macros, vs nota fiscal → OCR).
+  // Legenda da foto (pra rotear: comida → macros, vs nota fiscal → OCR, vs Drive).
   const legendaImg = String(image?.caption || mensagem || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   if (imageUrl) mensagem = '__imagem__'; // placeholder pra passar a validação abaixo
 
-  await processarMensagem({ phone, mensagem, imageUrl, legendaImg });
+  // --- DOCUMENTO (Drive) --- Z-API manda campos variados; normalizamos aqui.
+  const docInfo = document ? {
+    url:      document.documentUrl || document.fileUrl || document.url || null,
+    fileName: document.fileName || document.title || document.caption || 'arquivo',
+    mimeType: document.mimeType || document.mime || null,
+    caption:  document.caption || text?.message || '',
+  } : null;
+  if (docInfo?.url) mensagem = '__documento__'; // placeholder pra passar a validação
+
+  await processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInfo });
 });
 
 // ── Núcleo de processamento — COMPARTILHADO entre /webhook (Z-API) e
 // /webhook/meta (Cloud API). Recebe a mensagem já normalizada pelo provedor
 // (texto / áudio transcrito / URL de imagem) e roda toda a lógica da Sora.
 // Envia via mensageiro — o flag WHATSAPP_PROVIDER decide Z-API ou Meta.
-async function processarMensagem({ phone, mensagem, imageUrl, legendaImg }) {
+async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInfo }) {
   if (!mensagem || !phone) return;
 
   try {
@@ -320,6 +330,52 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg }) {
         phone, grupoId, user,
       });
       if (resolvido) return; // consumiu a mensagem
+    }
+
+    // ── 2.6. DRIVE — guardar arquivo pelo WhatsApp ────────────────
+    // Documento sempre vai pro Drive; imagem só quando a legenda pede pra
+    // guardar/salvar/arquivar (senão segue pro OCR de nota/comida abaixo).
+    const querSalvarDrive = /\b(salv|guard|arquiv|drive)\w*|\bpasta\b/.test(legendaImg || '');
+    if (docInfo?.url || (imageUrl && querSalvarDrive)) {
+      if (!['premium', 'black'].includes(user.plano)) {
+        await enviarTexto(phone, `📁 *Guardar arquivos no Drive* — mandar documento/foto pra Sora salvar e organizar — é do plano *Premium*.\n\nFaça o upgrade e mande seus documentos direto por aqui 💚\n👉 ${APP_URL_WH}/planos`);
+        return;
+      }
+      await enviarTexto(phone, '📎 Guardando no seu Drive...');
+      const rDrive = await salvarArquivoDrive({
+        userId:   user.id,
+        fileUrl:  docInfo?.url || imageUrl,
+        fileName: docInfo?.fileName || `foto-${Date.now()}.jpg`,
+        mimeType: docInfo?.mimeType || (imageUrl ? 'image/jpeg' : null),
+        caption:  docInfo?.caption || legendaImg || '',
+      });
+      if (!rDrive.ok) {
+        console.error(`📁 Drive falhou [${phone}]:`, rDrive.erro, rDrive.detalhe || '');
+        await enviarTexto(phone, rDrive.erro === 'grande'
+          ? '😕 Esse arquivo é grande demais (máx. 20 MB).'
+          : '😕 Não consegui guardar esse arquivo agora. Tenta de novo em instantes.');
+        return;
+      }
+      await enviarTexto(phone, `✅ Salvei na pasta 📁 *${rDrive.pasta}*!\n\n_${rDrive.arquivo}_ já está no seu Drive 👉 ${APP_URL_WH}/grow/dados`);
+      return;
+    }
+
+    // ── 2.6b. DRIVE — buscar arquivo por linguagem natural ────────
+    if (!imageUrl && !docInfo && ['premium', 'black'].includes(user.plano)) {
+      const termoBusca = intentoBuscaArquivo(mensagem);
+      if (termoBusca) {
+        const achados = await buscarArquivosDrive(user.id, termoBusca);
+        if (achados.length) {
+          await enviarTexto(phone, achados.length === 1 ? '🔎 Achei no seu Drive 👇' : `🔎 Achei ${achados.length} arquivos no seu Drive 👇`);
+          for (const a of achados) {
+            const url = await urlAssinada(a.arquivo_url);
+            if (url) await enviarLink(phone, { message: `📎 ${a.arquivo_nome}`, linkUrl: url, title: a.arquivo_nome, linkDescription: a.titulo || 'Abrir arquivo' });
+          }
+          return;
+        }
+        await enviarTexto(phone, `🔎 Não achei nenhum arquivo assim no seu Drive. Dá uma olhada em ${APP_URL_WH}/grow/dados`);
+        return;
+      }
     }
 
     // ── 2.7. IMAGEM (nota fiscal / comprovante) ───────────────────
