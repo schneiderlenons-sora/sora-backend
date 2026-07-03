@@ -198,6 +198,19 @@ router.post('/download-url', auth, requireGrow, async (req, res) => {
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// Lista TODOS os arquivos do usuário (Recentes + busca do Drive no painel).
+// Só itens tipo 'arquivo'; o painel junta com as seções/quadros já carregados.
+router.get('/arquivos/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('dados_itens')
+      .select('id, titulo, arquivo_url, arquivo_nome, created_at, secao_id')
+      .eq('user_id', req.userRow.id).eq('tipo', 'arquivo')
+      .order('created_at', { ascending: false }).limit(300);
+    if (error) return res.status(503).json({ erro: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 // DELETE de item — remove o arquivo do Storage se houver. Registrado ANTES do
 // crud genérico pra ter precedência sobre o DELETE padrão.
 router.delete('/dados_itens/:id', auth, requireGrow, async (req, res) => {
