@@ -73,17 +73,18 @@ async function acharOuCriarSecao(userId, quadroId, nome, icone) {
 async function salvarArquivoDrive({ userId, fileUrl, fileName, mimeType, caption }) {
   if (!userId || !fileUrl) return { ok: false, erro: 'sem_url' };
 
-  // 1) baixa
-  let buffer;
-  try {
-    const resp = await axios.get(fileUrl, {
-      responseType: 'arraybuffer', maxContentLength: MAX_BYTES, maxBodyLength: MAX_BYTES, timeout: 30000,
-    });
-    buffer = Buffer.from(resp.data);
-  } catch (e) {
-    if (/maxContentLength|content length/i.test(e.message || '')) return { ok: false, erro: 'grande' };
-    return { ok: false, erro: 'download', detalhe: e.message };
+  // 1) baixa — 2 tentativas: pública e, se falhar, com o client-token do Z-API
+  // (algumas URLs de mídia do Z-API exigem o header de autenticação).
+  const baixar = (hdr) => axios.get(fileUrl, {
+    responseType: 'arraybuffer', maxContentLength: MAX_BYTES, maxBodyLength: MAX_BYTES,
+    timeout: 30000, maxRedirects: 5, headers: { 'User-Agent': 'SoraBot/1.0', ...(hdr || {}) },
+  });
+  let buffer, erroDl;
+  for (const hdr of [null, { 'client-token': process.env.ZAPI_CLIENT_TOKEN }]) {
+    try { const resp = await baixar(hdr); buffer = Buffer.from(resp.data); erroDl = null; break; }
+    catch (e) { erroDl = e; if (/maxContentLength|content length/i.test(e.message || '')) return { ok: false, erro: 'grande' }; }
   }
+  if (!buffer) return { ok: false, erro: 'download', detalhe: `${erroDl?.response?.status || ''} ${erroDl?.message || ''}`.trim() };
   if (buffer.length > MAX_BYTES) return { ok: false, erro: 'grande' };
 
   // 2) resolve a pasta (subpasta): legenda explícita > palavra-chave > Geral

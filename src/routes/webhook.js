@@ -241,6 +241,7 @@ router.post('/', async (req, res) => {
     caption:  document.caption || text?.message || '',
   } : null;
   if (docInfo?.url) mensagem = '__documento__'; // placeholder pra passar a validação
+  if (document) console.log(`📁 [${phone}] document recebido:`, JSON.stringify(document)); // TEMP diag
 
   await processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInfo });
 });
@@ -351,9 +352,10 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       });
       if (!rDrive.ok) {
         console.error(`📁 Drive falhou [${phone}]:`, rDrive.erro, rDrive.detalhe || '');
-        await enviarTexto(phone, rDrive.erro === 'grande'
+        await enviarTexto(phone, (rDrive.erro === 'grande'
           ? '😕 Esse arquivo é grande demais (máx. 20 MB).'
-          : '😕 Não consegui guardar esse arquivo agora. Tenta de novo em instantes.');
+          : '😕 Não consegui guardar esse arquivo agora. Tenta de novo em instantes.')
+          + `\n\n🔧 diag: ${rDrive.erro} — ${rDrive.detalhe || '(sem detalhe)'}`); // TEMP: remover depois
         return;
       }
       await enviarTexto(phone, `✅ Salvei na pasta 📁 *${rDrive.pasta}*!\n\n_${rDrive.arquivo}_ já está no seu Drive 👉 ${APP_URL_WH}/grow/dados`);
