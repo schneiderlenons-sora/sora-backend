@@ -26,8 +26,15 @@ const MAPA_PASTA = [
   [/foto|imagem|selfie|print|screenshot/i,            'Fotos',        '🖼️'],
 ];
 
-function limparNome(s = '') {
-  return String(s).replace(/[^\wà-úÀ-Ú.\- ]+/g, '_').trim().slice(0, 90) || 'arquivo';
+const semAcento = (s = '') => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+
+// Nome pra EXIBIR — mantém acentos (compõe NFC). Ex.: "Currículo - Lenon.pdf".
+function nomeExibicao(s = '') {
+  return String(s).normalize('NFC').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'arquivo';
+}
+// Nome ASCII-seguro pro path do bucket (sem acento/espaço/símbolo).
+function nomeStorage(s = '') {
+  return semAcento(s).replace(/[^a-z0-9.\-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 90) || 'arquivo';
 }
 
 // Extrai "…pasta X" explicitamente dito na legenda.
@@ -45,24 +52,27 @@ function pastaPorPalavra(texto = '') {
   return null;
 }
 
-async function acharOuCriarQuadro(userId) {
-  const { data: existe } = await supabase.from('dados_quadros')
-    .select('id').eq('user_id', userId).ilike('nome', QUADRO_ROOT).limit(1).maybeSingle();
+// Acha (reusa) uma PASTA de topo = quadro pelo nome, ignorando acento/maiúscula
+// ("curriculos" acha "Currículos"). Só cria se realmente não existir.
+async function acharOuCriarQuadro(userId, nome, cor, icone) {
+  const alvo = semAcento(nome);
+  const { data: todos } = await supabase.from('dados_quadros').select('id, nome').eq('user_id', userId);
+  const existe = (todos || []).find(q => semAcento(q.nome) === alvo);
   if (existe) return existe.id;
   const { data, error } = await supabase.from('dados_quadros')
-    .insert({ user_id: userId, nome: QUADRO_ROOT, cor: '#10b981', icone: '📁' })
+    .insert({ user_id: userId, nome, cor: cor || '#10b981', icone: icone || '📁' })
     .select('id').single();
   if (error) throw new Error(`quadro: ${error.message}`);
   return data.id;
 }
 
 async function acharOuCriarSecao(userId, quadroId, nome, icone) {
-  const { data: existe } = await supabase.from('dados_secoes')
-    .select('id, nome').eq('user_id', userId).eq('quadro_id', quadroId)
-    .ilike('nome', nome).limit(1).maybeSingle();
+  const alvo = semAcento(nome);
+  const { data: todas } = await supabase.from('dados_secoes').select('id, nome').eq('user_id', userId).eq('quadro_id', quadroId);
+  const existe = (todas || []).find(s => semAcento(s.nome) === alvo);
   if (existe) return existe;
   const { data, error } = await supabase.from('dados_secoes')
-    .insert({ user_id: userId, quadro_id: quadroId, nome, icone: icone || '🗂️' })
+    .insert({ user_id: userId, quadro_id: quadroId, nome, icone: icone || '📄' })
     .select('id, nome').single();
   if (error) throw new Error(`secao: ${error.message}`);
   return data;
@@ -87,32 +97,36 @@ async function salvarArquivoDrive({ userId, fileUrl, fileName, mimeType, caption
   if (!buffer) return { ok: false, erro: 'download', detalhe: `${erroDl?.response?.status || ''} ${erroDl?.message || ''}`.trim() };
   if (buffer.length > MAX_BYTES) return { ok: false, erro: 'grande' };
 
-  // 2) resolve a pasta (subpasta): legenda explícita > palavra-chave > Geral
-  const nomeArq   = limparNome(fileName);
+  // 2) resolve a PASTA (= quadro de topo): legenda explícita > palavra-chave >
+  // "Recebidos". Se bater no mapa, usa o nome canônico ("curriculos" → "Currículos").
+  const nomeExib  = nomeExibicao(fileName);
   const explicita = pastaDaLegenda(caption);
-  const contexto  = `${caption || ''} ${nomeArq}`;
-  const pasta = explicita
-    ? { nome: explicita, icone: pastaPorPalavra(explicita)?.icone || '📁' }
-    : (pastaPorPalavra(contexto) || { nome: 'Geral', icone: '🗂️' });
+  let pastaNome, pastaIcone;
+  if (explicita) {
+    const m = pastaPorPalavra(explicita);
+    pastaNome = m ? m.nome : explicita; pastaIcone = m ? m.icone : '📁';
+  } else {
+    const m = pastaPorPalavra(`${caption || ''} ${nomeExib}`);
+    pastaNome = m ? m.nome : QUADRO_ROOT; pastaIcone = m ? m.icone : '📁';
+  }
 
-  // 3) sobe no bucket privado
-  const path = `${userId}/${crypto.randomUUID()}-${nomeArq}`;
+  // 3) sobe no bucket privado (path ASCII-seguro; nome exibido mantém acentos)
+  const path = `${userId}/${crypto.randomUUID()}-${nomeStorage(fileName)}`;
   const up = await supabase.storage.from(BUCKET).upload(path, buffer, {
     contentType: mimeType || 'application/octet-stream', upsert: false,
   });
   if (up.error) return { ok: false, erro: 'upload', detalhe: up.error.message };
 
-  // 4) grava quadro > seção > item
+  // 4) grava PASTA (quadro) > "Arquivos" (seção) > item
   try {
-    const quadroId = await acharOuCriarQuadro(userId);
-    const secao    = await acharOuCriarSecao(userId, quadroId, pasta.nome, pasta.icone);
-    const titulo   = (caption && caption.trim().slice(0, 80)) || nomeArq;
+    const quadroId = await acharOuCriarQuadro(userId, pastaNome, '#10b981', pastaIcone);
+    const secao    = await acharOuCriarSecao(userId, quadroId, 'Arquivos', '📄');
     const { error } = await supabase.from('dados_itens').insert({
       user_id: userId, secao_id: secao.id, tipo: 'arquivo',
-      titulo, arquivo_url: path, arquivo_nome: nomeArq,
+      titulo: null, arquivo_url: path, arquivo_nome: nomeExib,
     });
     if (error) throw new Error(error.message);
-    return { ok: true, pasta: secao.nome, arquivo: nomeArq };
+    return { ok: true, pasta: pastaNome, arquivo: nomeExib };
   } catch (e) {
     try { await supabase.storage.from(BUCKET).remove([path]); } catch {}
     return { ok: false, erro: 'db', detalhe: e.message };
