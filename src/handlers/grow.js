@@ -171,6 +171,172 @@ function pareceAgenda(mensagem) {
   return pareceCompromisso(mensagem) || pareceAjusteLembrete(mensagem);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// QUICK-CAPTURE (local-first, sem IA): TAREFA e NOTA por linguagem natural.
+// Roda no webhook ANTES do fast-path da Agenda. Regra de ouro pra não brigar
+// com a Agenda: tarefa/nota só disparam SEM data/hora (com data é compromisso).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const _low = (s) => (s || '').toLowerCase().replace(/^\s*sora[,!.:\s]+/i, '').trim();
+
+// Tem data OU hora explícita? Reusa os parsers PT locais da Agenda.
+function temDataHora(mensagem) {
+  const s = _low(mensagem);
+  return !!(parseDataPt(s) || parseHoraPt(s));
+}
+
+// ── TAREFA ──────────────────────────────────────────────────────────────────
+const RE_TAREFA_NL = /\b(?:me\s+)?lembr(?:a|ar|e)\s+de\b|\btenho\s+que\b|\bpreciso\s+(?:de\s+)?(?=[a-zà-ú]+(?:ar|er|ir)\b)|\bn[ãa]o\s+(?:posso\s+)?esquecer(?:\s+de)?\b|\bn[ãa]o\s+esque[çc]a\s+de\b|^(?:tarefa|todo|to-?do)\b|\b(?:anota[r]?|cria[r]?|adiciona[r]?|nova)\s+tarefa\b/i;
+
+// Frases que NÃO são tarefa (ajuda/venda/dúvida) — evita falso positivo.
+const RE_NAO_TAREFA = /\b(ajuda|suporte|cancelar|como\s+funciona|quanto\s+custa|pre[çc]o|planos?|assinar|d[úu]vida)\b/i;
+
+function pareceTarefa(mensagem) {
+  const s = _low(mensagem);
+  if (temDataHora(mensagem)) return false;   // com data → Agenda
+  if (RE_NAO_TAREFA.test(s)) return false;
+  return RE_TAREFA_NL.test(s);
+}
+
+const CAT_TAREFA = [
+  [/passage|\bvoo\b|viagem|hotel|hosped|reserva|passaporte|\bmala\b|embarque/i, 'Viagem'],
+  [/mercado|comprar|\bcompra\b|feira|super|padaria|a[çc]ougue|farm[áa]cia|lista\s+de\s+compras/i, 'Compras'],
+  [/reuni[ãa]o|e-?mail|\bcliente\b|projeto|relat[óo]rio|apresenta|proposta|contrato|\bchefe\b|\bequipe\b|planilha|slide/i, 'Trabalho'],
+  [/m[ée]dic|dentista|consulta|exame|rem[ée]dio|academia|treino|fisio|vacina|psic[óo]log/i, 'Saúde'],
+  [/estud|\bprova\b|facul|\bcurso\b|\baula\b|li[çc][ãa]o|\btcc\b|monografia|reda[çc][ãa]o/i, 'Estudos'],
+  [/faxina|limpeza|lavar|arrumar|conserto|manuten[çc]|jardim|\blixo\b|lou[çc]a|passar\s+roupa/i, 'Casa'],
+  [/ligar|telefonar|responder|retornar|mandar\s+(?:mensagem|zap|whats)|whatsapp/i, 'Contatos'],
+  [/pagar|boleto|fatura|\bpix\b|transfer|\bbanco\b|imposto|conta\s+de\s+(?:luz|[áa]gua|internet)/i, 'Financeiro'],
+];
+function categoriaTarefa(titulo) {
+  for (const [re, cat] of CAT_TAREFA) if (re.test(titulo)) return cat;
+  return null;
+}
+
+function extrairTituloTarefa(mensagem) {
+  let t = mensagem.replace(/^\s*sora[,!.:\s]+/i, '').trim()
+    .replace(/^\s*(?:me\s+)?lembr(?:a|ar|e)\s+de\s+/i, '')
+    .replace(/^\s*tenho\s+que\s+/i, '')
+    .replace(/^\s*preciso\s+(?:de\s+)?/i, '')
+    .replace(/^\s*n[ãa]o\s+(?:posso\s+)?esquecer\s+(?:de\s+)?/i, '')
+    .replace(/^\s*n[ãa]o\s+esque[çc]a\s+(?:de\s+)?/i, '')
+    .replace(/^\s*(?:anota[r]?|cria[r]?|adiciona[r]?|nova)\s+tarefa\s+(?:de\s+|que\s+|pra\s+|para\s+)?/i, '')
+    .replace(/^\s*(?:tarefa|todo|to-?do)\s+/i, '')
+    .replace(/\b(?:me\s+)?lembr(?:a|ar|e)\b/gi, ' ')
+    .replace(/[?!.]+\s*$/, '')
+    .replace(/\s+/g, ' ').trim();
+  t = t.replace(/^(?:de|do|da|pra|para|o|a|que)\s+/i, '').trim();
+  if (!t) return null;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+// ── NOTA / INSIGHT ───────────────────────────────────────────────────────────
+const RE_NOTA_FORTE = /\b(?:tive|tenho)\s+uma\s+ideia\b|\b(?:guarda[r]?|salva[r]?|anota[r]?)\s+(?:esse|essa|este|esta|isso|aqui|a|o)?\s*(?:insight|ideia|nota|anota[çc][ãa]o|pensamento)\b|^\s*(?:nota|ideia|insight|anota[çc][ãa]o)\s*[:\-]/i;
+const RE_NOTA_FRACA = /^\s*anota[r]?\s+(?:a[íi]\s+)?que\b/i;
+
+function pareceNota(mensagem) {
+  const s = _low(mensagem);
+  if (RE_NOTA_FORTE.test(s)) return true;
+  if (RE_NOTA_FRACA.test(s) && !temDataHora(mensagem)) return true; // "anota que X" sem data
+  return false;
+}
+
+function extrairTextoNota(mensagem) {
+  let t = mensagem.replace(/^\s*sora[,!.:\s]+/i, '').trim()
+    .replace(/^\s*anota[r]?\s+(?:a[íi]\s+)?que\s+/i, '')
+    .replace(/^\s*(?:guarda[r]?|salva[r]?|anota[r]?)\s+(?:esse|essa|este|esta|isso|aqui|a|o)?\s*(?:insight|ideia|nota|anota[çc][ãa]o|pensamento)\s*(?:de\s+que\s+|que\s+|sobre\s+|:|-)?\s*/i, '')
+    .replace(/^\s*(?:tive|tenho)\s+uma\s+ideia\s*(?:sobre\s+|de\s+|:|-)?\s*/i, '')
+    .replace(/^\s*(?:nota|ideia|insight|anota[çc][ãa]o)\s*[:\-]\s*/i, '')
+    .replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+const RE_NOTA_CONSULTAR = /\b(?:o\s+que\s+(?:eu\s+)?(?:anotei|guardei|salvei)|minhas?\s+(?:notas?|ideias?|anota[çc][õo]es|insights?)|(?:procura[r]?|acha[r]?|busca[r]?|encontra[r]?|cad[êe]|qual\s+(?:foi\s+)?(?:a\s+)?|quais)\s+(?:minha\s+|as\s+)?(?:nota|ideia|anota[çc][ãa]o|insight)|o\s+que\s+eu\s+(?:disse|falei|pensei)\s+sobre)\b/i;
+
+function pareceConsultaNota(mensagem) {
+  return RE_NOTA_CONSULTAR.test(_low(mensagem));
+}
+
+const _STOP_NOTA = new Set(['o','a','os','as','que','eu','anotei','guardei','salvei','disse','falei','pensei','minha','minhas','meu','meus','nota','notas','ideia','ideias','anotacao','anotacoes','insight','insights','procura','procurar','acha','achar','busca','buscar','encontra','encontrar','cade','qual','quais','foi','foram','era','eram','sobre','de','da','do','das','dos']);
+function termoConsultaNota(mensagem) {
+  const norm = (w) => w.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const palavras = _low(mensagem).replace(/[?!.,]/g, ' ').split(/\s+/)
+    .filter((w) => w && !_STOP_NOTA.has(norm(w)));  // mantém a palavra ORIGINAL (com acento)
+  const t = palavras.join(' ').trim();
+  return t || null;
+}
+
+async function buscarNotas(userId, termo) {
+  let query = supabase.from('notas').select('id, texto, titulo, created_at')
+    .eq('user_id', userId).order('created_at', { ascending: false }).limit(5);
+  const palavras = (termo || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^\wà-ú ]+/g, ' ').split(/\s+/).filter((w) => w.length >= 3).slice(0, 4);
+  if (palavras.length) {
+    query = query.or(palavras.flatMap((w) => [`texto.ilike.%${w}%`, `titulo.ilike.%${w}%`]).join(','));
+  }
+  const { data, error } = await query;
+  if (error) return [];
+  return data || [];
+}
+
+// Dispatcher chamado pelo webhook. Retorna true se TRATOU (tarefa/nota); senão
+// false (segue o fluxo normal: agenda/FAQ/IA). Nunca lança.
+async function capturaRapida(mensagem, ctx) {
+  const { phone, grupoId, user } = ctx;
+
+  // 1) CONSULTAR nota
+  if (pareceConsultaNota(mensagem)) {
+    const termo = termoConsultaNota(mensagem);
+    const notas = await buscarNotas(user.id, termo);
+    if (!notas.length) {
+      await enviarTexto(phone, termo
+        ? `🔎 Não achei nenhuma nota sobre "${termo}". Pra salvar: *anota que ...* ou *tive uma ideia ...*`
+        : '📝 Você ainda não salvou nenhuma nota. Guarde uma com *anota que ...* ou *tive uma ideia ...* 😉');
+      return true;
+    }
+    const linhas = notas.map((n) => `• ${(n.texto || '').length > 180 ? n.texto.slice(0, 180) + '…' : n.texto}`);
+    await enviarTexto(phone, `📝 *Suas notas${termo ? ` sobre "${termo}"` : ''}* (${notas.length})\n\n${linhas.join('\n\n')}`);
+    return true;
+  }
+
+  // 2) SALVAR nota
+  if (pareceNota(mensagem)) {
+    const texto = extrairTextoNota(mensagem);
+    if (!texto) return false;
+    const titulo = texto.length > 60 ? texto.slice(0, 57) + '…' : texto;
+    const { error } = await supabase.from('notas').insert({
+      grupo_id: grupoId, user_id: user.id, texto, titulo, origem: ctx.origem === 'audio' ? 'audio' : 'texto',
+    });
+    if (error) { await enviarTexto(phone, '😕 Não consegui salvar a nota agora (rode a migration 063). Tenta de novo em instantes.'); return true; }
+    await enviarTexto(phone, `📝 *Nota salva!*\n\n_${titulo}_\n\nPra achar depois: *o que anotei sobre ...*`);
+    return true;
+  }
+
+  // 3) CRIAR tarefa
+  if (pareceTarefa(mensagem)) {
+    const titulo = extrairTituloTarefa(mensagem);
+    if (!titulo) return false;
+    const s = _low(mensagem);
+    let prioridade = 'media';
+    if (/urgente|urgent[ií]ssim/i.test(s)) prioridade = 'urgente';
+    else if (/importante|prioridade\s+alta/i.test(s)) prioridade = 'alta';
+    const categoria = categoriaTarefa(titulo);
+    const { data: tarefa, error } = await supabase.from('tarefas')
+      .insert({ grupo_id: grupoId, user_id: user.id, criado_por: user.id, titulo, prioridade })
+      .select('id').single();
+    if (error) { await enviarTexto(phone, '😕 Não consegui criar a tarefa agora. Tenta de novo em instantes.'); return true; }
+    // Categoria em update TOLERANTE (coluna nova — migration 062). Se ainda não
+    // rodou, a tarefa fica sem categoria no banco; a resposta já mostra a inferida.
+    if (categoria) { await supabase.from('tarefas').update({ categoria }).eq('id', tarefa.id); }
+    const priTag = prioridade === 'urgente' ? ' 🔴 URGENTE' : prioridade === 'alta' ? ' 🟠 Alta prioridade' : '';
+    await enviarTexto(phone, `📋 *Tarefa criada*${priTag}\n\n${titulo}${categoria ? `\n🏷️ ${categoria}` : ''}\n\nVer todas: *tarefas*`);
+    return true;
+  }
+
+  return false;
+}
+
 module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   const { phone, grupoId, user } = ctx;
   // Tira o vocativo "Sora," do começo — senão quebra as âncoras ^ de vários
@@ -740,3 +906,15 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
 // Detectores expostos pro webhook usar como fast-path (sem IA).
 module.exports.pareceCompromisso = pareceCompromisso;
 module.exports.pareceAgenda = pareceAgenda; // criar OU ajustar lembrete
+
+// Quick-capture (tarefa/nota por linguagem natural). capturaRapida é o dispatcher
+// usado no webhook; o resto é exposto pra testes.
+module.exports.capturaRapida       = capturaRapida;
+module.exports.pareceTarefa        = pareceTarefa;
+module.exports.pareceNota          = pareceNota;
+module.exports.pareceConsultaNota  = pareceConsultaNota;
+module.exports.extrairTituloTarefa = extrairTituloTarefa;
+module.exports.extrairTextoNota    = extrairTextoNota;
+module.exports.categoriaTarefa     = categoriaTarefa;
+module.exports.temDataHora         = temDataHora;
+module.exports.termoConsultaNota   = termoConsultaNota;

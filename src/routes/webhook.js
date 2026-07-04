@@ -414,6 +414,16 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     // ── 3. Interpreta a mensagem ──────────────────────────────────
     if (!data) data = interpretarRapido(mensagem); // tenta regex primeiro (grátis)
 
+    // Quick-capture do Grow (local-first, sem IA): TAREFA e NOTA por linguagem
+    // natural ("lembra de comprar as passagens", "anota que ...", "o que anotei
+    // sobre ..."). Roda ANTES da Agenda; tarefa/nota só disparam SEM data (com
+    // data é compromisso, tratado logo abaixo). Não intercepta Finanças (só roda
+    // quando o interpretarRapido não achou ação).
+    if (!data && temAcessoGrow(user)) {
+      const ctxG = { phone, grupoId: user.grupo_ativo, user, mensagem };
+      if (await require('../handlers/grow').capturaRapida(mensagem, ctxG)) return;
+    }
+
     // Fast-path da AGENDA (determinístico, sem IA): criar ("marca X terça 15h",
     // "tenho reunião amanhã às 19, me lembra?") OU ajustar o lembrete do último
     // ("me lembra 1 dia antes"). Sem isso, a IA às vezes manda pra Finance/conversa.
