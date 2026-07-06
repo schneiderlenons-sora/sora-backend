@@ -3,7 +3,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarMenu, enviarLink, enviarBotaoLink, enviarImagem } = require('../services/mensageiro');
 const { responderFaq } = require('../services/faq');
-const { emRecuperacao, RECUPERACAO_TEXT } = require('../services/recuperacaoPagamento');
+const { emRecuperacao, RECUPERACAO_TEXT, linkRecuperacao } = require('../services/recuperacaoPagamento');
 const { emRecuperacaoCadastro, respostaRecuperacaoCadastro, notaIaRecuperacaoCadastro } = require('../services/recuperacaoSignup');
 const APP_URL_WH = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA = process.env.SORA_CAPA_URL || `${APP_URL_WH}/sora-capa.png`;
@@ -313,7 +313,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     if (!temAcessoGrow(user) && pareceVenda(mensagem)) {
       // Lead que já tem conta (pagamento falhou OU cadastro não finalizado) →
       // CTA pro login + cupom, em vez do pitch de criar conta.
-      const txtVenda = emRecuperacao(user)        ? RECUPERACAO_TEXT(user.name)
+      const txtVenda = emRecuperacao(user)        ? RECUPERACAO_TEXT(user.name, linkRecuperacao(user.vitalicio_intent, 'SORA15'))
                      : emRecuperacaoCadastro(user) ? respostaRecuperacaoCadastro(user)
                      : VENDAS_TEXT(user.name);
       await enviarTexto(phone, txtVenda);
@@ -501,7 +501,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     if (!temAcessoGrow(user) && data?.acao && !ACOES_LIVRES.includes(data.acao)) {
       // Já tem conta (pagamento falhou ou cadastro não finalizado) → empurra
       // pro login + cupom em vez do paywall genérico de "crie sua conta".
-      const txtBloqueio = emRecuperacao(user)        ? RECUPERACAO_TEXT(user.name)
+      const txtBloqueio = emRecuperacao(user)        ? RECUPERACAO_TEXT(user.name, linkRecuperacao(user.vitalicio_intent, 'SORA15'))
                         : emRecuperacaoCadastro(user) ? respostaRecuperacaoCadastro(user)
                         : PAYWALL_TEXT;
       await enviarTexto(phone, txtBloqueio);

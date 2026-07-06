@@ -12,7 +12,29 @@ const { enviarTexto } = require('./mensageiro');
 
 const APP = 'https://www.forsora.com';
 
-function RECUPERACAO_SIGNUP_TEXT(nome) {
+// Link da recuperação: volta pro checkout do vitalício certo se houver intenção
+// (com cupom, rec=1 → passa pelo login se preciso). Senão, /login genérico.
+// `intent` vem de users.vitalicio_intent (pode ser null → cai no /login).
+function linkRecuperacao(intent, cupom = 'SORA15') {
+  const tier = ['kit', 'completa', 'upgrade'].includes(intent) ? intent : null;
+  return tier
+    ? `${APP}/checkout-vitalicio?tier=${tier}&cupom=${cupom}&rec=1`
+    : `${APP}/login`;
+}
+
+// Busca as intenções de vitalício de um lote de ids (tolerante: sem a migration
+// 064, retorna vazio → cai no /login).
+async function fetchIntents(ids) {
+  const map = {};
+  if (!ids || !ids.length) return map;
+  try {
+    const { data } = await supabase.from('users').select('id, vitalicio_intent').in('id', ids);
+    for (const r of data || []) map[r.id] = r.vitalicio_intent || null;
+  } catch { /* migration 064 pendente */ }
+  return map;
+}
+
+function RECUPERACAO_SIGNUP_TEXT(nome, link = `${APP}/login`) {
   const ola = nome ? `Oi, ${String(nome).trim().split(' ')[0]}!` : 'Oi!';
   return [
     `${ola} 👋 Aqui é a *Sora* 💚`,
@@ -24,14 +46,14 @@ function RECUPERACAO_SIGNUP_TEXT(nome) {
     `🎁 E pra te dar um empurrãozinho, separei um presente: *15% OFF* com o cupom *SORA15* no checkout — válido por *24 horas* ⏳😉`,
     ``,
     `É 2 minutinhos. Finaliza aqui:`,
-    `🌐 ${APP}/login`,
+    `🌐 ${link}`,
     ``,
     `Te espero do outro lado pra organizar essa vida financeira! 🙌`,
   ].join('\n');
 }
 
 // 2º lembrete — mais agressivo (cupom SORA25, 25% OFF, 5h). "Última chance".
-function RECUPERACAO_SIGNUP2_TEXT(nome) {
+function RECUPERACAO_SIGNUP2_TEXT(nome, link = `${APP}/login`) {
   const ola = nome ? `Oi, ${String(nome).trim().split(' ')[0]}!` : 'Oi!';
   return [
     `${ola} 👋 É a *Sora* de novo 💚`,
@@ -41,7 +63,7 @@ function RECUPERACAO_SIGNUP2_TEXT(nome) {
     `É a sua chance de começar a organizar suas finanças no automático, direto no WhatsApp, pagando bem menos.`,
     ``,
     `Finaliza aqui antes que expire:`,
-    `🌐 ${APP}/login`,
+    `🌐 ${link}`,
     ``,
     `Depois disso o desconto some 😬 Bora? 🙌`,
   ].join('\n');
@@ -67,13 +89,15 @@ async function processarRecuperacaoSignup(limite = 50) {
 
   if (error) { console.log('[recuperacao signup] rode a migration 056:', error.message); return; }
 
+  const intents = await fetchIntents((users || []).map((u) => u.id));
+
   let enviados = 0;
   for (const u of users || []) {
     if (!u.phone) continue;
     // Marca ANTES de enviar — à prova de restart e não corre risco de spamar.
     await supabase.from('users').update({ recuperacao_signup_em: new Date().toISOString() }).eq('id', u.id);
     try {
-      await enviarTexto(u.phone, RECUPERACAO_SIGNUP_TEXT(u.name));
+      await enviarTexto(u.phone, RECUPERACAO_SIGNUP_TEXT(u.name, linkRecuperacao(intents[u.id], 'SORA15')));
       enviados++;
     } catch (e) {
       console.warn('[recuperacao signup] envio falhou', u.id, e.message);
@@ -103,12 +127,14 @@ async function processarRecuperacaoSignup2(limite = 50) {
 
   if (error) { console.log('[recuperacao signup 2] rode a migration 057:', error.message); return; }
 
+  const intents = await fetchIntents((users || []).map((u) => u.id));
+
   let enviados = 0;
   for (const u of users || []) {
     if (!u.phone) continue;
     await supabase.from('users').update({ recuperacao_signup2_em: new Date().toISOString() }).eq('id', u.id);
     try {
-      await enviarTexto(u.phone, RECUPERACAO_SIGNUP2_TEXT(u.name));
+      await enviarTexto(u.phone, RECUPERACAO_SIGNUP2_TEXT(u.name, linkRecuperacao(intents[u.id], 'SORA25')));
       enviados++;
     } catch (e) {
       console.warn('[recuperacao signup 2] envio falhou', u.id, e.message);
@@ -128,12 +154,14 @@ function emRecuperacaoCadastro(user) {
 // Cupom acompanha o estágio: quem já recebeu o 2º vê SORA25; senão SORA15.
 function respostaRecuperacaoCadastro(user) {
   const ola = user?.name ? `Oi, ${String(user.name).trim().split(' ')[0]}!` : 'Oi!';
+  const cupomCode = user?.recuperacao_signup2_em ? 'SORA25' : 'SORA15';
   const cupom = user?.recuperacao_signup2_em ? '*SORA25* (25% OFF)' : '*SORA15* (15% OFF)';
+  const link = linkRecuperacao(user?.vitalicio_intent, cupomCode);
   return [
     `${ola} 💚 Que bom te ver por aqui!`,
     ``,
     `Sua conta já está criada — falta só *ativar o plano* pra eu começar a organizar suas finanças aqui no WhatsApp. Não precisa criar de novo, é só entrar e finalizar:`,
-    `🌐 ${APP}/login`,
+    `🌐 ${link}`,
     ``,
     `🎁 E aproveita o cupom ${cupom} no checkout 😉`,
     ``,
@@ -143,8 +171,10 @@ function respostaRecuperacaoCadastro(user) {
 
 // Nota pra IA responder a dúvida no tom de recuperação de cadastro.
 function notaIaRecuperacaoCadastro(user) {
+  const cupomCode = user?.recuperacao_signup2_em ? 'SORA25' : 'SORA15';
   const cupom = user?.recuperacao_signup2_em ? 'SORA25 = 25% de desconto' : 'SORA15 = 15% de desconto';
-  return `OBS: este lead JÁ tem conta criada, mas nunca ativou o plano. Responda a dúvida de forma útil e SEMPRE convide a FINALIZAR a assinatura entrando em forsora.com/login (NÃO mande criar conta nova). Mencione o cupom ${cupom}. Tom acolhedor e persuasivo.`;
+  const link = linkRecuperacao(user?.vitalicio_intent, cupomCode);
+  return `OBS: este lead JÁ tem conta criada, mas nunca ativou o plano. Responda a dúvida de forma útil e SEMPRE convide a FINALIZAR entrando em ${link} (NÃO mande criar conta nova). Mencione o cupom ${cupom}. Tom acolhedor e persuasivo.`;
 }
 
 module.exports = {
