@@ -954,10 +954,14 @@ console.log('   • Todo dia 00h05 — snapshot de DRE Negócios');
 // ─────────────────────────────────────────────────────────────────
 const { processarRecuperacoes } = require('../services/recuperacaoPagamento');
 cron.schedule('*/15 * * * *', async () => {
+  // DESATIVADO por padrão (incidente de spam no WhatsApp). Religar: setar
+  // RECUPERACAO_ATIVA=1 no Render → Environment. As respostas reativas (quando o
+  // lead responde) continuam funcionando; só o disparo proativo fica pausado.
+  if (process.env.RECUPERACAO_ATIVA !== '1') return;
   try { await processarRecuperacoes(); }
   catch (e) { console.log('💸 Recuperação de pagamento falhou:', e.message); }
 });
-console.log('   • A cada 15min — recuperação de pagamento recusado');
+console.log(`   • A cada 15min — recuperação de pagamento recusado ${process.env.RECUPERACAO_ATIVA === '1' ? '' : '(DESATIVADA)'}`);
 
 // ─────────────────────────────────────────────────────────────────
 // JOB 1P — RECUPERAÇÃO de cadastro sem pagamento (abandono no paywall).
@@ -966,9 +970,11 @@ console.log('   • A cada 15min — recuperação de pagamento recusado');
 // ─────────────────────────────────────────────────────────────────
 const { processarRecuperacaoSignup, processarRecuperacaoSignup2 } = require('../services/recuperacaoSignup');
 cron.schedule('*/30 * * * *', async () => {
+  // DESATIVADO por padrão (incidente de spam no WhatsApp). Religar: RECUPERACAO_ATIVA=1.
+  if (process.env.RECUPERACAO_ATIVA !== '1') return;
   try { await processarRecuperacaoSignup(50); }
   catch (e) { console.log('💸 Recuperação de cadastro (1º) falhou:', e.message); }
   try { await processarRecuperacaoSignup2(50); }
   catch (e) { console.log('💸 Recuperação de cadastro (2º) falhou:', e.message); }
 });
-console.log('   • A cada 30min — recuperação de cadastro sem pagamento (1º + 2º lembrete)');
+console.log(`   • A cada 30min — recuperação de cadastro sem pagamento (1º + 2º lembrete) ${process.env.RECUPERACAO_ATIVA === '1' ? '' : '(DESATIVADA)'}`);
