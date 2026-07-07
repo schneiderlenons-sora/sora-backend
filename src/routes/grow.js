@@ -31,8 +31,9 @@ function temGrowPremium(user) {
 }
 
 async function requireGrow(req, res, next) {
-  const phone = req.params.phone || req.body.phone || req.query.phone;
-  if (!phone) return res.status(400).json({ erro: 'phone obrigatorio' });
+  // Usuario resolvido pelo JWT (getUser usa req.authUser.id) — NAO exigir phone,
+  // senao chamadas autenticadas que nao mandam phone (ex.: PUT/DELETE de tarefa,
+  // mover no Kanban) quebram com "phone obrigatorio".
   const user = await getUser(req);
   if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
   if (!temAcessoGrow(user)) return res.status(403).json({ erro: 'sem_acesso_grow', mensagem: 'Acesso ao Sora Grow indisponivel no seu plano.' });
@@ -42,8 +43,7 @@ async function requireGrow(req, res, next) {
 
 // Pra rotas Premium+ do Grow (despensa, receitas, manutenções)
 async function requirePremiumGrow(req, res, next) {
-  const phone = req.params.phone || req.body.phone || req.query.phone;
-  if (!phone) return res.status(400).json({ erro: 'phone obrigatorio' });
+  // Mesma logica do requireGrow: usuario vem do JWT, phone nao e exigido.
   const user = await getUser(req);
   if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
   if (!temGrowPremium(user)) return res.status(403).json({ erro: 'sem_acesso_premium', mensagem: 'Disponivel no plano Premium.' });
