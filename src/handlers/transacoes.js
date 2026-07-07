@@ -255,6 +255,35 @@ async function detectarContaNoTexto(grupoId, texto) {
   return null;
 }
 
+// Casa um nome de carteira vindo da IA/parser (ex.: "conta nubank", "cartão
+// nubank") com uma carteira REAL do grupo. NUNCA deixamos o valor da IA virar
+// carteira verbatim: se não bate com nenhuma conta real, retorna null e o fluxo
+// cai pra detecção no texto / padrão / pergunta (evita carteira-fantasma tipo
+// "conta nubank", que não existe e faz o saldo não ser ajustado). Retorna o
+// nome CANÔNICO da carteira real.
+async function resolverCarteiraReal(grupoId, nomeInformado) {
+  const alvo = normTxt(nomeInformado);
+  if (!alvo) return null;
+  const contas = await listarContasAtivas(grupoId);
+  if (!contas.length) return null;
+  // 1) match exato normalizado
+  const exato = contas.find(c => normTxt(c.nome) === alvo);
+  if (exato) return exato.nome;
+  // 2) tira ruído comum ("conta", "cartão", "banco", conectivos) e tenta exato
+  const semRuido = alvo.replace(/\b(conta|carteira|cartao|banco|no|na|do|da|de|em)\b/g, '').replace(/\s+/g, ' ').trim();
+  if (semRuido && semRuido !== alvo) {
+    const hit = contas.find(c => normTxt(c.nome) === semRuido);
+    if (hit) return hit.nome;
+  }
+  // 3) nome real aparece como palavra dentro do informado ("conta nubank" ⊃
+  //    "nubank"); prefere o mais longo ("Nubank Crédito" antes de "Nubank").
+  for (const c of [...contas].sort((a, b) => b.nome.length - a.nome.length)) {
+    const nome = normTxt(c.nome);
+    if (nome && (temPalavra(alvo, nome) || (semRuido && temPalavra(semRuido, nome)))) return c.nome;
+  }
+  return null;
+}
+
 // Lista as contas ATIVAS do grupo (pra perguntar de qual saiu a transação)
 // Não filtra por `arquivada` na query (coluna pode não existir no schema) —
 // filtra em JS de forma defensiva.
@@ -325,26 +354,33 @@ module.exports = async function handleTransacoes(data, ctx) {
     //   3) Se user só tem 1 conta cadastrada → usa essa (e marca como padrão!)
     //   4) Se user não tem contas → cria 'Dinheiro' automaticamente
     //   5) Múltiplas contas, sem padrão → PERGUNTA via menu interativo
-    let carteiraNome   = data.carteira_nome;
     let precisaPerguntar = false;
     let contasAtivas   = [];
     let receitaRedirecionada = false; // recebimento que ia pra cartão → mandado p/ conta
+
+    // A IA/parser pode mandar um nome de conta (ex.: "conta nubank"). NUNCA
+    // confiamos verbatim: casamos com uma carteira REAL do grupo. Se não bater
+    // com nenhuma, vira null e cai pra detecção no texto / padrão / pergunta —
+    // antes salvava "conta nubank" (inexistente) e o saldo não era ajustado.
+    let carteiraNome = data.carteira_nome
+      ? await resolverCarteiraReal(grupoId, data.carteira_nome)
+      : null;
 
     if (!carteiraNome) {
       // Caso 1: conta citada no texto (ex: "...na shein nubank" → Nubank)
       carteiraNome = await detectarContaNoTexto(grupoId, ctx.mensagem);
 
-      // Conta veio embutida no texto → remove o nome dela da observação
-      // pra não ficar "shein nubank" na descrição (vira só "shein").
-      if (carteiraNome && data.observacao) {
-        const esc = carteiraNome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        data.observacao = data.observacao
-          .replace(new RegExp(`\\b${esc}\\b`, 'gi'), '')
-          .replace(/\s+/g, ' ').trim();
-      }
-
       // Caso 2: wallet padrão do usuário
       if (!carteiraNome) carteiraNome = await buscarWalletPadrao(user?.id);
+    }
+
+    // Conta resolvida → remove o nome dela da observação pra não sobrar
+    // "... nubank" na descrição (vira só "quiosque"/"shein"). Qualquer origem.
+    if (carteiraNome && data.observacao) {
+      const esc = carteiraNome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      data.observacao = data.observacao
+        .replace(new RegExp(`\\b${esc}\\b`, 'gi'), '')
+        .replace(/\s+/g, ' ').trim();
     }
 
     // REGRA: recebimento NÃO cai em cartão de crédito (não dá pra receber num

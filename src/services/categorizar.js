@@ -44,7 +44,8 @@ const REGRAS = [
       'restaurante', 'restaur', 'lanchonete', 'lanches', 'hamburgueria', 'burger king', 'burguer', 'mcdonald', 'mc donalds', 'bobs', 'subway',
       'pizzaria', 'pizza', 'outback', 'habibs', 'spoleto', 'dominos', 'china in box', 'sushi', 'temaki', 'churrascaria', 'espetinho',
       'cafeteria', 'starbucks', 'kopenhagen', 'cacau show', 'sorveteria', 'acai', 'doceria', 'confeitaria', 'marmita', 'self service',
-      'rotisseria', 'boteco', 'comida', 'restaurante e lanchonete'] },
+      'rotisseria', 'boteco', 'comida', 'restaurante e lanchonete',
+      'quiosque', 'food truck', 'foodtruck', 'food park', 'petiscaria', 'pastelaria', 'creperia', 'tapiocaria', 'trailer de'] },
   { cat: 'Padaria',        kws: ['padaria', 'panificadora', 'panific'] },
 
   // ── Transporte ──
