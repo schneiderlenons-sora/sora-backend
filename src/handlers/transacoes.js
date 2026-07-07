@@ -220,6 +220,32 @@ function temPalavra(texto, trecho) {
   return new RegExp(`(^|\\s)${esc}(\\s|$)`).test(texto);
 }
 
+// Distância de edição (Levenshtein) — usada no fuzzy match de conta com typo
+// (ex.: "nubanck" → "nubank"). Iterativo, O(m*n), sem dependências.
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+// Similaridade 0..1 entre duas strings (1 = iguais). Baseada na distância de
+// edição relativa ao tamanho da maior.
+function similaridade(a, b) {
+  const maxLen = Math.max(a.length, b.length);
+  if (!maxLen) return 0;
+  return 1 - levenshtein(a, b) / maxLen;
+}
+
 // Refina a categoria usando as categorias/subcategorias REAIS do grupo.
 // Ex: usuário tem subcategoria "Shein" → "gastei 290 na shein" vira Shein.
 // Prioriza subcategorias e nomes mais longos (mais específicos).
@@ -281,6 +307,15 @@ async function resolverCarteiraReal(grupoId, nomeInformado) {
     const nome = normTxt(c.nome);
     if (nome && (temPalavra(alvo, nome) || (semRuido && temPalavra(semRuido, nome)))) return c.nome;
   }
+  // 4) fuzzy (typos): melhor similaridade acima de um limiar ALTO. Abaixo disso
+  //    NÃO chuta (retorna null) — quem chama vai perguntar de qual conta foi.
+  const base = semRuido || alvo;
+  let melhor = null, melhorSim = 0;
+  for (const c of contas) {
+    const sim = similaridade(base, normTxt(c.nome));
+    if (sim > melhorSim) { melhorSim = sim; melhor = c; }
+  }
+  if (melhor && melhorSim >= 0.8) return melhor.nome;
   return null;
 }
 
@@ -359,19 +394,23 @@ module.exports = async function handleTransacoes(data, ctx) {
     let receitaRedirecionada = false; // recebimento que ia pra cartão → mandado p/ conta
 
     // A IA/parser pode mandar um nome de conta (ex.: "conta nubank"). NUNCA
-    // confiamos verbatim: casamos com uma carteira REAL do grupo. Se não bater
-    // com nenhuma, vira null e cai pra detecção no texto / padrão / pergunta —
-    // antes salvava "conta nubank" (inexistente) e o saldo não era ajustado.
+    // confiamos verbatim: casamos com uma carteira REAL do grupo (exato → sem
+    // ruído → palavra → fuzzy p/ typos). Se não bater com nenhuma, vira null.
     let carteiraNome = data.carteira_nome
       ? await resolverCarteiraReal(grupoId, data.carteira_nome)
       : null;
 
-    if (!carteiraNome) {
-      // Caso 1: conta citada no texto (ex: "...na shein nubank" → Nubank)
-      carteiraNome = await detectarContaNoTexto(grupoId, ctx.mensagem);
+    // Caso 1: conta citada solta no texto (ex: "...na shein nubank" → Nubank)
+    if (!carteiraNome) carteiraNome = await detectarContaNoTexto(grupoId, ctx.mensagem);
 
-      // Caso 2: wallet padrão do usuário
-      if (!carteiraNome) carteiraNome = await buscarWalletPadrao(user?.id);
+    // O usuário TENTOU citar uma conta (a IA extraiu algo) mas não casou com
+    // NENHUMA conta real, nem por fuzzy → NÃO chutamos na padrão; vamos
+    // PERGUNTAR de qual conta foi (listando as contas pra escolher).
+    const contaCitadaNaoResolvida = !!data.carteira_nome && !carteiraNome;
+
+    // Caso 2: wallet padrão — só quando o user NÃO tentou especificar conta.
+    if (!carteiraNome && !contaCitadaNaoResolvida) {
+      carteiraNome = await buscarWalletPadrao(user?.id);
     }
 
     // Conta resolvida → remove o nome dela da observação pra não sobrar
@@ -491,8 +530,14 @@ module.exports = async function handleTransacoes(data, ctx) {
         .map((c, i) => `${i + 1}️⃣ ${c.nome}`)
         .join('\n');
 
+      // Intro diferente quando o user CITOU uma conta que não bateu com nenhuma.
+      const intro = contaCitadaNaoResolvida
+        ? `✅ Anotei R$ ${valor.toFixed(2)} em ${data.categoria || 'Outros'}.\n\n` +
+          `🤔 Não encontrei a conta que você mencionou entre as suas.`
+        : `✅ Anotei R$ ${valor.toFixed(2)} em ${data.categoria || 'Outros'}.`;
+
       const msg =
-        `✅ Anotei R$ ${valor.toFixed(2)} em ${data.categoria || 'Outros'}.\n\n` +
+        `${intro}\n\n` +
         `❓ *De qual conta saiu?*\n${opcoesTexto}\n\n` +
         `Responde com o número ou o nome.`;
       await enviarTexto(phone, msg);
@@ -538,7 +583,9 @@ module.exports = async function handleTransacoes(data, ctx) {
   // uma transação na conta padrão. Move a última transação (criada
   // pelo user nas últimas 24h) pra carteira correta e reajusta saldos.
   if (data.acao === 'corrigir_ultima_carteira') {
-    const novaCarteira = data.carteira_nome;
+    // Casa com uma carteira REAL (mesmo tratamento do salvar) pra não mover a
+    // transação pra um nome-fantasma. Só cai no texto cru se não achar match.
+    const novaCarteira = (await resolverCarteiraReal(grupoId, data.carteira_nome)) || data.carteira_nome;
     if (!novaCarteira) {
       await enviarTexto(phone, '❌ Não entendi pra qual conta corrigir. Tenta: "última foi do nubank"');
       return;
