@@ -23,8 +23,8 @@ function temAcessoGrow(u) {
 }
 
 async function requireGrow(req, res, next) {
-  const phone = req.params.phone || req.body.phone || req.query.phone;
-  if (!phone) return res.status(400).json({ erro: 'phone obrigatorio' });
+  // Usuario resolvido pelo JWT (getUser usa req.authUser.id) — NAO exigir phone,
+  // senao chamadas autenticadas sem phone (ex.: PUT /dados/dados_itens/:id) quebram.
   const user = await getUser(req);
   if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
   if (!temAcessoGrow(user)) return res.status(403).json({ erro: 'sem_acesso_grow' });
