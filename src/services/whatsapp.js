@@ -29,6 +29,10 @@ function to(phone) {
   return n;
 }
 
+// Guarda o último erro de envio pra diagnóstico via /webhook/meta/diag.
+let lastSendError = null;
+const getLastSendError = () => lastSendError;
+
 // Helper base de POST /messages com log de erro detalhado da Meta.
 async function postMessage(body) {
   try {
@@ -36,6 +40,14 @@ async function postMessage(body) {
     return data;
   } catch (e) {
     const err = e.response?.data?.error;
+    lastSendError = {
+      status: e.response?.status || null,
+      code: err?.code || null,
+      message: err?.message || e.message,
+      details: err?.error_data?.details || null,
+      type: body?.type || null,
+      em: new Date().toISOString(),
+    };
     console.error(`❌ [whatsapp] erro ${e.response?.status || ''}:`, err?.message || e.message, err?.error_data?.details || '');
     throw e;
   }
@@ -186,4 +198,4 @@ async function baixarMidia(mediaId) {
   }
 }
 
-module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink, enviarBotaoLink, baixarMidia, enviarTemplate };
+module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink, enviarBotaoLink, baixarMidia, enviarTemplate, getLastSendError };

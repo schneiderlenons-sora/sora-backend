@@ -36,6 +36,7 @@ router.get('/diag', async (req, res) => {
     version,
     lastInbound,
     lastStatus,
+    lastSendError: wa.getLastSendError ? wa.getLastSendError() : null,
   };
 
   // Assinatura do WABA ↔ app (é o que faz a Meta ENTREGAR o inbound).
