@@ -23,6 +23,18 @@ let lastStatus = null;
 //  - &to=55...   → tenta ENVIAR direto e devolve o erro cru da Meta
 router.get('/diag', async (req, res) => {
   if (req.query.key !== process.env.WHATSAPP_VERIFY_TOKEN) return res.sendStatus(403);
+
+  // Testa conectividade Render → Supabase (isola hang de query no processamento).
+  if (req.query.dbtest) {
+    const supabase = require('../db/supabase');
+    const t0 = Date.now();
+    try {
+      const { error } = await supabase.from('users').select('id', { head: true, count: 'exact' });
+      return res.json({ dbtest: error ? 'error' : 'ok', ms: Date.now() - t0, error: error?.message || null });
+    } catch (e) {
+      return res.json({ dbtest: 'throw', ms: Date.now() - t0, error: e.message });
+    }
+  }
   const version = process.env.WHATSAPP_API_VERSION || 'v21.0';
   const TOKEN   = process.env.WHATSAPP_TOKEN;
   const wabaId  = process.env.WHATSAPP_WABA_ID;
