@@ -150,7 +150,9 @@ async function enviarBoasVindas({ user_id, phone, nome, force = false }) {
       // (→ /dashboard); a app redireciona pra /onboarding quem ainda não fez.
       const { enviarTemplate } = require('./whatsapp');
       const primeiroNome = (nome || 'tudo bem').split(' ')[0];
-      await enviarTemplate(phone, 'boas_vindas', [primeiroNome]);
+      // O template 'boas_vindas' tem cabeçalho de IMAGEM (a capa) → precisa mandar
+      // a imagem no header, senão a Meta rejeita por parâmetro faltando.
+      await enviarTemplate(phone, 'boas_vindas', [primeiroNome], 'pt_BR', { headerImage: CAPA });
     } else {
       // Z-API: capa como banner no topo + a mensagem rica (com os links) na
       // legenda. enviarImagem cai pra texto se a imagem falhar.

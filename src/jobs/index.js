@@ -3,10 +3,23 @@ const supabase  = require('../db/supabase');
 const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { avisosLigados } = require('../services/avisos');
+const { enviarProativo } = require('../services/proativo');
 const yahooFinance    = require('yahoo-finance2').default;
 
 // Gera ID curto de 6 caracteres
 const gerarId = () => Math.random().toString(36).substring(2,8).toUpperCase();
+
+// Atalho de LEMBRETE proativo: no Z-API vai o `texto` rico de sempre; na Meta
+// (fora da janela de 24h) vai o template aprovado `lembrete_geral` com `core` no
+// {{1}}. A escolha é do enviarProativo (via WHATSAPP_PROVIDER) — enquanto o flag
+// for 'zapi', o comportamento é EXATAMENTE o de hoje (zero impacto em produção).
+const lembrete = (phone, texto, core) => enviarProativo(phone, {
+  texto,
+  template: { name: 'lembrete_geral', params: [core || texto] },
+});
+
+// Formata valor em BRL pros params de template (ex.: "R$ 1.240,00").
+const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 // Busca o telefone do dono de um grupo
 async function phoneDono(grupoId) {
@@ -49,14 +62,14 @@ async function donoDoItem(userId, grupoId) {
 async function avisarFatura({ titulo, venc, total, emAberto, contasAtivas, dono, nomeCartao }) {
   const vencLinha = venc ? `\n📅 Vence dia ${venc}` : '';
   if (!contasAtivas.length) {
-    await enviarTexto(dono.phone,
+    await lembrete(dono.phone,
       `${titulo}\n💵 Total: R$ ${total.toFixed(2)}${vencLinha}\n\n` +
       `Você ainda não tem conta bancária cadastrada pra eu debitar — quando cadastrar, eu pago pra você.`);
     return;
   }
   const opcoesTexto = contasAtivas
     .map((x, i) => `${i + 1}️⃣ ${x.nome} (R$ ${(x.saldo || 0).toFixed(2)})`).join('\n');
-  await enviarTexto(dono.phone,
+  await lembrete(dono.phone,
     `${titulo}\n💵 Total: R$ ${total.toFixed(2)}${vencLinha}\n\n` +
     `❓ *Quer que eu pague? De qual conta?*\n${opcoesTexto}\n\n` +
     `Responde com o número ou o nome — ou ignore se for pagar por fora.`);
@@ -187,9 +200,8 @@ cron.schedule('0 * * * *', async () => {
 
     const phone = await phoneDoUser(rec.criado_por, rec.grupo_id);
     if (phone && await avisosLigados(rec.criado_por)) {
-      await enviarTexto(phone,
-        `🔁 *Lançamento automático:*\n${rec.tipo === 'Gasto' ? '🔴' : '🟢'} ${rec.descricao} — R$ ${rec.valor.toFixed(2)}\nID: \`${idCurto}\``
-      );
+      const txt = `🔁 *Lançamento automático:*\n${rec.tipo === 'Gasto' ? '🔴' : '🟢'} ${rec.descricao} — R$ ${rec.valor.toFixed(2)}\nID: \`${idCurto}\``;
+      await lembrete(phone, txt, `🔁 Lançamento automático: ${rec.descricao} — R$ ${rec.valor.toFixed(2)}`);
     }
   }
 
@@ -204,12 +216,15 @@ cron.schedule('0 * * * *', async () => {
   for (const lem of lembretes || []) {
     const phone = await phoneDoUser(lem.criado_por, lem.grupo_id);
     if (phone && await avisosLigados(lem.criado_por)) {
-      await enviarTexto(phone,
+      const txt =
         `🔔 *LEMBRETE:*\n` +
         `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} *${lem.descricao}*\n` +
         `Valor: R$ ${(lem.valor||0).toFixed(2)}\n` +
-        `Vencimento: ${new Date(lem.data_vencimento).toLocaleDateString('pt-BR')}`
-      );
+        `Vencimento: ${new Date(lem.data_vencimento).toLocaleDateString('pt-BR')}`;
+      const core =
+        `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} *${lem.descricao}* — R$ ${(lem.valor||0).toFixed(2)}\n` +
+        `Vencimento: ${new Date(lem.data_vencimento).toLocaleDateString('pt-BR')}`;
+      await lembrete(phone, txt, core);
     }
     await supabase.from('lembretes').update({ enviado: true }).eq('id', lem.id);
   }
@@ -225,12 +240,16 @@ cron.schedule('0 * * * *', async () => {
     if (p.parcelas_pagas >= p.total_parcelas) continue;
     const phone = await phoneDoUser(p.criado_por, p.grupo_id);
     if (phone && await avisosLigados(p.criado_por)) {
-      await enviarTexto(phone,
+      const txt =
         `🔔 *PARCELA VENCE HOJE:*\n` +
         `📦 ${p.descricao} — ${p.parcelas_pagas + 1}/${p.total_parcelas}\n` +
         `💵 R$ ${p.valor_parcela.toFixed(2)} no cartão *${p.carteira}*\n\n` +
-        `Para pagar: "pagar parcela da ${p.descricao}"`
-      );
+        `Para pagar: "pagar parcela da ${p.descricao}"`;
+      const core =
+        `📦 *Parcela vence hoje:* ${p.descricao} — ${p.parcelas_pagas + 1}/${p.total_parcelas}\n` +
+        `💵 R$ ${p.valor_parcela.toFixed(2)} no cartão *${p.carteira}*\n` +
+        `Pra pagar, responda: "pagar parcela da ${p.descricao}"`;
+      await lembrete(phone, txt, core);
     }
   }
 
@@ -288,9 +307,11 @@ cron.schedule('*/15 * * * *', async () => {
       const estoqueAviso = med.estoque_atual != null && med.estoque_atual <= (med.estoque_alerta || 5)
         ? `\n⚠️ Estoque baixo: ${med.estoque_atual} restantes`
         : '';
-      await enviarTexto(user.phone,
+      const txt =
         `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''}\n` +
-        `Quando tomar, responda *tomei ${med.nome}* pra eu marcar.${estoqueAviso}`);
+        `Quando tomar, responda *tomei ${med.nome}* pra eu marcar.${estoqueAviso}`;
+      await lembrete(user.phone, txt,
+        `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''} — quando tomar, responda *tomei ${med.nome}*.${estoqueAviso}`);
       lembretesMedHoje.add(key);
       console.log(`💊 Lembrete med enviado: ${med.nome} → ${user.phone}`);
     }
@@ -355,11 +376,13 @@ cron.schedule('*/15 * * * *', async () => {
     const pendentes = doDia.filter(h => !feitos.has(h.id)).length;
     if (pendentes === 0) continue; // tudo feito — não precisa lembrar
 
-    await enviarTexto(u.phone,
+    const txt =
       `🎯 *Lembrete de hábitos*\n\n` +
       `Você ainda tem *${pendentes}* hábito${pendentes === 1 ? '' : 's'} pra marcar hoje. Bora fechar o dia? 💪\n\n` +
       `Responda *fiz todos* que eu marco todos de uma vez — ou abra o painel:\n` +
-      `🌐 https://www.forsora.com/grow/habitos`);
+      `🌐 https://www.forsora.com/grow/habitos`;
+    await lembrete(u.phone, txt,
+      `🎯 Você ainda tem *${pendentes}* hábito${pendentes === 1 ? '' : 's'} pra marcar hoje. Bora fechar o dia? 💪 Responda *fiz todos* que eu marco tudo.`);
     console.log(`🎯 Lembrete de hábitos → ${u.phone} (${pendentes} pendentes)`);
   }
 });
@@ -401,10 +424,12 @@ cron.schedule('0 9 * * *', async () => {
 
     const diasAtraso = Math.round((hoje - proxima) / 86400000);
     const quando = diasAtraso <= 0 ? 'hoje' : `há ${diasAtraso} dia${diasAtraso === 1 ? '' : 's'}`;
-    await enviarTexto(phone,
+    const txt =
       `🔧 *Manutenção: ${m.icone || ''} ${m.nome}*\n\n` +
       `${m.ultima_data ? `Tá na hora — venceu ${quando}.` : 'Você ainda não registrou essa manutenção.'}\n\n` +
-      `Quando fizer, responda *fiz a manutenção ${m.nome}* que eu marco e reprogramo a próxima.`);
+      `Quando fizer, responda *fiz a manutenção ${m.nome}* que eu marco e reprogramo a próxima.`;
+    await lembrete(phone, txt,
+      `🔧 *Manutenção: ${m.icone || ''} ${m.nome}* — ${m.ultima_data ? `venceu ${quando}` : 'ainda não registrada'}. Quando fizer, responda *fiz a manutenção ${m.nome}*.`);
     await supabase.from('manutencoes').update({ lembrete_ultimo: hojeStr }).eq('id', m.id);
     console.log(`🔧 Lembrete manutenção → ${phone}: ${m.nome}`);
   }
@@ -453,10 +478,12 @@ cron.schedule('*/15 * * * *', async () => {
 
     await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
     const quando = c.hora ? `hoje às ${c.hora}` : 'hoje';
-    await enviarTexto(phone,
+    const txt =
       `📅 *Lembrete de compromisso*\n\n` +
       `*${c.titulo}*\n🕐 ${quando}${c.local ? `\n📍 ${c.local}` : ''}\n\n` +
-      `Ver agenda: 🌐 https://www.forsora.com/grow/agenda`);
+      `Ver agenda: 🌐 https://www.forsora.com/grow/agenda`;
+    await lembrete(phone, txt,
+      `📅 *${c.titulo}* — ${quando}${c.local ? ` · 📍 ${c.local}` : ''}`);
     console.log(`📅 Lembrete compromisso → ${phone}: ${c.titulo}`);
   }
 });
@@ -475,7 +502,7 @@ cron.schedule('*/15 * * * *', async () => {
   const sp = agoraSP();
 
   const { data: usuarios } = await supabase.from('users')
-    .select('id, phone, grupo_ativo, agenda_briefing_horario, agenda_briefing_ultimo')
+    .select('id, name, phone, grupo_ativo, agenda_briefing_horario, agenda_briefing_ultimo')
     .eq('agenda_briefing_ativo', true)
     .not('agenda_briefing_horario', 'is', null);
 
@@ -502,9 +529,13 @@ cron.schedule('*/15 * * * *', async () => {
       return `${EMOJI_AGENDA[e.source] || '•'} ${h} ${e.titulo}${val}`;
     });
     const dataFmt = new Date(sp.dataStr + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
-    await enviarTexto(u.phone,
+    const txt =
       `☀️ *Bom dia!*\nSua agenda de hoje (${dataFmt}):\n\n${linhas.join('\n')}\n\n` +
-      `Tenha um ótimo dia! 💜`);
+      `Tenha um ótimo dia! 💜`;
+    await enviarProativo(u.phone, {
+      texto: txt,
+      template: { name: 'briefing_matinal', params: [(u.name || 'tudo bem').split(' ')[0], linhas.join('\n')] },
+    });
     console.log(`☀️ Briefing → ${u.phone} (${eventos.length} itens)`);
   }
 });
@@ -538,7 +569,9 @@ cron.schedule('0 9 * * *', async () => {
     if (c.profissional && c.especialidade) partes.push(`👨‍⚕️ ${c.profissional}`);
     if (c.hora) partes.push(`⏰ ${c.hora.slice(0,5)}`);
     if (c.local) partes.push(`📍 ${c.local}`);
-    await enviarTexto(user.phone, partes.join('\n'));
+    const txt = partes.join('\n');
+    await lembrete(user.phone, txt,
+      `📅 *Consulta amanhã:* ${c.especialidade || c.profissional || 'Consulta'}${c.hora ? ` às ${c.hora.slice(0,5)}` : ''}${c.local ? ` · 📍 ${c.local}` : ''}`);
   }
 
   // Retornos médicos pra próximos 7 dias (avisa só uma vez quando faltar exatamente 7d)
@@ -550,8 +583,9 @@ cron.schedule('0 9 * * *', async () => {
     const { data: user } = await supabase.from('users').select('phone').eq('id', r.user_id).single();
     if (!user?.phone) continue;
     if (!(await avisosLigados(r.user_id))) continue; // kill-switch
-    await enviarTexto(user.phone,
-      `📆 *Retorno em 7 dias*\n\nSeu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana.\nQuer agendar pelo painel?`);
+    const txt = `📆 *Retorno em 7 dias*\n\nSeu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana.\nQuer agendar pelo painel?`;
+    await lembrete(user.phone, txt,
+      `📆 *Retorno em 7 dias:* seu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana. Quer agendar?`);
   }
   console.log('✅ Lembretes de consultas processados.');
 });
@@ -620,7 +654,7 @@ cron.schedule('0 9 * * *', async () => {
     if (!user?.phone || user.lembretes_dividas === false) continue;
     if (!(await avisosLigados(grupo.dono_id))) continue; // kill-switch
 
-    await enviarTexto(user.phone, mensagem);
+    await lembrete(user.phone, mensagem);
     await supabase.from('dividas').update({ ultimo_lembrete_em: hojeStr }).eq('id', d.id);
   }
   console.log('✅ Lembretes de dívidas processados.');
@@ -825,11 +859,15 @@ cron.schedule('0 13 * * *', async () => {
         }
         if (!elegivel) continue;
 
-        await enviarTexto(u.phone,
-          `🎁 *Seu Sora Wrapped de ${mesNome} tá pronto!*\n\n` +
-          `Seus números viraram um resumo lindo — seu maior vilão de gastos, quanto você ` +
-          `economizou, sua sequência... do jeitinho que dá vontade de postar no story. 🐳\n\n` +
-          `👉 Ver meu Wrapped: ${APP_URL_RESUMO}/wrapped`);
+        // No Z-API manda o aviso rico; na Meta NÃO duplicamos — o fechamento
+        // mensal (resumo_mensal) já convida pro Wrapped (evita mais 1 template).
+        if ((process.env.WHATSAPP_PROVIDER || 'zapi').toLowerCase() !== 'meta') {
+          await enviarTexto(u.phone,
+            `🎁 *Seu Sora Wrapped de ${mesNome} tá pronto!*\n\n` +
+            `Seus números viraram um resumo lindo — seu maior vilão de gastos, quanto você ` +
+            `economizou, sua sequência... do jeitinho que dá vontade de postar no story. 🐳\n\n` +
+            `👉 Ver meu Wrapped: ${APP_URL_RESUMO}/wrapped`);
+        }
         await supabase.from('users').update({ wrapped_avisado: periodo }).eq('id', u.id);
         avisados++;
       } catch { /* tolerante por usuário */ }
@@ -869,7 +907,7 @@ cron.schedule('*/15 * * * *', async () => {
     if (sp.minutos < 9 * 60) return;  // a partir das 09:00
 
     const { data: usuarios, error } = await supabase.from('users')
-      .select('id, phone, grupo_ativo, resumo_semanal_em')
+      .select('id, name, phone, grupo_ativo, resumo_semanal_em')
       .eq('resumo_semanal', true)
       .not('phone', 'is', null).not('grupo_ativo', 'is', null);
     if (error) { console.log('📅 Resumo semanal: rode a migration 044.', error.message); return; }
@@ -888,8 +926,15 @@ cron.schedule('*/15 * * * *', async () => {
         if (atual.count === 0) continue;                                  // semana sem movimento
         const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
         const insight = await gerarInsight({ periodo: 'semana', atual, anterior });
-        await enviarTexto(u.phone,
-          `${montarCorpoSemanal({ atual, anterior, insight })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/dashboard`);
+        const txt = `${montarCorpoSemanal({ atual, anterior, insight })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/dashboard`;
+        await enviarProativo(u.phone, {
+          texto: txt,
+          template: {
+            name: 'resumo_semanal',
+            params: [brl(atual.gastos), brl(atual.receitas)],   // corpo: {{1}} gasto · {{2}} recebido
+            opts: { headerText: (u.name || 'tudo bem').split(' ')[0] }, // cabeçalho: {{1}} nome
+          },
+        });
         enviados++;
       } catch { /* tolerante por usuário */ }
     }
@@ -906,7 +951,7 @@ cron.schedule('*/15 * * * *', async () => {
 
     const mesCorrente = sp.dataStr.slice(0, 7); // 'YYYY-MM' — chave de dedup
     const { data: usuarios, error } = await supabase.from('users')
-      .select('id, phone, grupo_ativo, meta_mensal, resumo_mensal_em')
+      .select('id, name, phone, grupo_ativo, meta_mensal, resumo_mensal_em')
       .eq('resumo_mensal', true)
       .not('phone', 'is', null).not('grupo_ativo', 'is', null);
     if (error) { console.log('🧾 Resumo mensal: rode a migration 044.', error.message); return; }
@@ -927,8 +972,14 @@ cron.schedule('*/15 * * * *', async () => {
         if (atual.count === 0) continue;
         const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
         const insight = await gerarInsight({ periodo: 'mes', atual, anterior });
-        await enviarTexto(u.phone,
-          `${montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/dashboard`);
+        const txt = `${montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/dashboard`;
+        await enviarProativo(u.phone, {
+          texto: txt,
+          template: {
+            name: 'resumo_mensal',
+            params: [(u.name || 'tudo bem').split(' ')[0], mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
+          },
+        });
         enviados++;
       } catch { /* tolerante por usuário */ }
     }

@@ -145,6 +145,16 @@ async function enviarLink(phone, { message, image, linkUrl, title, linkDescripti
 async function enviarTemplate(phone, name, bodyParams = [], lang = 'pt_BR', opts = {}) {
   try {
     const components = [];
+    // Cabeçalho: imagem (ex.: capa) OU texto com variável — a Meta só permite um
+    // header por template. Media header EXIGE o parâmetro no envio, senão a Meta
+    // rejeita ("header handle/param faltando").
+    if (opts.headerImage) {
+      const img = /^https?:\/\//.test(opts.headerImage) ? { link: opts.headerImage } : { id: opts.headerImage };
+      components.push({ type: 'header', parameters: [{ type: 'image', image: img }] });
+    } else if (opts.headerText != null) {
+      const hp = Array.isArray(opts.headerText) ? opts.headerText : [opts.headerText];
+      components.push({ type: 'header', parameters: hp.map((t) => ({ type: 'text', text: String(t) })) });
+    }
     if (bodyParams.length) {
       components.push({ type: 'body', parameters: bodyParams.map((t) => ({ type: 'text', text: String(t) })) });
     }
