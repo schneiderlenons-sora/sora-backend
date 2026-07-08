@@ -175,7 +175,7 @@ router.post('/', async (req, res) => {
     // Trava: só processa de verdade quando a Meta é o provedor ATIVO. Enquanto
     // WHATSAPP_PROVIDER=zapi, o /webhook/meta fica DORMENTE — não responde via
     // Z-API a quem chegou pela Meta. (lastInbound acima ainda alimenta o /diag.)
-    if ((process.env.WHATSAPP_PROVIDER || 'zapi') !== 'meta') {
+    if ((process.env.WHATSAPP_PROVIDER || 'zapi').toLowerCase() !== 'meta') {
       console.log('💤 [webhook-meta] dormente (provedor ativo = zapi)');
       return;
     }
