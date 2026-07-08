@@ -252,9 +252,13 @@ router.post('/', async (req, res) => {
 // Captura do último erro de processamento (diagnóstico via /webhook/meta/diag).
 let lastProcessError = null;
 const getLastProcessError = () => lastProcessError;
+let lastTrace = [];
+const getLastTrace = () => lastTrace;
 
 async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInfo }) {
   if (!mensagem || !phone) return;
+  const TR = (x) => lastTrace.push(`${x} @${new Date().toISOString().slice(11,19)}`);
+  lastTrace = [`in "${String(mensagem).slice(0, 25)}"`];
 
   try {
     // ── 1. Busca usuário (tenta com e sem o 9º dígito brasileiro) ──
@@ -417,6 +421,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
 
     // ── 3. Interpreta a mensagem ──────────────────────────────────
     if (!data) data = interpretarRapido(mensagem); // tenta regex primeiro (grátis)
+    TR(`rapido:${data?.acao || 'NULL'}`);
 
     // Quick-capture do Grow (local-first, sem IA): TAREFA e NOTA por linguagem
     // natural ("lembra de comprar as passagens", "anota que ...", "o que anotei
@@ -461,6 +466,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     }
 
     if (!data) {
+      TR('ia:call');
       console.log(`🤖 Chamando IA para: "${mensagem}"`);
       // Passa wallet_padrao_nome no contexto pra IA usar como default
       let walletPadraoNome = null;
@@ -515,6 +521,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
 
     // ── 4. Roteia para o handler correto ──────────────────────────
     const ctx = { phone, grupoId, user, mensagem };
+    TR(`dispatch:${data?.acao}`);
 
     switch (data.acao) {
 
@@ -558,6 +565,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       case 'resumo':
       case 'analisar':
         await require('../handlers/transacoes')(data, ctx);
+        TR('handler:transacoes:done');
         break;
 
       // Contas bancárias + cartões de crédito
@@ -638,6 +646,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     }
 
   } catch (err) {
+    TR(`CATCH:${err.message}`);
     lastProcessError = {
       message: err.message,
       stack: String(err.stack || '').split('\n').slice(0, 5).join(' | '),
@@ -651,3 +660,4 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
 module.exports = router;
 module.exports.processarMensagem = processarMensagem;
 module.exports.getLastProcessError = getLastProcessError;
+module.exports.getLastTrace = getLastTrace;
