@@ -249,6 +249,10 @@ router.post('/', async (req, res) => {
 // /webhook/meta (Cloud API). Recebe a mensagem já normalizada pelo provedor
 // (texto / áudio transcrito / URL de imagem) e roda toda a lógica da Sora.
 // Envia via mensageiro — o flag WHATSAPP_PROVIDER decide Z-API ou Meta.
+// Captura do último erro de processamento (diagnóstico via /webhook/meta/diag).
+let lastProcessError = null;
+const getLastProcessError = () => lastProcessError;
+
 async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInfo }) {
   if (!mensagem || !phone) return;
 
@@ -553,7 +557,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       case 'buscar':
       case 'resumo':
       case 'analisar':
-        require('../handlers/transacoes')(data, ctx);
+        await require('../handlers/transacoes')(data, ctx);
         break;
 
       // Contas bancárias + cartões de crédito
@@ -634,6 +638,11 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     }
 
   } catch (err) {
+    lastProcessError = {
+      message: err.message,
+      stack: String(err.stack || '').split('\n').slice(0, 5).join(' | '),
+      em: new Date().toISOString(),
+    };
     console.error('❌ Erro no webhook:', err.message);
     await enviarTexto(phone, '⚠️ Ocorreu um erro interno. Tente novamente.');
   }
@@ -641,3 +650,4 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
 
 module.exports = router;
 module.exports.processarMensagem = processarMensagem;
+module.exports.getLastProcessError = getLastProcessError;

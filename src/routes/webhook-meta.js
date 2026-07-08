@@ -37,6 +37,7 @@ router.get('/diag', async (req, res) => {
     lastInbound,
     lastStatus,
     lastSendError: wa.getLastSendError ? wa.getLastSendError() : null,
+    lastProcessError: (() => { try { const w = require('./webhook'); return w.getLastProcessError ? w.getLastProcessError() : null; } catch { return null; } })(),
   };
 
   // Assinatura do WABA ↔ app (é o que faz a Meta ENTREGAR o inbound).
