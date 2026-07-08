@@ -130,12 +130,56 @@ router.post('/transferir', auth, exigirPermissao('admin', 'escrita'), async (req
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// DELETE /api/wallets/:id — só do próprio grupo (anti-IDOR)
+// DELETE /api/wallets/:id — só do próprio grupo (anti-IDOR).
+// Se a conta AINDA tem transações e nenhuma ação foi dita, devolve 409 com a
+// contagem pro painel perguntar (mover pra outra conta OU excluir junto). Assim
+// nunca deixamos transações órfãs (apontando pra uma conta que não existe mais).
+//   ?transacoes=mover&destino=<walletId>  → move as transações e leva o saldo
+//   ?transacoes=excluir                   → apaga as transações junto
 router.delete('/:id', auth, async (req, res) => {
   try {
-    await supabase.from('wallets').delete()
-      .eq('id', req.params.id).eq('grupo_id', req.authUser?.grupoAtivo || '__nenhum__');
-    res.json({ ok: true });
+    const grupoId = req.authUser?.grupoAtivo || '__nenhum__';
+    const { data: wallet } = await supabase.from('wallets')
+      .select('id, nome, saldo').eq('id', req.params.id).eq('grupo_id', grupoId).maybeSingle();
+    if (!wallet) return res.json({ ok: true }); // já não existe
+
+    // Quantas transações usam essa conta (match case-insensitive pelo nome).
+    // Count exato (head) — não traz linhas (o select de linhas capa em 1000).
+    const { count } = await supabase.from('transacoes')
+      .select('id', { count: 'exact', head: true }).eq('grupo_id', grupoId).ilike('carteira_nome', wallet.nome);
+    const total = count || 0;
+    const acao = req.query.transacoes; // undefined | 'mover' | 'excluir'
+
+    if (total > 0 && !acao) {
+      return res.status(409).json({
+        erro: `Essa conta tem ${total} lançamento(s).`,
+        motivo: 'conta_com_transacoes', count: total, nome: wallet.nome,
+      });
+    }
+
+    if (total > 0 && acao === 'mover') {
+      const { data: destino } = await supabase.from('wallets')
+        .select('id, nome, saldo').eq('id', req.query.destino).eq('grupo_id', grupoId).maybeSingle();
+      if (!destino || destino.id === wallet.id) {
+        return res.status(400).json({ erro: 'Escolha uma conta destino válida (diferente da excluída).' });
+      }
+      // Efeito no saldo do destino = soma dos lançamentos movidos.
+      const { data: txs } = await supabase.from('transacoes')
+        .select('valor, tipo').eq('grupo_id', grupoId).ilike('carteira_nome', wallet.nome);
+      await supabase.from('transacoes').update({ carteira_nome: destino.nome })
+        .eq('grupo_id', grupoId).ilike('carteira_nome', wallet.nome);
+      const delta = (txs || []).reduce((s, t) => s + (t.valor || 0) * (t.tipo === 'Gasto' ? -1 : 1), 0);
+      await supabase.from('wallets').update({ saldo: (destino.saldo || 0) + delta }).eq('id', destino.id);
+    } else if (total > 0 && acao === 'excluir') {
+      await supabase.from('transacoes').delete()
+        .eq('grupo_id', grupoId).ilike('carteira_nome', wallet.nome);
+    }
+
+    await supabase.from('wallets').delete().eq('id', wallet.id).eq('grupo_id', grupoId);
+    // Se era a conta padrão de alguém, limpa a referência (defensivo).
+    try { await supabase.from('users').update({ wallet_padrao_id: null }).eq('wallet_padrao_id', wallet.id); } catch {}
+
+    res.json({ ok: true, movidas: acao === 'mover' ? total : 0, excluidas: acao === 'excluir' ? total : 0 });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

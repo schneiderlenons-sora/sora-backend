@@ -6,6 +6,8 @@ const { exigirPermissao } = require('../middlewares/permissao');
 const { calcularResumo } = require('../services/resumoTransacoes');
 
 const norm = p => p?.replace(/\D/g, '');
+// Normaliza nome de conta pra comparar (lowercase, sem acento).
+const normNome = s => (s || '').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 
 // Primeiro dia do mês seguinte (YYYY-MM-01) — usado como limite exclusivo.
 // Evita usar `${mes}-31` que é data inválida em meses de 30/28/29 dias
@@ -91,6 +93,12 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     const grupoId = req.grupoId;
     const userId  = req.userId;
 
+    // Guardrail anti-conta-fantasma: casa a conta informada com uma wallet REAL
+    // do grupo; se não existir, cai em 'Dinheiro' (nunca grava nome inexistente).
+    const { data: wsGrupo } = await supabase.from('wallets').select('id, saldo, nome').eq('grupo_id', grupoId);
+    const walletReal = (wsGrupo || []).find(w => normNome(w.nome) === normNome(carteira_nome));
+    const contaFinal = walletReal ? walletReal.nome : 'Dinheiro';
+
     const idCurto = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     const { data: tx, error } = await supabase.from('transacoes').insert({
@@ -101,21 +109,17 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       categoria,
       valor:         parseFloat(valor),
       observacao:    observacao || '',
-      carteira_nome: carteira_nome || 'Dinheiro',
+      carteira_nome: contaFinal,
       pago:          pago !== false,
       data:          data || new Date().toISOString(),
     }).select().single();
 
     if (error) throw error;
 
-    if (tx.pago) {
+    if (tx.pago && walletReal) {
       const mult = tipo === 'Gasto' ? -1 : 1;
-      const { data: wallet } = await supabase.from('wallets')
-        .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', carteira_nome || 'Dinheiro').maybeSingle();
-      if (wallet) {
-        await supabase.from('wallets')
-          .update({ saldo: wallet.saldo + (parseFloat(valor) * mult) }).eq('id', wallet.id);
-      }
+      await supabase.from('wallets')
+        .update({ saldo: (walletReal.saldo || 0) + (parseFloat(valor) * mult) }).eq('id', walletReal.id);
     }
 
     res.json(tx);
@@ -145,6 +149,17 @@ router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res)
       jaExistem = new Set((existentes || []).map(e => e.fitid));
     }
 
+    // Guardrail anti-conta-fantasma: casa cada carteira_nome com uma wallet REAL
+    // do grupo; se não existir, cai em 'Dinheiro'. Evita gravar conta que não
+    // existe (cliente antigo/bug), que sumia com o dinheiro em conta nenhuma.
+    const { data: walletsGrupo } = await supabase.from('wallets').select('nome').eq('grupo_id', req.grupoId);
+    const nomesReais = new Map((walletsGrupo || []).map(w => [normNome(w.nome), w.nome]));
+    const reconciliarConta = (cn) => {
+      const k = normNome(cn);
+      if (!k || k === 'dinheiro') return 'Dinheiro';
+      return nomesReais.get(k) || 'Dinheiro';
+    };
+
     const rows = transacoes
       .filter(t => !t.fitid || !jaExistem.has(t.fitid))
       .map(t => ({
@@ -155,7 +170,7 @@ router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res)
         categoria:     t.categoria || '📦 Outros',
         valor:         Math.abs(parseFloat(t.valor) || 0),
         observacao:    (t.observacao || '').toString().slice(0, 200),
-        carteira_nome: t.carteira_nome || 'Dinheiro',
+        carteira_nome: reconciliarConta(t.carteira_nome),
         pago:          t.pago !== false,
         data:          t.data,
         fitid:         t.fitid || null,
