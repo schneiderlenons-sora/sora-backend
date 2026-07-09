@@ -129,6 +129,12 @@ function interpretarRapido(message) {
   if ((m = msg.match(/remover\s+membro\s+(.+)/i)))
     return { acao: 'remover_membro', nome: m[1].trim() };
 
+  // --- CONFIRMAR PREVISTO (conta variável): "confirmar luz 243" / "confirma agua 89,90" ---
+  // A conta variável vira um "previsto" pendente no dia do vencimento; o usuário
+  // confirma o valor real por aqui (por nome ou pelo ID: "confirmar A1B2C3 243").
+  if ((m = msg.match(/^confirm\w*\s+(.+?)\s+(?:r?\$?\s*)?(\d[\d.,]*)$/i)))
+    return { acao: 'confirmar_previsto', termo: m[1].trim(), valor: parseValor(m[2]) };
+
   // --- RECORRÊNCIA ---
   if ((m = msg.match(/todo\s+m[eê]s\s+(\d[\d.,]*)\s+(.+?)\s+dia\s+(\d{1,2})/i)))
     return { acao: 'set_recorrente', valor: parseValor(m[1]), descricao: m[2].trim(), dia: parseInt(m[3]) };

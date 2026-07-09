@@ -1,6 +1,9 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/mensageiro');
 
+const norm = (s) => (s || '').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+const semPrefixo = (obs) => (obs || '').replace(/^\[previsto\]\s*/i, '').trim();
+
 // Insert tolerante a coluna criado_por ausente (pré-migration 052): tenta com
 // o dono; se a coluna ainda não existe, refaz sem ela (não quebra a criação).
 async function inserirComDono(tabela, base, donoId) {
@@ -10,6 +13,79 @@ async function inserirComDono(tabela, base, donoId) {
 
 module.exports = async function handleRecorrencias(data, ctx) {
   const { phone, grupoId, user } = ctx;
+
+  // ── CONFIRMAR PREVISTO (conta variável) ────────────────────────────────
+  // "confirmar luz 243" → acha o lançamento PREVISTO/pendente da conta variável,
+  // grava o valor real, marca como pago e debita/credita a carteira.
+  if (data.acao === 'confirmar_previsto') {
+    const termo = (data.termo || '').trim();
+    const valor = parseFloat(data.valor);
+
+    const { data: previstos } = await supabase.from('transacoes')
+      .select('id, id_curto, tipo, valor, observacao, carteira_nome')
+      .eq('grupo_id', grupoId).eq('pago', false)
+      .ilike('observacao', '[Previsto]%')
+      .order('data', { ascending: false });
+    const lista = previstos || [];
+
+    if (!lista.length) {
+      await enviarTexto(phone, '🔎 Você não tem contas *previstas* em aberto pra confirmar agora.');
+      return;
+    }
+
+    const listar = () => lista.map((t) => `• ${semPrefixo(t.observacao)} — \`${t.id_curto}\``).join('\n');
+
+    // Match por ID (6 alfanum) ou por descrição.
+    let alvo = null;
+    if (/^[a-z0-9]{6}$/i.test(termo)) {
+      alvo = lista.find((t) => (t.id_curto || '').toLowerCase() === termo.toLowerCase());
+    }
+    if (!alvo) {
+      const tn = norm(termo);
+      const cands = lista.filter((t) => {
+        const d = norm(semPrefixo(t.observacao));
+        return d && (d.includes(tn) || tn.includes(d));
+      });
+      if (cands.length === 1) alvo = cands[0];
+      else if (cands.length > 1) {
+        await enviarTexto(phone,
+          `Achei mais de uma conta prevista com *"${termo}"*. Confirma pelo ID:\n` +
+          cands.map((t) => `• ${semPrefixo(t.observacao)} — \`${t.id_curto}\``).join('\n') +
+          `\n\nEx.: *confirmar ${cands[0].id_curto} ${isNaN(valor) ? '243' : valor.toFixed(2).replace('.', ',')}*`);
+        return;
+      }
+    }
+
+    if (!alvo) {
+      await enviarTexto(phone,
+        `🔎 Não achei a conta prevista *"${termo}"* em aberto.\n\nSuas previstas em aberto:\n${listar()}\n\n` +
+        `Responda: *confirmar <nome> <valor>*`);
+      return;
+    }
+    if (isNaN(valor) || valor <= 0) {
+      await enviarTexto(phone, `❌ Qual o valor? Ex.: *confirmar ${semPrefixo(alvo.observacao)} 243*`);
+      return;
+    }
+
+    const descLimpa = semPrefixo(alvo.observacao);
+    await supabase.from('transacoes')
+      .update({ valor, pago: true, observacao: descLimpa }).eq('id', alvo.id);
+
+    const ehGasto = alvo.tipo === 'Gasto';
+    const mult = ehGasto ? -1 : 1;
+    const { data: wallet } = await supabase.from('wallets')
+      .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', alvo.carteira_nome || 'Dinheiro').maybeSingle();
+    if (wallet) {
+      await supabase.from('wallets').update({ saldo: (wallet.saldo || 0) + (valor * mult) }).eq('id', wallet.id);
+    }
+
+    const linhaConta = wallet
+      ? ` · ${ehGasto ? 'debitado de' : 'creditado em'} *${alvo.carteira_nome}*`
+      : '';
+    await enviarTexto(phone,
+      `✅ *Confirmado!* ${ehGasto ? '🔴' : '🟢'} ${descLimpa} — R$ ${valor.toFixed(2)}${linhaConta}.`);
+    return;
+  }
 
   if (data.acao === 'set_recorrente') {
     const valorNum = parseFloat(data.valor);

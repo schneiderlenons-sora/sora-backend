@@ -194,10 +194,12 @@ cron.schedule('0 * * * *', async () => {
         const est   = rec.valor ? ` (estimei R$ ${Number(rec.valor).toFixed(2)})` : '';
         const emoji = rec.tipo === 'Gasto' ? '💡' : '💰';
         const verbo = rec.tipo === 'Gasto' ? 'vence' : 'cai';
+        const exemplo = rec.valor ? Number(rec.valor).toFixed(2).replace('.', ',') : '243';
         const txt =
           `${emoji} *${rec.descricao}* ${verbo} hoje${est}.\n` +
-          `Deixei como *pendente* — confirme o valor real no painel (Transações).\nID: \`${idCurtoP}\``;
-        const core = `${emoji} ${rec.descricao} ${verbo} hoje${est}. Confirme o valor real no painel.`;
+          `Quando souber o valor real, responda: *confirmar ${rec.descricao} <valor>*\n` +
+          `Ex.: *confirmar ${rec.descricao} ${exemplo}* — ou ajuste no painel. ID: \`${idCurtoP}\``;
+        const core = `${emoji} ${rec.descricao} ${verbo} hoje${est}. Responda "confirmar ${rec.descricao} <valor>" pra registrar.`;
         await lembrete(phoneP, txt, core);
       }
       continue;
