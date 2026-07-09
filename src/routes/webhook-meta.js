@@ -39,6 +39,35 @@ router.get('/diag', async (req, res) => {
   const TOKEN   = process.env.WHATSAPP_TOKEN;
   const wabaId  = process.env.WHATSAPP_WABA_ID;
   const auth    = { headers: { Authorization: `Bearer ${TOKEN}` } };
+
+  // Estrutura de um template (pra montar o envio certo). Ex.: &tplinfo=boas_vindas
+  if (req.query.tplinfo) {
+    try {
+      const r = await axios.get(`https://graph.facebook.com/${version}/${wabaId}/message_templates`, { params: { name: req.query.tplinfo, access_token: TOKEN } });
+      return res.json({ templates: (r.data.data || []).map(t => ({ name: t.name, lang: t.language, status: t.status, components: t.components })) });
+    } catch (e) { return res.json({ error: e.response?.data || e.message }); }
+  }
+
+  // Envia o template boas_vindas (header de imagem + primeiro nome) pra 1 número.
+  // Reonboarding manual. Ex.: &welcome=5561993429488&nome=Robin
+  if (req.query.welcome) {
+    const nome = String(req.query.nome || 'tudo bem').split(' ')[0];
+    const CAPA = process.env.SORA_CAPA_URL || `${process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com'}/sora-capa.png`;
+    let dest = String(req.query.welcome).replace(/\D/g, '');
+    if (/^55\d{10}$/.test(dest)) dest = dest.slice(0, 4) + '9' + dest.slice(4);
+    const body = {
+      messaging_product: 'whatsapp', to: dest, type: 'template',
+      template: { name: 'boas_vindas', language: { code: 'pt_BR' }, components: [
+        { type: 'header', parameters: [{ type: 'image', image: { link: CAPA } }] },
+        { type: 'body', parameters: [{ type: 'text', text: nome }] },
+      ] },
+    };
+    try {
+      const r = await axios.post(`https://graph.facebook.com/${version}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`, body, { headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' } });
+      return res.json({ welcome: dest, nome, sent: true, id: r.data?.messages?.[0]?.id });
+    } catch (e) { return res.json({ welcome: dest, nome, sent: false, error: e.response?.data?.error || e.message }); }
+  }
+
   const env = {
     provider: process.env.WHATSAPP_PROVIDER || 'zapi',
     hasToken: !!TOKEN,
