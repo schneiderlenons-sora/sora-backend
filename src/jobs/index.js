@@ -15,7 +15,7 @@ const gerarId = () => Math.random().toString(36).substring(2,8).toUpperCase();
 // for 'zapi', o comportamento é EXATAMENTE o de hoje (zero impacto em produção).
 const lembrete = (phone, texto, core) => enviarProativo(phone, {
   texto,
-  template: { name: 'lembrete_geral', params: [core || texto] },
+  template: { name: 'lembretes_gerais', params: [core || texto] },
 });
 
 // Formata valor em BRL pros params de template (ex.: "R$ 1.240,00").
