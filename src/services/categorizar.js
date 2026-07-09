@@ -45,7 +45,18 @@ const REGRAS = [
       'pizzaria', 'pizza', 'outback', 'habibs', 'spoleto', 'dominos', 'china in box', 'sushi', 'temaki', 'churrascaria', 'espetinho',
       'cafeteria', 'starbucks', 'kopenhagen', 'cacau show', 'sorveteria', 'acai', 'doceria', 'confeitaria', 'marmita', 'self service',
       'rotisseria', 'boteco', 'comida', 'restaurante e lanchonete',
-      'quiosque', 'food truck', 'foodtruck', 'food park', 'petiscaria', 'pastelaria', 'creperia', 'tapiocaria', 'trailer de'] },
+      'quiosque', 'food truck', 'foodtruck', 'food park', 'petiscaria', 'pastelaria', 'creperia', 'tapiocaria', 'trailer de',
+      // ── Comida do dia a dia: salgados, lanches, refeições, doces e bebidas ──
+      'coxinha', 'coxinhas', 'pastel', 'pasteis', 'esfiha', 'esfirra', 'kibe', 'quibe', 'empada', 'empadao',
+      'enroladinho', 'risole', 'rissole', 'bolinho', 'salgad', 'pao de queijo', 'lanche', 'hamburgu', 'hamburguer',
+      'cheeseburger', 'x-tudo', 'x-salada', 'x-burguer', 'x-bacon', 'cachorro quente', 'cachorro-quente', 'hot dog', 'hotdog',
+      'misto quente', 'sandui', 'sanduba', 'bauru', 'beirute', 'batata frita', 'porcao', 'tapioca', 'crepe', 'acaraje',
+      'galeto', 'frango assado', 'refeicao', 'refeicoes', 'prato feito', 'prato do dia', 'marmit', 'marmitex', 'quentinha',
+      'buffet', 'bufe', 'por quilo', 'rodizio', 'yakisoba', 'lamen', 'macarrao', 'lasanha', 'nhoque', 'feijoada',
+      'strogonoff', 'estrogonofe', 'parmegiana', 'churrasco', 'sobremesa', 'brigadeiro', 'brownie', 'cupcake', 'bolo',
+      'torta', 'donut', 'rosquinha', 'milkshake', 'milk shake', 'shake', 'picole', 'gelato', 'sorvete', 'chocolate',
+      'guloseima', 'pirulito', 'chiclete', 'bombom', 'churros', 'pacoca', 'pipoca', 'refrigerante', 'refri', 'suco',
+      'sucos', 'guarana', 'coca cola', 'coca-cola', 'pepsi', 'energetico', 'red bull', 'smoothie', 'agua de coco'] },
   { cat: 'Padaria',        kws: ['padaria', 'panificadora', 'panific'] },
 
   // ── Transporte ──

@@ -1,3 +1,5 @@
+const { categorizarDescricao } = require('../services/categorizar');
+
 // Detecta categoria pelo texto da mensagem
 function detectarCategoria(msg) {
   // Tira acentos pra casar "farmácia"/"ração"/"água" com os keywords ASCII.
@@ -12,13 +14,18 @@ function detectarCategoria(msg) {
   if (m.includes('aluguel')) return 'Aluguel';
   if (m.match(/(padaria|pao|cafe da manha)/i)) return 'Padaria';
   if (m.match(/(internet|wifi|vivo|claro|tim|oi |banda larga)/i)) return 'Internet';
-  if (m.match(/(pet|petshop|cachorro|cao|gato|racao|veterinari|tosa|banho e tosa)/i)) return 'Pet';
+  // "cachorro quente" (hot dog) NÃO é Pet — deixa cair no motor de comida abaixo.
+  if (m.match(/(\bpet\b|petshop|pet\s+shop|racao|veterinari|tosa|banho e tosa|cachorro(?![\s-]*quente)|\bcao\b|\bgato\b)/i)) return 'Pet';
   if (m.match(/(lazer|cerveja|breja|balada|cinema|show)/i)) return 'Lazer e Entretenimento';
   if (m.match(/(escola|faculdade|curso|livro|material)/i)) return 'Educação';
   if (m.match(/(luz|agua|gas|condominio|iptu)/i)) return 'Casa';
   if (m.match(/(roupa|tenis|calcado|camiseta|calca|vestido)/i)) return 'Vestuário';
   if (m.match(/(viagem|passagem|hotel|airbnb|hospedagem)/i)) return 'Viagem';
   if (m.includes('pix')) return 'Transferências';
+  // Fallback: motor de descrição compartilhado (mesma engine do OFX/Pluggy) —
+  // cobre centenas de itens do dia a dia (coxinha, pastel, suco, refri, etc.).
+  const sug = categorizarDescricao(msg);
+  if (sug) return sug;
   return 'Outros';
 }
 
@@ -370,8 +377,20 @@ function interpretarRapido(message) {
     return { acao: 'apagar', idCurto };
   }
 
-  if (/\bgastos?\b/i.test(msg)) {
-    const termo = msg.replace(/gastos?/i, '').trim();
+  // "quais foram meus gastos com alimentação?" / "meus gastos de transporte" /
+  // "quanto gastei com mercado" / "gastos alimentação" → busca por categoria/termo.
+  // (Registros "gastei 50 no mercado" já retornaram lá em cima — aqui é consulta.)
+  if (/\bgast(?:o|os|ei|ar|ando|amos|aria)\b/i.test(msg)) {
+    // Prefere o assunto após uma preposição ("com/de/em/no/na/sobre"); senão,
+    // tira só a palavra "gasto(s)/gastei" e usa o resto.
+    const mm = msg.match(/\bgast\w+\b[^?!.]*?\b(?:com|de|d[oa]s?|em|n[oa]s?|sobre)\s+(.+)$/i);
+    let termo = mm ? mm[1] : msg.replace(/\bgast\w+\b/gi, ' ');
+    // Limpa pontuação e palavras de pergunta/ruído — sobra o assunto (a categoria).
+    termo = termo
+      .replace(/[?!.,;:]+/g, ' ')
+      .replace(/\b(quais|qual|quanto|quantos|quantas|foram|foi|sao|s[aã]o|meus|minhas|meu|minha|os|as|um|uma|eu|tive|tenho|total|totais|somando|soma|gastando|no|na|nos|nas|do|da|dos|das|de|com|em|sobre|esse|este|deste|nesse|neste|todos|todas)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
     return { acao: 'buscar', termo: termo || 'TUDO' };
   }
 
