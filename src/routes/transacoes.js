@@ -201,10 +201,38 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (data !== undefined)          patch.data = data;
     if (pago !== undefined)          patch.pago = pago;
 
+    // Estado ANTES (pra reconciliar o saldo da carteira pela diferença).
+    const { data: antes } = await supabase.from('transacoes')
+      .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+
     // Só edita transação do próprio grupo (anti-IDOR)
     const { data: tx, error } = await supabase.from('transacoes')
       .update(patch).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
     if (error) throw error;
+
+    // Reconcilia o saldo da carteira: efeito = pago ? (Gasto −valor / Receita +valor) : 0.
+    // Aplica a DIFERENÇA (depois − antes) — cobre marcar pendente→pago (ex.: confirmar
+    // um "previsto" variável), mudar o valor de um pago, ou trocar de conta. Pula
+    // transferências e fatura de cartão (têm débito próprio) pra não contar em dobro.
+    try {
+      const especial = (t) => !t || t.transferencia === true || t.categoria === 'Fatura cartão' || t.categoria === 'Transferências';
+      if (!especial(antes) && !especial(tx)) {
+        const efeito = (t) => (t.pago ? (t.tipo === 'Gasto' ? -1 : 1) * (Number(t.valor) || 0) : 0);
+        const ajustar = async (nome, delta) => {
+          if (!delta || !nome) return;
+          const { data: w } = await supabase.from('wallets')
+            .select('id, saldo').eq('grupo_id', req.grupoId).ilike('nome', nome).maybeSingle();
+          if (w) await supabase.from('wallets').update({ saldo: (w.saldo || 0) + delta }).eq('id', w.id);
+        };
+        if (normNome(antes.carteira_nome) === normNome(tx.carteira_nome)) {
+          await ajustar(tx.carteira_nome, efeito(tx) - efeito(antes));
+        } else {
+          await ajustar(antes.carteira_nome, -efeito(antes)); // tira o efeito da conta antiga
+          await ajustar(tx.carteira_nome, efeito(tx));         // aplica na conta nova
+        }
+      }
+    } catch (e) { console.warn('[transacoes PUT] reconcilia saldo falhou:', e.message); }
+
     res.json(tx);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

@@ -164,6 +164,45 @@ cron.schedule('0 * * * *', async () => {
     .eq('ativa', true);
 
   for (const rec of recorrencias || []) {
+    // ── VARIÁVEL: conta recorrente cujo valor muda (luz, água, cartão, freela). ──
+    // No vencimento cria um lançamento PREVISTO/PENDENTE com o valor estimado e
+    // NÃO debita a carteira — o usuário confirma o valor real no painel. Dedup
+    // por mês (não recria o previsto se já existe um neste mês).
+    if (rec.valor_variavel) {
+      const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString();
+      const obsPrev = `[Previsto] ${rec.descricao}`;
+      const { data: jaPrevisto } = await supabase.from('transacoes')
+        .select('id').eq('grupo_id', rec.grupo_id).eq('observacao', obsPrev)
+        .gte('data', inicioMes).limit(1);
+      if (jaPrevisto && jaPrevisto.length) continue;
+
+      const idCurtoP = gerarId();
+      await supabase.from('transacoes').insert({
+        id_curto:      idCurtoP,
+        grupo_id:      rec.grupo_id,
+        tipo:          rec.tipo,
+        categoria:     rec.categoria || 'Outros',
+        valor:         rec.valor || 0,   // estimativa — o usuário confirma o valor real
+        observacao:    obsPrev,
+        carteira_nome: rec.carteira || 'Dinheiro',
+        pago:          false,            // pendente → não mexe no saldo até confirmar
+        data:          new Date().toISOString(),
+      });
+
+      const phoneP = await phoneDoUser(rec.criado_por, rec.grupo_id);
+      if (phoneP && await avisosLigados(rec.criado_por)) {
+        const est   = rec.valor ? ` (estimei R$ ${Number(rec.valor).toFixed(2)})` : '';
+        const emoji = rec.tipo === 'Gasto' ? '💡' : '💰';
+        const verbo = rec.tipo === 'Gasto' ? 'vence' : 'cai';
+        const txt =
+          `${emoji} *${rec.descricao}* ${verbo} hoje${est}.\n` +
+          `Deixei como *pendente* — confirme o valor real no painel (Transações).\nID: \`${idCurtoP}\``;
+        const core = `${emoji} ${rec.descricao} ${verbo} hoje${est}. Confirme o valor real no painel.`;
+        await lembrete(phoneP, txt, core);
+      }
+      continue;
+    }
+
     // Verifica se já foi lançado hoje
     const { data: jaLancado } = await supabase
       .from('transacoes')
