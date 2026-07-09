@@ -40,11 +40,16 @@ router.get('/diag', async (req, res) => {
   const wabaId  = process.env.WHATSAPP_WABA_ID;
   const auth    = { headers: { Authorization: `Bearer ${TOKEN}` } };
 
-  // Estrutura de um template (pra montar o envio certo). Ex.: &tplinfo=boas_vindas
+  // Templates da WABA. &tplinfo=all lista todos; &tplinfo=NOME detalha um.
   if (req.query.tplinfo) {
     try {
-      const r = await axios.get(`https://graph.facebook.com/${version}/${wabaId}/message_templates`, { params: { name: req.query.tplinfo, access_token: TOKEN } });
-      return res.json({ templates: (r.data.data || []).map(t => ({ name: t.name, lang: t.language, status: t.status, components: t.components })) });
+      const params = { access_token: TOKEN, limit: 200 };
+      if (req.query.tplinfo !== 'all') params.name = req.query.tplinfo;
+      const r = await axios.get(`https://graph.facebook.com/${version}/${wabaId}/message_templates`, { params });
+      const full = req.query.tplinfo !== 'all';
+      return res.json({ count: (r.data.data || []).length, templates: (r.data.data || []).map(t => full
+        ? { name: t.name, lang: t.language, status: t.status, category: t.category, components: t.components }
+        : { name: t.name, lang: t.language, status: t.status, category: t.category }) });
     } catch (e) { return res.json({ error: e.response?.data || e.message }); }
   }
 
