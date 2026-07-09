@@ -413,7 +413,7 @@ function interpretarRapido(message) {
         'passado','passada','atual','geral']);
       const termo = mm[1].replace(/[?!.,;:]+/g, ' ').trim()
         .split(/\s+/).filter((w) => w && !STOP.has(w.toLowerCase())).join(' ').trim();
-      if (termo) return { acao: 'buscar', termo };
+      if (termo) return { acao: 'buscar', termo, periodo: detectarPeriodo(msg) || undefined };
     }
     return { acao: 'resumo', periodo: detectarPeriodo(msg) || 'mes' };
   }

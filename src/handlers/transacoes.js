@@ -6,6 +6,29 @@ const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
 const { criarPendente } = require('../services/pendentes');
 const { categorizarDescricao } = require('../services/categorizar');
 
+// Intervalo de datas de um período de consulta (resumo/busca), no fuso de São
+// Paulo (UTC-3, sem horário de verão). fim=null → até agora. Retorna null quando
+// não há período (a query fica sem filtro de data — mostra os recentes).
+function intervaloPeriodo(p) {
+  if (!p) return null;
+  const [Y, M, D] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+  const spIni = (y, mo, d) => new Date(Date.UTC(y, mo - 1, d, 3, 0, 0)); // meia-noite SP em UTC
+  const DIA = 864e5;
+  const hoje0 = spIni(Y, M, D);
+  const dow = new Date(Date.UTC(Y, M - 1, D)).getUTCDay();        // 0=dom … 6=sáb
+  const segunda = new Date(hoje0.getTime() - ((dow === 0 ? 6 : dow - 1) * DIA));
+  switch (p) {
+    case 'hoje':           return { inicio: hoje0, fim: null, label: 'DE HOJE' };
+    case 'ontem':          return { inicio: new Date(hoje0.getTime() - DIA), fim: hoje0, label: 'DE ONTEM' };
+    case 'semana':         return { inicio: segunda, fim: null, label: 'DESTA SEMANA' };
+    case 'semana_passada': return { inicio: new Date(segunda.getTime() - 7 * DIA), fim: segunda, label: 'DA SEMANA PASSADA' };
+    case 'mes_passado':    return { inicio: spIni(M === 1 ? Y - 1 : Y, M === 1 ? 12 : M - 1, 1), fim: spIni(Y, M, 1), label: 'DO MÊS PASSADO' };
+    case 'ano':            return { inicio: spIni(Y, 1, 1), fim: null, label: 'DESTE ANO' };
+    case 'mes':            return { inicio: spIni(Y, M, 1), fim: null, label: 'DO MÊS' };
+    default:               return null;
+  }
+}
+
 // Mapa de emoji por categoria/subcategoria (chave normalizada: sem emoji, sem acento, lowercase)
 const EMOJIS_MAP = {
   // Categorias principais
@@ -690,19 +713,27 @@ module.exports = async function handleTransacoes(data, ctx) {
     return;
   }
 
-  // ── BUSCAR ──────────────────────────────────────────────────────
+  // ── BUSCAR (opcionalmente por período) ──────────────────────────
   if (data.acao === 'buscar') {
+    const intervalo = intervaloPeriodo(data.periodo); // null = sem filtro de data
+    const sufPeriodo = intervalo ? ` ${intervalo.label.toLowerCase()}` : '';
+
     let query = supabase.from('transacoes')
       .select('*').eq('grupo_id', grupoId)
-      .eq('tipo', 'Gasto').order('data', { ascending: false }).limit(30);
+      .eq('tipo', 'Gasto').order('data', { ascending: false })
+      .limit(intervalo ? 200 : 30);
 
     if (data.termo && data.termo !== 'TUDO') {
       query = query.or(`categoria.ilike.%${data.termo}%,observacao.ilike.%${data.termo}%`);
     }
+    if (intervalo) {
+      query = query.gte('data', intervalo.inicio.toISOString());
+      if (intervalo.fim) query = query.lt('data', intervalo.fim.toISOString());
+    }
 
     const { data: rows } = await query;
     if (!rows?.length) {
-      await enviarTexto(phone, `🔍 Nenhum gasto encontrado para *"${data.termo}"*.`);
+      await enviarTexto(phone, `🔍 Nenhum gasto encontrado para *"${data.termo}"*${sufPeriodo}.`);
       return;
     }
 
@@ -721,34 +752,15 @@ module.exports = async function handleTransacoes(data, ctx) {
     }).join('\n');
 
     await enviarTexto(phone,
-      `🔍 *Busca: ${data.termo}*\n\n${lista}\n\n💰 *Total: R$ ${total.toFixed(2)}*`
+      `🔍 *Busca: ${data.termo}${sufPeriodo}*\n\n${lista}\n\n💰 *Total: R$ ${total.toFixed(2)}*`
     );
     return;
   }
 
   // ── RESUMO (por período) ────────────────────────────────────────
   if (data.acao === 'resumo') {
-    // Intervalo conforme o período pedido, no fuso de São Paulo (UTC-3, sem
-    // horário de verão). fim=null → até agora.
-    const periodoResumo = (p) => {
-      const [Y, M, D] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
-      const spIni = (y, mo, d) => new Date(Date.UTC(y, mo - 1, d, 3, 0, 0)); // meia-noite SP em UTC
-      const DIA = 864e5;
-      const hoje0 = spIni(Y, M, D);
-      const dow = new Date(Date.UTC(Y, M - 1, D)).getUTCDay();        // 0=dom … 6=sáb
-      const segunda = new Date(hoje0.getTime() - ((dow === 0 ? 6 : dow - 1) * DIA));
-      switch (p) {
-        case 'hoje':           return { inicio: hoje0, fim: null, label: 'DE HOJE' };
-        case 'ontem':          return { inicio: new Date(hoje0.getTime() - DIA), fim: hoje0, label: 'DE ONTEM' };
-        case 'semana':         return { inicio: segunda, fim: null, label: 'DESTA SEMANA' };
-        case 'semana_passada': return { inicio: new Date(segunda.getTime() - 7 * DIA), fim: segunda, label: 'DA SEMANA PASSADA' };
-        case 'mes_passado':    return { inicio: spIni(M === 1 ? Y - 1 : Y, M === 1 ? 12 : M - 1, 1), fim: spIni(Y, M, 1), label: 'DO MÊS PASSADO' };
-        case 'ano':            return { inicio: spIni(Y, 1, 1), fim: null, label: 'DESTE ANO' };
-        default:               return { inicio: spIni(Y, M, 1), fim: null, label: 'DO MÊS' };
-      }
-    };
     const ehMes = !data.periodo || data.periodo === 'mes';
-    const { inicio, fim, label } = periodoResumo(data.periodo);
+    const { inicio, fim, label } = intervaloPeriodo(data.periodo) || intervaloPeriodo('mes');
 
     let queryResumo = supabase
       .from('transacoes').select('tipo, categoria, valor, criado_por')
