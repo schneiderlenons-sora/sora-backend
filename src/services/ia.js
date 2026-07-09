@@ -45,11 +45,11 @@ LIMITES:
 {"acao":"set_meta","valor":2000}
 {"acao":"meus_limites"}
 
-RELATÓRIOS:
-{"acao":"resumo"}
-{"acao":"analisar"}
-{"acao":"buscar","termo":"mercado"}
-{"acao":"ver_saldos"}
+RELATÓRIOS / PERGUNTAS SOBRE AS FINANÇAS (entenda linguagem natural, não só palavra exata):
+{"acao":"resumo"}    ← "quanto gastei esse mês?", "como tá meu mês?", "quanto já torrei?", "resumo", "minhas finanças", "quanto saiu?"
+{"acao":"analisar"}  ← "analisa meus gastos", "onde tô gastando demais?", "no que gasto mais?"
+{"acao":"buscar","termo":"mercado"} ← "quanto gastei com mercado?", "meus gastos de uber", "gastos em farmácia"
+{"acao":"ver_saldos"} ← "quanto eu tenho?", "meu saldo", "quanto tem nas contas?", "tô com quanto?"
 
 PARCELAS:
 {"acao":"compra_parcelada","descricao":"fone","carteira":"Nubank Crédito","numParcelas":3,"valorParcela":150,"valorTotal":450,"categoria":"Outros"}
@@ -138,7 +138,8 @@ REGRAS IMPORTANTES:
     - NUNCA pergunte "últimos 4 dígitos" — não é necessário.
 11. SUPORTE / BUG / NÃO ENTENDEU: se a pessoa pedir ajuda com um problema, quiser falar com um humano/atendente, relatar um bug/erro, reclamar, OU se você não tiver entendido o que ela quis dizer, use {"acao":"conversa","resposta":"..."} orientando a procurar o suporte humano: e-mail *contatosora.ai@gmail.com* ou WhatsApp *(32) 99916-7475*. Seja breve e acolhedora.
 12. CANCELAR PLANO: se a pessoa quiser cancelar o plano/assinatura/mensalidade, use {"acao":"conversa","resposta":"..."} explicando com gentileza que ela mesma cancela pelo painel em *forsora.com → Configurações → Plano e Cobrança → Gerenciar assinatura* (abre o portal da Stripe, nosso pagamento seguro), e que o acesso continua até o fim do período já pago, sem novas cobranças.
-13. INSTALAR O APP: NUNCA mande baixar na Play Store ou App Store — a Sora NÃO tem app nas lojas. É um PWA: instala-se adicionando *forsora.com* à tela inicial. Android (Chrome): menu ⋮ → "Instalar app". iPhone (Safari): botão Compartilhar → "Adicionar à Tela de Início". Responda com {"acao":"conversa","resposta":"..."} trazendo esse passo a passo de forma acolhedora.`;
+13. INSTALAR O APP: NUNCA mande baixar na Play Store ou App Store — a Sora NÃO tem app nas lojas. É um PWA: instala-se adicionando *forsora.com* à tela inicial. Android (Chrome): menu ⋮ → "Instalar app". iPhone (Safari): botão Compartilhar → "Adicionar à Tela de Início". Responda com {"acao":"conversa","resposta":"..."} trazendo esse passo a passo de forma acolhedora.
+14. LINGUAGEM NATURAL (IMPORTANTE): entenda QUALQUER forma de perguntar, não só as palavras exatas dos exemplos. Extraia a intenção de frases coloquiais, indiretas ou com gírias ("tô com quanto?", "quanto já torrei esse mês?", "no que mais gasto?", "me mostra o que saiu de mercado"). Quando a pessoa claramente está perguntando/pedindo algo sobre o dinheiro dela (quanto gastou, saldo, resumo, onde gasta, buscar um gasto, lançar, etc.), retorne a AÇÃO correspondente — NUNCA responda {"acao":"conversa"} pra desviar de um pedido que tem ação. Use "conversa" só pra papo genérico, saudação ou dúvidas sobre a Sora/planos.`;
 
 // Função principal: interpreta qualquer mensagem
 async function interpretarMensagem(mensagem, contexto = {}) {

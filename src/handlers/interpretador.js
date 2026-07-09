@@ -383,24 +383,28 @@ function interpretarRapido(message) {
     return { acao: 'apagar', idCurto };
   }
 
-  // "quais foram meus gastos com alimentação?" / "meus gastos de transporte" /
-  // "quanto gastei com mercado" / "gastos alimentação" → busca por categoria/termo.
+  // "gastos com alimentação?" / "quanto gastei com mercado" → busca por assunto.
+  // MAS "quanto gastei esse mês?" / "meus gastos" (sem assunto) NÃO é busca — é um
+  // pedido de RESUMO. E qualquer frase que não sobre um assunto real vai pra IA.
   // (Registros "gastei 50 no mercado" já retornaram lá em cima — aqui é consulta.)
   if (/\bgast(?:o|os|ei|ar|ando|amos|aria)\b/i.test(msg)) {
-    // Prefere o assunto após uma preposição ("com/de/em/no/na/sobre"); senão,
-    // tira só a palavra "gasto(s)/gastei" e usa o resto.
+    // Prefere o assunto após uma preposição ("com/de/em/no/na/sobre").
     const mm = msg.match(/\bgast\w+\b[^?!.]*?\b(?:com|de|d[oa]s?|em|n[oa]s?|sobre)\s+(.+)$/i);
     let termo = mm ? mm[1] : msg.replace(/\bgast\w+\b/gi, ' ');
-    // Limpa pontuação e palavras de pergunta/ruído — sobra o assunto (a categoria).
+    // Remove pontuação, palavras de pergunta/ligação E de tempo (período não é
+    // "assunto"): sobra só a categoria/lugar, se houver.
     termo = termo
       .replace(/[?!.,;:]+/g, ' ')
-      .replace(/\b(quais|qual|quanto|quantos|quantas|foram|foi|sao|s[aã]o|meus|minhas|meu|minha|os|as|um|uma|eu|tive|tenho|total|totais|somando|soma|gastando|no|na|nos|nas|do|da|dos|das|de|com|em|sobre|esse|este|deste|nesse|neste|todos|todas)\b/gi, ' ')
+      .replace(/\b(quais|qual|quanto|quantos|quantas|foram|foi|sao|s[aã]o|meus|minhas|meu|minha|os|as|um|uma|eu|tive|tenho|total|totais|somando|soma|gastando|gasto|gastos|no|na|nos|nas|do|da|dos|das|de|com|em|sobre|esse|este|essa|esta|deste|nesse|neste|todos|todas|mes|m[êe]s|semana|hoje|ontem|ano|dia|agora|passad[oa]|atual|geral|muito|pouco|ate|at[ée])\b/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    return { acao: 'buscar', termo: termo || 'TUDO' };
+    // Sobrou um assunto real (categoria/lugar) → busca. Sem assunto = "quanto
+    // gastei (no mês)" → resumo do mês.
+    if (termo) return { acao: 'buscar', termo };
+    return { acao: 'resumo' };
   }
 
-  // Não reconheceu → vai para a IA
+  // Não reconheceu → vai para a IA (linguagem natural / perguntas soltas)
   return null;
 }
 
