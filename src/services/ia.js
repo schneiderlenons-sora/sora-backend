@@ -46,7 +46,9 @@ LIMITES:
 {"acao":"meus_limites"}
 
 RELATÓRIOS / PERGUNTAS SOBRE AS FINANÇAS (entenda linguagem natural, não só palavra exata):
-{"acao":"resumo"}    ← "quanto gastei esse mês?", "como tá meu mês?", "quanto já torrei?", "resumo", "minhas finanças", "quanto saiu?"
+{"acao":"resumo","periodo":"mes"}  ← "quanto gastei esse mês?", "como tá meu mês?", "quanto já torrei?", "resumo", "minhas finanças", "quanto saiu?"
+   O campo "periodo" pode ser: hoje, ontem, semana, semana_passada, mes, mes_passado, ano (default "mes").
+   Ex.: "quanto gastei hoje?"→hoje · "gastos dessa semana"→semana · "quanto gastei semana passada?"→semana_passada · "quanto torrei mês passado?"→mes_passado · "quanto gastei esse ano?"→ano
 {"acao":"analisar"}  ← "analisa meus gastos", "onde tô gastando demais?", "no que gasto mais?"
 {"acao":"buscar","termo":"mercado"} ← "quanto gastei com mercado?", "meus gastos de uber", "gastos em farmácia"
 {"acao":"ver_saldos"} ← "quanto eu tenho?", "meu saldo", "quanto tem nas contas?", "tô com quanto?"

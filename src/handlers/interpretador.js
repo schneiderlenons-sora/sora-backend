@@ -34,6 +34,20 @@ function parseValor(str) {
   return parseFloat(str.replace(/\./g, '').replace(',', '.'));
 }
 
+// Detecta o período de uma pergunta de resumo ("quanto gastei HOJE / ESSA
+// SEMANA / MÊS PASSADO"). Ordem importa: "semana passada" antes de "semana".
+function detectarPeriodo(texto) {
+  const t = ' ' + (texto || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') + ' ';
+  if (/\bhoje\b/.test(t)) return 'hoje';
+  if (/\bontem\b/.test(t)) return 'ontem';
+  if (/\b(semana\s+passada|ultima\s+semana|semana\s+retrasada)\b/.test(t)) return 'semana_passada';
+  if (/\bsemana\b/.test(t)) return 'semana';
+  if (/\b(mes\s+passado|ultimo\s+mes|mes\s+anterior|mes\s+retrasado)\b/.test(t)) return 'mes_passado';
+  if (/\bano\b/.test(t)) return 'ano';
+  if (/\bmes\b/.test(t)) return 'mes';
+  return null;
+}
+
 // Detecta a data de uma transação no texto (interpretação pro PASSADO).
 // "ontem", "anteontem", "3 dias atrás", "dia 5", "15/06", "segunda".
 // Retorna { iso:'YYYY-MM-DD', matched:'...' } ou null (= hoje).
@@ -365,7 +379,7 @@ function interpretarRapido(message) {
   // não quando a palavra aparece no meio de uma frase ("...da aba de estudos do painel").
   if (/\bpainel\b/i.test(msg) && msg.trim().split(/\s+/).length <= 5) return { acao: 'painel' };
   if (/\bsaldo\b/i.test(msg))          return { acao: 'ver_saldos' };
-  if (/\b(resumo|relat[oó]rio)\b/i.test(msg)) return { acao: 'resumo' };
+  if (/\b(resumo|relat[oó]rio)\b/i.test(msg)) return { acao: 'resumo', periodo: detectarPeriodo(msg) || 'mes' };
   if (/\banalisar\b/i.test(msg))       return { acao: 'analisar' };
   if (/\b(ajuda|help|menu)\b/i.test(msg)) return { acao: 'ajuda' };
   if (/\bdividendos\b|\bproventos\b/i.test(msg)) return { acao: 'ver_dividendos' };
@@ -383,29 +397,29 @@ function interpretarRapido(message) {
     return { acao: 'apagar', idCurto };
   }
 
-  // "gastos com alimentação?" / "quanto gastei com mercado" → busca por assunto.
-  // MAS "quanto gastei esse mês?" / "meus gastos" (sem assunto) NÃO é busca — é um
-  // pedido de RESUMO. E qualquer frase que não sobre um assunto real vai pra IA.
-  // (Registros "gastei 50 no mercado" já retornaram lá em cima — aqui é consulta.)
+  // Consultas de gasto: "gastos com alimentação" (assunto) vs "quanto gastei esse
+  // mês / hoje" (total). Só vira BUSCA quando há um assunto EXPLÍCITO depois de
+  // preposição (com/de/em/no/na/sobre); senão é RESUMO do período. Frases de
+  // análise ("no que gasto mais", "onde tô gastando demais") caem no resumo, que
+  // já mostra o ranking por categoria — e o que fugir do padrão vai pra IA.
+  // (Registros "gastei 50 no mercado" já retornaram lá em cima.)
   if (/\bgast(?:o|os|ei|ar|ando|amos|aria)\b/i.test(msg)) {
-    // Prefere o assunto após uma preposição ("com/de/em/no/na/sobre").
     const mm = msg.match(/\bgast\w+\b[^?!.]*?\b(?:com|de|d[oa]s?|em|n[oa]s?|sobre)\s+(.+)$/i);
-    let termo = mm ? mm[1] : msg.replace(/\bgast\w+\b/gi, ' ');
-    // Remove pontuação, palavras de pergunta/ligação E de tempo (período não é
-    // "assunto"): sobra só a categoria/lugar, se houver.
-    termo = termo
-      .replace(/[?!.,;:]+/g, ' ')
-      .replace(/\b(quais|qual|quanto|quantos|quantas|foram|foi|sao|s[aã]o|meus|minhas|meu|minha|os|as|um|uma|eu|tive|tenho|total|totais|somando|soma|gastando|gasto|gastos|no|na|nos|nas|do|da|dos|das|de|com|em|sobre|esse|este|essa|esta|deste|nesse|neste|todos|todas|mes|m[êe]s|semana|hoje|ontem|ano|dia|agora|passad[oa]|atual|geral|muito|pouco|ate|at[ée])\b/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    // Sobrou um assunto real (categoria/lugar) → busca. Sem assunto = "quanto
-    // gastei (no mês)" → resumo do mês.
-    if (termo) return { acao: 'buscar', termo };
-    return { acao: 'resumo' };
+    if (mm) {
+      // Sobra a categoria/lugar: filtro por PALAVRA INTEIRA (não usa \b, que em JS
+      // corta vogal acentuada — "alimentação" viraria "alimentaçã").
+      const STOP = new Set(['o','a','os','as','um','uma','meu','minha','meus','minhas',
+        'esse','essa','este','esta','mes','mês','semana','hoje','ontem','ano','dia',
+        'passado','passada','atual','geral']);
+      const termo = mm[1].replace(/[?!.,;:]+/g, ' ').trim()
+        .split(/\s+/).filter((w) => w && !STOP.has(w.toLowerCase())).join(' ').trim();
+      if (termo) return { acao: 'buscar', termo };
+    }
+    return { acao: 'resumo', periodo: detectarPeriodo(msg) || 'mes' };
   }
 
   // Não reconheceu → vai para a IA (linguagem natural / perguntas soltas)
   return null;
 }
 
-module.exports = { interpretarRapido, detectarCategoria };
+module.exports = { interpretarRapido, detectarCategoria, detectarPeriodo };

@@ -726,15 +726,36 @@ module.exports = async function handleTransacoes(data, ctx) {
     return;
   }
 
-  // ── RESUMO ──────────────────────────────────────────────────────
+  // ── RESUMO (por período) ────────────────────────────────────────
   if (data.acao === 'resumo') {
-    const inicioMes = new Date();
-    inicioMes.setDate(1); inicioMes.setHours(0,0,0,0);
+    // Intervalo conforme o período pedido, no fuso de São Paulo (UTC-3, sem
+    // horário de verão). fim=null → até agora.
+    const periodoResumo = (p) => {
+      const [Y, M, D] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+      const spIni = (y, mo, d) => new Date(Date.UTC(y, mo - 1, d, 3, 0, 0)); // meia-noite SP em UTC
+      const DIA = 864e5;
+      const hoje0 = spIni(Y, M, D);
+      const dow = new Date(Date.UTC(Y, M - 1, D)).getUTCDay();        // 0=dom … 6=sáb
+      const segunda = new Date(hoje0.getTime() - ((dow === 0 ? 6 : dow - 1) * DIA));
+      switch (p) {
+        case 'hoje':           return { inicio: hoje0, fim: null, label: 'DE HOJE' };
+        case 'ontem':          return { inicio: new Date(hoje0.getTime() - DIA), fim: hoje0, label: 'DE ONTEM' };
+        case 'semana':         return { inicio: segunda, fim: null, label: 'DESTA SEMANA' };
+        case 'semana_passada': return { inicio: new Date(segunda.getTime() - 7 * DIA), fim: segunda, label: 'DA SEMANA PASSADA' };
+        case 'mes_passado':    return { inicio: spIni(M === 1 ? Y - 1 : Y, M === 1 ? 12 : M - 1, 1), fim: spIni(Y, M, 1), label: 'DO MÊS PASSADO' };
+        case 'ano':            return { inicio: spIni(Y, 1, 1), fim: null, label: 'DESTE ANO' };
+        default:               return { inicio: spIni(Y, M, 1), fim: null, label: 'DO MÊS' };
+      }
+    };
+    const ehMes = !data.periodo || data.periodo === 'mes';
+    const { inicio, fim, label } = periodoResumo(data.periodo);
 
-    const { data: rows } = await supabase
+    let queryResumo = supabase
       .from('transacoes').select('tipo, categoria, valor, criado_por')
       .eq('grupo_id', grupoId)
-      .gte('data', inicioMes.toISOString());
+      .gte('data', inicio.toISOString());
+    if (fim) queryResumo = queryResumo.lt('data', fim.toISOString());
+    const { data: rows } = await queryResumo;
 
     let gastos = 0, receitas = 0;
     const cats = {};
@@ -759,7 +780,8 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     const saldo = receitas - gastos;
     const metaMensal = user.meta_mensal || 0;
-    const statusMeta = metaMensal > 0
+    // Meta é mensal → só mostra no resumo do mês (não em "hoje"/"semana"/etc.).
+    const statusMeta = (ehMes && metaMensal > 0)
       ? `\n🎯 Meta: R$ ${metaMensal.toFixed(2)} (${((gastos/metaMensal)*100).toFixed(0)}% usado)`
       : '';
 
@@ -775,7 +797,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     }
 
     await enviarTexto(phone,
-      `📊 *RESUMO DO MÊS*\n\n${catOrdenadas}${blocoMembros}\n\n` +
+      `📊 *RESUMO ${label}*\n\n${catOrdenadas}${blocoMembros}\n\n` +
       `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
       `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
       `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}\n\n` +
