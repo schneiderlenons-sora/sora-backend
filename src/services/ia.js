@@ -154,6 +154,10 @@ async function interpretarMensagem(mensagem, contexto = {}) {
     const response = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       max_tokens: 500,
+      // JSON mode: obriga a saída a ser um JSON válido (o SYSTEM_PROMPT já pede
+      // JSON, requisito do modo). Elimina "não entendi" causado por texto solto
+      // ou JSON quebrado — a resposta sempre dá pra parsear.
+      response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userContent },
@@ -162,7 +166,7 @@ async function interpretarMensagem(mensagem, contexto = {}) {
 
     const texto = response.choices[0].message.content.trim();
 
-    // Remove possíveis ```json ``` que o modelo possa adicionar
+    // Belt-and-suspenders: remove ```json ``` caso apareça (não aparece no JSON mode).
     const limpo = texto.replace(/```json|```/g, '').trim();
 
     return JSON.parse(limpo);
