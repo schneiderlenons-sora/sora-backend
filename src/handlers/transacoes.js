@@ -48,6 +48,7 @@ const EMOJIS_MAP = {
   'padaria':'🥖',
   'assinaturas':'📺',
   'vestuario':'👕', 'vestuário':'👕',
+  'academia':'💪',
   'impostos':'📉',
   'viagem':'✈️',
   'doacoes':'🏷️', 'doações':'🏷️',
