@@ -11,7 +11,7 @@
 // (allow_promotion_codes), então SORA15 funciona direto no checkout.
 // =====================================================================
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('./mensageiro');
+const { enviarProativo } = require('./proativo');
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 
@@ -91,7 +91,11 @@ async function processarRecuperacoes() {
 
   for (const u of users || []) {
     try {
-      await enviarTexto(u.phone, RECUPERACAO_TEXT(u.name, linkRecuperacao(intents[u.id], 'SORA15')));
+      const primeiro = (u.name || '').split(' ')[0] || 'oi';
+      await enviarProativo(u.phone, {
+        texto: RECUPERACAO_TEXT(u.name, linkRecuperacao(intents[u.id], 'SORA15')),  // Z-API / dentro da janela
+        template: { name: 'recuperacao_pagamento', params: [primeiro] },            // Cloud API fora da janela
+      });
       await supabase.from('users').update({
         recuperacao_enviada_em:  new Date().toISOString(),
         recuperacao_pendente_em: null,

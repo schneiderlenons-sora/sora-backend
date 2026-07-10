@@ -9,6 +9,7 @@
 // =====================================================================
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('./mensageiro');
+const { enviarProativo } = require('./proativo');
 
 const APP = 'https://www.forsora.com';
 
@@ -97,7 +98,11 @@ async function processarRecuperacaoSignup(limite = 50) {
     // Marca ANTES de enviar — à prova de restart e não corre risco de spamar.
     await supabase.from('users').update({ recuperacao_signup_em: new Date().toISOString() }).eq('id', u.id);
     try {
-      await enviarTexto(u.phone, RECUPERACAO_SIGNUP_TEXT(u.name, linkRecuperacao(intents[u.id], 'SORA15')));
+      const primeiro = (u.name || '').split(' ')[0] || 'oi';
+      await enviarProativo(u.phone, {
+        texto: RECUPERACAO_SIGNUP_TEXT(u.name, linkRecuperacao(intents[u.id], 'SORA15')),  // Z-API / dentro da janela
+        template: { name: 'recuperacao_pagamento', params: [primeiro] },                   // Cloud API fora da janela
+      });
       enviados++;
     } catch (e) {
       console.warn('[recuperacao signup] envio falhou', u.id, e.message);
@@ -134,6 +139,9 @@ async function processarRecuperacaoSignup2(limite = 50) {
     if (!u.phone) continue;
     await supabase.from('users').update({ recuperacao_signup2_em: new Date().toISOString() }).eq('id', u.id);
     try {
+      // TODO: o 2º lembrete (SORA25) ainda é texto livre → na Cloud API só entrega
+      // DENTRO da janela de 24h. Pra alcançar lead frio, criar um template
+      // `recuperacao_pagamento_2` (SORA25) na Meta e trocar por enviarProativo.
       await enviarTexto(u.phone, RECUPERACAO_SIGNUP2_TEXT(u.name, linkRecuperacao(intents[u.id], 'SORA25')));
       enviados++;
     } catch (e) {
