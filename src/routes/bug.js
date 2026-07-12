@@ -73,15 +73,15 @@ router.post('/', auth, async (req, res) => {
 
     try {
       if (provedor() === 'meta') {
-        // corpo do template ({{1}}) — mantém curto (limite seguro da Meta)
+        // corpo do template ({{1}}) — LINHA ÚNICA: a Meta rejeita parâmetro com
+        // quebra de linha/tab. Junta com " • " e remove \n do texto do usuário.
         const detalhes = [
           ehMelhoria ? '💡 Sugestão de melhoria' : '🐞 Relato de bug',
           `👤 ${nome || '—'}${phone ? ` · ${phone}` : ''}`,
           email ? `✉️ ${email}` : null,
           `💳 ${plano || '—'}${id ? ` · 🆔 ${id.slice(0, 8)}` : ''}`,
-          '',
-          mensagem,
-        ].filter(Boolean).join('\n').slice(0, 900);
+          `📝 ${mensagem}`,
+        ].filter(Boolean).join('  •  ').replace(/\s*[\r\n\t]+\s*/g, ' ').slice(0, 900);
 
         // header de imagem: o print (upload → media id) OU a capa da Sora.
         let headerImage = process.env.SORA_CAPA_URL
