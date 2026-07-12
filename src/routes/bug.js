@@ -3,6 +3,8 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { enviarTexto, enviarImagem } = require('../services/mensageiro');
+const { provedor } = require('../services/proativo');
+const whatsapp = require('../services/whatsapp');
 
 // WhatsApp que recebe os relatos (configurável; fallback = suporte da Sora).
 const SUPORTE_PHONE = (process.env.SUPORTE_PHONE || '5532999167475').replace(/\D/g, '');
@@ -52,7 +54,12 @@ router.post('/', auth, async (req, res) => {
       console.warn('[/api/bug] insert falhou (segue pro WhatsApp):', e.message);
     }
 
-    // 2) Encaminha pro WhatsApp de suporte.
+    // 2) Notifica o suporte no WhatsApp.
+    // O relato é PROATIVO (o bot inicia a conversa com o número de suporte). Na
+    // Cloud API (meta), FORA da janela de 24h só TEMPLATE aprovado é entregue —
+    // por isso texto/imagem livres não chegavam (a Meta bloqueia e o erro some).
+    // Meta → template `novo_relato` (header de IMAGEM = print; sem print, a capa;
+    //        corpo {{1}} = detalhes). Z-API não tem janela → manda rico direto.
     const cabecalho = [
       ehMelhoria ? '💡 *Nova sugestão de melhoria*' : '🐞 *Novo relato de bug*',
       '',
@@ -64,10 +71,35 @@ router.post('/', auth, async (req, res) => {
       `📝 ${mensagem}`,
     ].filter(Boolean).join('\n');
 
-    if (temImagem) {
-      await enviarImagem(SUPORTE_PHONE, imagem, cabecalho);
-    } else {
-      await enviarTexto(SUPORTE_PHONE, cabecalho);
+    try {
+      if (provedor() === 'meta') {
+        // corpo do template ({{1}}) — mantém curto (limite seguro da Meta)
+        const detalhes = [
+          ehMelhoria ? '💡 Sugestão de melhoria' : '🐞 Relato de bug',
+          `👤 ${nome || '—'}${phone ? ` · ${phone}` : ''}`,
+          email ? `✉️ ${email}` : null,
+          `💳 ${plano || '—'}${id ? ` · 🆔 ${id.slice(0, 8)}` : ''}`,
+          '',
+          mensagem,
+        ].filter(Boolean).join('\n').slice(0, 900);
+
+        // header de imagem: o print (upload → media id) OU a capa da Sora.
+        let headerImage = process.env.SORA_CAPA_URL
+          || `${process.env.APP_URL || 'https://forsora.com'}/sora-capa.png`;
+        if (temImagem) {
+          try {
+            const mid = await whatsapp.uploadImagemDataUri(imagem);
+            if (mid) headerImage = mid;
+          } catch (e) { console.warn('[/api/bug] upload do print falhou:', e.message); }
+        }
+        await whatsapp.enviarTemplate(SUPORTE_PHONE, 'novo_relato', [detalhes], 'pt_BR', { headerImage });
+      } else if (temImagem) {
+        await enviarImagem(SUPORTE_PHONE, imagem, cabecalho);
+      } else {
+        await enviarTexto(SUPORTE_PHONE, cabecalho);
+      }
+    } catch (e) {
+      console.warn('[/api/bug] notificação WhatsApp falhou:', e.message);
     }
 
     res.json({ ok: true, id });

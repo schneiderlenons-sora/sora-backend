@@ -198,4 +198,4 @@ async function baixarMidia(mediaId) {
   }
 }
 
-module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink, enviarBotaoLink, baixarMidia, enviarTemplate, getLastSendError };
+module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink, enviarBotaoLink, baixarMidia, enviarTemplate, uploadImagemDataUri, getLastSendError };
