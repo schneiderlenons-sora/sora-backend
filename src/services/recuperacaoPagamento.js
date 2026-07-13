@@ -14,6 +14,8 @@ const supabase = require('../db/supabase');
 const { enviarProativo } = require('./proativo');
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
+// Template 'recuperacao_pagamento' tem cabeçalho de IMAGEM → a Meta exige a capa.
+const CAPA = process.env.SORA_CAPA_URL || `${APP_URL}/sora-capa.png`;
 
 // Espera ~30 min antes de mandar — dá tempo do lead tentar de novo na hora
 // (com outro cartão) sem receber a mensagem à toa.
@@ -94,7 +96,7 @@ async function processarRecuperacoes() {
       const primeiro = (u.name || '').split(' ')[0] || 'oi';
       await enviarProativo(u.phone, {
         texto: RECUPERACAO_TEXT(u.name, linkRecuperacao(intents[u.id], 'SORA15')),  // Z-API / dentro da janela
-        template: { name: 'recuperacao_pagamento', params: [primeiro] },            // Cloud API fora da janela
+        template: { name: 'recuperacao_pagamento', params: [primeiro], opts: { headerImage: CAPA } }, // Cloud API fora da janela
       });
       await supabase.from('users').update({
         recuperacao_enviada_em:  new Date().toISOString(),

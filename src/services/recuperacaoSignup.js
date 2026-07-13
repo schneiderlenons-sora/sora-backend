@@ -11,6 +11,9 @@ const supabase = require('../db/supabase');
 const { enviarTexto } = require('./mensageiro');
 const { enviarProativo } = require('./proativo');
 
+// Template 'recuperacao_pagamento' tem cabeçalho de IMAGEM → a Meta exige a capa.
+const CAPA = process.env.SORA_CAPA_URL || `${process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com'}/sora-capa.png`;
+
 const APP = 'https://www.forsora.com';
 
 // Link da recuperação: volta pro checkout do vitalício certo se houver intenção
@@ -101,7 +104,7 @@ async function processarRecuperacaoSignup(limite = 50) {
       const primeiro = (u.name || '').split(' ')[0] || 'oi';
       await enviarProativo(u.phone, {
         texto: RECUPERACAO_SIGNUP_TEXT(u.name, linkRecuperacao(intents[u.id], 'SORA15')),  // Z-API / dentro da janela
-        template: { name: 'recuperacao_pagamento', params: [primeiro] },                   // Cloud API fora da janela
+        template: { name: 'recuperacao_pagamento', params: [primeiro], opts: { headerImage: CAPA } }, // Cloud API fora da janela
       });
       enviados++;
     } catch (e) {

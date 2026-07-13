@@ -20,7 +20,10 @@ const oneLine = (s) => String(s || '').replace(/\s*[\r\n\t]+\s*/g, ' ').trim();
 // de hoje é preservado.
 const lembrete = (phone, texto, core) => enviarProativo(phone, {
   texto,
-  template: { name: 'lembretes_gerais', params: [oneLine(core || texto)] },
+  // O template 'lembretes_gerais' tem cabeçalho de IMAGEM → a Meta EXIGE a capa
+  // no header em todo envio (senão rejeita e o lembrete não chega). `CAPA` é
+  // resolvido em tempo de chamada (o cron dispara após o módulo carregar).
+  template: { name: 'lembretes_gerais', params: [oneLine(core || texto)], opts: { headerImage: CAPA } },
 });
 
 // Formata valor em BRL pros params de template (ex.: "R$ 1.240,00").
@@ -583,7 +586,8 @@ cron.schedule('*/15 * * * *', async () => {
     const resumo = oneLine(linhas.join('  ·  ')).slice(0, 900);
     await enviarProativo(u.phone, {
       texto: txt,
-      template: { name: 'briefing_matinal', params: [(u.name || 'tudo bem').split(' ')[0], resumo] },
+      // 'briefing_matinal' tem cabeçalho de IMAGEM → manda a capa no header.
+      template: { name: 'briefing_matinal', params: [(u.name || 'tudo bem').split(' ')[0], resumo], opts: { headerImage: CAPA } },
     });
     console.log(`☀️ Briefing → ${u.phone} (${eventos.length} itens)`);
   }
@@ -980,8 +984,9 @@ cron.schedule('*/15 * * * *', async () => {
           texto: txt,
           template: {
             name: 'resumo_semanal',
-            params: [brl(atual.gastos), brl(atual.receitas)],   // corpo: {{1}} gasto · {{2}} recebido
-            opts: { headerText: (u.name || 'tudo bem').split(' ')[0] }, // cabeçalho: {{1}} nome
+            // corpo: {{1}} nome · {{2}} gasto · {{3}} recebido | cabeçalho IMAGE = capa
+            params: [(u.name || 'tudo bem').split(' ')[0], brl(atual.gastos), brl(atual.receitas)],
+            opts: { headerImage: CAPA },
           },
         });
         enviados++;
@@ -1027,6 +1032,7 @@ cron.schedule('*/15 * * * *', async () => {
           template: {
             name: 'resumo_mensal',
             params: [(u.name || 'tudo bem').split(' ')[0], mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
+            opts: { headerImage: CAPA }, // cabeçalho IMAGE = capa
           },
         });
         enviados++;
