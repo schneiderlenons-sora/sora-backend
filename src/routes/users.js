@@ -110,8 +110,12 @@ const horarioOk = (h) => typeof h === 'string' && /^\d{2}:\d{2}$/.test(h);
 router.get('/avisos', auth, async (req, res) => {
   try {
     const user_id = req.authUser?.id;
+    // select('*') em vez de listar as colunas: se UMA coluna de aviso ainda não
+    // existe no banco (migration não rodada), o select por lista falhava inteiro
+    // e caía no catch → devolvia TODOS os defaults (togglava tudo pra off, mesmo
+    // salvo). Com '*', a coluna ausente só não vem e usamos o default só dela.
     const { data, error } = await supabase
-      .from('users').select(COLS_AVISOS.join(', ')).eq('id', user_id).maybeSingle();
+      .from('users').select('*').eq('id', user_id).maybeSingle();
     if (error) throw error;
     const out = { ...DEFAULTS_AVISOS };
     for (const c of COLS_AVISOS) if (data?.[c] != null) out[c] = data[c];
