@@ -11,6 +11,19 @@ async function getUser(req) {
   return data;
 }
 
+// Papel do usuário no grupo — 'admin' se for o dono, senão o papel em grupo_membros;
+// null se NÃO participa. Base do controle de acesso (anti-IDOR) das rotas por grupo.
+async function papelNoGrupo(grupoId, userId) {
+  if (!grupoId || !userId) return null;
+  const { data: membro } = await supabase.from('grupo_membros')
+    .select('papel').eq('grupo_id', grupoId).eq('user_id', userId).maybeSingle();
+  if (membro?.papel) return membro.papel;
+  const { data: grupo } = await supabase.from('grupos')
+    .select('dono_id').eq('id', grupoId).maybeSingle();
+  if (grupo?.dono_id === userId) return 'admin';
+  return null;
+}
+
 router.get('/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
@@ -96,8 +109,16 @@ router.post('/aceitar', auth, async (req, res) => {
 
 router.post('/trocar', auth, async (req, res) => {
   try {
-    const { phone, grupo_id } = req.body;
-    await supabase.from('users').update({ grupo_ativo: grupo_id }).eq('id', req.authUser?.id || '__none__');
+    const userId = req.authUser?.id;
+    const { grupo_id } = req.body;
+    if (!userId) return res.status(401).json({ erro: 'Não autenticado.' });
+    if (!grupo_id) return res.status(400).json({ erro: 'Grupo não informado.' });
+    // Anti-IDOR: só troca pra um grupo do qual o usuário é membro/dono. Sem essa
+    // checagem, setar grupo_ativo pra qualquer grupo_id vazava a LEITURA das
+    // finanças dele (transações, dashboard, saldos… filtram por grupo_ativo).
+    const papel = await papelNoGrupo(grupo_id, userId);
+    if (!papel) return res.status(403).json({ erro: 'Você não participa deste grupo.' });
+    await supabase.from('users').update({ grupo_ativo: grupo_id }).eq('id', userId);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -235,6 +256,10 @@ router.delete('/membro/:membro_id', auth, async (req, res) => {
 // GET /:grupo_id/membros — lista membros (precisa ser do grupo)
 router.get('/:grupo_id/membros', auth, async (req, res) => {
   try {
+    // Anti-IDOR: só membros do grupo veem a lista (que expõe nome + telefone).
+    if (!(await papelNoGrupo(req.params.grupo_id, req.authUser?.id))) {
+      return res.status(403).json({ erro: 'Você não participa deste grupo.' });
+    }
     const { data, error } = await supabase.from('grupo_membros')
       .select('id, papel, created_at, user_id, users(id, name, phone, plano)')
       .eq('grupo_id', req.params.grupo_id)
@@ -248,6 +273,10 @@ router.get('/:grupo_id/membros', auth, async (req, res) => {
 router.get('/:grupo_id/stats', auth, async (req, res) => {
   try {
     const grupoId = req.params.grupo_id;
+    // Anti-IDOR: só membros veem as métricas (valor movimentado etc.) do grupo.
+    if (!(await papelNoGrupo(grupoId, req.authUser?.id))) {
+      return res.status(403).json({ erro: 'Você não participa deste grupo.' });
+    }
     const mes = new Date().toISOString().slice(0, 7);
 
     const { count: totalMembros } = await supabase.from('grupo_membros')

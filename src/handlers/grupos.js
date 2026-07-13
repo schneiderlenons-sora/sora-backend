@@ -8,11 +8,20 @@ module.exports = async function handleGrupos(data, ctx) {
   const { phone, grupoId, user } = ctx;
 
   if (data.acao === 'criar_grupo') {
+    // Gestão compartilhada é Premium — mesmo gate do painel (POST /grupos/criar).
+    // O WhatsApp deixava Básico/Inativo criar grupo (bypass do plano).
+    if (user.plano !== 'premium' && user.plano !== 'black') {
+      await enviarTexto(phone, '👥 Criar grupos e dividir as finanças (casal/família) é do plano *Premium*. Dá uma olhada em forsora.com/planos 💚');
+      return;
+    }
     const { data: existe } = await supabase.from('grupos')
-      .select('id').eq('dono_id', user.id).eq('nome', data.nome).single();
+      .select('id').eq('dono_id', user.id).eq('nome', data.nome).maybeSingle();
     if (existe) { await enviarTexto(phone, `❌ Você já tem um grupo chamado *"${data.nome}"*.`); return; }
     const { data: grupo } = await supabase.from('grupos')
       .insert({ nome: data.nome, dono_id: user.id }).select().single();
+    // Cria a linha de membership (admin) — igual ao painel. Sem isso, o grupo não
+    // aparecia em "meus grupos" (que lê grupo_membros).
+    await supabase.from('grupo_membros').insert({ grupo_id: grupo.id, user_id: user.id, papel: 'admin' });
     await supabase.from('users').update({ grupo_ativo: grupo.id }).eq('id', user.id);
     await enviarTexto(phone, `✅ Grupo *"${data.nome}"* criado! Use "convidar grupo" para gerar um código.`);
     return;
