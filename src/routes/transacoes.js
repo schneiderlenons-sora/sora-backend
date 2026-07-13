@@ -128,6 +128,65 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
   }
 });
 
+// POST /api/transacoes/parcelado — compra parcelada NO CARTÃO DE CRÉDITO.
+// Cria N transações (uma por mês), cada uma = valor_parcela. `pagas` = array com
+// os números das parcelas já pagas (1..N). O modelo "1 tx por mês" faz o cartão
+// mostrar a fatura mês a mês e o limite comprometido (soma das parcelas) sozinho.
+router.post('/parcelado', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { categoria, observacao, carteira_nome, valor_parcela, num_parcelas, data, pagas } = req.body;
+    const grupoId = req.grupoId, userId = req.userId;
+
+    const n  = parseInt(num_parcelas, 10);
+    const vp = parseFloat(valor_parcela);
+    if (!Number.isInteger(n) || n < 1 || n > 60) return res.status(400).json({ erro: 'Número de parcelas inválido (1 a 60).' });
+    if (!(vp > 0)) return res.status(400).json({ erro: 'Valor da parcela inválido.' });
+
+    // Parcelado é só em CARTÃO DE CRÉDITO.
+    const { data: wsGrupo } = await supabase.from('wallets').select('id, nome, tipo, saldo').eq('grupo_id', grupoId);
+    const card = (wsGrupo || []).find(w => normNome(w.nome) === normNome(carteira_nome) && w.tipo === 'Crédito');
+    if (!card) return res.status(400).json({ erro: 'Compra parcelada só pode ser lançada em um cartão de crédito.' });
+
+    const pagasSet = new Set((Array.isArray(pagas) ? pagas : []).map(Number));
+    const grupoParcela = 'P' + Math.random().toString(36).substring(2, 10).toUpperCase();
+    // Data da 1ª parcela (meio-dia evita virar o dia por fuso). Parcela i = 1ª + (i-1) meses.
+    const base = data ? new Date(`${String(data).slice(0, 10)}T12:00:00`) : new Date();
+
+    const rows = [];
+    for (let i = 1; i <= n; i++) {
+      const d = new Date(base.getFullYear(), base.getMonth() + (i - 1), base.getDate(), 12, 0, 0);
+      rows.push({
+        id_curto:      Math.random().toString(36).substring(2, 8).toUpperCase(),
+        grupo_id:      grupoId,
+        criado_por:    userId,
+        tipo:          'Gasto',
+        categoria:     categoria || '📦 Outros',
+        valor:         vp,
+        observacao:    (observacao || '').toString().slice(0, 200),
+        carteira_nome: card.nome,
+        pago:          pagasSet.has(i),
+        data:          d.toISOString(),
+        parcela_num:   i,
+        parcela_total: n,
+        parcela_grupo: grupoParcela,
+      });
+    }
+
+    const { data: inseridas, error } = await supabase.from('transacoes').insert(rows).select('id');
+    if (error) throw error;
+
+    // Simetria com o POST single: parcela PAGA desconta o saldo do cartão (as
+    // futuras ficam pago=false e não mexem). O DELETE reverte por parcela paga.
+    const pagasCount = rows.filter(r => r.pago).length;
+    if (pagasCount > 0) {
+      await supabase.from('wallets')
+        .update({ saldo: (card.saldo || 0) - (vp * pagasCount) }).eq('id', card.id);
+    }
+
+    res.json({ ok: true, parcela_grupo: grupoParcela, criadas: inseridas?.length || n });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // POST /api/transacoes/bulk — importação em massa (OFX/CSV)
 router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
@@ -281,18 +340,34 @@ router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res
       .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
     if (!tx) return res.status(404).json({ erro: 'Transação não encontrada' });
 
-    if (tx.pago) {
-      const mult = tx.tipo === 'Gasto' ? 1 : -1;
+    // Excluir a COMPRA PARCELADA inteira? (?parcelas=todas) — apaga todas as
+    // parcelas do mesmo parcela_grupo. Senão, só a parcela/transação clicada.
+    const excluirTodas = req.query.parcelas === 'todas' && tx.parcela_grupo;
+    let alvos = [tx];
+    if (excluirTodas) {
+      const { data: grupo } = await supabase.from('transacoes')
+        .select('*').eq('grupo_id', req.grupoId).eq('parcela_grupo', tx.parcela_grupo);
+      if (grupo?.length) alvos = grupo;
+    }
+
+    // Reverte o saldo de cada alvo PAGO (por carteira).
+    for (const t of alvos) {
+      if (!t.pago) continue;
+      const mult = t.tipo === 'Gasto' ? 1 : -1;
       const { data: wallet } = await supabase.from('wallets')
-        .select('id, saldo').eq('grupo_id', tx.grupo_id).ilike('nome', tx.carteira_nome).maybeSingle();
+        .select('id, saldo').eq('grupo_id', t.grupo_id).ilike('nome', t.carteira_nome).maybeSingle();
       if (wallet) {
         await supabase.from('wallets')
-          .update({ saldo: wallet.saldo + (tx.valor * mult) }).eq('id', wallet.id);
+          .update({ saldo: (wallet.saldo || 0) + (t.valor * mult) }).eq('id', wallet.id);
       }
     }
 
-    await supabase.from('transacoes').delete().eq('id', req.params.id).eq('grupo_id', req.grupoId);
-    res.json({ ok: true });
+    if (excluirTodas) {
+      await supabase.from('transacoes').delete().eq('grupo_id', req.grupoId).eq('parcela_grupo', tx.parcela_grupo);
+    } else {
+      await supabase.from('transacoes').delete().eq('id', req.params.id).eq('grupo_id', req.grupoId);
+    }
+    res.json({ ok: true, excluidas: alvos.length });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
