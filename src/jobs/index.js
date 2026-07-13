@@ -9,13 +9,18 @@ const yahooFinance    = require('yahoo-finance2').default;
 // Gera ID curto de 6 caracteres
 const gerarId = () => Math.random().toString(36).substring(2,8).toUpperCase();
 
+// Colapsa quebras de linha/tab em espaço → parâmetro de template válido pra Meta
+// (a Meta REJEITA parâmetro com \n; ver reference das regras de template).
+const oneLine = (s) => String(s || '').replace(/\s*[\r\n\t]+\s*/g, ' ').trim();
+
 // Atalho de LEMBRETE proativo: no Z-API vai o `texto` rico de sempre; na Meta
-// (fora da janela de 24h) vai o template aprovado `lembrete_geral` com `core` no
-// {{1}}. A escolha é do enviarProativo (via WHATSAPP_PROVIDER) — enquanto o flag
-// for 'zapi', o comportamento é EXATAMENTE o de hoje (zero impacto em produção).
+// (fora da janela de 24h) vai o template aprovado `lembretes_gerais` com `core`
+// no {{1}} — SEMPRE em linha única (senão a Meta rejeita e o lembrete não chega).
+// A escolha é do enviarProativo (via WHATSAPP_PROVIDER); no 'zapi' o texto rico
+// de hoje é preservado.
 const lembrete = (phone, texto, core) => enviarProativo(phone, {
   texto,
-  template: { name: 'lembretes_gerais', params: [core || texto] },
+  template: { name: 'lembretes_gerais', params: [oneLine(core || texto)] },
 });
 
 // Formata valor em BRL pros params de template (ex.: "R$ 1.240,00").
@@ -573,9 +578,12 @@ cron.schedule('*/15 * * * *', async () => {
     const txt =
       `☀️ *Bom dia!*\nSua agenda de hoje (${dataFmt}):\n\n${linhas.join('\n')}\n\n` +
       `Tenha um ótimo dia! 💜`;
+    // Param {{2}} do template em LINHA ÚNICA — a Meta rejeita \n no parâmetro (era
+    // por isso que o briefing não chegava). Junta os eventos com " · ".
+    const resumo = oneLine(linhas.join('  ·  ')).slice(0, 900);
     await enviarProativo(u.phone, {
       texto: txt,
-      template: { name: 'briefing_matinal', params: [(u.name || 'tudo bem').split(' ')[0], linhas.join('\n')] },
+      template: { name: 'briefing_matinal', params: [(u.name || 'tudo bem').split(' ')[0], resumo] },
     });
     console.log(`☀️ Briefing → ${u.phone} (${eventos.length} itens)`);
   }
