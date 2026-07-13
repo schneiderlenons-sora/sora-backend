@@ -7,19 +7,11 @@ function limpaCat(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 }
 
-// Barra de progresso com quadradinhos de emoji (cantos arredondados + cor no
-// WhatsApp). 10 segmentos = 10% cada; a cor do preenchido reflete o consumo:
-// verde (ok) → amarelo (perto do teto ≥80%) → vermelho (estourou ≥100%).
-function barra(pct) {
-  const cheio = Math.max(0, Math.min(10, Math.round(pct / 10)));
-  const cor = pct >= 100 ? '🟥' : pct >= 80 ? '🟨' : '🟩';
-  return cor.repeat(cheio) + '⬜'.repeat(10 - cheio);
-}
-
-// Bloco de um limite: nome + %, a barra, e "R$ gasto de R$ teto".
-function blocoLimite(nome, gasto, limite, extra = '') {
+// Linha "Nome: R$ gasto de R$ limite (pct%)" com bolinha de status por consumo.
+function linhaLimite(nome, gasto, limite, extra = '') {
   const pct = limite > 0 ? Math.round((gasto / limite) * 100) : 0;
-  return `*${nome}* — ${pct}%${extra}\n${barra(pct)}\nR$ ${gasto.toFixed(2)} de R$ ${limite.toFixed(2)}`;
+  const dot = pct >= 100 ? '🔴' : pct >= 80 ? '🟠' : '🟢';
+  return `${dot} *${nome}:* R$ ${gasto.toFixed(2)} de R$ ${limite.toFixed(2)} (${pct}%)${extra}`;
 }
 
 module.exports = async function handleLimites(data, ctx) {
@@ -84,9 +76,9 @@ module.exports = async function handleLimites(data, ctx) {
     const { data: cats } = await supabase.from('categorias')
       .select('id, nome, parent_id').eq('grupo_id', grupoId);
 
-    const blocos = [];
+    const linhas = [];
     if (temGeral) {
-      blocos.push(blocoLimite('Geral (todos os gastos)', gastoTotal, metaGeral, metaAtiva ? '' : ' _(pausado)_'));
+      linhas.push(linhaLimite('Geral (todos os gastos)', gastoTotal, metaGeral, metaAtiva ? '' : ' _(pausado)_'));
     }
     for (const lim of limitesCat) {
       const alvo = limpaCat(lim.categoria);
@@ -96,10 +88,11 @@ module.exports = async function handleLimites(data, ctx) {
       const gastoCat = gastos
         .filter(g => nomes.has(limpaCat(g.categoria)))
         .reduce((s, g) => s + (g.valor || 0), 0);
-      blocos.push(blocoLimite(lim.categoria, gastoCat, lim.limite_mensal));
+      linhas.push(linhaLimite(lim.categoria, gastoCat, lim.limite_mensal));
     }
 
-    await enviarTexto(phone, `📊 *Seus limites do mês:*\n\n${blocos.join('\n\n')}`);
+    await enviarTexto(phone,
+      `📊 *Seus limites do mês:*\n\n${linhas.join('\n')}\n\n_O 1º valor é quanto você já gastou de cada limite._`);
     return;
   }
 };
