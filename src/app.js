@@ -49,6 +49,9 @@ app.use('/api/user',         require('./routes/users'));
 app.use('/api/bug',          require('./routes/bug'));
 app.use('/api/pluggy',       require('./routes/pluggy'));
 app.use('/api/webhooks/pluggy', require('./routes/webhookPluggy'));
+// Open Finance (Polp) — agregador-agnóstico. Guardado por env (503 até configurar).
+app.use('/api/open-finance', require('./routes/openFinance'));
+app.use('/api/webhooks/polp', require('./routes/webhookPolp'));
 
 // --- 404 ---
 app.use((req, res) => {
