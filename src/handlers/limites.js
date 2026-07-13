@@ -7,18 +7,19 @@ function limpaCat(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 }
 
-// Barra de progresso em blocos Unicode (largura uniforme no WhatsApp → alinha).
-// 10 segmentos = 10% cada; nunca passa de 10 (mesmo acima de 100%).
+// Barra de progresso com quadradinhos de emoji (cantos arredondados + cor no
+// WhatsApp). 10 segmentos = 10% cada; a cor do preenchido reflete o consumo:
+// verde (ok) → amarelo (perto do teto ≥80%) → vermelho (estourou ≥100%).
 function barra(pct) {
   const cheio = Math.max(0, Math.min(10, Math.round(pct / 10)));
-  return '█'.repeat(cheio) + '░'.repeat(10 - cheio);
+  const cor = pct >= 100 ? '🟥' : pct >= 80 ? '🟨' : '🟩';
+  return cor.repeat(cheio) + '⬜'.repeat(10 - cheio);
 }
 
-// Bloco de um limite: bolinha de status + nome, barra + %, e "R$ gasto de R$ teto".
+// Bloco de um limite: nome + %, a barra, e "R$ gasto de R$ teto".
 function blocoLimite(nome, gasto, limite, extra = '') {
   const pct = limite > 0 ? Math.round((gasto / limite) * 100) : 0;
-  const dot = pct >= 100 ? '🔴' : pct >= 80 ? '🟠' : '🟢';
-  return `${dot} *${nome}*${extra}\n${barra(pct)} ${pct}%\nR$ ${gasto.toFixed(2)} de R$ ${limite.toFixed(2)}`;
+  return `*${nome}* — ${pct}%${extra}\n${barra(pct)}\nR$ ${gasto.toFixed(2)} de R$ ${limite.toFixed(2)}`;
 }
 
 module.exports = async function handleLimites(data, ctx) {
