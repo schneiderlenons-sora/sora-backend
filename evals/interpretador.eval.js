@@ -26,6 +26,12 @@ const CASOS = [
   { msg: 'gastei 12 com um pastel',           expect: { acao: 'salvar', categoria: 'Alimentação' } },
   { msg: 'gastei 8 num cachorro quente',      expect: { acao: 'salvar', categoria: 'Alimentação' } }, // NÃO pode ser Pet
   { msg: 'gastei 100 na academia',            expect: { acao: 'salvar', categoria: 'Academia' } },
+  // Valor NO FIM (introduzido por "por/de") — forma natural (bug jul/2026: caía no Grow "não entendi")
+  { msg: 'Comprei um hambúrguer no ifood por 8,29 reais', expect: { acao: 'salvar', tipo: 'Gasto', valor: 8.29, categoria: 'Alimentação' } },
+  { msg: 'paguei o uber por 15',              expect: { acao: 'salvar', tipo: 'Gasto', valor: 15, categoria: 'Transporte' } },
+  { msg: 'paguei o almoço de 25',             expect: { acao: 'salvar', tipo: 'Gasto', valor: 25, categoria: 'Alimentação' } },
+  { msg: 'comprei um presente de 50',         expect: { acao: 'salvar', tipo: 'Gasto', valor: 50 } },
+  { msg: 'paguei a conta de luz',             expect: null }, // "de" sem número → NÃO vira gasto (cai pra IA/agenda)
 
   // ── Registrar receita ─────────────────────────────────────────────────────
   { msg: 'recebi 3000 de salário',            expect: { acao: 'salvar', tipo: 'Recebimento', valor: 3000 } },

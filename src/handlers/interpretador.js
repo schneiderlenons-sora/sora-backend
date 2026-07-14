@@ -304,6 +304,27 @@ function interpretarRapido(message) {
     };
   }
 
+  // Gasto com o VALOR NO FIM (introduzido por "por/de"): a forma natural
+  // "comprei um hambúrguer no ifood POR 8,29", "paguei o almoço DE 25".
+  // (o padrão acima só pega valor logo após o verbo: "gastei 50 no mercado").
+  // Só casa se o "por/de" for seguido de número → não pega "paguei a conta de luz".
+  if ((m = msg.match(/(gastei|paguei|comprei)\s+(.+?)\s+(?:por|de)\s+(?:r\$\s*)?(\d[\d.,]*)\s*$/i))) {
+    let descricao = m[2].trim().replace(/[,;]+$/, '');
+    const dInfo = parseDataGasto(msg);
+    if (dInfo) {
+      const re = new RegExp(`\\b${dInfo.matched.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      descricao = descricao.replace(re, '').replace(/\s+/g, ' ').replace(/[,;]+$/, '').trim();
+    }
+    return {
+      acao: 'salvar', tipo: 'Gasto',
+      valor: parseValor(m[3]),
+      dataTx: dInfo ? dInfo.iso : null,
+      categoria: detectarCategoria(descricao),
+      observacao: descricao,
+      carteira_nome: null,   // valor no fim → sem banco citado; handler usa a conta padrão
+    };
+  }
+
   // --- RECEITAS ---
   if ((m = msg.match(/(ganhei|recebi|caiu|depositaram|entrou)\s+(\d[\d.,]*)(?:\s+(?:no|na|pelo|de)\s+(.+))?/i))) {
     const dInfo = parseDataGasto(msg);
