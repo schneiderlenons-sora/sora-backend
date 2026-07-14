@@ -27,10 +27,18 @@ async function detectarRecorrencias(grupoId) {
   if (!grupoId) return [];
 
   const desde = new Date(); desde.setMonth(desde.getMonth() - 6);
-  const { data: txs } = await supabase.from('transacoes')
-    .select('tipo, categoria, valor, observacao, data, transferencia')
+  // Inclui parcela_grupo pra EXCLUIR compras parceladas (repetem mês a mês, mas
+  // têm fim — não são fixo). Tolerante à migration 071 ainda não rodada.
+  let { data: txs, error: eTx } = await supabase.from('transacoes')
+    .select('tipo, categoria, valor, observacao, data, transferencia, parcela_grupo')
     .eq('grupo_id', grupoId)
     .gte('data', desde.toISOString());
+  if (eTx) {
+    ({ data: txs } = await supabase.from('transacoes')
+      .select('tipo, categoria, valor, observacao, data, transferencia')
+      .eq('grupo_id', grupoId)
+      .gte('data', desde.toISOString()));
+  }
 
   // Recorrências já cadastradas — não sugere o que já existe.
   const { data: jaTem } = await supabase.from('recorrencias')
@@ -47,6 +55,7 @@ async function detectarRecorrencias(grupoId) {
   const grupos = new Map();
   for (const t of txs || []) {
     if (t.transferencia || t.categoria === 'Fatura cartão' || t.categoria === 'Transferências') continue;
+    if (t.parcela_grupo) continue; // compra parcelada não é fixo/recorrência
     const desc = (t.observacao || t.categoria || '').trim();
     if (ehParcela(desc)) continue;
     const chave = chaveDe(desc) || chaveDe(t.categoria);
