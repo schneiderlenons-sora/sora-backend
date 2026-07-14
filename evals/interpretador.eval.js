@@ -71,6 +71,19 @@ const CASOS = [
   // ── Cartão / parcelas / fatura ────────────────────────────────────────────
   { msg: 'comprei fone no nubank crédito em 3x de 150', expect: { acao: 'compra_parcelada' } },
   { msg: 'pagar fatura',                      expect: { acao: 'pagar_fatura' } },
+  // Listar compras parceladas (comando novo + variações naturais)
+  { msg: 'parcelas',                          expect: { acao: 'listar_parcelas' } },
+  { msg: 'minhas parcelas',                   expect: { acao: 'listar_parcelas' } },
+  { msg: 'como estão minhas parcelas',        expect: { acao: 'listar_parcelas' } },
+  { msg: 'quantas parcelas tenho pra pagar',  expect: { acao: 'listar_parcelas' } },
+  { msg: 'compras parceladas',                expect: { acao: 'listar_parcelas' } },
+  { msg: 'parcelas em aberto',                expect: { acao: 'listar_parcelas' } },
+  { msg: 'antecipar parcela do fone',         expect: { acao: 'antecipar_parcela', termo: 'fone' } }, // verbo continua ganhando
+  // Gastos por cartão / conta (comando novo)
+  { msg: 'gastos dos meus cartões',           expect: { acao: 'gastos_carteiras' } },
+  { msg: 'quanto gastei nas contas',          expect: { acao: 'gastos_carteiras' } },
+  { msg: 'gastos por cartão e conta',         expect: { acao: 'gastos_carteiras' } },
+  { msg: 'quanto gastei no cartão',           expect: { acao: 'gastos_carteiras' } },
 
   // ── Contas bancárias ──────────────────────────────────────────────────────
   { msg: 'adicionar 200 no inter',           expect: { acao: 'adicionar_saldo', valor: 200 } },

@@ -587,17 +587,19 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       case 'adicionar_saldo':
       case 'alterar_saldo':
       case 'ver_saldos':
+      case 'gastos_carteiras':
       case 'transferir':
       case 'deletar_conta':
-        require('../handlers/wallets')(data, ctx);
+        await require('../handlers/wallets')(data, ctx);
         break;
 
       // Parcelas e fatura
       case 'compra_parcelada':
       case 'antecipar_parcela':
+      case 'listar_parcelas':
       case 'set_fatura_dia':
       case 'pagar_fatura':
-        require('../handlers/parcelas')(data, ctx);
+        await require('../handlers/parcelas')(data, ctx);
         break;
 
       // Limites e metas de gastos

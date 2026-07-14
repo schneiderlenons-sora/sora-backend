@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/mensageiro');
+const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { oferecerDesconto } = require('../services/descontoConta');
 
@@ -161,18 +161,25 @@ module.exports = async function handleParcelas(data, ctx) {
     const bY = base.getUTCFullYear(), bM = base.getUTCMonth(), bD = base.getUTCDate();
     const dataParcela = i => new Date(Date.UTC(bY, bM + i, Math.min(bD, 28), 12));
 
+    // Mesmo schema do painel (migration 071): parcela_num/total/grupo — assim o
+    // "listar parcelas", a badge "1/3" e o "excluir todas" funcionam igual.
+    const grupoParcela = 'P' + Math.random().toString(36).substring(2, 10).toUpperCase();
     const linhas = [];
     for (let i = 0; i < numParcelas; i++) {
       linhas.push({
         id_curto:      gerarId(),
         grupo_id:      grupoId,
+        criado_por:    user?.id || null,
         tipo:          'Gasto',
         categoria:     categoria || 'Outros',
         valor:         valorParcela,
-        observacao:    `${descricao} (${i + 1}/${numParcelas})`,
+        observacao:    descricao,
         carteira_nome: wallet.nome,
         pago:          false,
         data:          dataParcela(i).toISOString(),
+        parcela_num:   i + 1,
+        parcela_total: numParcelas,
+        parcela_grupo: grupoParcela,
       });
     }
     await supabase.from('transacoes').insert(linhas);
@@ -258,4 +265,94 @@ module.exports = async function handleParcelas(data, ctx) {
     }
     return;
   }
+
+  // ── LISTAR COMPRAS PARCELADAS EM ABERTO ─────────────────────────
+  // "parcelas", "minhas parcelas", "como estão minhas parcelas",
+  // "quantas parcelas tenho pra pagar". Agrupa por compra (parcela_grupo)
+  // e mostra só as que ainda têm parcela a vencer.
+  if (data.acao === 'listar_parcelas') {
+    const grupos = new Map(); // chave → { desc, cartao, total, pagas, restantes, valorRestante, valorParcela, proxima }
+
+    // Fonte principal: linhas com parcela_grupo (painel + WhatsApp novo).
+    const { data: comGrupo } = await supabase.from('transacoes')
+      .select('valor, observacao, carteira_nome, pago, data, parcela_num, parcela_total, parcela_grupo')
+      .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
+      .not('parcela_grupo', 'is', null)
+      .order('data', { ascending: true });
+    for (const t of comGrupo || []) {
+      const g = grupos.get(t.parcela_grupo) || {
+        desc: (t.observacao || 'Compra').trim() || 'Compra', cartao: t.carteira_nome,
+        total: t.parcela_total || 0, pagas: 0, restantes: 0, valorRestante: 0,
+        valorParcela: t.valor || 0, proxima: null,
+      };
+      if (t.parcela_total) g.total = t.parcela_total;
+      if (t.pago) g.pagas++;
+      else {
+        g.restantes++;
+        g.valorRestante += (t.valor || 0);
+        if (!g.proxima || t.data < g.proxima.data) g.proxima = { data: t.data };
+      }
+      grupos.set(t.parcela_grupo, g);
+    }
+
+    // Fallback legado: WhatsApp antigo (sem parcela_grupo) — observação "Desc (2/3)".
+    const { data: semGrupo } = await supabase.from('transacoes')
+      .select('valor, observacao, carteira_nome, pago, data')
+      .eq('grupo_id', grupoId).eq('tipo', 'Gasto').eq('pago', false)
+      .is('parcela_grupo', null)
+      .ilike('observacao', '%(%/%)%')
+      .order('data', { ascending: true });
+    for (const t of semGrupo || []) {
+      const mm = (t.observacao || '').match(/^(.*?)\s*\((\d+)\/(\d+)\)\s*$/);
+      if (!mm) continue;
+      const desc = mm[1].trim() || 'Compra';
+      const total = parseInt(mm[3], 10);
+      const chave = `legacy:${desc.toLowerCase()}:${(t.carteira_nome || '').toLowerCase()}:${total}`;
+      const g = grupos.get(chave) || {
+        desc, cartao: t.carteira_nome, total, pagas: 0, restantes: 0,
+        valorRestante: 0, valorParcela: t.valor || 0, proxima: null,
+      };
+      g.restantes++;
+      g.valorRestante += (t.valor || 0);
+      if (!g.proxima || t.data < g.proxima.data) g.proxima = { data: t.data };
+      grupos.set(chave, g);
+    }
+
+    const abertas = [...grupos.values()]
+      .filter(g => g.restantes > 0)
+      .sort((a, b) => (a.proxima?.data || '').localeCompare(b.proxima?.data || ''));
+
+    if (!abertas.length) {
+      await enviarTexto(phone, '🎉 Você não tem *compras parceladas em aberto*. Tudo quitado por aqui!');
+      return;
+    }
+
+    const fmtMes = iso => new Date(iso)
+      .toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', month: 'short', year: '2-digit' })
+      .replace('.', '');
+    // Cabe no corpo do botão (limite 1024): mostra as ~8 mais próximas.
+    const MAX = 8;
+    const mostradas = abertas.slice(0, MAX);
+    const blocos = mostradas.map(g => {
+      const nome = (g.desc || 'Compra').replace(/\s*\(\d+\/\d+\)\s*$/, '');
+      const pagasTxt = g.total ? `${g.pagas}/${g.total} pagas` : `${g.pagas} pagas`;
+      const prox = g.proxima ? ` · próxima ${fmtMes(g.proxima.data)}` : '';
+      return `💳 *${nome}* — ${g.cartao || 'cartão'}\n   ${g.restantes}x de R$ ${g.valorParcela.toFixed(2)} a pagar (${pagasTxt})${prox}`;
+    }).join('\n\n');
+    const maisTxt = abertas.length > MAX ? `\n\n_+${abertas.length - MAX} compra(s) — veja o restante no painel._` : '';
+
+    const totalRestante = abertas.reduce((s, g) => s + g.valorRestante, 0);
+    await enviarBotaoLink(phone, {
+      message:
+        `🧾 *Suas compras parceladas*\n\n${blocos}${maisTxt}\n\n` +
+        `💰 *Total ainda a pagar: R$ ${totalRestante.toFixed(2)}*\n\n` +
+        `_Pra adiantar: *antecipar parcela do <nome>* · quitar tudo: *quitar parcelas do <nome>*._`,
+      label: 'Ver no painel',
+      url: 'https://forsora.com/cartao-de-credito',
+    });
+    return;
+  }
 };
+
+module.exports.cicloFatura = cicloFatura;
+module.exports.somarFatura = somarFatura;

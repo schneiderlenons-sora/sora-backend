@@ -183,6 +183,19 @@ function interpretarRapido(message) {
     return { acao: 'antecipar_parcela', termo: m[2].trim(), todas };
   }
 
+  // LISTAR compras parceladas em aberto: "parcelas", "minhas parcelas",
+  // "como estão minhas parcelas", "quantas parcelas tenho pra pagar",
+  // "compras parceladas", "parcelas em aberto". (Registro "em 3x" e
+  // pagar/antecipar parcela já retornaram acima.)
+  if (/^(?:minhas\s+|as\s+|ver\s+|listar\s+|mostrar\s+)?parcelas?(?:\s+(?:em\s+)?abert[oa]s?|\s+a\s+pagar|\s+pendentes?)?$/i.test(msg)
+      || /\bcompras?\s+parcelad(?:a|as|o|os)\b/i.test(msg)
+      || /\bparcelamentos?\b/i.test(msg)
+      || /\bcomo\s+(?:est[ãa]o|t[ãa]o)\s+(?:as\s+|minhas\s+)?parcelas?\b/i.test(msg)
+      || /\bquantas?\s+parcelas?\b/i.test(msg)
+      || /\bparcelas?\s+(?:eu\s+)?(?:tenho|falta|faltam|restam?|devo)\b/i.test(msg)) {
+    return { acao: 'listar_parcelas' };
+  }
+
   if ((m = msg.match(/definir\s+fatura\s+dia\s+(\d{1,2})/i)))
     return { acao: 'set_fatura_dia', dia: parseInt(m[1]) };
 
@@ -424,6 +437,15 @@ function interpretarRapido(message) {
   // análise ("no que gasto mais", "onde tô gastando demais") caem no resumo, que
   // já mostra o ranking por categoria — e o que fugir do padrão vai pra IA.
   // (Registros "gastei 50 no mercado" já retornaram lá em cima.)
+  // GASTOS POR CARTÃO / CONTA (visão agregada): "gastos dos meus cartões",
+  // "quanto gastei nas contas", "gastos por cartão e conta". Registro de gasto
+  // ("gastei 50 no cartão nubank") já retornou lá em cima (tem valor). Só entra
+  // aqui a PERGUNTA genérica sobre cartões/contas (não "conta de luz").
+  if (/\bgast\w+/i.test(msg)
+      && (/\bcart[ãa]o\b|\bcart[õo]es\b|\bcontas\b|\bconta\s+banc\w*/i.test(msg))) {
+    return { acao: 'gastos_carteiras' };
+  }
+
   if (/\bgast(?:o|os|ei|ar|ando|amos|aria)\b/i.test(msg)) {
     const mm = msg.match(/\bgast\w+\b[^?!.]*?\b(?:com|de|d[oa]s?|em|n[oa]s?|sobre)\s+(.+)$/i);
     if (mm) {

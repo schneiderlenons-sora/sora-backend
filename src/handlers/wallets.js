@@ -1,6 +1,18 @@
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/mensageiro');
+const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
+
+// Soma os gastos de uma carteira (conta/cartão) num intervalo [ini, fimExcl).
+// excluirTransfer = ignora transferências (elas não são gasto de verdade).
+async function somarGastosCarteira(grupoId, nome, ini, fimExcl, excluirTransfer = false) {
+  const { data } = await supabase.from('transacoes')
+    .select('valor, transferencia')
+    .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
+    .ilike('carteira_nome', nome).gte('data', ini).lt('data', fimExcl);
+  return (data || [])
+    .filter(t => !(excluirTransfer && t.transferencia))
+    .reduce((s, t) => s + (t.valor || 0), 0);
+}
 
 // Tipos válidos de conta
 const TIPOS_CONTA = ['Corrente', 'Poupança', 'Vale Alimentação', 'Dinheiro'];
@@ -325,6 +337,60 @@ module.exports = async function handleWallets(data, ctx) {
 
     await supabase.from('wallets').delete().eq('id', wallet.id);
     await enviarTexto(phone, `🗑️ Conta *${wallet.nome}* removida com sucesso.`);
+    return;
+  }
+
+  // ── GASTOS POR CARTÃO / CONTA ───────────────────────────────────
+  // "gastos dos meus cartões", "quanto gastei nas contas", "gastos por cartão".
+  // Cartões pela FATURA ABERTA (ciclo de fechamento); contas pelo gasto do MÊS.
+  if (data.acao === 'gastos_carteiras') {
+    const { data: wallets } = await supabase.from('wallets')
+      .select('nome, tipo, limite, dia_fechamento').eq('grupo_id', grupoId).order('nome');
+
+    if (!wallets?.length) {
+      await enviarTexto(phone,
+        '🏦 Você ainda não tem contas nem cartões cadastrados.\n' +
+        'Crie com: *nubank 1000* ou *cartão nubank limite 5000 fecha 5 vence 15*.');
+      return;
+    }
+
+    const { cicloFatura } = require('./parcelas');
+    const [Y, M] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+    const iniMes = new Date(Date.UTC(Y, M - 1, 1, 12)).toISOString().slice(0, 10);
+    const fimMes = new Date(Date.UTC(Y, M, 1, 12)).toISOString().slice(0, 10);
+
+    const cartoes = [], contas = [];
+    for (const w of wallets) {
+      if (w.tipo === 'Crédito') {
+        const c = w.dia_fechamento ? cicloFatura(w.dia_fechamento, 0) : { ini: iniMes, fimExcl: fimMes };
+        const fatura = await somarGastosCarteira(grupoId, w.nome, c.ini, c.fimExcl);
+        cartoes.push({ nome: w.nome, fatura, limite: w.limite });
+      } else {
+        const gasto = await somarGastosCarteira(grupoId, w.nome, iniMes, fimMes, true);
+        contas.push({ nome: w.nome, gasto, tipo: w.tipo });
+      }
+    }
+
+    const mesNome = new Date(Date.UTC(Y, M - 1, 1)).toLocaleDateString('pt-BR', { month: 'long' });
+    let msg = `💸 *Gastos por cartão e conta* · ${mesNome}`;
+
+    if (cartoes.length) {
+      msg += `\n\n*💳 Cartões (fatura aberta):*\n` + cartoes.map(c => {
+        const uso = c.limite ? ` · ${Math.round((c.fatura / c.limite) * 100)}% do limite` : '';
+        return `💳 *${c.nome}:* R$ ${c.fatura.toFixed(2)}${uso}`;
+      }).join('\n');
+    }
+    if (contas.length) {
+      msg += `\n\n*🏦 Contas (gasto no mês):*\n` + contas.map(c => {
+        const emoji = c.tipo === 'Poupança' ? '🐷' : c.tipo === 'Dinheiro' ? '💵' : '🏦';
+        return `${emoji} *${c.nome}:* R$ ${c.gasto.toFixed(2)}`;
+      }).join('\n');
+    }
+
+    const total = cartoes.reduce((s, c) => s + c.fatura, 0) + contas.reduce((s, c) => s + c.gasto, 0);
+    msg += `\n\n💰 *Total: R$ ${total.toFixed(2)}*`;
+
+    await enviarBotaoLink(phone, { message: msg, label: 'Ver no painel', url: 'https://forsora.com/dashboard' });
     return;
   }
 };

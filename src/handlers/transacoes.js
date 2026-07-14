@@ -767,7 +767,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     const { inicio, fim, label } = intervaloPeriodo(data.periodo) || intervaloPeriodo('mes');
 
     let queryResumo = supabase
-      .from('transacoes').select('tipo, categoria, valor, criado_por')
+      .from('transacoes').select('tipo, categoria, valor, criado_por, carteira_nome')
       .eq('grupo_id', grupoId)
       .gte('data', inicio.toISOString());
     if (fim) queryResumo = queryResumo.lt('data', fim.toISOString());
@@ -776,11 +776,13 @@ module.exports = async function handleTransacoes(data, ctx) {
     let gastos = 0, receitas = 0;
     const cats = {};
     const porMembro = {};
+    const porCarteira = {};
     (rows || []).forEach(r => {
       if (r.tipo === 'Gasto') {
         gastos += r.valor;
         cats[r.categoria] = (cats[r.categoria] || 0) + r.valor;
         if (r.criado_por) porMembro[r.criado_por] = (porMembro[r.criado_por] || 0) + r.valor;
+        if (r.carteira_nome) porCarteira[r.carteira_nome] = (porCarteira[r.carteira_nome] || 0) + r.valor;
       } else {
         receitas += r.valor;
       }
@@ -812,12 +814,30 @@ module.exports = async function handleTransacoes(data, ctx) {
       if (linhas) blocoMembros = `\n\n*Por membro:*\n${linhas}`;
     }
 
+    // Quanto saiu de cada cartão/conta no período (só quando há ≥2 carteiras —
+    // com uma só, é redundante com o total de gastos). Ícone pelo tipo da wallet.
+    let blocoCarteiras = '';
+    if (Object.keys(porCarteira).length >= 2) {
+      const { data: ws } = await supabase.from('wallets')
+        .select('nome, tipo').eq('grupo_id', grupoId);
+      const tipoDe = new Map((ws || []).map(w => [w.nome.toLowerCase(), w.tipo]));
+      const linhas = Object.entries(porCarteira)
+        .sort((a, b) => b[1] - a[1])
+        .map(([nome, val]) => {
+          const tipo = tipoDe.get(nome.toLowerCase());
+          const emoji = tipo === 'Crédito' ? '💳' : tipo === 'Poupança' ? '🐷' : tipo === 'Dinheiro' ? '💵' : '🏦';
+          return `${emoji} *${nome}:* R$ ${val.toFixed(2)}`;
+        })
+        .join('\n');
+      if (linhas) blocoCarteiras = `\n\n*Por conta/cartão:*\n${linhas}`;
+    }
+
     // Painel vai num BOTÃO (cta_url) em vez de link cru — evita o preview de
     // imagem bugado do link em cima da mensagem. "resumo" é in-window (o usuário
     // acabou de mandar), então a mensagem interativa é permitida.
     await enviarBotaoLink(phone, {
       message:
-        `📊 *RESUMO ${label}*\n\n${catOrdenadas}${blocoMembros}\n\n` +
+        `📊 *RESUMO ${label}*\n\n${catOrdenadas}${blocoCarteiras}${blocoMembros}\n\n` +
         `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
         `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
         `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}`,
