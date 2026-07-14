@@ -35,15 +35,21 @@ async function calcularResumo({ grupoId, mes, criadoPorId } = {}) {
 
   let receitas = 0, gastos = 0;
   const porCategoria = {};
-  const porMembro    = {};
+  const porMembro    = {}; // user_id -> { gastos, receitas }
+  const bumpMembro = (id, campo, v) => {
+    if (!id) return;
+    if (!porMembro[id]) porMembro[id] = { gastos: 0, receitas: 0 };
+    porMembro[id][campo] += v;
+  };
   (rows || []).forEach(r => {
     if (ehTransferencia(r)) return;
     if (r.tipo === 'Gasto') {
       gastos += r.valor;
       porCategoria[r.categoria] = (porCategoria[r.categoria] || 0) + r.valor;
-      if (r.criado_por) porMembro[r.criado_por] = (porMembro[r.criado_por] || 0) + r.valor;
+      bumpMembro(r.criado_por, 'gastos', r.valor);
     } else {
       receitas += r.valor;
+      bumpMembro(r.criado_por, 'receitas', r.valor);
     }
   });
 
@@ -63,8 +69,16 @@ async function calcularResumo({ grupoId, mes, criadoPorId } = {}) {
       .map(([categoria, total]) => ({ categoria, total }))
       .sort((a, b) => b.total - a.total),
     por_membro: Object.entries(porMembro)
-      .map(([user_id, total]) => ({ user_id, total, name: nomes[user_id]?.name || 'Desconhecido', phone: nomes[user_id]?.phone }))
-      .sort((a, b) => b.total - a.total),
+      .map(([user_id, v]) => ({
+        user_id,
+        name: nomes[user_id]?.name || 'Desconhecido',
+        phone: nomes[user_id]?.phone,
+        gastos: v.gastos,
+        receitas: v.receitas,
+        saldo: v.receitas - v.gastos,
+        total: v.gastos, // backward-compat: "Gastos por membro" usava `total` = gastos
+      }))
+      .sort((a, b) => b.gastos - a.gastos),
   };
 }
 

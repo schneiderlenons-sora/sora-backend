@@ -34,7 +34,7 @@ router.get('/:phone', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
     const grupoId = user.grupo_ativo;
 
-    const { mes, tipo, categoria, limit = 50, offset = 0, criado_por_me, criado_por_phone, ate } = req.query;
+    const { mes, tipo, categoria, limit = 50, offset = 0, criado_por, criado_por_me, criado_por_phone, ate } = req.query;
 
     // Tenta com JOIN — se a FK não existir no schema, cai para SELECT * sem join
     let query = supabase.from('transacoes')
@@ -48,7 +48,9 @@ router.get('/:phone', auth, async (req, res) => {
     if (tipo)      query = query.eq('tipo', tipo);
     if (categoria) query = query.eq('categoria', categoria);
 
-    if (criado_por_me === 'true') {
+    if (criado_por) {
+      query = query.eq('criado_por', criado_por); // filtro por membro (user_id) — escopo do grupo
+    } else if (criado_por_me === 'true') {
       query = query.eq('criado_por', user.id);
     } else if (criado_por_phone) {
       const { data: outro } = await supabase.from('users')
@@ -71,7 +73,8 @@ router.get('/:phone', auth, async (req, res) => {
         if (ate)       q = q.lte('data', ate);
         if (tipo)      q = q.eq('tipo', tipo);
         if (categoria) q = q.eq('categoria', categoria);
-        if (criado_por_me === 'true') q = q.eq('criado_por', user.id);
+        if (criado_por) q = q.eq('criado_por', criado_por);
+        else if (criado_por_me === 'true') q = q.eq('criado_por', user.id);
         return q;
       };
       let r = await baseQ2('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url)');
@@ -381,7 +384,9 @@ router.get('/:phone/resumo', auth, async (req, res) => {
     // Fonte única (services/resumoTransacoes) — mesma regra do dashboard.
     const resumo = await calcularResumo({
       grupoId: user.grupo_ativo, mes,
-      criadoPorId: req.query.criado_por_me === 'true' ? user.id : undefined,
+      // criado_por (user_id) filtra por membro; criado_por_me = o próprio user.
+      // Escopo é sempre o grupo do user (calcularResumo filtra por grupo_ativo).
+      criadoPorId: req.query.criado_por || (req.query.criado_por_me === 'true' ? user.id : undefined),
     });
     res.json(resumo);
   } catch (err) {
