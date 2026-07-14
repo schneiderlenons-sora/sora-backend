@@ -110,8 +110,7 @@ const SUPORTE_TEXT = `Quer falar com a gente? Tô aqui pra ajudar 💚
 
 Pra dúvidas, problemas ou pra relatar um bug, é só chamar o nosso suporte:
 
-📧 *E-mail:* contatosora.ai@gmail.com
-📱 *WhatsApp:* (32) 99916-7475
+📧 *E-mail:* contato@forsora.com
 
 Manda o que aconteceu com o máximo de detalhes que o time te responde rapidinho! 🙌`;
 
@@ -128,7 +127,7 @@ A sua assinatura é cuidada pela *Stripe* (nosso sistema de pagamento seguro). P
 
 Pronto! ✅ Você continua com acesso até o fim do período que já pagou e não recebe mais nenhuma cobrança.
 
-Se tiver qualquer dificuldade, é só chamar o suporte: 📧 contatosora.ai@gmail.com`;
+Se tiver qualquer dificuldade, é só chamar o suporte: 📧 contato@forsora.com`;
 
 // Normaliza telefone (remove tudo que não é dígito)
 const norm = (p) => p ? p.replace(/\D/g, '') : p;

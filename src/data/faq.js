@@ -8,7 +8,7 @@
 // Ordem importa: do mais específico pro mais genérico.
 // =====================================================================
 
-const SUP = '📧 contatosora.ai@gmail.com\n📱 WhatsApp (32) 99916-7475';
+const SUP = '📧 contato@forsora.com';
 const PAINEL = 'https://forsora.com/dashboard';
 
 const FAQ = [
@@ -190,7 +190,7 @@ Pra usar comigo no WhatsApp de verdade — lançar gastos, ver saldo, metas — 
 3️⃣ Toque em *Gerenciar assinatura* (abre o portal seguro da Stripe)
 4️⃣ *Cancelar plano* e confirmar
 
-Você continua com acesso até o fim do período já pago e não recebe mais cobrança. Qualquer dúvida: 📧 contatosora.ai@gmail.com`,
+Você continua com acesso até o fim do período já pago e não recebe mais cobrança. Qualquer dúvida: 📧 contato@forsora.com`,
   },
   {
     id: 'anual-desconto',
