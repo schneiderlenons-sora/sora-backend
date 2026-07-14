@@ -134,7 +134,7 @@ function montarCorpoMensal({ mesNome, atual, anterior, metaMensal, insight }) {
     atual.topCats.slice(0, 3).forEach(([nome, val]) => partes.push(`• ${nome}: ${brl(val)}`));
   }
   if (metaMensal > 0) {
-    partes.push('', `🎯 Meta do mês: ${brl(metaMensal)} (${Math.round((atual.gastos / metaMensal) * 100)}% usado)`);
+    partes.push('', `🎯 Limite Geral: ${brl(metaMensal)} (${Math.round((atual.gastos / metaMensal) * 100)}% usado)`);
   }
   partes.push('', '_Pra parar: *desativar resumos*_');
   return partes.join('\n');

@@ -308,10 +308,13 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
 
     // ── 2.1. KIT (vitalício SEM WhatsApp): não atende pelo zap — empurra upgrade.
     if (user.plano === 'kit') {
-      await enviarTexto(phone,
-        '🔒 *Usar a Sora pelo WhatsApp é do plano Completo!*\n\n' +
-        'No seu *Kit* você organiza tudo pelo painel 💚 Pra lançar por aqui — texto, áudio e até foto da nota — e desbloquear Open Finance, painel do casal e o Sora Grow, é só fazer o upgrade:\n\n' +
-        `👉 ${APP_URL_WH}/kit`);
+      await enviarBotaoLink(phone, {
+        message:
+          '🔒 *Usar a Sora pelo WhatsApp é do plano Completo!*\n\n' +
+          'No seu *Kit* você organiza tudo pelo painel 💚 Pra lançar por aqui — texto, áudio e até foto da nota — e desbloquear Open Finance, painel do casal e o Sora Grow, é só fazer o upgrade:',
+        label: 'Fazer upgrade',
+        url: `${APP_URL_WH}/kit`,
+      });
       return;
     }
 
@@ -346,7 +349,11 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     const querSalvarDrive = /\b(salv|guard|arquiv|drive)\w*|\bpasta\b/.test(legendaImg || '');
     if (docInfo?.url || (imageUrl && querSalvarDrive)) {
       if (!['premium', 'black'].includes(user.plano)) {
-        await enviarTexto(phone, `📁 *Guardar arquivos no Drive* — mandar documento/foto pra Sora salvar e organizar — é do plano *Premium*.\n\nFaça o upgrade e mande seus documentos direto por aqui 💚\n👉 ${APP_URL_WH}/planos`);
+        await enviarBotaoLink(phone, {
+          message: `📁 *Guardar arquivos no Drive* — mandar documento/foto pra Sora salvar e organizar — é do plano *Premium*.\n\nFaça o upgrade e mande seus documentos direto por aqui 💚`,
+          label: 'Ver os planos',
+          url: `${APP_URL_WH}/planos`,
+        });
         return;
       }
       await enviarTexto(phone, '📎 Guardando no seu Drive...');
@@ -364,7 +371,11 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
           : '😕 Não consegui guardar esse arquivo agora. Tenta de novo em instantes.');
         return;
       }
-      await enviarTexto(phone, `✅ Salvei na pasta 📁 *${rDrive.pasta}*!\n\n_${rDrive.arquivo}_ já está no seu Drive 👉 ${APP_URL_WH}/grow/dados`);
+      await enviarBotaoLink(phone, {
+        message: `✅ Salvei na pasta 📁 *${rDrive.pasta}*!\n\n_${rDrive.arquivo}_ já está no seu Drive.`,
+        label: 'Abrir Drive',
+        url: `${APP_URL_WH}/grow/dados`,
+      });
       return;
     }
 
@@ -534,9 +545,11 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
         break;
 
       case 'painel':
-        await enviarTexto(phone,
-          '🐳 *Seu painel da Sora*\n\nGráficos, saldos, metas e tudo organizado num lugar só.\n\n' +
-          `👉 ${APP_URL_WH}/dashboard`);
+        await enviarBotaoLink(phone, {
+          message: '🐳 *Seu painel da Sora*\n\nGráficos, saldos, metas e tudo organizado num lugar só.',
+          label: 'Ver no painel',
+          url: `${APP_URL_WH}/dashboard`,
+        });
         break;
 
       case 'suporte':

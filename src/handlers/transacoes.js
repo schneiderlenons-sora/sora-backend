@@ -530,12 +530,15 @@ module.exports = async function handleTransacoes(data, ctx) {
         `✅ Anotei R$ ${valor.toFixed(2)} em ${data.categoria || 'Outros'}.\n\n` +
         `⚠️ Você ainda não tem contas cadastradas, então registrei em *Dinheiro*.\n\n` +
         `🏦 *Crie suas contas* pra eu organizar direito.\n` +
-        `Recomendo criar pelo painel onde dá pra escolher o tipo (corrente, poupança, crédito):\n` +
-        `👉 forsora.com/contas-bancarias\n\n` +
-        `Ou me manda o nome + saldo:\n` +
+        `Recomendo criar pelo painel (botão abaixo), onde dá pra escolher o tipo (corrente, poupança, crédito).\n\n` +
+        `Ou me manda aqui o nome + saldo:\n` +
         `Ex: \`nubank 1000\` → Nubank Corrente com R$ 1.000\n` +
         `Ex: \`nubank crédito 5000\` → Nubank Crédito com limite R$ 5.000`;
-      await enviarTexto(phone, msg);
+      await enviarBotaoLink(phone, {
+        message: msg,
+        label: 'Criar no painel',
+        url: `${APP_URL_TX}/contas-bancarias`,
+      });
       // Cria pendente pra próxima mensagem (se for "nubank 1000", o handler cria a conta)
       if (user?.id) {
         await criarPendente({

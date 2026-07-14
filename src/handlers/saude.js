@@ -4,7 +4,7 @@
 // Chamado de dentro do handlers/grow.js, retorna true se tratou.
 // ─────────────────────────────────────────────────────────────────
 const supabase = require('../db/supabase');
-const { enviarTexto } = require('../services/mensageiro');
+const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const nutricao = require('../services/nutricao');
 
 const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
@@ -120,8 +120,11 @@ module.exports = async function handleSaude(mensagem, ctx) {
       } else {
         txt += `\n\n📅 Total de hoje: *${Math.round(diaCal)} kcal*`;
       }
-      txt += `\n\nVer detalhes: 🌐 forsora.com/grow/saude`;
-      await enviarTexto(phone, txt);
+      await enviarBotaoLink(phone, {
+        message: txt,
+        label: 'Ver detalhes',
+        url: 'https://forsora.com/grow/saude',
+      });
       return true;
     }
   }

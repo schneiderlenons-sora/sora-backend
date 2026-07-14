@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto, enviarImagem } = require('../services/mensageiro');
+const { enviarTexto, enviarImagem, enviarBotaoLink } = require('../services/mensageiro');
 const { growShareCfg } = require('../services/growShare');
 const APP_URL_GROW = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_GROW = process.env.SORA_CAPA_URL || `${APP_URL_GROW}/sora-capa.png`;
@@ -401,10 +401,13 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
         || /\b(manuten[çc]|despensa|receita|cozinh|ingrediente)/i.test(msg)
         || /^(acabou|acabando|t[aá]\s+acabando|est[aá]\s+acabando)\b/i.test(msg)
         || /o\s+que\s+.*(cozinhar|falta\s+em\s+casa)/i.test(msg))) {
-    await enviarTexto(phone,
-      '🔒 *Casa* — lista de compras, despensa, receitas e manutenções — faz parte do plano *Premium*.\n\n' +
-      'No seu plano você já tem hábitos, tarefas, agenda e bem-estar. ✨\n\n' +
-      `👉 Ver os planos: ${APP_URL_GROW}/planos`);
+    await enviarBotaoLink(phone, {
+      message:
+        '🔒 *Casa* — lista de compras, despensa, receitas e manutenções — faz parte do plano *Premium*.\n\n' +
+        'No seu plano você já tem hábitos, tarefas, agenda e bem-estar. ✨',
+      label: 'Ver os planos',
+      url: `${APP_URL_GROW}/planos`,
+    });
     return;
   }
 
@@ -744,7 +747,11 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
       return `*${fmtDia(dia)}*\n${linhas.join('\n')}`;
     });
     const titulo = soHoje ? '📅 *Sua agenda de hoje*' : '📅 *Próximos compromissos*';
-    await enviarTexto(phone, `${titulo}\n\n${blocos.join('\n\n')}\n\nGerenciar: 🌐 forsora.com/grow/agenda`);
+    await enviarBotaoLink(phone, {
+      message: `${titulo}\n\n${blocos.join('\n\n')}`,
+      label: 'Ver agenda',
+      url: `${APP_URL_GROW}/grow/agenda`,
+    });
     return;
   }
 
@@ -820,15 +827,22 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
       lembrete_ativo: true, lembrete_antecedencia: antecedencia,
     });
     if (error) {
-      await enviarTexto(phone, '😕 Não consegui salvar agora. Tenta pelo painel: forsora.com/grow/agenda');
+      await enviarBotaoLink(phone, {
+        message: '😕 Não consegui salvar agora. Tenta pelo painel:',
+        label: 'Abrir agenda',
+        url: `${APP_URL_GROW}/grow/agenda`,
+      });
       return;
     }
     const dataFmt = new Date(dataISO + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
-    await enviarTexto(phone,
-      `📅 *Marquei!*\n\n*${titulo}*\n🗓️ ${dataFmt}${hora ? ` às ${hora}` : ' (dia todo)'}\n` +
-      `🔔 ${fmtAntecedencia(ant ? ant.minutos : null, !!hora)}\n\n` +
-      `_Quer ser avisado em outro momento? É só me dizer aqui, ex.: *me lembra 1 dia antes* ou *2 horas antes*._\n\n` +
-      `Ver agenda: 🌐 forsora.com/grow/agenda`);
+    await enviarBotaoLink(phone, {
+      message:
+        `📅 *Marquei!*\n\n*${titulo}*\n🗓️ ${dataFmt}${hora ? ` às ${hora}` : ' (dia todo)'}\n` +
+        `🔔 ${fmtAntecedencia(ant ? ant.minutos : null, !!hora)}\n\n` +
+        `_Quer ser avisado em outro momento? É só me dizer aqui, ex.: *me lembra 1 dia antes* ou *2 horas antes*._`,
+      label: 'Ver agenda',
+      url: `${APP_URL_GROW}/grow/agenda`,
+    });
     return;
   }
 
@@ -891,15 +905,19 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     } catch { /* cai no menu padrão */ }
   }
 
-  await enviarTexto(phone,
-    `🌱 *Sora Grow*\n\n` +
-    `Nao entendi. Exemplos:\n\n` +
-    `🎯 *fiz academia* — marca habito como feito\n` +
-    `📋 *tarefa ligar pro medico* — cria tarefa\n` +
-    `🛒 *comprar leite* — adiciona na lista\n` +
-    `💭 *me sinto bem hoje* — registra humor\n` +
-    `📊 *habitos* / *tarefas* / *lista de compras* — listar\n\n` +
-    `🌐 Painel completo: https://www.forsora.com/grow/dashboard`
+  await enviarBotaoLink(phone,
+    {
+      message:
+        `🌱 *Sora Grow*\n\n` +
+        `Nao entendi. Exemplos:\n\n` +
+        `🎯 *fiz academia* — marca habito como feito\n` +
+        `📋 *tarefa ligar pro medico* — cria tarefa\n` +
+        `🛒 *comprar leite* — adiciona na lista\n` +
+        `💭 *me sinto bem hoje* — registra humor\n` +
+        `📊 *habitos* / *tarefas* / *lista de compras* — listar`,
+      label: 'Abrir painel',
+      url: `${APP_URL_GROW}/grow/dashboard`,
+    }
   );
 };
 
