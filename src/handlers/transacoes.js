@@ -818,7 +818,7 @@ module.exports = async function handleTransacoes(data, ctx) {
         `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
         `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
         `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}`,
-      label: 'Abrir painel',
+      label: 'Ver no painel',
       url: `${APP_URL_TX}/dashboard`,
     });
     return;
