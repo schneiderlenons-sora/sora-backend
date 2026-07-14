@@ -1,5 +1,5 @@
 const supabase = require('../db/supabase');
-const { enviarTexto, enviarMenu, enviarImagem } = require('../services/mensageiro');
+const { enviarTexto, enviarMenu, enviarImagem, enviarBotaoLink } = require('../services/mensageiro');
 const { analisarGastos } = require('../services/ia');
 const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
@@ -793,9 +793,9 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     const saldo = receitas - gastos;
     const metaMensal = user.meta_mensal || 0;
-    // Meta é mensal → só mostra no resumo do mês (não em "hoje"/"semana"/etc.).
+    // Limite geral (users.meta_mensal) é mensal → só no resumo do mês.
     const statusMeta = (ehMes && metaMensal > 0)
-      ? `\n🎯 Meta: R$ ${metaMensal.toFixed(2)} (${((gastos/metaMensal)*100).toFixed(0)}% usado)`
+      ? `\n🎯 Limite Geral: R$ ${metaMensal.toFixed(2)} (${((gastos/metaMensal)*100).toFixed(0)}% usado)`
       : '';
 
     // Em grupo compartilhado, mostra o gasto de cada membro.
@@ -809,12 +809,18 @@ module.exports = async function handleTransacoes(data, ctx) {
       if (linhas) blocoMembros = `\n\n*Por membro:*\n${linhas}`;
     }
 
-    await enviarTexto(phone,
-      `📊 *RESUMO ${label}*\n\n${catOrdenadas}${blocoMembros}\n\n` +
-      `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
-      `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
-      `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}\n\n` +
-      `👉 Ver no painel: ${APP_URL_TX}/dashboard`);
+    // Painel vai num BOTÃO (cta_url) em vez de link cru — evita o preview de
+    // imagem bugado do link em cima da mensagem. "resumo" é in-window (o usuário
+    // acabou de mandar), então a mensagem interativa é permitida.
+    await enviarBotaoLink(phone, {
+      message:
+        `📊 *RESUMO ${label}*\n\n${catOrdenadas}${blocoMembros}\n\n` +
+        `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
+        `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
+        `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}`,
+      label: 'Abrir painel',
+      url: `${APP_URL_TX}/dashboard`,
+    });
     return;
   }
 
