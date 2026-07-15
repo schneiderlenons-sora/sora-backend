@@ -3,7 +3,7 @@ const { enviarTexto, enviarMenu, enviarImagem, enviarBotaoLink } = require('../s
 const { analisarGastos } = require('../services/ia');
 const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
-const { criarPendente } = require('../services/pendentes');
+const { criarPendente, buscarPendente, removerPendente } = require('../services/pendentes');
 const { categorizarDescricao } = require('../services/categorizar');
 
 // Intervalo de datas de um período de consulta (resumo/busca), no fuso de São
@@ -716,6 +716,16 @@ module.exports = async function handleTransacoes(data, ctx) {
     }
 
     await supabase.from('transacoes').delete().eq('id', tx.id);
+
+    // Se a transação apagada deixou uma pergunta aberta ("de qual conta saiu?"),
+    // limpa o pendente — senão a próxima mensagem vira resposta de pergunta morta.
+    if (user?.id) {
+      try {
+        const p = await buscarPendente(user.id);
+        if (p) await removerPendente(p.id);
+      } catch { /* tolerante */ }
+    }
+
     await enviarTexto(phone, `🗑️ Transação *${tx.id_curto}* removida. Saldo ajustado.`);
     return;
   }

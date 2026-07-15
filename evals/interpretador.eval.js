@@ -32,6 +32,24 @@ const CASOS = [
   { msg: 'paguei o almoço de 25',             expect: { acao: 'salvar', tipo: 'Gasto', valor: 25, categoria: 'Alimentação' } },
   { msg: 'comprei um presente de 50',         expect: { acao: 'salvar', tipo: 'Gasto', valor: 50 } },
   { msg: 'paguei a conta de luz',             expect: null }, // "de" sem número → NÃO vira gasto (cai pra IA/agenda)
+  // DESCRIÇÃO = só o ITEM (sem artigo, sem loja, sem "compra de") — bug jul/2026.
+  // categoria aqui é a do PARSER ('Encomendas' p/ marketplace); o handler ainda
+  // refina pela mensagem inteira e vira a subcategoria real ("Mercado Livre").
+  { msg: 'Comprei uma resistência no mercado livre por 28,90', expect: { acao: 'salvar', valor: 28.90, observacao: 'resistência', categoria: 'Encomendas' } },
+  { msg: 'paguei compra de coberta no mercado livre por 120',  expect: { acao: 'salvar', valor: 120, observacao: 'coberta', categoria: 'Encomendas' } },
+  { msg: 'Comprei um hambúrguer no ifood por 8,29 reais',      expect: { acao: 'salvar', observacao: 'hambúrguer' } },
+  { msg: 'gastei 9,50 com uma coxinha',                        expect: { acao: 'salvar', observacao: 'coxinha' } },
+  { msg: 'gastei 50 no mercado',                               expect: { acao: 'salvar', observacao: 'mercado' } },
+
+  // ── "cancela" sozinho = desfazer o ÚLTIMO LANÇAMENTO (não cancelar assinatura) ──
+  { msg: 'cancela',                           expect: { acao: 'apagar' } },
+  { msg: 'cancelar',                          expect: { acao: 'apagar' } },
+  { msg: 'cancela isso',                      expect: { acao: 'apagar' } },
+  { msg: 'cancela esse gasto',                expect: { acao: 'apagar' } },
+  // Guardas: cancelar plano/assinatura/resumo NÃO pode virar apagar
+  { msg: 'quero cancelar minha assinatura',   expect: { acao: 'cancelar_plano' } },
+  { msg: 'cancelar plano',                    expect: { acao: 'cancelar_plano' } },
+  { msg: 'cancelar resumos',                  expect: { acao: 'config_resumos', valor: false } },
 
   // ── Registrar receita ─────────────────────────────────────────────────────
   { msg: 'recebi 3000 de salário',            expect: { acao: 'salvar', tipo: 'Recebimento', valor: 3000 } },
@@ -128,7 +146,7 @@ for (const { msg, expect } of CASOS) {
   const got = interpretarRapido(msg);
   const passou = bate(expect, got);
   if (passou) ok++; else falhas.push({ msg, expect, got });
-  const alvo = expect === null ? '→ IA' : expect.acao;
+  const alvo = expect === null ? '→ IA' : (expect.acao || '(campos)');
   console.log(`${passou ? '  ok ' : 'FALHA'}  ${alvo.padEnd(18)} « ${msg} »`);
 }
 

@@ -88,6 +88,26 @@ function parseDataGasto(texto) {
   return null;
 }
 
+// Deixa só o ITEM na descrição. A frase natural traz a LOJA/lugar ("uma resistência
+// NO MERCADO LIVRE") e prefixos/artigos ("UMA resistência", "COMPRA DE coberta") que
+// não devem virar descrição. A categoria é detectada ANTES, com a frase inteira —
+// então tirar a loja daqui NÃO perde o "Mercado Livre".
+//   "uma resistência no mercado livre" → "resistência"
+//   "compra de coberta no mercado livre" → "coberta"
+function limparDescricao(txt) {
+  let d = (txt || '').trim();
+  // 1) corta o lugar/loja: primeiro "no/na/nos/nas/em" seguido de algo.
+  const lugar = d.match(/^(.*?)\s+(?:n[oa]s?|em)\s+.+$/i);
+  if (lugar && lugar[1].trim()) d = lugar[1].trim();
+  // 2) tira prefixo "compra/gasto/pagamento/despesa de|com".
+  d = d.replace(/^(?:compra|gasto|pagamento|despesa)\s+(?:de|do|da|com)\s+/i, '').trim();
+  // 3) tira artigo/quantificador do começo.
+  d = d.replace(/^(?:um|uma|uns|umas|o|a|os|as)\s+/i, '').trim();
+  // 4) sobrou só o lugar ("no mercado") → tira a preposição.
+  d = d.replace(/^(?:n[oa]s?|em)\s+/i, '').trim();
+  return d || (txt || '').trim();
+}
+
 // Tenta interpretar a mensagem sem chamar a IA (mais rápido e grátis)
 function interpretarRapido(message) {
   // Remove a unidade de moeda logo após o número ("10 reais" → "10"), pra
@@ -312,7 +332,7 @@ function interpretarRapido(message) {
       valor: parseValor(m[2]),
       dataTx: dInfo ? dInfo.iso : null,
       categoria: detectarCategoria(descricao),
-      observacao: descricao,   // só a descrição (ex: "padaria"), não a frase inteira
+      observacao: limparDescricao(descricao),   // só o item (ex: "padaria"), sem artigo/loja
       carteira_nome: carteira || null
     };
   }
@@ -322,18 +342,20 @@ function interpretarRapido(message) {
   // (o padrão acima só pega valor logo após o verbo: "gastei 50 no mercado").
   // Só casa se o "por/de" for seguido de número → não pega "paguei a conta de luz".
   if ((m = msg.match(/(gastei|paguei|comprei)\s+(.+?)\s+(?:por|de)\s+(?:r\$\s*)?(\d[\d.,]*)\s*$/i))) {
-    let descricao = m[2].trim().replace(/[,;]+$/, '');
+    let trecho = m[2].trim().replace(/[,;]+$/, '');
     const dInfo = parseDataGasto(msg);
     if (dInfo) {
       const re = new RegExp(`\\b${dInfo.matched.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-      descricao = descricao.replace(re, '').replace(/\s+/g, ' ').replace(/[,;]+$/, '').trim();
+      trecho = trecho.replace(re, '').replace(/\s+/g, ' ').replace(/[,;]+$/, '').trim();
     }
     return {
       acao: 'salvar', tipo: 'Gasto',
       valor: parseValor(m[3]),
       dataTx: dInfo ? dInfo.iso : null,
-      categoria: detectarCategoria(descricao),
-      observacao: descricao,
+      // Categoria pela frase TODA (a loja é quem define: "no mercado livre");
+      // descrição só com o item ("uma resistência no mercado livre" → "resistência").
+      categoria: detectarCategoria(trecho),
+      observacao: limparDescricao(trecho),
       carteira_nome: null,   // valor no fim → sem banco citado; handler usa a conta padrão
     };
   }
@@ -421,6 +443,17 @@ function interpretarRapido(message) {
   // Normaliza sem acento — o \b do regex não casa antes de "última" (ú não
   // é word char ASCII), então testamos no texto sem acento.
   const semAcento = msg.normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+  // "cancela" / "cancelar" SOZINHO (ou "cancela isso/esse gasto/o último") = DESFAZER
+  // o último lançamento — é o que a pessoa quer logo depois de lançar errado.
+  // NÃO é cancelar plano/assinatura/recorrência/lembrete/resumo: essas têm regras
+  // próprias ACIMA (exigem a palavra-chave) e já retornaram. A lista abaixo é trava
+  // extra pra nunca virar "apagar" quando o alvo do cancelamento é outra coisa.
+  if (/^\s*cancela(r)?\b/i.test(semAcento)
+      && msg.trim().split(/\s+/).length <= 4
+      && !/\b(plano|assinatura|mensalidade|inscricao|premium|black|basico|sora|recorren|lembrete|divida|fatura|resumo|conta|cartao|cartoes)/i.test(semAcento))
+    return { acao: 'apagar' };
+
   if (/(excluir|apagar|deletar|desfazer)/i.test(semAcento)) {
     // "última"/"último"/"desfazer último lançamento" → apaga a última
     if (/(ultim|desfaz)/i.test(semAcento)) return { acao: 'apagar' };
