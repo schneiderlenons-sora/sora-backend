@@ -125,6 +125,24 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
         .update({ saldo: (walletReal.saldo || 0) + (parseFloat(valor) * mult) }).eq('id', walletReal.id);
     }
 
+    // Toggle "Recorrente" do modal: além de lançar agora, cria a conta fixa
+    // (recorrência) que se repete todo mês no MESMO dia da transação. O cron
+    // deduplica o mês atual (mesma categoria+valor+dia), então não duplica o
+    // lançamento de hoje. valor_variavel=false (valor fixo).
+    if (req.body.recorrente) {
+      try {
+        const { criarRecorrencia } = require('../services/recorrencias');
+        let diaVenc = new Date().getUTCDate();
+        const m = String(data || tx.data || '').match(/^\d{4}-(\d{2})-(\d{2})/);
+        if (m) diaVenc = parseInt(m[2], 10);
+        await criarRecorrencia({
+          grupoId, criadoPor: userId, tipo, categoria, valor,
+          dia_vencimento: diaVenc, descricao: observacao, carteira: contaFinal,
+          valor_variavel: false,
+        });
+      } catch (e) { console.error('[transacoes] recorrência do modal falhou:', e.message); }
+    }
+
     res.json(tx);
   } catch (err) {
     res.status(500).json({ erro: err.message });

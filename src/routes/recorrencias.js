@@ -69,27 +69,13 @@ router.get('/:phone', auth, async (req, res) => {
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { tipo, categoria, valor, dia_vencimento, descricao, carteira, valor_variavel } = req.body;
-    const ehReceita = tipo === 'Recebimento';
-    const base = {
-      grupo_id:       req.grupoId,
-      tipo:           ehReceita ? 'Recebimento' : 'Gasto',
-      categoria:      categoria || (ehReceita ? '💼 Salário' : 'Outros'),
-      valor:          parseFloat(valor),
-      dia_vencimento: Math.max(1, Math.min(28, parseInt(dia_vencimento, 10) || 5)),
-      descricao:      (descricao || '').toString().slice(0, 120),
-      carteira:       carteira || 'Dinheiro',
-      ativa:          true,
-    };
-    const dono     = req.authUser?.id || req.userId || null;
-    const variavel = { valor_variavel: !!valor_variavel };
-    // Tolerante às migrations 052 (criado_por) e 066 (valor_variavel): tenta com
-    // as duas colunas extras e vai removendo o que o banco ainda não tiver.
-    let ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, criado_por: dono }).select().single();
-    if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel }).select().single();
-    if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, criado_por: dono }).select().single();
-    if (ins.error) ins = await supabase.from('recorrencias').insert(base).select().single();
-    if (ins.error) throw ins.error;
-    res.json(ins.data);
+    const { criarRecorrencia } = require('../services/recorrencias');
+    const row = await criarRecorrencia({
+      grupoId:   req.grupoId,
+      criadoPor: req.authUser?.id || req.userId || null,
+      tipo, categoria, valor, dia_vencimento, descricao, carteira, valor_variavel,
+    });
+    res.json(row);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
