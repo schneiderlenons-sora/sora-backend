@@ -21,7 +21,10 @@ async function criarRecorrencia({
     // → Saúde, luz → Contas…); receita sem categoria cai em Salário.
     categoria:      categoria || (ehReceita ? '💼 Salário' : (categorizarDescricao(desc) || 'Outros')),
     valor:          parseFloat(valor) || 0,
-    dia_vencimento: Math.max(1, Math.min(28, parseInt(dia_vencimento, 10) || 5)),
+    // 1–31. Dia que não existe no mês (29/30/31 em fev, 31 em abr…) o cron dispara
+    // no ÚLTIMO dia do mês — mesma semântica do ocorrenciasMensais (Agenda). Travar
+    // em 28 mudava a intenção do usuário calada ("dia 29" virava dia 28).
+    dia_vencimento: Math.max(1, Math.min(31, parseInt(dia_vencimento, 10) || 5)),
     descricao:      desc,
     carteira:       carteira || 'Dinheiro',
     ativa:          true,

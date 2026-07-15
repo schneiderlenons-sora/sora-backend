@@ -165,10 +165,17 @@ cron.schedule('0 * * * *', async () => {
   const fimHoje    = new Date(hoje); fimHoje.setHours(23,59,59,999);
 
   // ── 1A. CONTAS FIXAS (recorrências) ────────────────────────────
+  // Dias que vencem HOJE: o próprio dia + (se hoje é o ÚLTIMO dia do mês) todos os
+  // dias que não existem neste mês. Assim um fixo do dia 31 cai em 28/fev, 30/abr…
+  // em vez de nunca rodar. Mesma semântica do ocorrenciasMensais (Agenda).
+  const diasNoMes = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate();
+  const diasAlvo  = [diaHoje];
+  if (diaHoje === diasNoMes) for (let d = diaHoje + 1; d <= 31; d++) diasAlvo.push(d);
+
   const { data: recorrencias } = await supabase
     .from('recorrencias')
     .select('*')
-    .eq('dia_vencimento', diaHoje)
+    .in('dia_vencimento', diasAlvo)
     .eq('ativa', true);
 
   for (const rec of recorrencias || []) {
