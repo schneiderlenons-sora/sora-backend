@@ -1,6 +1,7 @@
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
+const { registrarAjuste } = require('../services/ajusteSaldo');
 
 // Soma os gastos de uma carteira (conta/cartão) num intervalo [ini, fimExcl).
 // excluirTransfer = ignora transferências (elas não são gasto de verdade).
@@ -209,16 +210,24 @@ module.exports = async function handleWallets(data, ctx) {
     }
 
     const { data: wallet } = await supabase.from('wallets')
-      .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
+      .select('id, nome, saldo').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
 
     if (!wallet) {
       await enviarTexto(phone, `❌ Conta *${nomeFinal}* não encontrada. Crie primeiro com "${nomeFinal.toLowerCase()} 0".`);
       return;
     }
 
-    const novoSaldo = wallet.saldo + parseFloat(data.valor);
+    const add = parseFloat(data.valor);
+    const novoSaldo = (wallet.saldo || 0) + add;
     await supabase.from('wallets').update({ saldo: novoSaldo }).eq('id', wallet.id);
-    await enviarTexto(phone, `✅ R$ ${parseFloat(data.valor).toFixed(2)} adicionados à conta *${nomeFinal}*.\nNovo saldo: R$ ${novoSaldo.toFixed(2)}`);
+
+    // Mesmo rastro do "ajustar saldo": o dinheiro que entrou na conta vira uma
+    // transação de Ajuste, senão some do histórico.
+    await registrarAjuste({ grupoId, criadoPor: user?.id, carteiraNome: wallet.nome, diff: add });
+
+    await enviarTexto(phone,
+      `✅ R$ ${add.toFixed(2)} adicionados à conta *${nomeFinal}*.\nNovo saldo: R$ ${novoSaldo.toFixed(2)}` +
+      (add ? `\n\n🔧 Registrei como *Ajuste* pra o histórico bater com o saldo.` : ''));
     return;
   }
 
@@ -244,25 +253,9 @@ module.exports = async function handleWallets(data, ctx) {
 
     await supabase.from('wallets').update({ saldo: novo }).eq('id', wallet.id);
 
-    // RASTRO: a diferença vira uma transação de AJUSTE. Sem isso o dinheiro some
-    // do histórico (o saldo era só sobrescrito) e "cadê meus R$ 50?" não tem
-    // resposta. Pra cima = entrou grana não registrada (Recebimento); pra baixo =
-    // saiu (Gasto). Categoria própria "Ajuste" pra não se misturar com
-    // salário/mercado de verdade nas análises.
-    if (diff !== 0) {
-      await supabase.from('transacoes').insert({
-        id_curto:      Math.random().toString(36).substring(2, 8).toUpperCase(),
-        grupo_id:      grupoId,
-        criado_por:    user?.id || null,
-        tipo:          diff > 0 ? 'Recebimento' : 'Gasto',
-        categoria:     '🔧 Ajuste',
-        valor:         Math.abs(diff),
-        observacao:    `Ajuste de saldo (${wallet.nome})`,
-        carteira_nome: wallet.nome,
-        pago:          true,
-        data:          new Date().toISOString(),
-      });
-    }
+    // RASTRO: a diferença vira transação de AJUSTE (senão o dinheiro some do
+    // histórico, já que o saldo era só sobrescrito).
+    await registrarAjuste({ grupoId, criadoPor: user?.id, carteiraNome: wallet.nome, diff });
 
     const sinal = diff > 0 ? `+R$ ${diff.toFixed(2)}` : `−R$ ${Math.abs(diff).toFixed(2)}`;
     await enviarTexto(phone,

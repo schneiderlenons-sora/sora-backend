@@ -55,6 +55,12 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     const grupoId = req.grupoId; // grupo do usuário autenticado (exigirPermissao)
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
+    // Saldo ANTES do upsert: se a conta já existe e o saldo muda, a diferença
+    // vira Ajuste (rastro). Se é CRIAÇÃO, o saldo é abertura (patrimônio) e NÃO
+    // gera transação — você já tinha o dinheiro, não recebeu agora.
+    const { data: antes } = await supabase.from('wallets')
+      .select('id, saldo').eq('grupo_id', grupoId).eq('nome', nome).maybeSingle();
+
     const row = { grupo_id: grupoId, nome, tipo, saldo, limite };
     // Campos de cartão de crédito (migration 023) — só inclui quando enviados
     if (dia_fechamento !== undefined) row.dia_fechamento = dia_fechamento || null;
@@ -74,6 +80,17 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
         .update({ criado_por: req.userId }).eq('id', data.id);
       if (!e2) data.criado_por = req.userId;
     }
+
+    // EDIÇÃO com saldo novo → registra o Ajuste. (Criação não entra: `antes` é
+    // null. Saldo omitido no body também não — o upsert nem mexeu na coluna.)
+    if (antes && saldo !== undefined && saldo !== null) {
+      const diff = Math.round(((Number(saldo) || 0) - (antes.saldo || 0)) * 100) / 100;
+      if (diff !== 0) {
+        const { registrarAjuste } = require('../services/ajusteSaldo');
+        await registrarAjuste({ grupoId, criadoPor: req.userId, carteiraNome: data.nome, diff });
+      }
+    }
+
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
