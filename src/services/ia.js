@@ -35,6 +35,13 @@ CONTAS BANCÁRIAS:
 {"acao":"adicionar_saldo","nome":"Inter","valor":200}
 {"acao":"alterar_saldo","nome":"Nubank","valor":2000}
 {"acao":"ver_saldos"}
+- QUAL usar (não confunda):
+  · set_wallet = CRIAR conta nova. Ex.: "nubank 1000", "criar conta no inter com 500".
+  · alterar_saldo = CORRIGIR/AJUSTAR o saldo de uma conta que JÁ EXISTE. Se a frase tem
+    *ajustar / ajusta / corrigir / atualizar / mude o saldo*, é SEMPRE alterar_saldo — nunca set_wallet.
+    "ajustar mercado pago para 700" → {"acao":"alterar_saldo","nome":"Mercado Pago","valor":700}
+    "corrige o saldo do nubank pra 850" → {"acao":"alterar_saldo","nome":"Nubank","valor":850}
+  · adicionar_saldo = SOMAR ao saldo atual. Ex.: "adicionar 200 no inter", "entrou 200 no inter".
 {"acao":"deletar_conta","nome":"Nubank"}
 {"acao":"transferir","origem":"Nubank","destino":"Inter","valor":200}
 

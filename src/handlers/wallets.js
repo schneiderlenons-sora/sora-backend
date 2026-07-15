@@ -64,7 +64,7 @@ module.exports = async function handleWallets(data, ctx) {
       .select('*', { count: 'exact', head: true }).eq('grupo_id', grupoId);
 
     const jaExiste = await supabase.from('wallets')
-      .select('id').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
+      .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
 
     if (!jaExiste.data && count >= limitePorPlano(user.plano)) {
       await enviarTexto(phone, `⚠️ Limite de ${limitePorPlano(user.plano)} contas atingido no seu plano.\nRemova uma conta antes de adicionar outra, ou faça upgrade.`);
@@ -98,14 +98,25 @@ module.exports = async function handleWallets(data, ctx) {
                     : tipo === 'Crédito' ? '💳'
                     : '🏦';
 
+    // A conta JÁ existia → isso foi um AJUSTE de saldo, não criação. Registra o
+    // rastro (mesma regra do "ajustar saldo") e fala a verdade na resposta.
+    const existia = !!jaExiste.data;
+    let diffAjuste = 0;
+    if (existia) {
+      diffAjuste = Math.round((parseFloat(data.valor) - (jaExiste.data.saldo || 0)) * 100) / 100;
+      await registrarAjuste({ grupoId, criadoPor: user?.id, carteiraNome: nomeFinal, diff: diffAjuste });
+    }
+
+    const sinalAj = diffAjuste > 0 ? `+R$ ${diffAjuste.toFixed(2)}` : `−R$ ${Math.abs(diffAjuste).toFixed(2)}`;
     await enviarTexto(phone,
-      `${emojiTipo} Conta *${nomeFinal}* (${tipo}) criada com saldo de R$ ${parseFloat(data.valor).toFixed(2)}.`
+      `${emojiTipo} Conta *${nomeFinal}* (${tipo}) ${existia ? 'atualizada' : 'criada'} com saldo de R$ ${parseFloat(data.valor).toFixed(2)}.` +
+      (diffAjuste !== 0 ? `\n\n🔧 Registrei a diferença (*${sinalAj}*) como *Ajuste*, pra o histórico bater com o saldo.` : '')
     );
 
     // Se foi criada como Corrente (default) e o usuário não especificou,
     // oferece chance de mudar o tipo na próxima mensagem.
     const tipoVeioDoUsuario = !!data.tipo && TIPOS_CONTA.includes(data.tipo);
-    if (!tipoVeioDoUsuario && tipo === 'Corrente' && user?.id && walletCriada) {
+    if (!tipoVeioDoUsuario && tipo === 'Corrente' && user?.id && walletCriada && !existia) {
       await enviarTexto(phone,
         `💡 É conta corrente mesmo? Se for *poupança*, *vale alimentação* ou *dinheiro*, é só responder com o tipo.`
       );

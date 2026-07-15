@@ -106,6 +106,13 @@ const CASOS = [
   // ── Contas bancárias ──────────────────────────────────────────────────────
   { msg: 'adicionar 200 no inter',           expect: { acao: 'adicionar_saldo', valor: 200 } },
   { msg: 'transferir 200 do nubank pro inter', expect: { acao: 'transferir', valor: 200 } },
+  // AJUSTAR = conta que já existe → alterar_saldo (NUNCA set_wallet "conta criada").
+  { msg: 'Ajustar mercado pago para 700',    expect: { acao: 'alterar_saldo', nome: 'mercado pago', valor: 700 } },
+  { msg: 'ajustar nubank 850',               expect: { acao: 'alterar_saldo', nome: 'nubank', valor: 850 } },
+  { msg: 'ajusta o saldo do inter pra 300',  expect: { acao: 'alterar_saldo', nome: 'inter', valor: 300 } },
+  { msg: 'corrigir mercado pago para 621,25', expect: { acao: 'alterar_saldo', nome: 'mercado pago', valor: 621.25 } },
+  // Guarda: criar conta continua sendo set_wallet
+  { msg: 'nubank 1000',                      expect: { acao: 'set_wallet', nome: 'nubank', valor: 1000 } },
 
   // ── Limites ───────────────────────────────────────────────────────────────
   { msg: 'limite 2000',                       expect: { acao: 'set_meta', valor: 2000 } },

@@ -296,6 +296,13 @@ function interpretarRapido(message) {
   if ((m = msg.match(/(?:mude|altere|muda|muda)\s+(?:meu\s+)?saldo\s+d[oa]\s+(.+?)\s+(?:pra|para)\s+(\d[\d.,]*)/i)))
     return { acao: 'alterar_saldo', nome: m[1].trim(), valor: parseValor(m[2]) };
 
+  // "ajustar nubank 850" / "ajustar mercado pago para 700" / "ajusta o saldo do inter pra 300"
+  // AJUSTAR = conta que JÁ existe → alterar_saldo (com rastro de Ajuste). Sem essa
+  // regra a frase caía na IA, que respondia set_wallet ("conta criada") e o saldo
+  // mudava sem transação nenhuma. O "saldo"/"o"/"do" são opcionais.
+  if ((m = msg.match(/^(?:ajustar|ajusta|corrigir|corrige)\s+(?:o\s+)?(?:saldo\s+(?:d[oa]\s+)?)?(.+?)\s+(?:pra|para|em|=)?\s*(\d[\d.,]*)\s*$/i)))
+    return { acao: 'alterar_saldo', nome: m[1].trim(), valor: parseValor(m[2]) };
+
   // "transferir 200 do nubank pro inter"  ← bug corrigido
   if ((m = msg.match(/transferir\s+(\d[\d.,]*)\s+do\s+(.+?)\s+(?:pro|para|pra)\s+(.+)/i)))
     return { acao: 'transferir', valor: parseValor(m[1]), origem: m[2].trim(), destino: m[3].trim() };
