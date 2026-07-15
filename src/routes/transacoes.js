@@ -92,7 +92,7 @@ router.get('/:phone', auth, async (req, res) => {
 // POST /api/transacoes — cria transação pelo painel
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { phone, tipo, categoria, valor, observacao, carteira_nome, data, pago } = req.body;
+    const { phone, tipo, categoria, valor, observacao, carteira_nome, data, pago, recorrente } = req.body;
     const grupoId = req.grupoId;
     const userId  = req.userId;
 
@@ -101,6 +101,28 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     const { data: wsGrupo } = await supabase.from('wallets').select('id, saldo, nome').eq('grupo_id', grupoId);
     const walletReal = (wsGrupo || []).find(w => normNome(w.nome) === normNome(carteira_nome));
     const contaFinal = walletReal ? walletReal.nome : 'Dinheiro';
+
+    // Data FUTURA (fuso SP)? Um lançamento que ainda NÃO aconteceu não pode
+    // entrar como "pago" nem debitar o saldo hoje.
+    const hojeSP   = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const dataStr  = String(data || '').slice(0, 10);
+    const ehFuturo = !!dataStr && dataStr > hojeSP;
+    const mDia     = dataStr.match(/^\d{4}-\d{2}-(\d{2})/);
+    const diaVenc  = mDia ? parseInt(mDia[1], 10) : new Date().getUTCDate();
+
+    // "Recorrente" com data FUTURA = a pessoa está CADASTRANDO uma conta fixa que
+    // ainda vai vencer — não existe gasto hoje. Cria SÓ a recorrência: no dia o
+    // cron lança, debita e avisa. (Com data de hoje/passado o gasto já aconteceu:
+    // lança agora + cria a recorrência, e o cron deduplica o mês.)
+    if (recorrente && ehFuturo) {
+      const { criarRecorrencia } = require('../services/recorrencias');
+      const rec = await criarRecorrencia({
+        grupoId, criadoPor: userId, tipo, categoria, valor,
+        dia_vencimento: diaVenc, descricao: observacao, carteira: contaFinal,
+        valor_variavel: false,
+      });
+      return res.json({ ok: true, somente_recorrencia: true, recorrencia: rec });
+    }
 
     const idCurto = Math.random().toString(36).substring(2, 8).toUpperCase();
 
@@ -113,28 +135,25 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       valor:         parseFloat(valor),
       observacao:    observacao || '',
       carteira_nome: contaFinal,
-      pago:          pago !== false,
+      pago:          ehFuturo ? false : (pago !== false),
       data:          data || new Date().toISOString(),
     }).select().single();
 
     if (error) throw error;
 
+    // Só debita o que está pago (futuro fica pendente até o dia chegar).
     if (tx.pago && walletReal) {
       const mult = tipo === 'Gasto' ? -1 : 1;
       await supabase.from('wallets')
         .update({ saldo: (walletReal.saldo || 0) + (parseFloat(valor) * mult) }).eq('id', walletReal.id);
     }
 
-    // Toggle "Recorrente" do modal: além de lançar agora, cria a conta fixa
-    // (recorrência) que se repete todo mês no MESMO dia da transação. O cron
-    // deduplica o mês atual (mesma categoria+valor+dia), então não duplica o
-    // lançamento de hoje. valor_variavel=false (valor fixo).
-    if (req.body.recorrente) {
+    // Toggle "Recorrente" com data de hoje/passado: o gasto já aconteceu (lançado
+    // acima) e ainda vira conta fixa pros próximos meses. O cron deduplica o mês
+    // atual (mesma categoria+valor+dia), então não duplica o lançamento de hoje.
+    if (recorrente) {
       try {
         const { criarRecorrencia } = require('../services/recorrencias');
-        let diaVenc = new Date().getUTCDate();
-        const m = String(data || tx.data || '').match(/^\d{4}-(\d{2})-(\d{2})/);
-        if (m) diaVenc = parseInt(m[2], 10);
         await criarRecorrencia({
           grupoId, criadoPor: userId, tipo, categoria, valor,
           dia_vencimento: diaVenc, descricao: observacao, carteira: contaFinal,
