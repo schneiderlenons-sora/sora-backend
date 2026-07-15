@@ -254,15 +254,22 @@ module.exports = async function handleWallets(data, ctx) {
     }
 
     const linhas = wallets.map(w => {
-      const emoji = w.tipo === 'Crédito' ? '💳' : w.tipo === 'Poupança' ? '🐷' : '🏦';
+      const emoji = w.tipo === 'Crédito' ? '💳' : w.tipo === 'Poupança' ? '🐷' : w.tipo === 'Dinheiro' ? '💵' : '🏦';
       return `${emoji} *${w.nome}:* R$ ${w.saldo.toFixed(2)}`;
     }).join('\n');
 
-    const total = wallets
-      .filter(w => w.tipo !== 'Crédito')
-      .reduce((s, w) => s + w.saldo, 0);
+    const emContas  = wallets.filter(w => w.tipo !== 'Crédito').reduce((s, w) => s + (w.saldo || 0), 0);
+    const saldoCard = wallets.filter(w => w.tipo === 'Crédito').reduce((s, w) => s + (w.saldo || 0), 0); // negativo = a pagar
+    const aPagar    = saldoCard < 0 ? -saldoCard : 0;
 
-    await enviarTexto(phone, `💰 *SEUS SALDOS:*\n\n${linhas}\n\n💵 *Total (sem crédito): R$ ${total.toFixed(2)}*`);
+    // Com cartão a pagar, mostra o líquido (contas − fatura). Sem cartão, só o total.
+    const rodape = aPagar > 0
+      ? `💵 Total em contas: R$ ${emContas.toFixed(2)}\n` +
+        `💳 A pagar no cartão: R$ ${aPagar.toFixed(2)}\n` +
+        `💰 *Saldo líquido: R$ ${(emContas + saldoCard).toFixed(2)}*`
+      : `💵 *Total: R$ ${emContas.toFixed(2)}*`;
+
+    await enviarTexto(phone, `💰 *SEUS SALDOS:*\n\n${linhas}\n\n${rodape}`);
     return;
   }
 

@@ -17,14 +17,17 @@ function intervaloPeriodo(p) {
   const hoje0 = spIni(Y, M, D);
   const dow = new Date(Date.UTC(Y, M - 1, D)).getUTCDay();        // 0=dom … 6=sáb
   const segunda = new Date(hoje0.getTime() - ((dow === 0 ? 6 : dow - 1) * DIA));
+  // Todo período BOUNDED tem teto (fim) — senão transações FUTURAS (ex.: 2ª/3ª
+  // parcela de uma compra parcelada, datadas nos próximos meses) vazam pra dentro
+  // do período atual e inflam os gastos. "mês" vai até o 1º do mês seguinte.
   switch (p) {
-    case 'hoje':           return { inicio: hoje0, fim: null, label: 'DE HOJE' };
+    case 'hoje':           return { inicio: hoje0, fim: new Date(hoje0.getTime() + DIA), label: 'DE HOJE' };
     case 'ontem':          return { inicio: new Date(hoje0.getTime() - DIA), fim: hoje0, label: 'DE ONTEM' };
-    case 'semana':         return { inicio: segunda, fim: null, label: 'DESTA SEMANA' };
+    case 'semana':         return { inicio: segunda, fim: new Date(segunda.getTime() + 7 * DIA), label: 'DESTA SEMANA' };
     case 'semana_passada': return { inicio: new Date(segunda.getTime() - 7 * DIA), fim: segunda, label: 'DA SEMANA PASSADA' };
     case 'mes_passado':    return { inicio: spIni(M === 1 ? Y - 1 : Y, M === 1 ? 12 : M - 1, 1), fim: spIni(Y, M, 1), label: 'DO MÊS PASSADO' };
-    case 'ano':            return { inicio: spIni(Y, 1, 1), fim: null, label: 'DESTE ANO' };
-    case 'mes':            return { inicio: spIni(Y, M, 1), fim: null, label: 'DO MÊS' };
+    case 'ano':            return { inicio: spIni(Y, 1, 1), fim: spIni(Y + 1, 1, 1), label: 'DESTE ANO' };
+    case 'mes':            return { inicio: spIni(Y, M, 1), fim: spIni(Y, M + 1, 1), label: 'DO MÊS' };
     default:               return null;
   }
 }
@@ -814,24 +817,66 @@ module.exports = async function handleTransacoes(data, ctx) {
       if (linhas) blocoMembros = `\n\n*Por membro:*\n${linhas}`;
     }
 
+    // Carteiras do grupo (uma leitura só) — usada no "por conta/cartão" E no
+    // saldo real (patrimônio). Só busca quando vai usar.
+    let ws = [];
+    if (ehMes || Object.keys(porCarteira).length >= 2) {
+      const { data } = await supabase.from('wallets').select('nome, tipo, saldo').eq('grupo_id', grupoId);
+      ws = data || [];
+    }
+    const tipoDe = new Map(ws.map(w => [w.nome.toLowerCase(), w.tipo]));
+
     // Quanto saiu de cada cartão/conta no período (só quando há ≥2 carteiras —
     // com uma só, é redundante com o total de gastos). Ícone pelo tipo da wallet.
     let blocoCarteiras = '';
     if (Object.keys(porCarteira).length >= 2) {
-      const { data: ws } = await supabase.from('wallets')
-        .select('nome, tipo').eq('grupo_id', grupoId);
-      const tipoDe = new Map((ws || []).map(w => [w.nome.toLowerCase(), w.tipo]));
       const linhas = Object.entries(porCarteira)
         .sort((a, b) => b[1] - a[1])
         .map(([nome, val]) => {
-          const tipo = tipoDe.get(nome.toLowerCase());
-          const emoji = tipo === 'Crédito' ? '💳' : tipo === 'Poupança' ? '🐷' : tipo === 'Dinheiro' ? '💵' : '🏦';
+          const emoji = ({ 'Crédito': '💳', 'Poupança': '🐷', 'Dinheiro': '💵' })[tipoDe.get(nome.toLowerCase())] || '🏦';
           return `${emoji} *${nome}:* R$ ${val.toFixed(2)}`;
         })
         .join('\n');
       if (linhas) blocoCarteiras = `\n\n*Por conta/cartão:*\n${linhas}`;
     }
 
+    // Saldo REAL (patrimônio) = saldo das contas − o que falta pagar no cartão.
+    // Diferente do "saldo do mês" (fluxo: receitas − gastos). Só no resumo do mês.
+    let blocoPatrimonio = '';
+    if (ehMes && ws.length) {
+      const emContas  = ws.filter(w => w.tipo !== 'Crédito').reduce((s, w) => s + (w.saldo || 0), 0);
+      const saldoCard = ws.filter(w => w.tipo === 'Crédito').reduce((s, w) => s + (w.saldo || 0), 0); // negativo = a pagar
+      const aPagar    = saldoCard < 0 ? -saldoCard : 0;
+      blocoPatrimonio = aPagar > 0
+        ? `\n\n🏦 Em contas: R$ ${emContas.toFixed(2)}\n💳 A pagar no cartão: R$ ${aPagar.toFixed(2)}\n💰 *Saldo real: R$ ${(emContas + saldoCard).toFixed(2)}*`
+        : `\n\n🏦 *Saldo em contas: R$ ${emContas.toFixed(2)}*`;
+    }
+
+    // 📌 Ainda neste mês: gastos fixos (recorrências) que ainda vão vencer no mês.
+    let blocoPendentes = '';
+    if (ehMes) {
+      const diaHoje = parseInt(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).slice(8, 10), 10);
+      let recs = [];
+      try {
+        const { data: r } = await supabase.from('recorrencias')
+          .select('descricao, valor, dia_vencimento, valor_variavel')
+          .eq('grupo_id', grupoId).eq('ativa', true).eq('tipo', 'Gasto')
+          .gte('dia_vencimento', diaHoje).order('dia_vencimento');
+        recs = r || [];
+      } catch { recs = []; }
+      let totalAVencer = 0;
+      const linhasP = recs.map(r => {
+        if (r.valor_variavel) return `• ${r.descricao} — a confirmar · dia ${r.dia_vencimento}`;
+        totalAVencer += (r.valor || 0);
+        return `• ${r.descricao} — R$ ${(r.valor || 0).toFixed(2)} · dia ${r.dia_vencimento}`;
+      });
+      if (linhasP.length) {
+        blocoPendentes = `\n\n*📌 Ainda neste mês:*\n${linhasP.join('\n')}`
+          + (totalAVencer > 0 ? `\n_A vencer: R$ ${totalAVencer.toFixed(2)}_` : '');
+      }
+    }
+
+    const labelSaldo = ehMes ? 'Saldo do mês' : 'Saldo';
     // Painel vai num BOTÃO (cta_url) em vez de link cru — evita o preview de
     // imagem bugado do link em cima da mensagem. "resumo" é in-window (o usuário
     // acabou de mandar), então a mensagem interativa é permitida.
@@ -840,7 +885,8 @@ module.exports = async function handleTransacoes(data, ctx) {
         `📊 *RESUMO ${label}*\n\n${catOrdenadas}${blocoCarteiras}${blocoMembros}\n\n` +
         `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
         `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
-        `💰 *Saldo: R$ ${saldo.toFixed(2)}*${statusMeta}`,
+        `💰 *${labelSaldo}: R$ ${saldo.toFixed(2)}*${statusMeta}` +
+        `${blocoPatrimonio}${blocoPendentes}`,
       label: 'Ver no painel',
       url: `${APP_URL_TX}/dashboard`,
     });
