@@ -231,15 +231,45 @@ module.exports = async function handleWallets(data, ctx) {
     }
 
     const { data: wallet } = await supabase.from('wallets')
-      .select('id').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
+      .select('id, nome, saldo').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
 
     if (!wallet) {
       await enviarTexto(phone, `❌ Conta *${nomeFinal}* não encontrada.`);
       return;
     }
 
-    await supabase.from('wallets').update({ saldo: parseFloat(data.valor) }).eq('id', wallet.id);
-    await enviarTexto(phone, `✅ Saldo da conta *${nomeFinal}* atualizado para R$ ${parseFloat(data.valor).toFixed(2)}.`);
+    const novo  = parseFloat(data.valor);
+    const atual = wallet.saldo || 0;
+    const diff  = Math.round((novo - atual) * 100) / 100;
+
+    await supabase.from('wallets').update({ saldo: novo }).eq('id', wallet.id);
+
+    // RASTRO: a diferença vira uma transação de AJUSTE. Sem isso o dinheiro some
+    // do histórico (o saldo era só sobrescrito) e "cadê meus R$ 50?" não tem
+    // resposta. Pra cima = entrou grana não registrada (Recebimento); pra baixo =
+    // saiu (Gasto). Categoria própria "Ajuste" pra não se misturar com
+    // salário/mercado de verdade nas análises.
+    if (diff !== 0) {
+      await supabase.from('transacoes').insert({
+        id_curto:      Math.random().toString(36).substring(2, 8).toUpperCase(),
+        grupo_id:      grupoId,
+        criado_por:    user?.id || null,
+        tipo:          diff > 0 ? 'Recebimento' : 'Gasto',
+        categoria:     '🔧 Ajuste',
+        valor:         Math.abs(diff),
+        observacao:    `Ajuste de saldo (${wallet.nome})`,
+        carteira_nome: wallet.nome,
+        pago:          true,
+        data:          new Date().toISOString(),
+      });
+    }
+
+    const sinal = diff > 0 ? `+R$ ${diff.toFixed(2)}` : `−R$ ${Math.abs(diff).toFixed(2)}`;
+    await enviarTexto(phone,
+      `✅ Saldo da conta *${nomeFinal}* atualizado para R$ ${novo.toFixed(2)}.` +
+      (diff !== 0
+        ? `\n\n🔧 Registrei a diferença (*${sinal}*) como *Ajuste*, pra o histórico bater com o saldo.`
+        : ''));
     return;
   }
 

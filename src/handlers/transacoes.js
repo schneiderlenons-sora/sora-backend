@@ -56,6 +56,7 @@ const EMOJIS_MAP = {
   'viagem':'✈️',
   'doacoes':'🏷️', 'doações':'🏷️',
   'outros':'📦',
+  'ajuste':'🔧',   // reconciliação de saldo (ajustar saldo) — categoria própria
   'escola':'🎒',
   'encomendas':'📦',
   // Subcategorias de transporte
