@@ -87,6 +87,26 @@ router.post('/conexoes/:externalId/sincronizar', auth, exigirConfigurado, exigir
   }
 });
 
+// DIAGNÓSTICO (temporário, allowlist): devolve a RESPOSTA CRUA da Polp pra eu ver
+// o formato real de contas/transações/investimentos e ajustar o normalize.
+router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (req, res) => {
+  const id = req.params.externalId;
+  const out = { externalId: id };
+  try { out.integracao = await polp.getIntegracao(id); } catch (e) { out.integracao_erro = e.message; }
+  try { out.contas = await polp.listarContas(id); } catch (e) { out.contas_erro = e.message; }
+  try {
+    const primeira = Array.isArray(out.contas) && out.contas[0];
+    if (primeira && primeira.id) {
+      out.primeira_conta_id = primeira.id;
+      out.transacoes_amostra = (await polp.listarTransacoes(primeira.id, null, { paginaMax: 1 })).slice(0, 3);
+    } else {
+      out.transacoes_amostra = 'sem contas pra buscar transações';
+    }
+  } catch (e) { out.transacoes_erro = e.message; }
+  try { out.investimentos = await polp.listarInvestimentos(id); } catch (e) { out.investimentos_erro = e.message; }
+  res.json(out);
+});
+
 // Desconecta: remove o vínculo (histórico fica) + apaga no provedor.
 router.delete('/conexoes/:externalId', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
