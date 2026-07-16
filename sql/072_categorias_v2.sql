@@ -23,7 +23,24 @@
 -- ── tipo agora aceita 'ambos' ────────────────────────────────────────
 -- "Presente" pode ser gasto (você dá) OU receita (você recebe) — o CHECK da 017
 -- só permitia despesa|receita. Categorias 'ambos' aparecem nas DUAS listas.
-alter table public.categorias drop constraint if exists categorias_tipo_check;
+--
+-- Dropa QUALQUER check em `tipo` pelo catálogo, sem depender do nome: a 017 criou
+-- o check inline na coluna, e o nome auto-gerado pode variar. Se sobrasse o antigo,
+-- o update pra 'ambos' estouraria.
+do $$
+declare c record;
+begin
+  for c in
+    select conname
+      from pg_constraint
+     where conrelid = 'public.categorias'::regclass
+       and contype = 'c'
+       and pg_get_constraintdef(oid) ilike '%tipo%'
+  loop
+    execute format('alter table public.categorias drop constraint %I', c.conname);
+  end loop;
+end $$;
+
 alter table public.categorias
   add constraint categorias_tipo_check check (tipo in ('despesa','receita','ambos'));
 
