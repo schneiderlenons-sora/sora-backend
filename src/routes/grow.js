@@ -307,24 +307,33 @@ router.get('/rotina/:phone', auth, requireGrow, async (req, res) => {
   }
 });
 
+// Aceita UM dia (dia_semana) ou VÁRIOS (dias_semana[]) — o "colar em todos os
+// dias" manda a lista e cria tudo numa tacada só. Responde sempre um array.
 router.post('/rotina', auth, requireGrow, async (req, res) => {
   try {
-    const { dia_semana, hora, titulo, cor, data_especifica } = req.body;
-    const dia = parseInt(dia_semana, 10);
+    const { dia_semana, dias_semana, hora, titulo, cor, data_especifica } = req.body;
+    const dias = Array.isArray(dias_semana) && dias_semana.length
+      ? [...new Set(dias_semana.map(d => parseInt(d, 10)))]
+      : [parseInt(dia_semana, 10)];
+
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Título obrigatório' });
-    if (!(dia >= 1 && dia <= 7)) return res.status(400).json({ erro: 'Dia inválido (1=Seg … 7=Dom)' });
+    if (!dias.length || dias.some(d => !(d >= 1 && d <= 7))) {
+      return res.status(400).json({ erro: 'Dia inválido (1=Seg … 7=Dom)' });
+    }
     if (!/^\d{2}:\d{2}$/.test(hora || '')) return res.status(400).json({ erro: 'Hora inválida (use HH:MM)' });
-    const { data, error } = await supabase.from('rotina_blocos').insert({
+
+    const base = {
       grupo_id:        req.userRow.grupo_ativo,
       user_id:         req.userRow.id,
-      dia_semana:      dia,
       hora,
       titulo:          titulo.trim().slice(0, 60),
       cor:             cor || null,
       data_especifica: data_especifica || null,
-    }).select().single();
+    };
+    const { data, error } = await supabase.from('rotina_blocos')
+      .insert(dias.map(d => ({ ...base, dia_semana: d }))).select();
     if (error) throw error;
-    res.json(data);
+    res.json(data || []);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
