@@ -141,14 +141,9 @@ begin
   perform public.criar_categoria_pai(p_grupo_id, 'Extras',        '📥', 'receita', '%extras%');
 
   -- ── NOVAS subcategorias de Saúde (072) ──
-  select id into v_saude
-    from public.categorias
-   where grupo_id = p_grupo_id and parent_id is null
-     and nome ilike '%sa[uú]de%' and coalesce(ativa, true) = true
-   limit 1;
-  if v_saude is null then
-    v_saude := public.criar_categoria_pai(p_grupo_id, 'Saúde', '💊', 'despesa', '%sa_de%');
-  end if;
+  -- '%sa_de%': em LIKE o `_` casa 1 caractere qualquer → pega "Saúde" E "Saude".
+  -- (NÃO usar '[uú]' aqui: ILIKE não tem classe de caractere, viraria texto literal.)
+  v_saude := public.criar_categoria_pai(p_grupo_id, 'Saúde', '💊', 'despesa', '%sa_de%');
   perform public.criar_subcategoria_icone(p_grupo_id, v_saude, 'Médico', '🩺');
   perform public.criar_subcategoria_icone(p_grupo_id, v_saude, 'Plano de Saúde', '❤️‍🩹');
 end;
