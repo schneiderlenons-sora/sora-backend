@@ -1,16 +1,17 @@
 // =====================================================================
-// Cliente da API da Polp (Open Finance) — ESQUELETO.
-// Espelha a estrutura do services/pluggy.js. Os PATHS e NOMES DE CAMPOS abaixo
-// são a melhor aposta a partir do material público da Polp (POST /integrations,
-// contas/transações/saldos, SDK). ⚠️ CONFIRMAR TUDO NA DOC/SWAGGER OFICIAL antes
-// de ligar em produção — troque só os pontos marcados "⚠️".
+// Cliente da API da Polp (Open Finance — proxy da Pluggy).
+// Base: https://api.polp.com.br/api/v1  ·  Docs: polp.com.br/docs/pluggy
 //
-// Auth: suporta API key direta (POLP_API_KEY) OU client credentials
-// (POLP_CLIENT_ID + POLP_CLIENT_SECRET → OAuth2 client_credentials). Tudo lido
-// em runtime (não no boot) pra não derrubar o app quando ainda não configurado.
+// Auth (doc "Authentication"): SEM /auth e SEM token — as credenciais vão em
+// DOIS headers em toda requisição:
+//   x-api-client = client_id (público)   ·   x-api-secret = client_secret
+//
+// Fluxo de conexão (doc "Create Integration"): POST /integrations cria a
+// integração (assíncrona) e, se a instituição exigir login do usuário, devolve
+// `url_to_authenticate` — o link que o usuário abre pra autorizar o banco. O
+// status caminha UPDATING → WAITING_USER_INPUT → UPDATED (avisado por webhook).
 // =====================================================================
 
-// Base confirmada na doc: https://api.polp.com.br/api/v1
 const BASE          = () => process.env.POLP_API_URL || 'https://api.polp.com.br/api/v1';
 const CLIENT_ID     = () => process.env.POLP_CLIENT_ID;
 const CLIENT_SECRET = () => process.env.POLP_CLIENT_SECRET;
@@ -19,9 +20,7 @@ function configurado() {
   return !!(CLIENT_ID() && CLIENT_SECRET());
 }
 
-// Auth da Polp (doc "Authentication"): NÃO tem /auth nem token — as credenciais
-// vão em DOIS headers em toda requisição.
-//   x-api-client = client_id (público)   ·   x-api-secret = client_secret
+// Chamada autenticada. `path` começa com "/".
 async function api(path, { method = 'GET', body } = {}) {
   if (!configurado()) throw new Error('Polp não configurado (faltam POLP_CLIENT_ID / POLP_CLIENT_SECRET).');
   const r = await fetch(`${BASE()}${path}`, {
@@ -37,52 +36,63 @@ async function api(path, { method = 'GET', body } = {}) {
   return r.status === 204 ? {} : r.json();
 }
 
-// ── Conexão (o "item"/consentimento) ────────────────────────────────────────
-// Inicia uma integração → devolve o id da conexão + a URL do Polp Link pro user
-// autorizar o banco. `payload` mínimo: conector/instituição + dados básicos.
-// ⚠️ path (POST /integrations) e formato da resposta a confirmar.
-async function iniciarConexao({ connector, redirectUrl, webhookUrl, externalUserId } = {}) {
-  const j = await api('/integrations', {
-    method: 'POST',
-    body: { connector, redirect_url: redirectUrl, webhook_url: webhookUrl, external_user_id: externalUserId },
-  });
-  // ⚠️ nomes a confirmar (id / redirect_url / connect_url)
-  return { externalId: j.id || j.integration_id, linkUrl: j.redirect_url || j.connect_url || j.url };
+// As respostas vêm em { data: ... , links, meta }.
+const dados = (j) => (j && j.data !== undefined ? j.data : j);
+
+// ── Instituições (pro seletor de banco) ──────────────────────────────────────
+async function listarInstituicoes() {
+  try { return dados(await api('/institutions')) || []; } catch { return []; }
 }
 
-async function getConexao(id)        { return api(`/integrations/${encodeURIComponent(id)}`); }        // ⚠️
-async function listarContas(id)      { return listaDe(await api(`/integrations/${id}/accounts`)); }     // ⚠️
-async function listarCartoes(id)     { return listaDe(await api(`/integrations/${id}/cards`)); }        // ⚠️
-async function listarCaixinhas(id)   { return listaDe(await api(`/integrations/${id}/pockets`)); }      // ⚠️ (caixinhas/objetivos)
-async function listarInvestimentos(id){ return listaDe(await api(`/integrations/${id}/investments`)); } // ⚠️
+// ── Criar integração (o "conectar banco") ────────────────────────────────────
+// products: pede TUDO que a Sora usa (contas, cartões, transações, investimentos,
+// dívidas) — é o que faltava antes (investimentos não vinham).
+const PRODUTOS = ['ACCOUNTS', 'CREDIT_CARDS', 'TRANSACTIONS', 'INVESTMENTS', 'LOANS'];
+async function criarIntegracao({ institutionId, cpf, cnpj } = {}) {
+  const body = { institution_id: Number(institutionId), products: PRODUTOS };
+  if (cpf)  body.cpf  = String(cpf).replace(/\D/g, '');
+  if (cnpj) body.cnpj = String(cnpj).replace(/\D/g, '');
+  const d = dados(await api('/integrations', { method: 'POST', body }));
+  return { id: d.id, status: d.status, urlToAuthenticate: d.url_to_authenticate || null };
+}
 
-// Transações de uma conta a partir de `dateFrom` (YYYY-MM-DD). ⚠️ path/params +
-// paginação (cursor?) a confirmar; por ora tenta paginação simples por `page`.
-async function listarTransacoes(contaId, dateFrom) {
+async function getIntegracao(id) {
+  return dados(await api(`/integrations/${encodeURIComponent(id)}`));
+}
+
+// Contas + cartões da integração (mesmo endpoint; `type` BANK|CREDIT distingue).
+async function listarContas(id) {
+  return dados(await api(`/integrations/${encodeURIComponent(id)}/accounts`)) || [];
+}
+
+// Investimentos da integração (tolerante — nem toda instituição expõe).
+async function listarInvestimentos(id) {
+  try { return dados(await api(`/integrations/${encodeURIComponent(id)}/investments`)) || []; }
+  catch { return []; }
+}
+
+// Transações de UMA conta. GET /accounts/{id}/transactions — ordenado por data
+// DESC, paginado 50/página (meta.last_page). `dateFrom` (YYYY-MM-DD) corta a
+// busca cedo (para de paginar ao passar do corte, já que vem do mais recente).
+async function listarTransacoes(accountId, dateFrom, { paginaMax = 300 } = {}) {
   const out = [];
-  for (let page = 1; page <= 200; page++) {
-    const qs = new URLSearchParams({ account_id: contaId, page: String(page) });
-    if (dateFrom) qs.set('date_from', dateFrom);
-    const j = await api(`/transactions?${qs.toString()}`);
-    const results = listaDe(j);
+  for (let page = 1; page <= paginaMax; page++) {
+    const j = await api(`/accounts/${encodeURIComponent(accountId)}/transactions?page=${page}`);
+    const results = j?.data || [];
     out.push(...results);
-    if (results.length === 0 || !j.next) break; // ⚠️ critério de fim a confirmar
+    const ultima = results[results.length - 1];
+    if (dateFrom && ultima && String(ultima.date) < dateFrom) break;   // já passou do corte
+    const last = j?.meta?.last_page;
+    if (!results.length || (last && page >= last)) break;
   }
-  return out;
+  return dateFrom ? out.filter(t => String(t.date) >= dateFrom) : out;
 }
 
 async function removerConexao(id) {
   try { await api(`/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* tolerante */ }
 }
 
-// A API pode devolver { results: [] } ou { data: [] } ou o array cru.
-function listaDe(j) {
-  if (Array.isArray(j)) return j;
-  return j?.results || j?.data || j?.items || [];
-}
-
 module.exports = {
-  configurado, iniciarConexao, getConexao,
-  listarContas, listarCartoes, listarCaixinhas, listarInvestimentos, listarTransacoes,
-  removerConexao,
+  configurado, listarInstituicoes, criarIntegracao, getIntegracao,
+  listarContas, listarInvestimentos, listarTransacoes, removerConexao,
 };

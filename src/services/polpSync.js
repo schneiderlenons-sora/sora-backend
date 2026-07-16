@@ -30,47 +30,42 @@ function mapBandeira(brand) {
   return m[(brand || '').toString().toUpperCase()] || null;
 }
 
-// ─── camada de MAPEAMENTO Polp → Sora (⚠️ ajustar aos campos reais da doc) ───
+// ─── MAPEAMENTO Polp → Sora (campos confirmados na doc List Accounts/Transactions)
+// Conta E cartão vêm do MESMO endpoint (/integrations/:id/accounts); `type`
+// (BANK|CREDIT) distingue. Crédito traz os dados de fatura em `credit_data`.
 function normalizeConta(acc) {
-  const tipo = /cred/i.test(acc.type) ? 'Crédito'
-             : /sav|poup/i.test(acc.subtype || acc.type) ? 'Poupança' : 'Corrente';
+  const isCard = (acc.type || '').toString().toUpperCase() === 'CREDIT';
+  const sub    = (acc.subtype || '').toString().toUpperCase();
+  const tipo   = isCard ? 'Crédito' : /SAV|POUP/.test(sub) ? 'Poupança' : 'Corrente';
+  const cd     = acc.credit_data || {};
   return {
     externalId: acc.id,
-    nome:       acc.name || acc.marketing_name || acc.institution || 'Conta',
+    nome:  (acc.name || acc.marketing_name || 'Conta').toString(),
     tipo,
-    saldo:      tipo === 'Crédito' ? 0 : (num(acc.balance) || 0),
-    extras:     tipo === 'Crédito' ? {
-      limite:         num(acc.credit_limit),
-      dia_fechamento: dia(acc.close_date),
-      dia_vencimento: dia(acc.due_date),
-      bandeira:       mapBandeira(acc.brand),
+    saldo: isCard ? 0 : (num(acc.balance) || 0),
+    extras: isCard ? {
+      limite:         num(cd.limit ?? cd.credit_limit),
+      dia_fechamento: dia(cd.close_date ?? cd.balance_close_date),
+      dia_vencimento: dia(cd.due_date),
+      bandeira:       mapBandeira(cd.brand),
     } : {},
   };
 }
-function normalizeCartao(card) {
-  const last4 = (card.last_digits || card.number || '').toString().replace(/\D/g, '').slice(-4);
-  let nome = card.name || card.label || 'Cartão';
-  if (last4) nome += ` ••${last4}`;
-  return {
-    externalId: card.id, nome: nome.slice(0, 60), tipo: 'Crédito',
-    saldo: 0,
-    extras: { limite: num(card.credit_limit), dia_fechamento: dia(card.close_date),
-              dia_vencimento: dia(card.due_date), bandeira: mapBandeira(card.brand) },
-  };
-}
+// tx: amount NEGATIVO = débito (gasto); type DEBIT|CREDIT confirma. Categoria e
+// nome da loja quando vierem.
 function normalizeTx(tx) {
   const amount = num(tx.amount) || 0;
-  const t = (tx.type || tx.direction || '').toString().toUpperCase();
-  const ehGasto = t.includes('DEB') || t.includes('OUT') ? true
-                : t.includes('CRED') || t.includes('IN') ? false : amount < 0;
+  const t = (tx.type || '').toString().toUpperCase(); // DEBIT | CREDIT
+  const ehGasto = t === 'DEBIT' ? true : t === 'CREDIT' ? false : amount < 0;
+  const meta = tx.credit_card_metadata || {};
   return {
     externalId: tx.id,
     ehGasto,
-    descricao:  (tx.description || tx.merchant || '').toString(),
-    categoriaProvedor: tx.category || null,
+    descricao:  (tx.description || (tx.merchant && tx.merchant.name) || '').toString(),
+    categoriaProvedor: (tx.category && tx.category.description) || null,
     valor:      Math.abs(amount),
-    data:       tx.date || tx.posted_at || new Date().toISOString(),
-    card:       (tx.card && (tx.card.last_digits || tx.card.number)) || tx.card_last_digits || null,
+    data:       tx.date || tx.created_at || new Date().toISOString(),
+    card:       meta.card_number || meta.cardNumber || null,
   };
 }
 function normalizeCaixinha(c) {
@@ -177,12 +172,11 @@ async function sincronizarConexao(externalId, { dias = 90 } = {}) {
     let novasTx = 0;
     const detalhe = [];
 
-    // Contas + cartões → wallets, e as transações de cada um
-    const contas = [...await polp.listarContas(externalId), ...await polp.listarCartoes(externalId)];
+    // Contas + cartões (mesmo endpoint, type BANK|CREDIT) → wallets + transações.
+    const contas = await polp.listarContas(externalId);
     for (const raw of contas) {
       try {
-        const isCard = /cred|card/i.test(raw.type || raw.object || '') || raw.credit_limit != null;
-        const n = isCard ? normalizeCartao(raw) : normalizeConta(raw);
+        const n = normalizeConta(raw);
         const walletNome = await upsertWallet(grupoId, userId, n);
         const txsRaw = await polp.listarTransacoes(n.externalId, from);
         const novas = await inserirTransacoes(grupoId, userId, walletNome, txsRaw.map(normalizeTx), n.tipo === 'Crédito');
@@ -190,10 +184,6 @@ async function sincronizarConexao(externalId, { dias = 90 } = {}) {
         detalhe.push({ conta: walletNome, txs: txsRaw.length, novas });
       } catch (e) { detalhe.push({ erro: e.message }); }
     }
-
-    // Caixinhas / objetivos
-    try { for (const c of await polp.listarCaixinhas(externalId)) await upsertCaixinha(conexao, normalizeCaixinha(c)); }
-    catch (e) { console.warn('[polp] caixinhas:', e.message); }
 
     // Investimentos
     try { for (const i of await polp.listarInvestimentos(externalId)) await upsertInvestimento(grupoId, normalizeInvestimento(i)); }

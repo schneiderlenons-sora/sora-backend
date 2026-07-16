@@ -21,24 +21,43 @@ function exigirConfigurado(_req, res, next) {
   next();
 }
 
-// Inicia uma conexão → devolve a URL do Polp Link pro usuário autorizar o banco.
-router.post('/conectar', auth, exigirConfigurado, exigirPermissao('admin', 'escrita'), async (req, res) => {
+// Teste fechado: só o dono (allowlist) usa.
+const { liberadoOpenFinance } = require('../config/openFinanceAccess');
+async function exigirAcesso(req, res, next) {
+  if (!(await liberadoOpenFinance(req.authUser?.id))) {
+    return res.status(403).json({ erro: 'sem_acesso', mensagem: 'Open Finance ainda não está disponível na sua conta.' });
+  }
+  next();
+}
+
+// Instituições disponíveis (pro seletor de banco).
+router.get('/instituicoes', auth, exigirAcesso, exigirConfigurado, async (_req, res) => {
   try {
-    const redirectUrl = `${process.env.APP_URL || 'https://forsora.com'}/open-finance`;
-    const webhookUrl  = process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/api/webhooks/polp` : undefined;
-    const { externalId, linkUrl } = await polp.iniciarConexao({
-      connector: req.body?.connector, redirectUrl, webhookUrl, externalUserId: req.userId,
-    });
-    if (externalId) {
+    res.json({ instituicoes: await polp.listarInstituicoes() });
+  } catch (err) {
+    console.error('[open-finance/instituicoes]', err.message);
+    res.status(500).json({ erro: `Falha ao listar bancos: ${err.message}`.slice(0, 300) });
+  }
+});
+
+// Conectar: cria a integração e devolve a URL de autorização — o usuário abre,
+// autoriza o banco (MFA etc.), e o webhook avisa quando os dados ficam prontos.
+router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { institution_id, cpf, cnpj, instituicao_nome } = req.body || {};
+    if (!institution_id) return res.status(400).json({ erro: 'Escolha um banco (institution_id).' });
+    const { id, status, urlToAuthenticate } = await polp.criarIntegracao({ institutionId: institution_id, cpf, cnpj });
+    if (id) {
       await supabase.from('of_conexoes').upsert({
-        provider: 'polp', external_id: externalId, user_id: req.userId, grupo_id: req.grupoId,
-        instituicao: req.body?.connector || null, status: 'updating',
+        provider: 'polp', external_id: String(id), user_id: req.userId, grupo_id: req.grupoId,
+        instituicao: instituicao_nome || String(institution_id), status: (status || 'updating').toLowerCase(),
       }, { onConflict: 'provider,external_id' });
     }
-    res.json({ ok: true, externalId, linkUrl });
+    res.json({ ok: true, externalId: String(id), status, urlToAuthenticate });
   } catch (err) {
     console.error('[open-finance/conectar]', err.message);
-    res.status(500).json({ erro: 'Não consegui iniciar a conexão.' });
+    // Teste fechado (só o dono chega aqui) → devolve o motivo real pra diagnosticar.
+    res.status(500).json({ erro: `Falha ao conectar: ${err.message}`.slice(0, 300) });
   }
 });
 
