@@ -19,7 +19,9 @@ function detectarCategoria(msg) {
   //   3. Nutricionista → Saúde geral (exceção pedida)
   //   4. Médico (subcategoria de Saúde): o restante dos médicos
   //   5. Saúde geral: farmácia, ótica, psicólogo…
+  // Produtos de cuidado pessoal: "creme" só NÃO conta em "creme de leite/avelã".
   if (m.match(/(dentista|odonto|ortodontia|dermatolog|esteticista|estetica|cirurgia plastica|botox|harmoniza|preenchimento facial|depilacao|manicure|pedicure|salao|cabeleireiro|barbeiro|corte de cabelo|\bspa\b|massagem)/i)) return 'Autocuidado';
+  if (m.match(/(creme(?!\s+de\s+(leite|avela|avel))|perfume|pomada|hidratante|shampoo|xampu|condicionador|sabonete|desodorante|protetor solar|maquiagem|batom|cosmetic|skincare|esmalte|barbeador|gilete|creme dental|fio dental|enxaguante)/i)) return 'Autocuidado';
   if (m.match(/(unimed|amil|hapvida|notredame|paz eterna|sulamerica|sul america|golden cross|prevent senior|porto seguro saude|bradesco saude|plano de saude)/i)) return 'Plano de Saúde';
   if (m.match(/(nutricionista|nutrolog)/i)) return 'Saúde';
   if (m.match(/(medico|medica|otorrino|fisioterap|cardiolog|ortoped|pediatra|ginecolog|urolog|oftalmo|neurolog|psiquiatra|endocrino|reumatolog|clinico geral|consulta|exame|hospital|laboratorio)/i)) return 'Médico';

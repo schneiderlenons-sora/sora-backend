@@ -100,14 +100,19 @@ const REGRAS = [
   { cat: 'Mercado',        kws: ['mercado', 'supermercado', 'super mercado', 'atacad', 'atacarejo', 'carrefour', 'assai', 'assaí',
       'pao de acucar', 'extra hiper', 'bompreco', 'hortifruti', 'sams club', 'sam s club', 'makro', 'tenda atac',
       'dia supermercado', 'sonda', 'st marche', 'mambo', 'natural da terra', 'sacolao', 'quitanda', 'hipermercado',
-      'mercearia', 'prezunic', 'guanabara', 'zona sul', 'verdemar', 'cometa supermercados'] },
+      'mercearia', 'prezunic', 'guanabara', 'zona sul', 'verdemar', 'cometa supermercados',
+      'creme de leite', 'creme de avela'] },   // ANTES do Autocuidado: "creme" lá é cosmético
 
   // ── Saúde — ordem do MAIS específico pro geral (ver sql/072_categorias_v2.sql):
   //    Autocuidado e Plano de Saúde ANTES de Médico; Médico antes de Saúde geral.
   //    "Médico" e "Plano de Saúde" são SUBcategorias de Saúde.
   { cat: 'Autocuidado',    kws: ['dentista', 'odonto', 'ortodontia', 'dermatolog', 'esteticista', 'estetica', 'cirurgia plastica',
       'botox', 'harmoniza', 'preenchimento facial', 'depilacao', 'manicure', 'pedicure', 'salao de beleza', 'cabeleireiro',
-      'barbeiro', 'barbearia', 'corte de cabelo'] },
+      'barbeiro', 'barbearia', 'corte de cabelo',
+      // Produtos de cuidado pessoal (creme/perfume/pomada e afins).
+      'creme', 'perfume', 'pomada', 'hidratante', 'shampoo', 'xampu', 'condicionador', 'sabonete', 'desodorante',
+      'protetor solar', 'maquiagem', 'batom', 'cosmetic', 'skincare', 'esmalte', 'barbeador', 'gilete',
+      'escova de dente', 'creme dental', 'fio dental', 'enxaguante'] },
   { cat: 'Plano de Saúde', kws: ['unimed', 'amil', 'hapvida', 'notredame', 'paz eterna', 'sulamerica', 'sul america',
       'golden cross', 'prevent senior', 'porto seguro saude', 'bradesco saude', 'plano de saude'] },
   { cat: 'Saúde',          kws: ['nutricionista', 'nutrolog'] },

@@ -20,6 +20,13 @@
 -- Idempotente (só cria o que não existe). Aplicar: Supabase → SQL Editor → Run.
 -- =====================================================================
 
+-- ── tipo agora aceita 'ambos' ────────────────────────────────────────
+-- "Presente" pode ser gasto (você dá) OU receita (você recebe) — o CHECK da 017
+-- só permitia despesa|receita. Categorias 'ambos' aparecem nas DUAS listas.
+alter table public.categorias drop constraint if exists categorias_tipo_check;
+alter table public.categorias
+  add constraint categorias_tipo_check check (tipo in ('despesa','receita','ambos'));
+
 -- ── Helper: categoria PAI com ícone + tipo ───────────────────────────
 -- p_match: padrão ilike pra achar uma já existente (default '%nome%') — pega
 -- também as legadas com emoji no nome ('💪 Academia').
@@ -108,7 +115,7 @@ declare
   v_saude  uuid;
 begin
   -- ── Encomendas + marketplaces (da 030) ──
-  v_enc := public.criar_categoria_pai(p_grupo_id, 'Encomendas', '📦', 'despesa', '%encomendas%');
+  v_enc := public.criar_categoria_pai(p_grupo_id, 'Encomendas', '🚚', 'despesa', '%encomendas%');
   perform public.criar_subcategoria(p_grupo_id, v_enc, 'Shopee');
   perform public.criar_subcategoria(p_grupo_id, v_enc, 'Mercado Livre');
   perform public.criar_subcategoria(p_grupo_id, v_enc, 'Amazon');
@@ -146,7 +153,8 @@ begin
 
   -- ── NOVAS categorias pai (072) ──
   perform public.criar_categoria_pai(p_grupo_id, 'Autocuidado',   '🧼', 'despesa');
-  perform public.criar_categoria_pai(p_grupo_id, 'Presente',      '🎁', 'despesa');
+  -- Presente = 'ambos': você tanto compra um presente quanto ganha dinheiro de presente.
+  perform public.criar_categoria_pai(p_grupo_id, 'Presente',      '🎁', 'ambos');
   perform public.criar_categoria_pai(p_grupo_id, 'Combustível',   '⛽', 'despesa', '%combust%');
   perform public.criar_categoria_pai(p_grupo_id, 'Seguro',        '🔒', 'despesa', '%seguro%');
   perform public.criar_categoria_pai(p_grupo_id, 'Filhos',        '👶', 'despesa');
@@ -189,6 +197,23 @@ update public.categorias set icone = '🏫'
 -- 3) Autocuidado: garante o 🧼 (quem já tinha ficou com ícone aleatório)
 update public.categorias set icone = '🧼'
  where parent_id is null and nome ilike '%autocuidado%';
+
+-- 4) Encomendas: 📦 → 🚚
+update public.categorias set icone = '🚚'
+ where parent_id is null and nome ilike '%encomendas%';
+
+-- 5) Salário e Recebimento são ENTRADA — estavam gravados como 'despesa' e por
+--    isso não apareciam ao registrar uma receita. ('%sal_rio%': o _ casa 1 char,
+--    pega "Salário" e "Salario".)
+update public.categorias set tipo = 'receita'
+ where parent_id is null
+   and (nome ilike '%sal_rio%' or nome ilike '%recebimento%')
+   and tipo is distinct from 'receita';
+
+-- 6) Presente vale pros dois lados.
+update public.categorias set tipo = 'ambos'
+ where parent_id is null and nome ilike '%presente%'
+   and tipo is distinct from 'ambos';
 
 -- ── Backfill: aplica a todos os grupos já existentes ─────────────────
 do $$

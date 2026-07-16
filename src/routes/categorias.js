@@ -19,7 +19,8 @@ router.get('/:phone', auth, async (req, res) => {
     let q = supabase.from('categorias')
       .select('*, parent:parent_id(id,nome)').eq('grupo_id', grupoId)
       .eq('ativa', true).order('nome');
-    if (tipo === 'despesa' || tipo === 'receita') q = q.eq('tipo', tipo);
+    // 'ambos' (ex.: Presente) entra nas DUAS listas — filtrar por eq() a esconderia.
+    if (tipo === 'despesa' || tipo === 'receita') q = q.or(`tipo.eq.${tipo},tipo.eq.ambos`);
     const { data } = await q;
     res.json(data || []);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -30,7 +31,7 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     const { nome, parent_id, icone, cor, tipo } = req.body;
     const grupoId = req.grupoId; // grupo do usuário autenticado (exigirPermissao)
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
-    const tipoNorm = tipo === 'receita' ? 'receita' : 'despesa';
+    const tipoNorm = ['receita', 'ambos'].includes(tipo) ? tipo : 'despesa';
     const { data } = await supabase.from('categorias')
       .insert({ grupo_id: grupoId, nome, parent_id: parent_id || null, icone: icone || '📦', cor: cor || '#808080', tipo: tipoNorm })
       .select().single();
@@ -42,7 +43,7 @@ router.put('/:id', auth, async (req, res) => {
   try {
     const { nome, icone, cor, arquivada, tipo } = req.body;
     const patch = { nome, icone, cor, arquivada };
-    if (tipo === 'despesa' || tipo === 'receita') patch.tipo = tipo;
+    if (['despesa', 'receita', 'ambos'].includes(tipo)) patch.tipo = tipo;
     const { data } = await supabase.from('categorias')
       .update(patch).eq('id', req.params.id).eq('grupo_id', req.authUser?.grupoAtivo || '__nenhum__').select().single();
     res.json(data);
