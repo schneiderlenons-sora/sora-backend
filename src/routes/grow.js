@@ -280,6 +280,80 @@ async function sincronizarTreinoDoHabito(habitoId, userRow, dataReg, concluido) 
   }
 }
 
+// ─── ROTINA (planejamento semanal) ───────────────────────────────────
+// Blocos de dia × horário. Sem check-in: é organização/visualização.
+//   • template (data_especifica null) → repete TODA semana
+//   • pontual  (data_especifica set)  → só naquele dia (veio da Agenda)
+// Rotina é PESSOAL: filtra por user_id (igual hábitos/agenda).
+
+// GET /rotina/:phone?de=YYYY-MM-DD&ate=YYYY-MM-DD
+// Sempre traz o template; os pontuais só se caírem no intervalo pedido.
+router.get('/rotina/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const { de, ate } = req.query;
+    const { data, error } = await supabase.from('rotina_blocos')
+      .select('*').eq('user_id', req.userRow.id)
+      .order('dia_semana', { ascending: true }).order('hora', { ascending: true });
+    if (error) throw error;
+    const blocos = (data || []).filter(b => {
+      if (!b.data_especifica) return true;                    // template: sempre
+      if (!de || !ate) return false;                          // sem semana → só template
+      return b.data_especifica >= de && b.data_especifica <= ate;
+    });
+    res.json(blocos);
+  } catch (err) {
+    console.error('[grow/rotina]', err.message);
+    res.json([]); // tolerante: migration 073 pode não ter rodado — não quebra a aba
+  }
+});
+
+router.post('/rotina', auth, requireGrow, async (req, res) => {
+  try {
+    const { dia_semana, hora, titulo, cor, data_especifica } = req.body;
+    const dia = parseInt(dia_semana, 10);
+    if (!titulo?.trim()) return res.status(400).json({ erro: 'Título obrigatório' });
+    if (!(dia >= 1 && dia <= 7)) return res.status(400).json({ erro: 'Dia inválido (1=Seg … 7=Dom)' });
+    if (!/^\d{2}:\d{2}$/.test(hora || '')) return res.status(400).json({ erro: 'Hora inválida (use HH:MM)' });
+    const { data, error } = await supabase.from('rotina_blocos').insert({
+      grupo_id:        req.userRow.grupo_ativo,
+      user_id:         req.userRow.id,
+      dia_semana:      dia,
+      hora,
+      titulo:          titulo.trim().slice(0, 60),
+      cor:             cor || null,
+      data_especifica: data_especifica || null,
+    }).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.put('/rotina/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const { hora, titulo, cor, dia_semana } = req.body;
+    const patch = {};
+    if (titulo?.trim()) patch.titulo = titulo.trim().slice(0, 60);
+    if (/^\d{2}:\d{2}$/.test(hora || '')) patch.hora = hora;
+    if (cor !== undefined) patch.cor = cor || null;
+    const dia = parseInt(dia_semana, 10);
+    if (dia >= 1 && dia <= 7) patch.dia_semana = dia;
+    if (!Object.keys(patch).length) return res.status(400).json({ erro: 'Nada para atualizar' });
+    const { data, error } = await supabase.from('rotina_blocos')
+      .update(patch).eq('id', req.params.id).eq('user_id', req.userRow.id)
+      .select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.delete('/rotina/:id', auth, requireGrow, async (req, res) => {
+  try {
+    await supabase.from('rotina_blocos').delete()
+      .eq('id', req.params.id).eq('user_id', req.userRow.id);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // ─── TAREFAS ─────────────────────────────────────────────────────────
 router.get('/tarefas/:phone', auth, requireGrow, async (req, res) => {
   try {
@@ -803,6 +877,11 @@ router.post('/compromissos', auth, requireGrow, async (req, res) => {
       lembrete_antecedencia: Number.isInteger(lembrete_antecedencia) ? lembrete_antecedencia : 60,
     }).select().single();
     if (error) return res.status(500).json({ erro: error.message });
+
+    // Espelha no Planejamento Semanal como bloco PONTUAL (só nesse dia).
+    const { sincronizarCompromisso } = require('../services/rotinaSync');
+    await sincronizarCompromisso(novo);
+
     res.json(novo);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

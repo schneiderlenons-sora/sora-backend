@@ -821,11 +821,18 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     titulo = titulo.charAt(0).toUpperCase() + titulo.slice(1);
     const hora = hr ? hr.hora : null;
     const antecedencia = ant ? ant.minutos : (hora ? 60 : 0);
-    const { error } = await supabase.from('compromissos').insert({
+    const { data: novoComp, error } = await supabase.from('compromissos').insert({
       grupo_id: grupoId, user_id: user.id, titulo, data: dataISO, hora,
       categoria: 'pessoal', cor: '#7c3aed',
       lembrete_ativo: true, lembrete_antecedencia: antecedencia,
-    });
+    }).select().single();
+
+    // Também marca no Planejamento Semanal — como bloco PONTUAL (só nesse dia),
+    // sem entrar no template que se repete toda semana.
+    if (novoComp) {
+      const { sincronizarCompromisso } = require('../services/rotinaSync');
+      await sincronizarCompromisso(novoComp);
+    }
     if (error) {
       await enviarBotaoLink(phone, {
         message: '😕 Não consegui salvar agora. Tenta pelo painel:',
