@@ -69,6 +69,7 @@ const EMOJIS_MAP = {
   'filhos':'👶',
   'financiamento':'🔖',
   'extras':'📥',
+  'trabalho/negocio':'💼', 'trabalho/negócio':'💼', 'trabalho negocio':'💼',
   'encomendas':'🚚',
   // Subcategorias de transporte
   'uber':'🚗', '99':'🚗', 'cabify':'🚗',

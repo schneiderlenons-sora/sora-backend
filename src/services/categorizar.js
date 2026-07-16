@@ -35,8 +35,16 @@ const REGRAS = [
   { cat: 'Shein',          kws: ['shein'] },
   { cat: 'Encomendas',     kws: ['magazine luiza', 'magalu', 'americanas', 'casas bahia', 'submarino', 'kabum', 'pichau', 'terabyte', 'temu', 'wish', 'enjoei', 'pontofrio', 'ponto frio', 'extra com', 'fastshop', 'fast shop'] },
 
-  // ── Transferências / Pix (não-consumo) ──
-  { cat: 'Transferências', kws: ['mercado pago', 'mercadopago', 'pix enviado', 'pix recebido', 'pix ', 'ted ', 'doc ', 'transferencia', 'transferencias', 'transf '] },
+  // ── Assinatura da Sora (EC*SORA no extrato) — antes do genérico ──
+  { cat: 'Assinaturas',    kws: ['ec sora', 'forsora', 'sora ai'] },
+
+  // ── Trabalho / Negócio (anúncios e ferramentas de trabalho) ──
+  { cat: 'Trabalho/Negócio', kws: ['facebk', 'facebook', 'meta plataform', 'meta ads', 'fb ads', 'google ads', 'googleads',
+      'instagram ad', 'tiktok ads', 'kwai for business', 'linkedin ads', 'mailchimp'] },
+
+  // ── Transferências / Pix / estornos (não-consumo) ──
+  { cat: 'Transferências', kws: ['mercado pago', 'mercadopago', 'pix enviado', 'pix recebido', 'pix ', 'ted ', 'doc ', 'transferencia', 'transferencias', 'transf ',
+      'venda cancelada', 'liberacao de dinheiro', 'estorno', 'devolucao', 'reembolso', 'chargeback', 'dinheiro recebido'] },
 
   // ── Delivery / Alimentação ──
   { cat: 'iFood',          kws: ['ifood', 'i food'] },

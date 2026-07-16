@@ -37,16 +37,19 @@ function normalizeConta(acc) {
   const isCard = (acc.type || '').toString().toUpperCase() === 'CREDIT';
   const sub    = (acc.subtype || '').toString().toUpperCase();
   const tipo   = isCard ? 'Crédito' : /SAV|POUP/.test(sub) ? 'Poupança' : 'Corrente';
-  const cd     = acc.credit_data || {};
+  const cd     = acc.credit_data || {};   // camelCase: creditLimit, balanceCloseDate, balanceDueDate, brand
   return {
     externalId: acc.id,
     nome:  (acc.name || acc.marketing_name || 'Conta').toString(),
     tipo,
-    saldo: isCard ? 0 : (num(acc.balance) || 0),
+    // Cartão: saldo = −fatura ATUAL. A Polp já entrega a fatura pronta em `balance`
+    // (o valor devido) — mais fiel do que somar transações (refund/estorno, ciclo
+    // sem data de fechamento). Conta comum: saldo = balance.
+    saldo: isCard ? -(num(acc.balance) || 0) : (num(acc.balance) || 0),
     extras: isCard ? {
-      limite:         num(cd.limit ?? cd.credit_limit),
-      dia_fechamento: dia(cd.close_date ?? cd.balance_close_date),
-      dia_vencimento: dia(cd.due_date),
+      limite:         num(cd.creditLimit),
+      dia_fechamento: dia(cd.balanceCloseDate),   // MP costuma vir null → fica sem
+      dia_vencimento: dia(cd.balanceDueDate),
       bandeira:       mapBandeira(cd.brand),
     } : {},
   };
