@@ -10,44 +10,27 @@
 // em runtime (não no boot) pra não derrubar o app quando ainda não configurado.
 // =====================================================================
 
-const BASE          = () => process.env.POLP_API_URL || 'https://api.polp.com.br'; // ⚠️ confirmar host
-const API_KEY       = () => process.env.POLP_API_KEY;
+// Base confirmada na doc: https://api.polp.com.br/api/v1
+const BASE          = () => process.env.POLP_API_URL || 'https://api.polp.com.br/api/v1';
 const CLIENT_ID     = () => process.env.POLP_CLIENT_ID;
 const CLIENT_SECRET = () => process.env.POLP_CLIENT_SECRET;
 
-let _token = null;
-let _tokenExp = 0; // epoch ms
-
 function configurado() {
-  return !!(API_KEY() || (CLIENT_ID() && CLIENT_SECRET()));
+  return !!(CLIENT_ID() && CLIENT_SECRET());
 }
 
-// Bearer atual: usa a API key direta OU troca client_id/secret por um token OAuth.
-async function bearer() {
-  if (API_KEY()) return API_KEY();
-  if (!(CLIENT_ID() && CLIENT_SECRET())) {
-    throw new Error('Polp não configurado (faltam POLP_API_KEY ou POLP_CLIENT_ID/SECRET).');
-  }
-  if (_token && Date.now() < _tokenExp) return _token;
-  // ⚠️ Endpoint/payload de token a confirmar na doc (OAuth2 client_credentials).
-  const r = await fetch(`${BASE()}/oauth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ grant_type: 'client_credentials', client_id: CLIENT_ID(), client_secret: CLIENT_SECRET() }),
-  });
-  if (!r.ok) throw new Error(`Polp /oauth/token falhou: ${r.status} ${await r.text()}`);
-  const j = await r.json();
-  _token = j.access_token || j.token;                 // ⚠️ nome do campo a confirmar
-  _tokenExp = Date.now() + ((j.expires_in || 3000) * 1000) - 60_000; // renova com 1min de folga
-  return _token;
-}
-
-// Chamada autenticada. `path` começa com "/".
+// Auth da Polp (doc "Authentication"): NÃO tem /auth nem token — as credenciais
+// vão em DOIS headers em toda requisição.
+//   x-api-client = client_id (público)   ·   x-api-secret = client_secret
 async function api(path, { method = 'GET', body } = {}) {
-  const tk = await bearer();
+  if (!configurado()) throw new Error('Polp não configurado (faltam POLP_CLIENT_ID / POLP_CLIENT_SECRET).');
   const r = await fetch(`${BASE()}${path}`, {
     method,
-    headers: { Authorization: `Bearer ${tk}`, 'Content-Type': 'application/json' }, // ⚠️ header a confirmar (Bearer vs X-API-KEY)
+    headers: {
+      'x-api-client': CLIENT_ID(),
+      'x-api-secret': CLIENT_SECRET(),
+      'Content-Type': 'application/json',
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!r.ok) throw new Error(`Polp ${method} ${path} → ${r.status} ${await r.text()}`);
