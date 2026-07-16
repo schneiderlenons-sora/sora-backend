@@ -37,6 +37,8 @@ declare
   v_id    uuid;
   v_match text := coalesce(p_match, '%' || p_nome || '%');
 begin
+  -- 1) Categoria RAIZ ativa que casa o padrão (pega também as legadas com emoji
+  --    no nome, tipo '💪 Academia').
   select id into v_id
     from public.categorias
    where grupo_id = p_grupo_id
@@ -44,12 +46,23 @@ begin
      and nome ilike v_match
      and coalesce(ativa, true) = true
    limit 1;
+  if v_id is not null then return v_id; end if;
 
-  if v_id is null then
-    insert into public.categorias (grupo_id, nome, parent_id, icone, cor, tipo, ativa)
-    values (p_grupo_id, p_nome, null, p_icone, '#808080', p_tipo, true)
-    returning id into v_id;
-  end if;
+  -- 2) MESMO NOME em QUALQUER estado (subcategoria ou inativa). A unique é
+  --    (grupo_id, nome) — vale pro grupo inteiro, não só pras raízes ativas.
+  --    Sem esta checagem o insert estoura 23505 em quem já tem a categoria
+  --    como sub/inativa. Reaproveita a existente em vez de duplicar.
+  select id into v_id
+    from public.categorias
+   where grupo_id = p_grupo_id
+     and lower(btrim(nome)) = lower(btrim(p_nome))
+   limit 1;
+  if v_id is not null then return v_id; end if;
+
+  -- 3) Não existe → cria.
+  insert into public.categorias (grupo_id, nome, parent_id, icone, cor, tipo, ativa)
+  values (p_grupo_id, p_nome, null, p_icone, '#808080', p_tipo, true)
+  returning id into v_id;
 
   return v_id;
 end;
@@ -67,10 +80,12 @@ language plpgsql
 as $$
 begin
   if p_parent is null then return; end if;
+  -- A unique é (grupo_id, nome) → checa o NOME no GRUPO INTEIRO, não só sob este
+  -- pai. Se "Médico" já existir noutro lugar (raiz ou outro pai), inserir aqui
+  -- estouraria 23505.
   if exists (
     select 1 from public.categorias
      where grupo_id = p_grupo_id
-       and parent_id = p_parent
        and lower(btrim(nome)) = lower(btrim(p_nome))
   ) then
     return;
@@ -151,10 +166,21 @@ $$;
 
 -- ── FIXES nos grupos existentes ──────────────────────────────────────
 -- 1) Emoji duplicado: o nome NÃO deve carregar emoji (convenção nome+icone).
-update public.categorias set nome = 'Academia'
- where parent_id is null and btrim(nome) = '💪 Academia';
-update public.categorias set nome = 'Encomendas'
- where parent_id is null and btrim(nome) = '📦 Encomendas';
+--    O `not exists` evita 23505 em quem já tem a versão sem emoji no grupo
+--    (a unique é (grupo_id, nome)); nesse caso a legada fica como está.
+update public.categorias c set nome = 'Academia'
+ where c.parent_id is null and btrim(c.nome) = '💪 Academia'
+   and not exists (
+     select 1 from public.categorias o
+      where o.grupo_id = c.grupo_id and o.id <> c.id
+        and lower(btrim(o.nome)) = 'academia');
+
+update public.categorias c set nome = 'Encomendas'
+ where c.parent_id is null and btrim(c.nome) = '📦 Encomendas'
+   and not exists (
+     select 1 from public.categorias o
+      where o.grupo_id = c.grupo_id and o.id <> c.id
+        and lower(btrim(o.nome)) = 'encomendas');
 
 -- 2) Escola: ícone genérico 📦 → 🏫
 update public.categorias set icone = '🏫'
