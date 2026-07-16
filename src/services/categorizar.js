@@ -61,8 +61,11 @@ const REGRAS = [
 
   // ── Transporte ──
   { cat: 'Uber',           kws: ['uber'] },
+  // Combustível ANTES de Transporte — categoria própria desde a 072 (antes tudo
+  // isso caía em Transporte).
+  { cat: 'Combustível',    kws: ['posto', 'ipiranga', 'shell ', 'petrobras', 'br mania', 'gasolina', 'combustivel',
+      'etanol', 'diesel'] },
   { cat: 'Transporte',     kws: ['99app', '99 pop', '99pop', '99 tecnologia', 'cabify', 'indrive', 'in drive', 'blablacar',
-      'posto', 'ipiranga', 'shell ', 'petrobras', 'br mania', 'gasolina', 'combustivel', 'etanol', 'diesel',
       'estacionamento', 'estapar', 'zona azul', 'pedagio', 'sem parar', 'conectcar', 'veloe', 'move mais', 'ccr ',
       'metro', 'metrô', 'cptm', 'bilhete unico', 'sptrans', 'onibus', 'passagem rodoviaria', 'buser', 'autopecas', 'auto pecas',
       'oficina mecanica', 'borracharia', 'licenciamento'] },
@@ -99,11 +102,26 @@ const REGRAS = [
       'dia supermercado', 'sonda', 'st marche', 'mambo', 'natural da terra', 'sacolao', 'quitanda', 'hipermercado',
       'mercearia', 'prezunic', 'guanabara', 'zona sul', 'verdemar', 'cometa supermercados'] },
 
-  // ── Saúde / Farmácia ──
+  // ── Saúde — ordem do MAIS específico pro geral (ver sql/072_categorias_v2.sql):
+  //    Autocuidado e Plano de Saúde ANTES de Médico; Médico antes de Saúde geral.
+  //    "Médico" e "Plano de Saúde" são SUBcategorias de Saúde.
+  { cat: 'Autocuidado',    kws: ['dentista', 'odonto', 'ortodontia', 'dermatolog', 'esteticista', 'estetica', 'cirurgia plastica',
+      'botox', 'harmoniza', 'preenchimento facial', 'depilacao', 'manicure', 'pedicure', 'salao de beleza', 'cabeleireiro',
+      'barbeiro', 'barbearia', 'corte de cabelo'] },
+  { cat: 'Plano de Saúde', kws: ['unimed', 'amil', 'hapvida', 'notredame', 'paz eterna', 'sulamerica', 'sul america',
+      'golden cross', 'prevent senior', 'porto seguro saude', 'bradesco saude', 'plano de saude'] },
+  { cat: 'Saúde',          kws: ['nutricionista', 'nutrolog'] },
+  { cat: 'Médico',         kws: ['otorrino', 'fisioterap', 'cardiolog', 'ortoped', 'pediatra', 'ginecolog', 'urolog', 'oftalmo',
+      'neurolog', 'psiquiatra', 'endocrino', 'reumatolog', 'clinico geral', 'consulta medica', 'medico', 'exame',
+      'hospital', 'laboratorio', 'fleury', 'sabin', 'hermes pardini'] },
   { cat: 'Saúde',          kws: ['farmacia', 'drogaria', 'drogasil', 'droga raia', 'pacheco', 'pague menos', 'panvel', 'raia ',
-      'extrafarma', 'venancio', 'nissei', 'ultrafarma', 'clinica', 'hospital', 'laboratorio', 'fleury', 'sabin', 'hermes pardini',
-      'unimed', 'amil', 'hapvida', 'notredame', 'odonto', 'dentista', 'ortodontia', 'consulta medica', 'exame', 'fisioterapia',
-      'psicolog', 'terapia', 'vacina', 'otica', 'oculos'] },
+      'extrafarma', 'venancio', 'nissei', 'ultrafarma', 'clinica', 'psicolog', 'terapia', 'vacina', 'otica', 'oculos'] },
+
+  // ── Categorias novas da 072 (auto-categorização pedida) ──
+  { cat: 'Financiamento',  kws: ['financiamento', 'consorcio'] },
+  { cat: 'Seguro',         kws: ['seguro auto', 'seguro de vida', 'seguro residencial', 'seguro viagem', 'apolice'] },
+  { cat: 'Presente',       kws: ['presente', 'lembrancinha'] },
+  { cat: 'Filhos',         kws: ['fralda', 'creche', 'bercario', 'mesada', 'escolinha'] },
 
   // ── Pet ──
   { cat: 'Pet',            kws: ['petz', 'cobasi', 'petlove', 'veterinari', 'pet shop', 'petshop', 'pet center', 'clinipet', 'agropet', 'racao'] },
@@ -167,10 +185,12 @@ function categorizarDescricao(descricao) {
 const MAPA_PLUGGY = [
   { cat: 'Mercado',                kws: ['supermarket', 'groceries', 'grocery', 'mercado', 'supermercado'] },
   { cat: 'Alimentação',            kws: ['food and drinks', 'food & drinks', 'restaurant', 'food delivery', 'fast food', 'bars', 'coffee', 'dining', 'aliment', 'restaurante', 'comida', 'bares', 'cafe'] },
-  { cat: 'Transporte',             kws: ['transport', 'gas station', 'fuel', 'public transportation', 'parking', 'tolls', 'transporte', 'combustivel', 'pedagio', 'estacionamento'] },
+  { cat: 'Combustível',            kws: ['gas station', 'fuel', 'combustivel', 'gasolina'] },
+  { cat: 'Transporte',             kws: ['transport', 'public transportation', 'parking', 'tolls', 'transporte', 'pedagio', 'estacionamento'] },
   { cat: 'Uber',                   kws: ['ride hailing', 'ride-hailing', 'taxi', 'uber'] },
-  { cat: 'Saúde',                  kws: ['health', 'pharmacy', 'drugstore', 'doctor', 'medical', 'saude', 'farmacia', 'medico'] },
-  { cat: 'Beleza',                 kws: ['beauty', 'personal care', 'cosmetic', 'beleza', 'estetica'] },
+  { cat: 'Médico',                 kws: ['doctor', 'medical'] },
+  { cat: 'Saúde',                  kws: ['health', 'pharmacy', 'drugstore', 'saude', 'farmacia', 'medico'] },
+  { cat: 'Autocuidado',            kws: ['beauty', 'personal care', 'cosmetic', 'beleza', 'estetica'] },
   { cat: 'Academia',               kws: ['gym', 'fitness', 'academia'] },
   { cat: 'Vestuário',              kws: ['clothing', 'apparel', 'fashion', 'shoes', 'vestuario', 'roupa', 'calcado'] },
   { cat: 'Assinaturas',            kws: ['streaming', 'subscription', 'digital services', 'software', 'assinatura'] },

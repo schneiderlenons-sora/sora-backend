@@ -7,10 +7,28 @@ function detectarCategoria(msg) {
   // Marketplaces ANTES de "mercado" — senão "mercado livre" cairia em supermercado.
   if (m.match(/(shopee|shein|aliexpress|amazon|mercado\s*livre|mercadolivre|magalu|magazine\s*luiza|americanas|submarino|temu|tiktok\s*shop)/i)) return 'Encomendas';
   if (m.includes('mercado') || m.includes('supermercado')) return 'Mercado';
-  if (m.match(/(uber|99|gasolina|combustivel|posto|onibus|metro)/i)) return 'Transporte';
+  // Combustível ANTES de Transporte (senão "gasolina" cairia em Transporte).
+  // "posto" exclui "posto de saúde".
+  if (m.match(/(gasolina|combustivel|etanol|diesel|\bposto\b(?!\s+de\s+sa)|ipiranga|petrobras|\bshell\b)/i)) return 'Combustível';
+  if (m.match(/(uber|99|onibus|metro|cabify|taxi|pedagio|estacionamento)/i)) return 'Transporte';
   if (m.match(/(pizza|lanche|restaurante|janta|almoco|jantar|ifood|delivery|hamburguer|marmita)/i)) return 'Alimentação';
   if (m.match(/(netflix|spotify|prime|hbo|disney|globo|iptv)/i)) return 'Assinaturas';
-  if (m.match(/(farmacia|drogaria|remedio|medico|medica|dentista|hospital|clinica|exame|consulta|laboratorio|plano de saude)/i)) return 'Saúde';
+  // SAÚDE — ordem importa (do mais específico pro geral):
+  //   1. Autocuidado: dentista, dermato, estética/plástica (exceções pedidas)
+  //   2. Plano de Saúde (subcategoria de Saúde): unimed, amil, hapvida…
+  //   3. Nutricionista → Saúde geral (exceção pedida)
+  //   4. Médico (subcategoria de Saúde): o restante dos médicos
+  //   5. Saúde geral: farmácia, ótica, psicólogo…
+  if (m.match(/(dentista|odonto|ortodontia|dermatolog|esteticista|estetica|cirurgia plastica|botox|harmoniza|preenchimento facial|depilacao|manicure|pedicure|salao|cabeleireiro|barbeiro|corte de cabelo|\bspa\b|massagem)/i)) return 'Autocuidado';
+  if (m.match(/(unimed|amil|hapvida|notredame|paz eterna|sulamerica|sul america|golden cross|prevent senior|porto seguro saude|bradesco saude|plano de saude)/i)) return 'Plano de Saúde';
+  if (m.match(/(nutricionista|nutrolog)/i)) return 'Saúde';
+  if (m.match(/(medico|medica|otorrino|fisioterap|cardiolog|ortoped|pediatra|ginecolog|urolog|oftalmo|neurolog|psiquiatra|endocrino|reumatolog|clinico geral|consulta|exame|hospital|laboratorio)/i)) return 'Médico';
+  if (m.match(/(farmacia|drogaria|remedio|clinica|psicolog|terapia|vacina|otica|oculos)/i)) return 'Saúde';
+  // Categorias novas (072) — auto-categorização pedida.
+  if (m.match(/(financiamento|consorcio)/i)) return 'Financiamento';
+  if (m.match(/\bseguro\b/i)) return 'Seguro';
+  if (m.match(/(presente|lembrancinha|\bgift\b)/i)) return 'Presente';
+  if (m.match(/(fralda|creche|bercario|mesada|escolinha)/i)) return 'Filhos';
   if (m.includes('aluguel')) return 'Aluguel';
   if (m.match(/(padaria|pao|cafe da manha)/i)) return 'Padaria';
   if (m.match(/(internet|wifi|vivo|claro|tim|oi |banda larga)/i)) return 'Internet';

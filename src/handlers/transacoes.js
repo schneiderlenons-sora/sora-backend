@@ -57,7 +57,18 @@ const EMOJIS_MAP = {
   'doacoes':'🏷️', 'doações':'🏷️',
   'outros':'📦',
   'ajuste':'🔧',   // reconciliação de saldo (ajustar saldo) — categoria própria
-  'escola':'🎒',
+  'escola':'🏫',
+  // Categorias/subcategorias da 072
+  'autocuidado':'🧼',
+  'medico':'🩺', 'médico':'🩺',
+  'plano de saude':'❤️‍🩹', 'plano de saúde':'❤️‍🩹',
+  'vendas':'💵',
+  'presente':'🎁',
+  'combustivel':'⛽', 'combustível':'⛽',
+  'seguro':'🔒',
+  'filhos':'👶',
+  'financiamento':'🔖',
+  'extras':'📥',
   'encomendas':'📦',
   // Subcategorias de transporte
   'uber':'🚗', '99':'🚗', 'cabify':'🚗',
