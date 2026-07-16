@@ -19,9 +19,13 @@ function normalizar(s) {
 }
 
 // substring p/ palavras longas (>=4); palavra inteira p/ curtas.
+// Prefixo '=' força palavra inteira mesmo em kw longa — pra kw que é sufixo de
+// outra palavra comum (ex.: '=racao', senão "libeRACAO"/"decoRACAO" viram Pet).
 function casa(texto, kw) {
-  if (kw.length >= 4) return texto.includes(kw);
-  const esc = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const exato = kw[0] === '=';
+  const k = exato ? kw.slice(1) : kw;
+  if (!exato && k.length >= 4) return texto.includes(k);
+  const esc = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(^|\\s)${esc}(\\s|$)`).test(texto);
 }
 
@@ -137,7 +141,7 @@ const REGRAS = [
   { cat: 'Filhos',         kws: ['fralda', 'creche', 'bercario', 'mesada', 'escolinha'] },
 
   // ── Pet ──
-  { cat: 'Pet',            kws: ['petz', 'cobasi', 'petlove', 'veterinari', 'pet shop', 'petshop', 'pet center', 'clinipet', 'agropet', 'racao'] },
+  { cat: 'Pet',            kws: ['petz', 'cobasi', 'petlove', 'veterinari', 'pet shop', 'petshop', 'pet center', 'clinipet', 'agropet', '=racao'] },
 
   // ── Educação ──
   { cat: 'Educação',       kws: ['udemy', 'coursera', 'alura', 'duolingo', 'rocketseat', 'hotmart', 'escola', 'colegio',
@@ -186,8 +190,11 @@ function categorizarDescricao(descricao) {
   if (!t) return null;
   for (const regra of REGRAS) {
     for (const kw of regra.kws) {
+      // normalizar() comeria o '=' (vira espaço) — reaplica depois pra manter
+      // o pedido de "palavra inteira".
+      const exato = kw[0] === '=';
       const k = normalizar(kw);
-      if (k && casa(t, k)) return regra.cat;
+      if (k && casa(t, exato ? `=${k}` : k)) return regra.cat;
     }
   }
   return null;

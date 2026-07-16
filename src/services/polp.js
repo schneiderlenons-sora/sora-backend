@@ -88,11 +88,30 @@ async function listarTransacoes(accountId, dateFrom, { paginaMax = 300 } = {}) {
   return dateFrom ? out.filter(t => String(t.date) >= dateFrom) : out;
 }
 
+// Faturas de UM cartão. A fatura REAL vem pronta aqui (valor + vencimento) —
+// é a fonte certa: `balance` da conta é a dívida corrente (inclui compras já do
+// próximo ciclo) e o MP não manda `balanceCloseDate`, então não dá pra recortar
+// o ciclo por conta própria. Tolerante: nem toda instituição/plano expõe.
+async function listarFaturas(accountId) {
+  const tentativas = [
+    `/accounts/${encodeURIComponent(accountId)}/bills`,
+    `/bills?account_id=${encodeURIComponent(accountId)}`,
+  ];
+  for (const p of tentativas) {
+    try {
+      const d = dados(await api(p));
+      if (Array.isArray(d)) return d;
+      if (d && Array.isArray(d.results)) return d.results;
+    } catch { /* tenta o próximo caminho */ }
+  }
+  return [];
+}
+
 async function removerConexao(id) {
   try { await api(`/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { /* tolerante */ }
 }
 
 module.exports = {
   configurado, listarInstituicoes, criarIntegracao, getIntegracao,
-  listarContas, listarInvestimentos, listarTransacoes, removerConexao,
+  listarContas, listarInvestimentos, listarTransacoes, listarFaturas, removerConexao,
 };

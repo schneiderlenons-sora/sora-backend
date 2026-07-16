@@ -129,6 +129,14 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
       out.amostras_tx.push({ conta: c.name || c.id, type: c.type, txs: tx });
     } catch (e) { out.amostras_tx.push({ conta: c.name || c.id, erro: e.message }); }
   }
+  // Faturas CRUAS do cartão — pra conferir valor/vencimento/fechamento reais
+  // (o `balance` da conta não é a fatura; o MP não manda balanceCloseDate).
+  out.faturas = [];
+  for (const c of (Array.isArray(contas) ? contas : [])) {
+    if ((c.type || '').toString().toUpperCase() !== 'CREDIT') continue;
+    try { out.faturas.push({ conta: c.name || c.id, bills: await polp.listarFaturas(c.id) }); }
+    catch (e) { out.faturas.push({ conta: c.name || c.id, erro: e.message }); }
+  }
   try { out.investimentos = await polp.listarInvestimentos(id); } catch (e) { out.investimentos_erro = e.message; }
   res.json(out);
 });
