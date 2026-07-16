@@ -31,7 +31,9 @@ router.post('/connect-token', auth, exigirAcessoOpenFinance, async (req, res) =>
     res.json({ connectToken: token });
   } catch (err) {
     console.error('[pluggy/connect-token]', err.message);
-    res.status(500).json({ erro: 'Não consegui gerar o token de conexão.' });
+    // Teste fechado: só o dono (allowlist) chega aqui → devolve o motivo REAL
+    // (ex.: 403 de auth da Polp, host errado) pra diagnosticar o teste.
+    res.status(500).json({ erro: `Falha ao conectar com a Polp: ${err.message}`.slice(0, 300) });
   }
 });
 
