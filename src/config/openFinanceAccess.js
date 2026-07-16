@@ -5,14 +5,13 @@
 // =====================================================================
 const supabase = require('../db/supabase');
 
+// TESTE FECHADO (Polp/Pluggy): só o dono, enquanto valida com banco real.
+// Espelha o lib/open-finance-access.ts do frontend. Reabrir = readicionar aqui.
 const EMAILS = [
   'schneider.lenon.s@gmail.com',
   'schineiderlenon@gmail.com',
-  'cassiopellegrim@gmail.com',
 ];
-const PHONES = [
-  '5511991774537',
-];
+const PHONES = [];
 
 const normPhone = (p) => (p || '').replace(/\D/g, '');
 

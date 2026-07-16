@@ -5,10 +5,13 @@
 // O connectToken (curto, ~30min) é gerado pro widget Pluggy Connect no front.
 // Docs: https://docs.pluggy.ai
 // =====================================================================
-const BASE = 'https://api.pluggy.ai';
-
-const CLIENT_ID     = process.env.PLUGGY_CLIENT_ID;
-const CLIENT_SECRET = process.env.PLUGGY_CLIENT_SECRET;
+// A Polp REVENDE a Pluggy (docs em polp.com.br/docs/pluggy). Então aceitamos as
+// credenciais com o prefixo POLP_ (o que está no Render) OU PLUGGY_. E a base é
+// configurável: se a Polp usar um host próprio (proxy), é só setar POLP_API_URL —
+// senão vai direto na Pluggy.
+const BASE          = process.env.POLP_API_URL     || process.env.PLUGGY_API_URL     || 'https://api.pluggy.ai';
+const CLIENT_ID     = process.env.POLP_CLIENT_ID     || process.env.PLUGGY_CLIENT_ID;
+const CLIENT_SECRET = process.env.POLP_CLIENT_SECRET || process.env.PLUGGY_CLIENT_SECRET;
 
 let _apiKey = null;
 let _apiKeyExp = 0; // epoch ms
