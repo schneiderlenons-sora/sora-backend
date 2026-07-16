@@ -168,6 +168,20 @@ async function sincronizarConexao(externalId, { dias = 90 } = {}) {
   const { grupo_id: grupoId, user_id: userId } = conexao;
   const from = ymd(Date.now() - dias * 864e5);
 
+  // Estado REAL na Polp: não adianta importar se o usuário ainda não autorizou
+  // (WAITING_USER_INPUT) ou o login falhou. Reflete o status e sai — sem marcar
+  // "conectado" (o bug anterior: buscava 0 contas e dizia sucesso).
+  let integ = null;
+  try { integ = await polp.getIntegracao(externalId); } catch { /* segue e tenta importar */ }
+  const st = ((integ && (integ.status || integ.execution_status)) || '').toString().toUpperCase();
+  if (st && st !== 'UPDATED' && st !== 'OUTDATED') {
+    await supabase.from('of_conexoes').update({
+      status: st.toLowerCase(),
+      ultimo_erro: st === 'LOGIN_ERROR' ? 'Falha no login com o banco. Reconecte.' : null,
+    }).eq('id', conexao.id);
+    return { pendente: st, urlToAuthenticate: (integ && integ.url_to_authenticate) || null, novas: 0 };
+  }
+
   try {
     let novasTx = 0;
     const detalhe = [];

@@ -46,7 +46,24 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
   try {
     const { institution_id, cpf, cnpj, instituicao_nome } = req.body || {};
     if (!institution_id) return res.status(400).json({ erro: 'Escolha um banco (institution_id).' });
-    const { id, status, urlToAuthenticate } = await polp.criarIntegracao({ institutionId: institution_id, cpf, cnpj });
+    let { id, status, urlToAuthenticate } = await polp.criarIntegracao({ institutionId: institution_id, cpf, cnpj });
+
+    // A url_to_authenticate costuma aparecer um instante DEPOIS do create (o
+    // status vira WAITING_USER_INPUT). Se não veio, consulta a integração algumas
+    // vezes até a URL surgir (ou o status ficar terminal).
+    if (id && !urlToAuthenticate) {
+      for (let i = 0; i < 6; i++) {
+        await new Promise(r => setTimeout(r, 1200));
+        try {
+          const g = await polp.getIntegracao(id);
+          status = g.status || status;
+          if (g.url_to_authenticate) { urlToAuthenticate = g.url_to_authenticate; break; }
+          const s = (g.status || '').toString().toUpperCase();
+          if (s === 'UPDATED' || s === 'LOGIN_ERROR') break;
+        } catch { /* tenta de novo */ }
+      }
+    }
+
     if (id) {
       await supabase.from('of_conexoes').upsert({
         provider: 'polp', external_id: String(id), user_id: req.userId, grupo_id: req.grupoId,
@@ -84,6 +101,16 @@ router.post('/conexoes/:externalId/sincronizar', auth, exigirConfigurado, exigir
   } catch (err) {
     console.error('[open-finance/sync]', err.message);
     res.status(500).json({ erro: 'Não consegui sincronizar agora.' });
+  }
+});
+
+// URL de autorização ATUAL de uma conexão pendente (pro botão "Autorizar").
+router.get('/conexoes/:externalId/autorizar', auth, exigirAcesso, exigirConfigurado, async (req, res) => {
+  try {
+    const g = await polp.getIntegracao(req.params.externalId);
+    res.json({ urlToAuthenticate: (g && g.url_to_authenticate) || null, status: (g && g.status) || null });
+  } catch (err) {
+    res.status(500).json({ erro: `Não consegui buscar a autorização: ${err.message}`.slice(0, 200) });
   }
 });
 
