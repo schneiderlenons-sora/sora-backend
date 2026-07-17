@@ -42,15 +42,12 @@ function normalizeConta(acc) {
     externalId: acc.id,
     nome:  (acc.name || acc.marketing_name || 'Conta').toString(),
     tipo,
-    // Cartão: saldo = −dívida do cartão, que é o `balance` — o mesmo campo que
-    // usamos pra conta comum. Confirmado por DOIS caminhos independentes no MP:
-    // balance 904,71 == creditLimit − availableCreditLimit (2900 − 1995,29), e
-    // a soma de todas as transações importadas (compras − pagamentos) deu
-    // 907,84 — bate em R$3.
-    // NÃO usar o endpoint de bills aqui: o MP só devolve faturas ANTIGAS (a
-    // última é a de junho, já paga, e as outras vêm com total_amount 0). Foi o
-    // que fez a fatura aparecer como 208,77 — o valor de uma fatura quitada.
-    saldo: isCard ? -(num(acc.balance) || 0) : (num(acc.balance) || 0),
+    // Cartão: saldo = 0 — a fatura vem das TRANSAÇÕES, como sempre veio no
+    // pluggySync (`const saldo = ehCredito ? 0 : ...`). Não usar `balance` aqui:
+    // ele é o limite usado, não a fatura, e erra sempre pra cima — MP 904,71
+    // contra 708,06 no app; Nubank 5.349,63 contra 2.845,20. Ter trocado isso
+    // por -balance foi o que quebrou o cartão. Conta comum: saldo = balance.
+    saldo: isCard ? 0 : (num(acc.balance) || 0),
     extras: isCard ? {
       limite:         num(cd.creditLimit),
       // Fechamento: o MP manda balanceCloseDate null — fica sem, em vez de
@@ -204,7 +201,13 @@ async function sincronizarConexao(externalId, { dias = 90 } = {}) {
       try {
         const n = normalizeConta(raw);
         const walletNome = await upsertWallet(grupoId, userId, n);
-        const txsRaw = await polp.listarTransacoes(n.externalId, from);
+        // A Polp devolve PARCELA FUTURA como transação com data no futuro
+        // (ex.: 2027-03-13, "DL *HOTEIS.COM 12/12", status PENDING). Isso ainda
+        // não é gasto: entra na fatura no mês dela. Importar joga despesa lá na
+        // frente e suja qualquer soma. Só entra o que já aconteceu.
+        const hoje = ymd(Date.now());
+        const txsRaw = (await polp.listarTransacoes(n.externalId, from))
+          .filter(t => String(t.date || '').slice(0, 10) <= hoje);
         const novas = await inserirTransacoes(grupoId, userId, walletNome, txsRaw.map(normalizeTx), n.tipo === 'Crédito');
         novasTx += novas;
         detalhe.push({ conta: walletNome, txs: txsRaw.length, novas });
