@@ -126,11 +126,15 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
   let contas = [];
   try { contas = await polp.listarContas(id); out.contas = contas; } catch (e) { out.contas_erro = e.message; }
   // Amostra de transações de CADA conta (inclui o cartão) → pra ver categoria + campos.
+  // Amostra das transações MAIS RECENTES. A API devolve em ordem crescente de
+  // data, então as do mês estão no FIM da lista (pegar as 3 primeiras trazia
+  // compras de 2025, inúteis pra conferir a fatura do mês).
   out.amostras_tx = [];
   for (const c of (Array.isArray(contas) ? contas : []).slice(0, 4)) {
     try {
-      const tx = (await polp.listarTransacoes(c.id, null, { paginaMax: 1 })).slice(0, 3);
-      out.amostras_tx.push({ conta: c.name || c.id, type: c.type, txs: tx });
+      const todas = await polp.listarTransacoes(c.id, null);
+      const tx = todas.slice(-3).reverse();
+      out.amostras_tx.push({ conta: c.name || c.id, type: c.type, total: todas.length, txs: tx });
     } catch (e) { out.amostras_tx.push({ conta: c.name || c.id, erro: e.message }); }
   }
   // Faturas CRUAS do cartão + saldo AO VIVO. O `balance` que vem em
@@ -138,13 +142,45 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
   // vai no banco na hora. Se os dois divergirem, o nosso está velho.
   out.faturas = [];
   out.saldo_ao_vivo = [];
+  out.bills_das_tx = [];
+  out.faturas_fora_do_list = [];
   for (const c of (Array.isArray(contas) ? contas : [])) {
     try {
       out.saldo_ao_vivo.push({ conta: c.name || c.id, type: c.type, balance_cache: c.balance, ao_vivo: await polp.saldoAoVivo(c.id) });
-    } catch (e) { out.saldo_ao_vivo.push({ conta: c.name || c.id, erro: e.message }); }
+    } catch (e) { out.saldo_ao_vivo.push({ conta: c.name || c.id, type: c.type, balance_cache: c.balance, ao_vivo_erro: e.message }); }
     if ((c.type || '').toString().toUpperCase() !== 'CREDIT') continue;
-    try { out.faturas.push({ conta: c.name || c.id, bills: await polp.listarFaturas(c.id) }); }
+
+    let bills = [];
+    try { bills = await polp.listarFaturas(c.id); out.faturas.push({ conta: c.name || c.id, bills }); }
     catch (e) { out.faturas.push({ conta: c.name || c.id, erro: e.message }); }
+
+    // Cada transação de cartão cita a fatura dela em `bill_id`. Se as compras
+    // do mês citarem uma fatura que o List Bills NÃO devolveu, essa fatura
+    // existe — e é ela que tem o valor que o app do banco mostra.
+    try {
+      const txs = await polp.listarTransacoes(c.id, null);
+      const idsDoList = new Set((bills || []).map(b => String(b.id)));
+      const grupos = new Map();
+      for (const t of txs) {
+        const k = String(t.bill_id);
+        const g = grupos.get(k) || { bill_id: t.bill_id, qtd: 0, soma: 0, de: t.date, ate: t.date };
+        g.qtd++; g.soma += Number(t.amount) || 0;
+        if (t.date < g.de) g.de = t.date;
+        if (t.date > g.ate) g.ate = t.date;
+        grupos.set(k, g);
+      }
+      const lista = [...grupos.values()].map(g => ({
+        ...g, soma: Math.round(g.soma * 100) / 100,
+        no_list_bills: idsDoList.has(String(g.bill_id)),
+      })).sort((a, b) => String(a.ate).localeCompare(String(b.ate)));
+      out.bills_das_tx.push({ conta: c.name || c.id, total_tx: txs.length, grupos: lista });
+
+      for (const g of lista) {
+        if (g.no_list_bills || g.bill_id == null) continue;
+        try { out.faturas_fora_do_list.push({ bill_id: g.bill_id, fatura: await polp.getFatura(g.bill_id) }); }
+        catch (e) { out.faturas_fora_do_list.push({ bill_id: g.bill_id, erro: e.message }); }
+      }
+    } catch (e) { out.bills_das_tx.push({ conta: c.name || c.id, erro: e.message }); }
   }
   try { out.investimentos = await polp.listarInvestimentos(id); } catch (e) { out.investimentos_erro = e.message; }
   res.json(out);

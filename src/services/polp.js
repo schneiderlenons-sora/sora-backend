@@ -104,13 +104,20 @@ async function listarFaturas(accountId) {
   catch { return []; }
 }
 
+// UMA fatura pelo id (doc "Get Bill"): GET /bills/{id}. Serve pra buscar fatura
+// que as transações CITAM (tx.bill_id) mas que o List Bills não devolveu.
+async function getFatura(billId) {
+  return dados(await api(`/bills/${encodeURIComponent(billId)}`));
+}
+
 // Saldo AO VIVO (doc "Get Account Balance"): GET /accounts/{id}/balance.
 // Diferente do balance que vem em /integrations/:id/accounts (valor persistido
 // na Polp), este consulta o provedor bancário na hora e ressincroniza. Custa uma
 // ida ao banco — usar só onde o número precisa estar fresco.
+// NÃO engole o erro: quem chama decide (no cartão do MP isso volta erro, e o
+// motivo importa).
 async function saldoAoVivo(accountId) {
-  try { return dados(await api(`/accounts/${encodeURIComponent(accountId)}/balance`)); }
-  catch { return null; }
+  return dados(await api(`/accounts/${encodeURIComponent(accountId)}/balance`));
 }
 
 async function removerConexao(id) {
@@ -119,5 +126,5 @@ async function removerConexao(id) {
 
 module.exports = {
   configurado, listarInstituicoes, criarIntegracao, getIntegracao,
-  listarContas, listarInvestimentos, listarTransacoes, listarFaturas, saldoAoVivo, removerConexao,
+  listarContas, listarInvestimentos, listarTransacoes, listarFaturas, getFatura, saldoAoVivo, removerConexao,
 };
