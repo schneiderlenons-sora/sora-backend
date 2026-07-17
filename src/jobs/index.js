@@ -325,16 +325,20 @@ cron.schedule('0 * * * *', async () => {
 // Dedup em memória (lembretesMedHoje) — reseta à meia-noite.
 // ─────────────────────────────────────────────────────────────────
 const lembretesMedHoje = new Set();
-let diaResetMed = new Date().toDateString();
+let diaResetMed = ''; // preenchido no 1º tick com a data de São Paulo
 
 cron.schedule('*/15 * * * *', async () => {
-  const agora = new Date();
-  if (agora.toDateString() !== diaResetMed) {
+  // ⚠️ Fuso de São Paulo, NÃO o do servidor (Render roda em UTC). Usar
+  // agora.getHours() disparava o remédio 3h adiantado — um remédio das 16:00
+  // caía às 16:00 UTC = 13:00 em SP, e o usuário nunca recebia no horário.
+  // Mesma correção já aplicada aos outros crons (hábitos, briefing, etc.).
+  const sp = agoraSP();
+  if (sp.dataStr !== diaResetMed) {
     lembretesMedHoje.clear();
-    diaResetMed = agora.toDateString();
+    diaResetMed = sp.dataStr;
   }
-  const diaSemana = agora.getDay() === 0 ? 7 : agora.getDay(); // 1=seg ... 7=dom
-  const minutosAgora = agora.getHours() * 60 + agora.getMinutes();
+  const diaSemana = sp.diaSemana;   // 1=seg ... 7=dom (fuso SP)
+  const minutosAgora = sp.minutos;
 
   const { data: meds } = await supabase
     .from('medicamentos')
@@ -353,7 +357,7 @@ cron.schedule('*/15 * * * *', async () => {
       // Janela: 0 a 14 min depois do horário (a cada 15 min, cobre tudo)
       if (diff < 0 || diff >= 15) continue;
 
-      const key = `${med.id}|${h}|${agora.toDateString()}`;
+      const key = `${med.id}|${h}|${sp.dataStr}`;
       if (lembretesMedHoje.has(key)) continue;
 
       const { data: user } = await supabase.from('users').select('phone').eq('id', med.user_id).single();
