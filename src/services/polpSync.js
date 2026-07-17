@@ -33,7 +33,7 @@ function mapBandeira(brand) {
 // ─── MAPEAMENTO Polp → Sora (campos confirmados na doc List Accounts/Transactions)
 // Conta E cartão vêm do MESMO endpoint (/integrations/:id/accounts); `type`
 // (BANK|CREDIT) distingue. Crédito traz os dados de fatura em `credit_data`.
-function normalizeConta(acc) {
+function normalizeConta(acc, parcelasAVencer = 0) {
   const isCard = (acc.type || '').toString().toUpperCase() === 'CREDIT';
   const sub    = (acc.subtype || '').toString().toUpperCase();
   const tipo   = isCard ? 'Crédito' : /SAV|POUP/.test(sub) ? 'Poupança' : 'Corrente';
@@ -42,12 +42,17 @@ function normalizeConta(acc) {
     externalId: acc.id,
     nome:  (acc.name || acc.marketing_name || 'Conta').toString(),
     tipo,
-    // Cartão: saldo = 0 — a fatura vem das TRANSAÇÕES, como sempre veio no
-    // pluggySync (`const saldo = ehCredito ? 0 : ...`). Não usar `balance` aqui:
-    // ele é o limite usado, não a fatura, e erra sempre pra cima — MP 904,71
-    // contra 708,06 no app; Nubank 5.349,63 contra 2.845,20. Ter trocado isso
-    // por -balance foi o que quebrou o cartão. Conta comum: saldo = balance.
-    saldo: isCard ? 0 : (num(acc.balance) || 0),
+    // Cartão: saldo = −fatura atual, e
+    //     fatura atual = balance − parcelas a vencer
+    // O `balance` do cartão é o limite USADO: inclui parcela futura, que ocupa
+    // limite sem estar na fatura do mês. Tirando as parcelas, sobra a fatura.
+    // Medido no Nubank: 5.349,63 − 2.504,43 = 2.845,20 — exatamente o que o app
+    // mostra. As parcelas a vencer vêm das transações que a Polp manda com data
+    // no FUTURO (ex.: 2027-03-13 "HOTEIS.COM 12/12"); não são projetadas por
+    // nós. Sem parcelamento a soma é 0 e a fatura = balance (o "open balance"
+    // da doc da Pluggy) — nada muda pra quem não parcela.
+    // Não depende de data de fechamento, que metade dos bancos não manda.
+    saldo: isCard ? -((num(acc.balance) || 0) - (parcelasAVencer || 0)) : (num(acc.balance) || 0),
     extras: isCard ? {
       limite:         num(cd.creditLimit),
       // Fechamento: o MP manda balanceCloseDate null — fica sem, em vez de
@@ -199,15 +204,20 @@ async function sincronizarConexao(externalId, { dias = 90 } = {}) {
     const contas = await polp.listarContas(externalId);
     for (const raw of contas) {
       try {
-        const n = normalizeConta(raw);
+        // A Polp devolve PARCELA A VENCER como transação com data no FUTURO
+        // (ex.: 2027-03-13, "DL *HOTEIS.COM 12/12", status PENDING) — a Pluggy
+        // direta não fazia isso. Elas têm dois usos, e nenhum é "gasto de hoje":
+        //   1. somadas, são o que precisa sair do balance pra sobrar a fatura;
+        //   2. NÃO entram como transação (viraria despesa lá em 2027).
+        const hoje  = ymd(Date.now());
+        const todas = await polp.listarTransacoes(raw.id, from);
+        const noFuturo = (t) => String(t.date || '').slice(0, 10) > hoje;
+        const parcelasAVencer = todas.filter(noFuturo)
+          .reduce((s, t) => s + (num(t.amount) || 0), 0);
+
+        const n = normalizeConta(raw, parcelasAVencer);
         const walletNome = await upsertWallet(grupoId, userId, n);
-        // A Polp devolve PARCELA FUTURA como transação com data no futuro
-        // (ex.: 2027-03-13, "DL *HOTEIS.COM 12/12", status PENDING). Isso ainda
-        // não é gasto: entra na fatura no mês dela. Importar joga despesa lá na
-        // frente e suja qualquer soma. Só entra o que já aconteceu.
-        const hoje = ymd(Date.now());
-        const txsRaw = (await polp.listarTransacoes(n.externalId, from))
-          .filter(t => String(t.date || '').slice(0, 10) <= hoje);
+        const txsRaw = todas.filter(t => !noFuturo(t));
         const novas = await inserirTransacoes(grupoId, userId, walletNome, txsRaw.map(normalizeTx), n.tipo === 'Crédito');
         novasTx += novas;
         detalhe.push({ conta: walletNome, txs: txsRaw.length, novas });
