@@ -177,11 +177,31 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
     // No Nubank: 2001,64 (sobra da fatura de 09/07) + 843,56 = 2845,20 — que é o
     // que o app mostra. O `balance` (5349,63) não é isso e não deve ser usado.
     let compras_ciclo_aberto = null;
+    let acumulado = null;
     try {
       const txs = await polp.listarTransacoes(c.id, null);
-      compras_ciclo_aberto = Math.round(txs
-        .filter(t => t.bill_id == null)
+      const semFatura = txs.filter(t => t.bill_id == null)
+        .sort((a, b) => String(b.date).localeCompare(String(a.date))); // mais nova primeiro
+      compras_ciclo_aberto = Math.round(semFatura
         .reduce((s, t) => s + (Number(t.amount) || 0), 0) * 100) / 100;
+
+      // `bill_id: null` NÃO é "ciclo aberto" — é só "a Polp não amarrou a
+      // transação a uma fatura", e isso pega compra velha também (no Nubank deu
+      // 3.236,99 onde a fatura pedia 843,56). Como o banco não manda
+      // balanceCloseDate, dá pra achar o corte pelo avesso: somando da mais
+      // recente pra trás, a linha onde a soma bate com a fatura do app é o
+      // primeiro dia do ciclo.
+      let acc = 0;
+      acumulado = semFatura.slice(0, 60).map(t => {
+        acc += Number(t.amount) || 0;
+        return {
+          data: String(t.date).slice(0, 10),
+          valor: t.amount,
+          status: t.status,
+          soma_dessa_data_pra_ca: Math.round(acc * 100) / 100,
+          desc: String(t.description || '').slice(0, 30),
+        };
+      });
     } catch { /* fica null */ }
 
     const maisRecente = faturasResumo[0] || null; // List Bills vem por vencimento DESC
@@ -198,6 +218,9 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
       sobra_da_fatura_fechada: sobraFechada,
       compras_ciclo_aberto,
       fatura_calculada: calculada,
+      // Onde a soma acumulada bate com (fatura do app − sobra_da_fatura_fechada),
+      // ali é o começo do ciclo — e o dia do fechamento sai de graça.
+      acumulado_de_tras_pra_frente: acumulado,
       faturas: faturasResumo,
     });
 
