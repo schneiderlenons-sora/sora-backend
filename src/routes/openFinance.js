@@ -31,11 +31,26 @@ async function exigirAcesso(req, res, next) {
 }
 
 // Instituições disponíveis (pro seletor de banco).
+// Cache em memória: a lista é praticamente estática e a ida até a Polp (que por
+// sua vez é proxy da Pluggy) é o que fazia o seletor demorar a abrir. Se a Polp
+// falhar mas houver cache velho, serve o velho — melhor que tela vazia.
+const INST_TTL = 6 * 60 * 60 * 1000; // 6h
+let instCache = { em: 0, lista: null };
+
 router.get('/instituicoes', auth, exigirAcesso, exigirConfigurado, async (_req, res) => {
+  const agora = Date.now();
+  if (instCache.lista && agora - instCache.em < INST_TTL) {
+    res.set('Cache-Control', 'private, max-age=3600');
+    return res.json({ instituicoes: instCache.lista, cache: 'hit' });
+  }
   try {
-    res.json({ instituicoes: await polp.listarInstituicoes() });
+    const lista = await polp.listarInstituicoes();
+    if (lista && lista.length) instCache = { em: agora, lista };
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.json({ instituicoes: lista });
   } catch (err) {
     console.error('[open-finance/instituicoes]', err.message);
+    if (instCache.lista) return res.json({ instituicoes: instCache.lista, cache: 'stale' });
     res.status(500).json({ erro: `Falha ao listar bancos: ${err.message}`.slice(0, 300) });
   }
 });
@@ -46,24 +61,13 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
   try {
     const { institution_id, cpf, cnpj, instituicao_nome } = req.body || {};
     if (!institution_id) return res.status(400).json({ erro: 'Escolha um banco (institution_id).' });
-    let { id, status, urlToAuthenticate } = await polp.criarIntegracao({ institutionId: institution_id, cpf, cnpj });
+    const { id, status, urlToAuthenticate } = await polp.criarIntegracao({ institutionId: institution_id, cpf, cnpj });
 
-    // A url_to_authenticate costuma aparecer um instante DEPOIS do create (o
-    // status vira WAITING_USER_INPUT). Se não veio, consulta a integração algumas
-    // vezes até a URL surgir (ou o status ficar terminal).
-    if (id && !urlToAuthenticate) {
-      for (let i = 0; i < 6; i++) {
-        await new Promise(r => setTimeout(r, 1200));
-        try {
-          const g = await polp.getIntegracao(id);
-          status = g.status || status;
-          if (g.url_to_authenticate) { urlToAuthenticate = g.url_to_authenticate; break; }
-          const s = (g.status || '').toString().toUpperCase();
-          if (s === 'UPDATED' || s === 'LOGIN_ERROR') break;
-        } catch { /* tenta de novo */ }
-      }
-    }
-
+    // NÃO esperar a url_to_authenticate aqui. Ela só aparece um instante DEPOIS
+    // do create (quando o status vira WAITING_USER_INPUT) e ficar em loop de
+    // polling dentro da requisição segurava a resposta por até ~7s — era o
+    // "demora pra conectar / pra abrir o link". Responde já; o painel abre o
+    // modal na hora e busca a URL em GET /conexoes/:id/autorizar.
     if (id) {
       await supabase.from('of_conexoes').upsert({
         provider: 'polp', external_id: String(id), user_id: req.userId, grupo_id: req.grupoId,
