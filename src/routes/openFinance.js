@@ -160,21 +160,45 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
     // Cada fatura com quanto JÁ FOI PAGO nela. Fatura "aberta" = tem valor e
     // ainda sobra saldo a pagar. O erro do MP foi pegar a fatura mais recente
     // sem olhar isso — ela estava quitada (208,77 com FULL_PAYMENT).
+    const faturasResumo = (bills || []).map(b => {
+      const total = Number(b.total_amount) || 0;
+      const pago = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      return {
+        vence: String(b.due_date || '').slice(0, 10),
+        total,
+        pago: Math.round(pago * 100) / 100,
+        em_aberto: Math.round((total - pago) * 100) / 100,
+      };
+    });
+
+    // TESTE DA FÓRMULA (explicada pelo próprio usuário no Nubank):
+    //   fatura atual = o que sobrou da fatura FECHADA (não paga)
+    //                + compras do ciclo que ainda não entrou em fatura (bill_id null)
+    // No Nubank: 2001,64 (sobra da fatura de 09/07) + 843,56 = 2845,20 — que é o
+    // que o app mostra. O `balance` (5349,63) não é isso e não deve ser usado.
+    let compras_ciclo_aberto = null;
+    try {
+      const txs = await polp.listarTransacoes(c.id, null);
+      compras_ciclo_aberto = Math.round(txs
+        .filter(t => t.bill_id == null)
+        .reduce((s, t) => s + (Number(t.amount) || 0), 0) * 100) / 100;
+    } catch { /* fica null */ }
+
+    const maisRecente = faturasResumo[0] || null; // List Bills vem por vencimento DESC
+    const sobraFechada = maisRecente && maisRecente.em_aberto > 0 ? maisRecente.em_aberto : 0;
+    const calculada = compras_ciclo_aberto == null ? null
+      : Math.round((sobraFechada + compras_ciclo_aberto) * 100) / 100;
+
     out.resumo.push({
       conta: c.name || c.id,
-      balance: c.balance,
+      balance_do_banco: c.balance,
       due_date_do_banco: (c.credit_data || {}).balanceDueDate || null,
       close_date_do_banco: (c.credit_data || {}).balanceCloseDate || null,
-      faturas: (bills || []).map(b => {
-        const total = Number(b.total_amount) || 0;
-        const pago = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-        return {
-          vence: String(b.due_date || '').slice(0, 10),
-          total,
-          pago: Math.round(pago * 100) / 100,
-          em_aberto: Math.round((total - pago) * 100) / 100,
-        };
-      }),
+      // ↓ o teste: `fatura_calculada` tem que bater com o app do banco
+      sobra_da_fatura_fechada: sobraFechada,
+      compras_ciclo_aberto,
+      fatura_calculada: calculada,
+      faturas: faturasResumo,
     });
 
     // Cada transação de cartão cita a fatura dela em `bill_id`. Se as compras
