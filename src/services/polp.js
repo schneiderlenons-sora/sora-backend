@@ -110,6 +110,24 @@ async function getFatura(billId) {
   return dados(await api(`/bills/${encodeURIComponent(billId)}`));
 }
 
+// Compras parceladas de um cartão (doc "List Installments by Account"):
+// GET /accounts/{id}/installments — 25 por página.
+//
+// Importa pro cálculo da fatura: o `balance` do cartão é o LIMITE USADO, e
+// parcela a vencer ocupa limite sem estar na fatura do mês. Então
+// `fatura ≈ balance − parcelas futuras`.
+async function listarParcelamentos(accountId, { paginaMax = 40 } = {}) {
+  const out = [];
+  for (let page = 1; page <= paginaMax; page++) {
+    const j = await api(`/accounts/${encodeURIComponent(accountId)}/installments?page=${page}`);
+    const results = j?.data || [];
+    out.push(...results);
+    const last = j?.meta?.last_page;
+    if (!results.length || (last && page >= last)) break;
+  }
+  return out;
+}
+
 // Saldo AO VIVO (doc "Get Account Balance"): GET /accounts/{id}/balance.
 // Diferente do balance que vem em /integrations/:id/accounts (valor persistido
 // na Polp), este consulta o provedor bancário na hora e ressincroniza. Custa uma
@@ -126,5 +144,6 @@ async function removerConexao(id) {
 
 module.exports = {
   configurado, listarInstituicoes, criarIntegracao, getIntegracao,
-  listarContas, listarInvestimentos, listarTransacoes, listarFaturas, getFatura, saldoAoVivo, removerConexao,
+  listarContas, listarInvestimentos, listarTransacoes, listarFaturas, getFatura,
+  listarParcelamentos, saldoAoVivo, removerConexao,
 };

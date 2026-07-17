@@ -144,6 +144,7 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
   out.saldo_ao_vivo = [];
   out.bills_das_tx = [];
   out.faturas_fora_do_list = [];
+  out.parcelamentos = [];
   for (const c of (Array.isArray(contas) ? contas : [])) {
     try {
       out.saldo_ao_vivo.push({ conta: c.name || c.id, type: c.type, balance_cache: c.balance, ao_vivo: await polp.saldoAoVivo(c.id) });
@@ -181,6 +182,37 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
         catch (e) { out.faturas_fora_do_list.push({ bill_id: g.bill_id, erro: e.message }); }
       }
     } catch (e) { out.bills_das_tx.push({ conta: c.name || c.id, erro: e.message }); }
+
+    // HIPÓTESE A TESTAR: `balance` é o LIMITE USADO, então inclui parcela a
+    // vencer (parcela ocupa limite antes de entrar na fatura). Se for isso:
+    //     fatura do mês ≈ balance − parcelas futuras
+    // Bate com os dois bancos: MP 904,71 − 196,65 = 708,06 e
+    // Nubank 5.349,63 − 2.504,43 = 2.845,20. `fatura_estimada` abaixo é o teste.
+    try {
+      const parc = await polp.listarParcelamentos(c.id);
+      const resumo = parc.map(p => {
+        const total = Number(p.total_installments) || 0;
+        const pagas = p.paid_installments != null ? Number(p.paid_installments) : null;
+        const restantes = pagas != null ? Math.max(total - pagas, 0) : null;
+        return {
+          descricao: p.description, parcela: p.amount, total_compra: p.total_amount,
+          total_parcelas: total, parcelas_pagas: pagas, restantes,
+          futuro: restantes != null ? Math.round(restantes * (Number(p.amount) || 0) * 100) / 100 : null,
+          de: p.start_date, ate: p.end_date,
+          campos_recebidos: Object.keys(p), // a doc cita paid_installments mas não lista o campo
+        };
+      });
+      const futuro = resumo.reduce((s, r) => s + (r.futuro || 0), 0);
+      out.parcelamentos.push({
+        conta: c.name || c.id,
+        qtd: parc.length,
+        balance: c.balance,
+        parcelas_futuras: Math.round(futuro * 100) / 100,
+        fatura_estimada: Math.round(((Number(c.balance) || 0) - futuro) * 100) / 100,
+        resumo,
+        cru: parc.slice(0, 2),
+      });
+    } catch (e) { out.parcelamentos.push({ conta: c.name || c.id, erro: e.message }); }
   }
   try { out.investimentos = await polp.listarInvestimentos(id); } catch (e) { out.investimentos_erro = e.message; }
   res.json(out);
