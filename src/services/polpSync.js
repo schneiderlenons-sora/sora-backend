@@ -30,46 +30,33 @@ function mapBandeira(brand) {
   return m[(brand || '').toString().toUpperCase()] || null;
 }
 
-// Escolhe a fatura ABERTA entre as que o banco devolve: a de vencimento mais
-// próximo ainda no futuro — é a que o app do banco mostra como "fatura atual".
-// Se todas já venceram, usa a mais recente. Campos tolerantes (snake_case OU
-// camelCase) porque a Polp repassa a Pluggy sem padronizar.
-function faturaAtual(faturas) {
-  const hoje = ymd(Date.now());
-  const lista = (faturas || []).map(b => ({
-    valor: num(b.total_amount != null ? b.total_amount : (b.totalAmount != null ? b.totalAmount : b.amount)),
-    venc:  b.due_date || b.dueDate || null,
-    fecha: b.close_date || b.closeDate || b.closingDate || null,
-  })).filter(b => b.venc && b.valor != null);
-  if (!lista.length) return null;
-  lista.sort((a, b) => String(a.venc).localeCompare(String(b.venc)));
-  return lista.find(b => String(b.venc).slice(0, 10) >= hoje) || lista[lista.length - 1];
-}
-
 // ─── MAPEAMENTO Polp → Sora (campos confirmados na doc List Accounts/Transactions)
 // Conta E cartão vêm do MESMO endpoint (/integrations/:id/accounts); `type`
 // (BANK|CREDIT) distingue. Crédito traz os dados de fatura em `credit_data`.
-function normalizeConta(acc, faturas) {
+function normalizeConta(acc) {
   const isCard = (acc.type || '').toString().toUpperCase() === 'CREDIT';
   const sub    = (acc.subtype || '').toString().toUpperCase();
   const tipo   = isCard ? 'Crédito' : /SAV|POUP/.test(sub) ? 'Poupança' : 'Corrente';
   const cd     = acc.credit_data || {};   // camelCase: creditLimit, balanceCloseDate, balanceDueDate, brand
-  const f      = isCard ? faturaAtual(faturas) : null;
   return {
     externalId: acc.id,
     nome:  (acc.name || acc.marketing_name || 'Conta').toString(),
     tipo,
-    // Cartão: saldo = −fatura ATUAL. Preferir o valor da FATURA (endpoint de
-    // bills) — `balance` é a dívida corrente, que já inclui compras do próximo
-    // ciclo (era a origem do "1410 na Sora × 708 no app"). Sem bills, cai no
-    // balance. Conta comum: saldo = balance.
-    saldo: isCard ? -((f ? f.valor : num(acc.balance)) || 0) : (num(acc.balance) || 0),
+    // Cartão: saldo = −dívida do cartão, que é o `balance` — o mesmo campo que
+    // usamos pra conta comum. Confirmado por DOIS caminhos independentes no MP:
+    // balance 904,71 == creditLimit − availableCreditLimit (2900 − 1995,29), e
+    // a soma de todas as transações importadas (compras − pagamentos) deu
+    // 907,84 — bate em R$3.
+    // NÃO usar o endpoint de bills aqui: o MP só devolve faturas ANTIGAS (a
+    // última é a de junho, já paga, e as outras vêm com total_amount 0). Foi o
+    // que fez a fatura aparecer como 208,77 — o valor de uma fatura quitada.
+    saldo: isCard ? -(num(acc.balance) || 0) : (num(acc.balance) || 0),
     extras: isCard ? {
       limite:         num(cd.creditLimit),
-      // Fechamento: o MP não manda (balanceCloseDate null) — fica sem, em vez
-      // de inventar um ciclo.
-      dia_fechamento: dia((f && f.fecha) || cd.balanceCloseDate),
-      dia_vencimento: dia((f && f.venc) || cd.balanceDueDate),
+      // Fechamento: o MP manda balanceCloseDate null — fica sem, em vez de
+      // inventar um ciclo.
+      dia_fechamento: dia(cd.balanceCloseDate),
+      dia_vencimento: dia(cd.balanceDueDate),
       bandeira:       mapBandeira(cd.brand),
     } : {},
   };
@@ -213,10 +200,7 @@ async function sincronizarConexao(externalId, { dias = 90 } = {}) {
     const contas = await polp.listarContas(externalId);
     for (const raw of contas) {
       try {
-        // Cartão: busca a fatura fechada (valor + vencimento) — tolerante.
-        const ehCard  = (raw.type || '').toString().toUpperCase() === 'CREDIT';
-        const faturas = ehCard ? await polp.listarFaturas(raw.id) : [];
-        const n = normalizeConta(raw, faturas);
+        const n = normalizeConta(raw);
         const walletNome = await upsertWallet(grupoId, userId, n);
         const txsRaw = await polp.listarTransacoes(n.externalId, from);
         const novas = await inserirTransacoes(grupoId, userId, walletNome, txsRaw.map(normalizeTx), n.tipo === 'Crédito');

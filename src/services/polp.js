@@ -71,17 +71,21 @@ async function listarInvestimentos(id) {
   catch { return []; }
 }
 
-// Transações de UMA conta. GET /accounts/{id}/transactions — ordenado por data
-// DESC, paginado 50/página (meta.last_page). `dateFrom` (YYYY-MM-DD) corta a
-// busca cedo (para de paginar ao passar do corte, já que vem do mais recente).
+// Transações de UMA conta. GET /accounts/{id}/transactions — paginado 50/página
+// (meta.last_page).
+//
+// ⚠️ NÃO cortar a paginação por data. A API ordena por `id` DESC, e o id NÃO
+// acompanha a data (no MP os ids saem 755033→2025-10-15, 755032→2025-11-14,
+// 755031→2025-11-18: id descendo, data subindo). Havia um break "se a última
+// da página já passou do corte" que assumia ordem por data DESC — com a ordem
+// real ele para na página 1 e DESCARTA tudo que é recente. Pagina até o fim
+// (last_page) e filtra a data no final, que é a única forma correta aqui.
 async function listarTransacoes(accountId, dateFrom, { paginaMax = 300 } = {}) {
   const out = [];
   for (let page = 1; page <= paginaMax; page++) {
     const j = await api(`/accounts/${encodeURIComponent(accountId)}/transactions?page=${page}`);
     const results = j?.data || [];
     out.push(...results);
-    const ultima = results[results.length - 1];
-    if (dateFrom && ultima && String(ultima.date) < dateFrom) break;   // já passou do corte
     const last = j?.meta?.last_page;
     if (!results.length || (last && page >= last)) break;
   }
