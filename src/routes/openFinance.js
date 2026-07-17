@@ -122,7 +122,9 @@ router.get('/conexoes/:externalId/autorizar', auth, exigirAcesso, exigirConfigur
 // o formato real de contas/transações/investimentos e ajustar o normalize.
 router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (req, res) => {
   const id = req.params.externalId;
-  const out = { externalId: id };
+  // `resumo` primeiro: é o bloco que responde "de onde sai a fatura deste
+  // cartão" sem precisar ler o JSON inteiro.
+  const out = { externalId: id, resumo: [] };
   let contas = [];
   try { contas = await polp.listarContas(id); out.contas = contas; } catch (e) { out.contas_erro = e.message; }
   // Amostra de transações de CADA conta (inclui o cartão) → pra ver categoria + campos.
@@ -154,6 +156,26 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
     let bills = [];
     try { bills = await polp.listarFaturas(c.id); out.faturas.push({ conta: c.name || c.id, bills }); }
     catch (e) { out.faturas.push({ conta: c.name || c.id, erro: e.message }); }
+
+    // Cada fatura com quanto JÁ FOI PAGO nela. Fatura "aberta" = tem valor e
+    // ainda sobra saldo a pagar. O erro do MP foi pegar a fatura mais recente
+    // sem olhar isso — ela estava quitada (208,77 com FULL_PAYMENT).
+    out.resumo.push({
+      conta: c.name || c.id,
+      balance: c.balance,
+      due_date_do_banco: (c.credit_data || {}).balanceDueDate || null,
+      close_date_do_banco: (c.credit_data || {}).balanceCloseDate || null,
+      faturas: (bills || []).map(b => {
+        const total = Number(b.total_amount) || 0;
+        const pago = (b.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+        return {
+          vence: String(b.due_date || '').slice(0, 10),
+          total,
+          pago: Math.round(pago * 100) / 100,
+          em_aberto: Math.round((total - pago) * 100) / 100,
+        };
+      }),
+    });
 
     // Cada transação de cartão cita a fatura dela em `bill_id`. Se as compras
     // do mês citarem uma fatura que o List Bills NÃO devolveu, essa fatura
