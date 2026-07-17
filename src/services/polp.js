@@ -92,23 +92,25 @@ async function listarTransacoes(accountId, dateFrom, { paginaMax = 300 } = {}) {
   return dateFrom ? out.filter(t => String(t.date) >= dateFrom) : out;
 }
 
-// Faturas de UM cartão. A fatura REAL vem pronta aqui (valor + vencimento) —
-// é a fonte certa: `balance` da conta é a dívida corrente (inclui compras já do
-// próximo ciclo) e o MP não manda `balanceCloseDate`, então não dá pra recortar
-// o ciclo por conta própria. Tolerante: nem toda instituição/plano expõe.
+// Faturas de UM cartão (doc "List Bills"): GET /accounts/{id}/bills — ordenadas
+// por VENCIMENTO DECRESCENTE, 15 por página. Só contas type=CREDIT.
+//
+// ⚠️ Não é fonte confiável de "fatura atual": no Mercado Pago só voltam faturas
+// ANTIGAS (a mais nova é a do mês passado, já paga) e as demais vêm com
+// total_amount 0. Como a ordem é por vencimento DESC, o que interessa está na
+// página 1 — se a fatura do mês não veio aqui, ela não existe na Polp.
 async function listarFaturas(accountId) {
-  const tentativas = [
-    `/accounts/${encodeURIComponent(accountId)}/bills`,
-    `/bills?account_id=${encodeURIComponent(accountId)}`,
-  ];
-  for (const p of tentativas) {
-    try {
-      const d = dados(await api(p));
-      if (Array.isArray(d)) return d;
-      if (d && Array.isArray(d.results)) return d.results;
-    } catch { /* tenta o próximo caminho */ }
-  }
-  return [];
+  try { return dados(await api(`/accounts/${encodeURIComponent(accountId)}/bills`)) || []; }
+  catch { return []; }
+}
+
+// Saldo AO VIVO (doc "Get Account Balance"): GET /accounts/{id}/balance.
+// Diferente do balance que vem em /integrations/:id/accounts (valor persistido
+// na Polp), este consulta o provedor bancário na hora e ressincroniza. Custa uma
+// ida ao banco — usar só onde o número precisa estar fresco.
+async function saldoAoVivo(accountId) {
+  try { return dados(await api(`/accounts/${encodeURIComponent(accountId)}/balance`)); }
+  catch { return null; }
 }
 
 async function removerConexao(id) {
@@ -117,5 +119,5 @@ async function removerConexao(id) {
 
 module.exports = {
   configurado, listarInstituicoes, criarIntegracao, getIntegracao,
-  listarContas, listarInvestimentos, listarTransacoes, listarFaturas, removerConexao,
+  listarContas, listarInvestimentos, listarTransacoes, listarFaturas, saldoAoVivo, removerConexao,
 };

@@ -133,10 +133,15 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
       out.amostras_tx.push({ conta: c.name || c.id, type: c.type, txs: tx });
     } catch (e) { out.amostras_tx.push({ conta: c.name || c.id, erro: e.message }); }
   }
-  // Faturas CRUAS do cartão — pra conferir valor/vencimento/fechamento reais
-  // (o `balance` da conta não é a fatura; o MP não manda balanceCloseDate).
+  // Faturas CRUAS do cartão + saldo AO VIVO. O `balance` que vem em
+  // /integrations/:id/accounts é o valor persistido na Polp; /accounts/:id/balance
+  // vai no banco na hora. Se os dois divergirem, o nosso está velho.
   out.faturas = [];
+  out.saldo_ao_vivo = [];
   for (const c of (Array.isArray(contas) ? contas : [])) {
+    try {
+      out.saldo_ao_vivo.push({ conta: c.name || c.id, type: c.type, balance_cache: c.balance, ao_vivo: await polp.saldoAoVivo(c.id) });
+    } catch (e) { out.saldo_ao_vivo.push({ conta: c.name || c.id, erro: e.message }); }
     if ((c.type || '').toString().toUpperCase() !== 'CREDIT') continue;
     try { out.faturas.push({ conta: c.name || c.id, bills: await polp.listarFaturas(c.id) }); }
     catch (e) { out.faturas.push({ conta: c.name || c.id, erro: e.message }); }

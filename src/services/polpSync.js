@@ -58,6 +58,8 @@ function normalizeConta(acc) {
       dia_fechamento: dia(cd.balanceCloseDate),
       dia_vencimento: dia(cd.balanceDueDate),
       bandeira:       mapBandeira(cd.brand),
+      // Mínimo REAL do banco (migration 077) — o painel estimava 15% da fatura.
+      pagamento_minimo: num(cd.minimumPayment),
     } : {},
   };
 }
