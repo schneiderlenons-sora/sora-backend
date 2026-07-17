@@ -327,7 +327,11 @@ cron.schedule('0 * * * *', async () => {
 const lembretesMedHoje = new Set();
 let diaResetMed = ''; // preenchido no 1º tick com a data de São Paulo
 
-cron.schedule('*/15 * * * *', async () => {
+// A CADA MINUTO (não */15): remédio é horário-crítico, o usuário espera o aviso
+// no minuto exato que cadastrou. Os outros lembretes (hábitos/briefing) toleram
+// ±15 min; este não. Query leve (filtrada por ativo+lembrete_ativo) → ok rodar
+// de minuto em minuto.
+cron.schedule('* * * * *', async () => {
   // ⚠️ Fuso de São Paulo, NÃO o do servidor (Render roda em UTC). Usar
   // agora.getHours() disparava o remédio 3h adiantado — um remédio das 16:00
   // caía às 16:00 UTC = 13:00 em SP, e o usuário nunca recebia no horário.
@@ -354,8 +358,10 @@ cron.schedule('*/15 * * * *', async () => {
       const [hh, mm] = String(h).split(':').map(Number);
       const minHorario = hh * 60 + mm;
       const diff = minutosAgora - minHorario;
-      // Janela: 0 a 14 min depois do horário (a cada 15 min, cobre tudo)
-      if (diff < 0 || diff >= 15) continue;
+      // Janela de 2 min: dispara no minuto EXATO do horário; o +1 é resiliência
+      // se o tick do minuto certo tiver sido perdido (restart/carga). A dedup
+      // (lembretesMedHoje) garante 1 envio só, então os 2 minutos não duplicam.
+      if (diff < 0 || diff >= 2) continue;
 
       const key = `${med.id}|${h}|${sp.dataStr}`;
       if (lembretesMedHoje.has(key)) continue;
@@ -1055,7 +1061,7 @@ cron.schedule('*/15 * * * *', async () => {
 
 console.log('⏰ Cron jobs registrados:');
 console.log('   • A cada hora  — recorrências, lembretes, parcelas, fatura');
-console.log('   • A cada 15min — lembretes de medicamentos');
+console.log('   • A cada minuto — lembretes de medicamentos (horário exato)');
 console.log('   • Todo dia 09h — lembretes de consultas (24h antes + retorno 7d)');
 console.log('   • Todo dia 09h — lembretes de dívidas (3d antes / dia / atraso)');
 console.log('   • Todo dia 1º  — reset de alertas de limite');
