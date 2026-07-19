@@ -443,6 +443,14 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       if (await require('../handlers/grow').capturaRapida(mensagem, ctxG)) return;
     }
 
+    // Bíblia (local-first, sem IA): versículo do dia, "qual a leitura de hoje",
+    // "terminei a leitura de hoje", "li João 3". Gatilhos EXCLUSIVOS (não colidem
+    // com nota/tarefa/agenda/finanças). Roda antes da Agenda. Só Premium+.
+    if (!data && temAcessoGrow(user)) {
+      const ctxB = { phone, grupoId: user.grupo_ativo, user, mensagem };
+      if (await require('../handlers/biblia').capturaBiblia(mensagem, ctxB)) return;
+    }
+
     // Fast-path da AGENDA (determinístico, sem IA): criar ("marca X terça 15h",
     // "tenho reunião amanhã às 19, me lembra?") OU ajustar o lembrete do último
     // ("me lembra 1 dia antes"). Sem isso, a IA às vezes manda pra Finance/conversa.

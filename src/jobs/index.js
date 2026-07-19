@@ -454,6 +454,39 @@ cron.schedule('*/15 * * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1G-B — Versículo do dia da BÍBLIA (opt-in por WhatsApp)
+// ~07:00 (fuso SP). Só quem ativou (biblia_versiculo_ativo). Dedup por data
+// (biblia_versiculo_em). Reusa o template lembretes_gerais (sem template novo).
+// ─────────────────────────────────────────────────────────────────
+const { versiculoDoDia } = require('../data/biblia');
+
+cron.schedule('*/15 * * * *', async () => {
+  const sp = agoraSP();
+  if (sp.minutos < 7 * 60) return; // só a partir das 07:00 SP
+
+  const { data: usuarios } = await supabase.from('users')
+    .select('id, phone')
+    .eq('biblia_versiculo_ativo', true);
+
+  for (const u of usuarios || []) {
+    if (!u.phone) continue;
+    // dedup do dia — tolerante caso a coluna não exista (migration 081).
+    try {
+      const { data } = await supabase.from('users').select('biblia_versiculo_em').eq('id', u.id).maybeSingle();
+      if (data?.biblia_versiculo_em === sp.dataStr) continue;
+    } catch { /* sem coluna → segue */ }
+    if (!(await avisosLigados(u.id))) continue;
+
+    await supabase.from('users').update({ biblia_versiculo_em: sp.dataStr }).eq('id', u.id);
+
+    const v = versiculoDoDia();
+    const txt = `📖 *Versículo do dia*\n\n_"${v.texto}"_\n\n*${v.ref}*\n\nUm bom dia na Palavra! 🙏\n_(Pra parar: *desativar versículo diário*.)_`;
+    await lembrete(u.phone, txt, `📖 Versículo do dia — "${v.texto}" (${v.ref}) 🙏`);
+    console.log(`📖 Versículo do dia → ${u.phone}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 1I — Todo dia às 09:00: lembretes de MANUTENÇÕES da casa (opt-in)
 // Avisa quando a manutenção vence (próxima = última + frequência). Re-cutuca
 // no máximo 1x por semana enquanto continuar pendente. Dedup persistido.
