@@ -124,4 +124,105 @@ router.delete('/leitura/:id', auth, requireGrow, async (req, res) => {
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// FASE 2 — ORAÇÃO
+// ═══════════════════════════════════════════════════════════════════
+router.get('/oracoes/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const { data } = await supabase.from('biblia_oracoes')
+      .select('id, pedido, respondida, respondida_em, created_at')
+      .eq('user_id', req._user.id).order('created_at', { ascending: false });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/oracoes', auth, requireGrow, async (req, res) => {
+  try {
+    const u = req._user;
+    const pedido = String(req.body?.pedido || '').trim();
+    if (!pedido) return res.status(400).json({ erro: 'pedido obrigatório' });
+    const { data, error } = await supabase.from('biblia_oracoes')
+      .insert({ grupo_id: u.grupo_ativo, user_id: u.id, pedido: pedido.slice(0, 500) })
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Alterna "respondida" (ou seta pelo body).
+router.put('/oracoes/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const u = req._user;
+    const respondida = !!req.body?.respondida;
+    const { data, error } = await supabase.from('biblia_oracoes')
+      .update({ respondida, respondida_em: respondida ? new Date().toISOString().slice(0, 10) : null })
+      .eq('id', req.params.id).eq('user_id', u.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.delete('/oracoes/:id', auth, requireGrow, async (req, res) => {
+  try {
+    await supabase.from('biblia_oracoes').delete().eq('id', req.params.id).eq('user_id', req._user.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// FASE 2 — MEMORIZAÇÃO (repetição espaçada)
+// nivel → dias até a próxima revisão. Acertou = sobe de nível; errou = volta.
+// ═══════════════════════════════════════════════════════════════════
+const INTERVALOS = [1, 1, 3, 7, 14, 30, 60]; // dias por nível (0..6)
+const addDias = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+
+router.get('/memorizacao/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data } = await supabase.from('biblia_memorizacao')
+      .select('id, referencia, texto, nivel, proxima_revisao, ultima_revisao')
+      .eq('user_id', req._user.id).order('created_at', { ascending: false });
+    const versos = data || [];
+    res.json({ versos, paraRevisar: versos.filter(v => v.proxima_revisao <= hoje).length });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/memorizacao', auth, requireGrow, async (req, res) => {
+  try {
+    const u = req._user;
+    const referencia = String(req.body?.referencia || '').trim();
+    if (!referencia) return res.status(400).json({ erro: 'referencia obrigatória' });
+    const { data, error } = await supabase.from('biblia_memorizacao')
+      .insert({ grupo_id: u.grupo_ativo, user_id: u.id, referencia: referencia.slice(0, 200),
+                texto: req.body?.texto ? String(req.body.texto).slice(0, 1000) : null })
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Revisão: acertou=true sobe de nível (intervalo maior); false volta pro nível 1.
+router.post('/memorizacao/:id/revisar', auth, requireGrow, async (req, res) => {
+  try {
+    const u = req._user;
+    const acertou = !!req.body?.acertou;
+    const { data: v } = await supabase.from('biblia_memorizacao')
+      .select('nivel').eq('id', req.params.id).eq('user_id', u.id).maybeSingle();
+    if (!v) return res.status(404).json({ erro: 'não encontrado' });
+    const nivel = acertou ? Math.min(6, (v.nivel || 0) + 1) : 1;
+    const { data, error } = await supabase.from('biblia_memorizacao')
+      .update({ nivel, proxima_revisao: addDias(INTERVALOS[nivel]), ultima_revisao: new Date().toISOString().slice(0, 10) })
+      .eq('id', req.params.id).eq('user_id', u.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.delete('/memorizacao/:id', auth, requireGrow, async (req, res) => {
+  try {
+    await supabase.from('biblia_memorizacao').delete().eq('id', req.params.id).eq('user_id', req._user.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 module.exports = router;
