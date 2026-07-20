@@ -548,23 +548,35 @@ router.get('/medicamentos/:phone', auth, requireGrow, async (req, res) => {
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// `foto_url` é coluna nova (migration 082). Se ainda não rodou, o insert/update
+// falharia — então removemos e tentamos de novo (a feature degrada sem quebrar).
+function semFoto(erro) { return /foto_url|column/i.test(erro?.message || ''); }
+
 router.post('/medicamentos', auth, requireGrow, async (req, res) => {
   try {
     const u = req._user;
     const payload = { ...req.body, grupo_id: u.grupo_ativo, user_id: u.id };
     delete payload.phone;
-    const { data, error } = await supabase.from('medicamentos').insert(payload).select().single();
-    if (error) throw error;
-    res.json(data);
+    let r = await supabase.from('medicamentos').insert(payload).select().single();
+    if (r.error && 'foto_url' in payload && semFoto(r.error)) {
+      delete payload.foto_url;
+      r = await supabase.from('medicamentos').insert(payload).select().single();
+    }
+    if (r.error) throw r.error;
+    res.json(r.data);
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 router.put('/medicamentos/:id', auth, requireGrow, async (req, res) => {
   try {
     const patch = { ...req.body }; delete patch.phone;
-    const { data, error } = await supabase.from('medicamentos').update(patch).eq('id', req.params.id).select().single();
-    if (error) throw error;
-    res.json(data);
+    let r = await supabase.from('medicamentos').update(patch).eq('id', req.params.id).select().single();
+    if (r.error && 'foto_url' in patch && semFoto(r.error)) {
+      delete patch.foto_url;
+      r = await supabase.from('medicamentos').update(patch).eq('id', req.params.id).select().single();
+    }
+    if (r.error) throw r.error;
+    res.json(r.data);
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
@@ -577,13 +589,46 @@ router.post('/medicamentos/:id/tomar', auth, requireGrow, async (req, res) => {
   try {
     const u = req._user;
     const { data: med } = await supabase.from('medicamentos').select('estoque_atual').eq('id', req.params.id).maybeSingle();
-    await supabase.from('medicamento_doses').insert({
+    // `horario` = qual dose do dia (fix da baixa individual). Coluna nova (082):
+    // se ainda não migrou, grava sem ela (não quebra a baixa).
+    const horario = req.body?.horario ? String(req.body.horario).slice(0, 5) : null;
+    const base = {
       medicamento_id: req.params.id, user_id: u.id,
       datetime_planejado: req.body?.datetime_planejado || null,
       status: 'tomou',
-    });
+    };
+    let ins = await supabase.from('medicamento_doses').insert({ ...base, horario });
+    if (ins.error && horario && /horario|column/i.test(ins.error.message || '')) {
+      ins = await supabase.from('medicamento_doses').insert(base);
+    }
+    if (ins.error) throw ins.error;
     if (med?.estoque_atual != null && med.estoque_atual > 0) {
       await supabase.from('medicamentos').update({ estoque_atual: med.estoque_atual - 1 }).eq('id', req.params.id);
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Desfaz uma baixa (mis-tap): apaga a dose de HOJE daquele horário (ou a última
+// de hoje, se não vier horário) e devolve o comprimido ao estoque.
+router.post('/medicamentos/:id/desfazer', auth, requireGrow, async (req, res) => {
+  try {
+    const u = req._user;
+    const horario = req.body?.horario ? String(req.body.horario).slice(0, 5) : null;
+    const desde = new Date(Date.now() - 20 * 3600 * 1000).toISOString(); // janela ~hoje
+    const { data: doses } = await supabase.from('medicamento_doses')
+      .select('id, horario, datetime_tomado')
+      .eq('medicamento_id', req.params.id).eq('user_id', u.id)
+      .gte('datetime_tomado', desde)
+      .order('datetime_tomado', { ascending: false });
+    let alvo = null;
+    if (horario) alvo = (doses || []).find(d => d.horario && String(d.horario).slice(0, 5) === horario);
+    if (!alvo) alvo = (doses || [])[0];
+    if (!alvo) return res.json({ ok: true, nada: true });
+    await supabase.from('medicamento_doses').delete().eq('id', alvo.id);
+    const { data: med } = await supabase.from('medicamentos').select('estoque_atual').eq('id', req.params.id).maybeSingle();
+    if (med?.estoque_atual != null) {
+      await supabase.from('medicamentos').update({ estoque_atual: med.estoque_atual + 1 }).eq('id', req.params.id);
     }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ erro: e.message }); }

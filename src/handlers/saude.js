@@ -18,6 +18,21 @@ async function buscarMed(grupoId, termo) {
   return data || [];
 }
 
+// Horário (HH:MM) do medicamento mais perto de agora (fuso SP). Usado quando o
+// usuário dá baixa por texto ("tomei X") sem dizer o horário.
+function horarioMaisProximo(horarios) {
+  if (!horarios || !horarios.length) return null;
+  const spNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const nowMin = spNow.getHours() * 60 + spNow.getMinutes();
+  let best = null, bestDiff = Infinity;
+  for (const h of horarios) {
+    const [hh, mm] = String(h).slice(0, 5).split(':').map(Number);
+    const diff = Math.abs(hh * 60 + mm - nowMin);
+    if (diff < bestDiff) { bestDiff = diff; best = String(h).slice(0, 5); }
+  }
+  return best;
+}
+
 module.exports = async function handleSaude(mensagem, ctx) {
   const { phone, grupoId, user } = ctx;
   const msg = norm(mensagem);
@@ -39,10 +54,17 @@ module.exports = async function handleSaude(mensagem, ctx) {
     }
     const med = meds[0];
     const agora = new Date();
-    await supabase.from('medicamento_doses').insert({
+    // Casa com o horário mais próximo de agora (SP) pra o painel marcar o slot
+    // certo — não todos. Coluna nova (082): grava sem ela se ainda não migrou.
+    const horario = horarioMaisProximo(med.horarios);
+    const baseDose = {
       medicamento_id: med.id, user_id: user.id,
       datetime_tomado: agora.toISOString(), status: 'tomou',
-    });
+    };
+    let insDose = await supabase.from('medicamento_doses').insert({ ...baseDose, horario });
+    if (insDose.error && horario && /horario|column/i.test(insDose.error.message || '')) {
+      await supabase.from('medicamento_doses').insert(baseDose);
+    }
     if (med.estoque_atual != null && med.estoque_atual > 0) {
       const novo = med.estoque_atual - 1;
       await supabase.from('medicamentos').update({ estoque_atual: novo }).eq('id', med.id);
