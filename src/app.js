@@ -35,6 +35,7 @@ app.use('/api/dashboard',    require('./routes/dashboard'));
 app.use('/api/wallets',      require('./routes/wallets'));
 app.use('/api/grupos',       require('./routes/grupos'));
 app.use('/api/categorias',   require('./routes/categorias'));
+app.use('/api/marcas',       require('./routes/marcas'));
 app.use('/api/limites',      require('./routes/limites'));
 app.use('/api/investimentos',require('./routes/investimentos'));
 app.use('/api/metas',        require('./routes/metas'));
