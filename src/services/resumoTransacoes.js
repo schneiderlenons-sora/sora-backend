@@ -34,7 +34,8 @@ async function calcularResumo({ grupoId, mes, criadoPorId } = {}) {
   const { data: rows } = await q;
 
   let receitas = 0, gastos = 0;
-  const porCategoria = {};
+  const porCategoria    = {}; // gastos por categoria
+  const porCategoriaRec = {}; // receitas por categoria (mesma regra do total)
   const porMembro    = {}; // user_id -> { gastos, receitas }
   const bumpMembro = (id, campo, v) => {
     if (!id) return;
@@ -49,6 +50,7 @@ async function calcularResumo({ grupoId, mes, criadoPorId } = {}) {
       bumpMembro(r.criado_por, 'gastos', r.valor);
     } else {
       receitas += r.valor;
+      porCategoriaRec[r.categoria || 'Outros'] = (porCategoriaRec[r.categoria || 'Outros'] || 0) + r.valor;
       bumpMembro(r.criado_por, 'receitas', r.valor);
     }
   });
@@ -66,6 +68,9 @@ async function calcularResumo({ grupoId, mes, criadoPorId } = {}) {
     receitas, gastos,
     saldo: receitas - gastos,
     por_categoria: Object.entries(porCategoria)
+      .map(([categoria, total]) => ({ categoria, total }))
+      .sort((a, b) => b.total - a.total),
+    por_categoria_receitas: Object.entries(porCategoriaRec)
       .map(([categoria, total]) => ({ categoria, total }))
       .sort((a, b) => b.total - a.total),
     por_membro: Object.entries(porMembro)
