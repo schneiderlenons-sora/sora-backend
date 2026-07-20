@@ -2,12 +2,21 @@ const OpenAI = require('openai');
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Categorias disponíveis no sistema
+// Categorias disponíveis no sistema (taxonomia v3 — ver sql/084_categorias_v3.sql).
+// Mistura categorias-pai + as subcategorias/marcas mais usadas, pra a Sora poder
+// ser específica ("Supermercado", "iFood", "Combustível") sem errar a pasta.
 const CATEGORIAS = [
-  'Mercado','Transporte','Lazer e Entretenimento','Saúde','Aluguel',
-  'Educação','Casa','Salário','Alimentação','Recebimento','Transferências',
-  'Internet','Pet','Padaria','Assinaturas','Vestuário','Impostos',
-  'Viagem','Doações','Outros'
+  // Despesas
+  'Moradia','Aluguel','Conta de Luz','Água','Gás','Internet','Condomínio',
+  'Alimentação','Supermercado','Padaria','Restaurante','Lanches','Café',
+  'Delivery','iFood','Transporte','Combustível','Uber',
+  'Saúde','Farmácia','Consultas','Dentista','Plano de Saúde','Academia',
+  'Compras','Roupas','Eletrônicos','Encomendas','Autocuidado','Dieta',
+  'Lazer','Viagem','Esporte','Assinaturas','Netflix','Spotify',
+  'Educação','Trabalho/Negócio','Tecnologia','Família','Pet',
+  'Financeiro','Impostos','Doações','Outros',
+  // Receitas
+  'Salário','Trabalho','Negócio','Investimentos','Extras','Transferências','Recebimento'
 ];
 
 // Prompt base do sistema
@@ -18,14 +27,22 @@ CATEGORIAS DISPONÍVEIS: ${CATEGORIAS.join(', ')}
 AÇÕES DISPONÍVEIS — retorne o JSON correspondente:
 
 TRANSAÇÕES:
-{"acao":"salvar","tipo":"Gasto","valor":50,"categoria":"Mercado","observacao":"mercado","carteira_nome":"Dinheiro"}
-{"acao":"salvar","tipo":"Recebimento","valor":2000,"categoria":"Recebimento","observacao":"salário","carteira_nome":"Dinheiro"}
+{"acao":"salvar","tipo":"Gasto","valor":50,"categoria":"Supermercado","observacao":"mercado","carteira_nome":"Dinheiro"}
+{"acao":"salvar","tipo":"Recebimento","valor":2000,"categoria":"Salário","observacao":"salário","carteira_nome":"Dinheiro"}
 - "observacao" = SÓ O ITEM, curto (1-3 palavras). NUNCA a frase inteira, nem a loja/lugar,
-  nem artigo ("uma"), nem verbo ("comprei"), nem prefixo ("compra de"). A loja vira categoria/carteira, não descrição:
-  "comprei uma resistência no mercado livre por 28,90" → {"acao":"salvar","tipo":"Gasto","valor":28.90,"categoria":"Casa","observacao":"resistência","carteira_nome":"Dinheiro"}
-  "comprei uma coberta no mercado livre por 120"       → {"acao":"salvar","tipo":"Gasto","valor":120,"categoria":"Casa","observacao":"coberta","carteira_nome":"Dinheiro"}
-  "gastei 25 com um hambúrguer no ifood"               → {"acao":"salvar","tipo":"Gasto","valor":25,"categoria":"Alimentação","observacao":"hambúrguer","carteira_nome":"Dinheiro"}
-  "paguei 80 de gasolina no posto shell"               → {"acao":"salvar","tipo":"Gasto","valor":80,"categoria":"Transporte","observacao":"gasolina","carteira_nome":"Dinheiro"}
+  nem artigo ("uma"), nem verbo ("comprei"), nem prefixo ("compra de"). A loja vira categoria/carteira, não descrição.
+- CATEGORIA = escolha a MAIS específica que couber da lista (subcategoria/marca vence a pai):
+  "comprei uma resistência no mercado livre por 28,90" → {"acao":"salvar","tipo":"Gasto","valor":28.90,"categoria":"Encomendas","observacao":"resistência","carteira_nome":"Dinheiro"}
+  "gastei 25 com um hambúrguer no ifood"               → {"acao":"salvar","tipo":"Gasto","valor":25,"categoria":"iFood","observacao":"hambúrguer","carteira_nome":"Dinheiro"}
+  "paguei 80 de gasolina no posto shell"               → {"acao":"salvar","tipo":"Gasto","valor":80,"categoria":"Combustível","observacao":"gasolina","carteira_nome":"Dinheiro"}
+  "gastei 40 no mercado"                               → {"acao":"salvar","tipo":"Gasto","valor":40,"categoria":"Supermercado","observacao":"mercado","carteira_nome":"Dinheiro"}
+  "paguei 120 da conta de luz"                         → {"acao":"salvar","tipo":"Gasto","valor":120,"categoria":"Conta de Luz","observacao":"luz","carteira_nome":"Dinheiro"}
+  "paguei a energia 90"                                → {"acao":"salvar","tipo":"Gasto","valor":90,"categoria":"Conta de Luz","observacao":"energia","carteira_nome":"Dinheiro"}
+  "assinei a netflix 39,90"                            → {"acao":"salvar","tipo":"Gasto","valor":39.90,"categoria":"Netflix","observacao":"netflix","carteira_nome":"Dinheiro"}
+  "uber 18"                                            → {"acao":"salvar","tipo":"Gasto","valor":18,"categoria":"Uber","observacao":"uber","carteira_nome":"Dinheiro"}
+  "comprei um whey por 150"                            → {"acao":"salvar","tipo":"Gasto","valor":150,"categoria":"Dieta","observacao":"whey","carteira_nome":"Dinheiro"}
+  "50 no zé delivery"                                  → {"acao":"salvar","tipo":"Gasto","valor":50,"categoria":"Zé Delivery","observacao":"bebida","carteira_nome":"Dinheiro"}
+  "recebi 500 de freela"                               → {"acao":"salvar","tipo":"Recebimento","valor":500,"categoria":"Negócio","observacao":"freela","carteira_nome":"Dinheiro"}
 
 CONTAS BANCÁRIAS:
 {"acao":"set_wallet","nome":"Nubank","valor":1000,"tipo":"Corrente"}
@@ -54,7 +71,7 @@ CARTÕES DE CRÉDITO (ação separada de conta bancária):
 - Tipos de compra a IA NUNCA pede últimos 4 dígitos.
 
 LIMITES:
-{"acao":"set_limite","categoria":"Mercado","valor":500}
+{"acao":"set_limite","categoria":"Supermercado","valor":500}
 {"acao":"set_meta","valor":2000}
 {"acao":"meus_limites"}
 
