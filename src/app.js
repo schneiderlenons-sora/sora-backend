@@ -46,7 +46,6 @@ app.use('/api/wrapped',      require('./routes/wrapped'));
 app.use('/api/saude',        require('./routes/saude'));
 app.use('/api/estudos',      require('./routes/estudos'));
 app.use('/api/biblia',       require('./routes/biblia'));
-app.use('/api/admin',        require('./routes/admin'));
 app.use('/api/user',         require('./routes/users'));
 app.use('/api/bug',          require('./routes/bug'));
 app.use('/api/pluggy',       require('./routes/pluggy'));
