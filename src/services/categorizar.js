@@ -52,7 +52,7 @@ const REGRAS = [
   // ── Trabalho / Negócio (anúncios e ferramentas) ──
   { cat: 'Facebook Ads',   kws: ['facebk', 'facebook ad', 'fb ads', 'meta ads', 'meta plataform', 'instagram ad'] },
   { cat: 'Google Ads',     kws: ['google ads', 'googleads', 'google adwords'] },
-  { cat: 'Trabalho/Negócio', kws: ['tiktok ads', 'kwai for business', 'linkedin ads', 'mailchimp', 'fornecedor', 'frete', 'transportadora', 'embalagem', 'correios sedex'] },
+  { cat: 'Empreendimento', kws: ['tiktok ads', 'kwai for business', 'linkedin ads', 'mailchimp', 'fornecedor', 'frete', 'transportadora', 'embalagem', 'correios sedex'] },
 
   // ── Transferências / Pix / estornos (não-consumo) ──
   { cat: 'Transferências', kws: ['mercado pago', 'mercadopago', 'pix enviado', 'pix recebido', 'pix ', 'ted ', 'doc ', 'transferencia', 'transferencias', 'transf ',
@@ -150,7 +150,7 @@ const REGRAS = [
   { cat: 'Saúde',          kws: ['nutricionista', 'nutrolog', 'vacina', 'otica', 'oculos'] },
 
   // ── Família / Pet ──
-  { cat: 'Pet',            kws: ['petz', 'cobasi', 'petlove', 'veterinari', 'pet shop', 'petshop', 'pet center', 'clinipet', 'agropet', '=racao'] },
+  { cat: 'Pets',           kws: ['petz', 'cobasi', 'petlove', 'veterinari', 'pet shop', 'petshop', 'pet center', 'clinipet', 'agropet', '=racao'] },
   { cat: 'Família',        kws: ['fralda', 'creche', 'bercario', 'mesada', 'escolinha', 'brinquedo', 'ri happy', 'pbkids'] },
 
   // ── Educação ──
@@ -246,7 +246,7 @@ const MAPA_PLUGGY = [
   { cat: 'Lazer',          kws: ['leisure', 'entertainment', 'gaming', 'games', 'lazer', 'entreten', 'jogos'] },
   { cat: 'Viagem',         kws: ['travel', 'airline', 'airlines', 'hotel', 'lodging', 'accommodation', 'viagem', 'hospedagem', 'passagens'] },
   { cat: 'Educação',       kws: ['education', 'school', 'tuition', 'courses', 'educacao', 'escola', 'curso'] },
-  { cat: 'Pet',            kws: ['pet', 'pets', 'veterinary'] },
+  { cat: 'Pets',           kws: ['pet', 'pets', 'veterinary'] },
   { cat: 'Tecnologia',     kws: ['telecommunication', 'phone', 'mobile', 'internet', 'telefon', 'celular'] },
   { cat: 'Conta de Luz',   kws: ['utilities', 'electricity', 'bills', 'energia', 'luz', 'contas'] },
   { cat: 'Água',           kws: ['water', 'agua'] },

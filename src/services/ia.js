@@ -13,10 +13,10 @@ const CATEGORIAS = [
   'Saúde','Farmácia','Consultas','Dentista','Plano de Saúde','Academia',
   'Compras','Roupas','Eletrônicos','Encomendas','Autocuidado','Dieta',
   'Lazer','Viagem','Esporte','Assinaturas','Netflix','Spotify',
-  'Educação','Trabalho/Negócio','Tecnologia','Família','Pet',
+  'Educação','Empreendimento','Tecnologia','Família','Pets',
   'Financeiro','Impostos','Doações','Outros',
   // Receitas
-  'Salário','Trabalho','Negócio','Investimentos','Extras','Transferências','Recebimento'
+  'Salário','Trabalho','Negócio','Investimentos','Extras','Transferências'
 ];
 
 // Prompt base do sistema
