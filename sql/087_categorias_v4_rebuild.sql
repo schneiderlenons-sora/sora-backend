@@ -295,7 +295,8 @@ end; $$;
 do $$
 declare r record;
 begin
-  for r in (values
+  for r in
+    select velho, novo from (values
       ('Mercado',                '🛒 Supermercado'),
       ('Contas',                 '🏠 Moradia'),
       ('Vestuário',              '🛍️ Compras'),
