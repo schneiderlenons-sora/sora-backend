@@ -77,7 +77,7 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     const {
       titulo, credor, tipo, valor_total, valor_parcela,
       parcelas_total, parcelas_pagas, taxa_juros, indexador,
-      dia_vencimento, data_inicio, observacao,
+      dia_vencimento, data_inicio, observacao, imagem_url,
     } = req.body;
 
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Título obrigatório.' });
@@ -87,7 +87,7 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     let vp = valor_parcela;
     if (!vp && parcelas_total > 0) vp = parseFloat(valor_total) / parseInt(parcelas_total, 10);
 
-    const { data, error } = await supabase.from('dividas').insert({
+    const payload = {
       grupo_id:       req.grupoId,
       criado_por:     req.userId,
       titulo:         titulo.trim(),
@@ -103,9 +103,18 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       data_inicio:    data_inicio || null,
       observacao:     observacao?.trim() || null,
       status:         (parcelas_total && parseInt(parcelas_pagas || 0, 10) >= parseInt(parcelas_total, 10)) ? 'quitada' : 'ativa',
-    }).select().single();
-    if (error) throw error;
-    res.json(data);
+    };
+    if (imagem_url) payload.imagem_url = imagem_url;
+
+    // `imagem_url` é coluna nova (migration 088). Se ainda não rodou, remove e
+    // tenta de novo (a dívida cria sem foto até migrar).
+    let r = await supabase.from('dividas').insert(payload).select().single();
+    if (r.error && 'imagem_url' in payload && /imagem_url|column/i.test(r.error.message || '')) {
+      delete payload.imagem_url;
+      r = await supabase.from('dividas').insert(payload).select().single();
+    }
+    if (r.error) throw r.error;
+    res.json(r.data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -115,15 +124,19 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const allowed = ['titulo','credor','tipo','valor_total','valor_parcela','parcelas_total','parcelas_pagas',
-                     'taxa_juros','indexador','dia_vencimento','data_inicio','status','observacao','lembretes_ativos'];
+                     'taxa_juros','indexador','dia_vencimento','data_inicio','status','observacao','lembretes_ativos','imagem_url'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     patch.updated_at = new Date().toISOString();
 
-    const { data, error } = await supabase.from('dividas')
-      .update(patch).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
-    if (error) throw error;
-    res.json(data);
+    const upd = () => supabase.from('dividas').update(patch).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
+    let r = await upd();
+    if (r.error && 'imagem_url' in patch && /imagem_url|column/i.test(r.error.message || '')) {
+      delete patch.imagem_url; // migration 088 pendente
+      r = await upd();
+    }
+    if (r.error) throw r.error;
+    res.json(r.data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
