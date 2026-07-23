@@ -134,6 +134,150 @@ router.delete('/empresas/:id', auth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// LANÇAMENTOS — o livro caixa (entradas, saídas e contas a pagar)
+//
+// Uma tabela resolve as três coisas: conta a pagar é saída com
+// status='pendente' + vencimento. `valor` SEMPRE em centavos (inteiro).
+// ─────────────────────────────────────────────────────────────────
+
+/** Confirma que a empresa é do usuário (anti-IDOR em toda operação). */
+async function empresaDoUsuario(userId, empresaId) {
+  if (!empresaId) return null;
+  const { data } = await supabase.from('empresas')
+    .select('id').eq('id', empresaId).eq('user_id', userId).maybeSingle();
+  return data || null;
+}
+
+function validarLancamento({ tipo, descricao, valor, data, status }) {
+  if (!['entrada', 'saida'].includes(tipo)) return 'Tipo inválido.';
+  if (!descricao || !String(descricao).trim()) return 'Descreva o lançamento.';
+  if (!Number.isFinite(Number(valor)) || Math.round(Number(valor)) <= 0) return 'Informe um valor maior que zero.';
+  if (!data) return 'Informe a data.';
+  if (status && !['pago', 'pendente'].includes(status)) return 'Status inválido.';
+  return null;
+}
+
+// GET /api/negocios/lancamentos/:phone?empresa_id=&mes=YYYY-MM
+// Sem `mes` devolve o mês corrente. Também aceita ?status=pendente (fase 3).
+router.get('/lancamentos/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+
+    let q = supabase.from('lancamentos_negocio').select('*').eq('empresa_id', empresa.id);
+
+    if (req.query.status) {
+      // Contas em aberto: ignora o mês e ordena por vencimento.
+      q = q.eq('status', req.query.status).order('vencimento', { ascending: true, nullsFirst: false });
+    } else {
+      const mes = req.query.mes || new Date().toISOString().slice(0, 7);
+      const inicio = `${mes}-01`;
+      const [a, m] = mes.split('-').map(Number);
+      const prox = new Date(a, m, 1);
+      const fim = `${prox.getFullYear()}-${String(prox.getMonth() + 1).padStart(2, '0')}-01`;
+      q = q.gte('data', inicio).lt('data', fim).order('data', { ascending: false });
+    }
+
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// POST /api/negocios/lancamentos
+router.post('/lancamentos', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const b = req.body || {};
+    const empresa = await empresaDoUsuario(user.id, b.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+
+    const erro = validarLancamento(b);
+    if (erro) return res.status(400).json({ erro });
+
+    const status = b.status || 'pago';
+    const { data, error } = await supabase.from('lancamentos_negocio').insert({
+      empresa_id:      empresa.id,
+      user_id:         user.id,
+      tipo:            b.tipo,
+      categoria:       b.categoria || null,
+      descricao:       String(b.descricao).trim(),
+      valor:           Math.round(Number(b.valor)),
+      data:            b.data,
+      status,
+      vencimento:      b.vencimento || null,
+      pago_em:         status === 'pago' ? (b.pago_em || b.data) : null,
+      forma_pagamento: b.forma_pagamento || null,
+      contraparte:     b.contraparte || null,
+      recorrente:      !!b.recorrente,
+      recorrencia:     b.recorrencia || null,
+      observacao:      b.observacao || null,
+    }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, lancamento: data });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// PUT /api/negocios/lancamentos/:id — editar ou dar baixa (status → pago)
+router.put('/lancamentos/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const b = req.body || {};
+    const patch = {};
+    ['tipo', 'categoria', 'descricao', 'data', 'status', 'vencimento',
+     'forma_pagamento', 'contraparte', 'observacao', 'recorrencia'].forEach(k => {
+      if (b[k] !== undefined) patch[k] = b[k];
+    });
+    if (b.valor !== undefined) patch.valor = Math.round(Number(b.valor));
+    if (b.recorrente !== undefined) patch.recorrente = !!b.recorrente;
+    // Baixa: ao virar pago registra a data do pagamento.
+    if (b.status === 'pago') patch.pago_em = b.pago_em || new Date().toISOString().slice(0, 10);
+    if (b.status === 'pendente') patch.pago_em = null;
+
+    const { data, error } = await supabase.from('lancamentos_negocio')
+      .update(patch)
+      .eq('id', req.params.id)
+      .eq('user_id', user.id) // anti-IDOR
+      .select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ erro: 'Lançamento não encontrado.' });
+    res.json({ ok: true, lancamento: data });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// DELETE /api/negocios/lancamentos/:id
+router.delete('/lancamentos/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const { error } = await supabase.from('lancamentos_negocio')
+      .delete().eq('id', req.params.id).eq('user_id', user.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // INTEGRAÇÕES — CRUD
 // ─────────────────────────────────────────────────────────────────
 
