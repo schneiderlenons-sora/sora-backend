@@ -22,6 +22,118 @@ function exigirBlack(user) {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// EMPRESAS — CRUD (fundação do multi-empresa; ILIMITADAS no Premium)
+//
+// Escopo por user_id, igual ao resto do Negócios (custos/DRE). A logo vem como
+// data URL (crop no canvas do cliente — mesmo padrão de marcas_personalizadas),
+// então não precisa de bucket; só limitamos o tamanho pra não inchar a linha.
+// ─────────────────────────────────────────────────────────────────
+
+const TIPOS_EMPRESA  = ['digital', 'fisico', 'hibrido'];
+const LOGO_MAX_CHARS = 700000; // ~500 KB em base64
+
+function validarEmpresa({ nome, tipo, cor, logo_url }) {
+  if (!nome || !String(nome).trim()) return 'Informe o nome da empresa.';
+  if (tipo && !TIPOS_EMPRESA.includes(tipo)) return 'Tipo de empresa inválido.';
+  if (cor && !/^#[0-9a-fA-F]{6}$/.test(cor)) return 'Cor inválida.';
+  if (logo_url && logo_url.length > LOGO_MAX_CHARS) return 'A logo é muito grande (máx. ~500 KB).';
+  return null;
+}
+
+// GET /api/negocios/empresas/:phone — lista as empresas ativas
+router.get('/empresas/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const { data, error } = await supabase.from('empresas')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('ativa', true)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// POST /api/negocios/empresas — cria (sem limite de quantidade no Premium)
+router.post('/empresas', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const { nome, tipo, cor, logo_url, icone, cnpj } = req.body;
+    const erro = validarEmpresa({ nome, tipo, cor, logo_url });
+    if (erro) return res.status(400).json({ erro });
+
+    const { data, error } = await supabase.from('empresas').insert({
+      user_id:  user.id,
+      grupo_id: user.grupo_ativo,
+      nome:     String(nome).trim(),
+      tipo:     tipo || 'digital',
+      cor:      cor  || '#61D17B',
+      logo_url: logo_url || null,
+      icone:    icone || 'Store',
+      cnpj:     cnpj  || null,
+    }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, empresa: data });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// PUT /api/negocios/empresas/:id — edita
+router.put('/empresas/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const { nome, tipo, cor, logo_url, icone, cnpj } = req.body;
+    const erro = validarEmpresa({ nome, tipo, cor, logo_url });
+    if (erro) return res.status(400).json({ erro });
+
+    const patch = { nome: String(nome).trim(), tipo, cor, icone, cnpj: cnpj || null };
+    if (logo_url !== undefined) patch.logo_url = logo_url || null;
+    Object.keys(patch).forEach(k => patch[k] === undefined && delete patch[k]);
+
+    const { data, error } = await supabase.from('empresas')
+      .update(patch)
+      .eq('id', req.params.id)
+      .eq('user_id', user.id) // anti-IDOR: só mexe no que é seu
+      .select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    res.json({ ok: true, empresa: data });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// DELETE /api/negocios/empresas/:id — arquiva (soft delete: preserva histórico)
+router.delete('/empresas/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const { error } = await supabase.from('empresas')
+      .update({ ativa: false })
+      .eq('id', req.params.id)
+      .eq('user_id', user.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // INTEGRAÇÕES — CRUD
 // ─────────────────────────────────────────────────────────────────
 
