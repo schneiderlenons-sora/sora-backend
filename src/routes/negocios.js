@@ -278,6 +278,167 @@ router.delete('/lancamentos/:id', auth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// FUNCIONÁRIOS + FOLHA (fase 4) — escopo SIMPLES: registro de pagamento,
+// sem cálculo de encargos CLT (decisão de produto).
+//
+// "Pagar salário" não cria estrutura nova: gera um lançamento de saída na
+// categoria 'folha' com funcionario_id — a folha já entra no caixa e no DRE.
+// ─────────────────────────────────────────────────────────────────
+
+const VINCULOS = ['clt', 'pj', 'diarista', 'estagio', 'outro'];
+const FOTO_MAX_CHARS = 700000; // ~500 KB em base64
+
+function validarFuncionario({ nome, vinculo, salario, dia_pagamento, foto_url }) {
+  if (!nome || !String(nome).trim()) return 'Informe o nome.';
+  if (vinculo && !VINCULOS.includes(vinculo)) return 'Vínculo inválido.';
+  if (salario !== undefined && (!Number.isFinite(Number(salario)) || Number(salario) < 0)) return 'Salário inválido.';
+  if (dia_pagamento != null && dia_pagamento !== '' &&
+      (!Number.isInteger(Number(dia_pagamento)) || Number(dia_pagamento) < 1 || Number(dia_pagamento) > 31)) {
+    return 'Dia de pagamento deve ser entre 1 e 31.';
+  }
+  if (foto_url && foto_url.length > FOTO_MAX_CHARS) return 'A foto é muito grande (máx. ~500 KB).';
+  return null;
+}
+
+// GET /api/negocios/funcionarios/:phone?empresa_id=
+router.get('/funcionarios/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+
+    const { data, error } = await supabase.from('funcionarios_negocio')
+      .select('*').eq('empresa_id', empresa.id).eq('ativo', true)
+      .order('nome', { ascending: true });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// POST /api/negocios/funcionarios
+router.post('/funcionarios', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const b = req.body || {};
+    const empresa = await empresaDoUsuario(user.id, b.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+
+    const erro = validarFuncionario(b);
+    if (erro) return res.status(400).json({ erro });
+
+    const { data, error } = await supabase.from('funcionarios_negocio').insert({
+      empresa_id:    empresa.id,
+      user_id:       user.id,
+      nome:          String(b.nome).trim(),
+      foto_url:      b.foto_url || null,
+      cargo:         b.cargo || null,
+      vinculo:       b.vinculo || 'clt',
+      salario:       Math.round(Number(b.salario) || 0),
+      dia_pagamento: b.dia_pagamento ? Number(b.dia_pagamento) : null,
+      pix:           b.pix || null,
+      observacao:    b.observacao || null,
+    }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, funcionario: data });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// PUT /api/negocios/funcionarios/:id
+router.put('/funcionarios/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const b = req.body || {};
+    const erro = validarFuncionario(b);
+    if (erro) return res.status(400).json({ erro });
+
+    const patch = {};
+    ['nome', 'cargo', 'vinculo', 'pix', 'observacao'].forEach(k => { if (b[k] !== undefined) patch[k] = b[k]; });
+    if (b.nome !== undefined) patch.nome = String(b.nome).trim();
+    if (b.foto_url !== undefined) patch.foto_url = b.foto_url || null;
+    if (b.salario !== undefined) patch.salario = Math.round(Number(b.salario) || 0);
+    if (b.dia_pagamento !== undefined) patch.dia_pagamento = b.dia_pagamento ? Number(b.dia_pagamento) : null;
+
+    const { data, error } = await supabase.from('funcionarios_negocio')
+      .update(patch).eq('id', req.params.id).eq('user_id', user.id) // anti-IDOR
+      .select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ erro: 'Funcionário não encontrado.' });
+    res.json({ ok: true, funcionario: data });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// DELETE /api/negocios/funcionarios/:id — arquiva (preserva o histórico da folha)
+router.delete('/funcionarios/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const { error } = await supabase.from('funcionarios_negocio')
+      .update({ ativo: false }).eq('id', req.params.id).eq('user_id', user.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// POST /api/negocios/funcionarios/:id/pagar — registra o pagamento do salário
+// como um lançamento de saída (categoria 'folha') vinculado ao funcionário.
+router.post('/funcionarios/:id/pagar', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    const { data: f } = await supabase.from('funcionarios_negocio')
+      .select('*').eq('id', req.params.id).eq('user_id', user.id).maybeSingle();
+    if (!f) return res.status(404).json({ erro: 'Funcionário não encontrado.' });
+
+    const b = req.body || {};
+    const valor = Math.round(Number(b.valor ?? f.salario) || 0);
+    if (valor <= 0) return res.status(400).json({ erro: 'Informe um valor maior que zero.' });
+    const data = b.data || new Date().toISOString().slice(0, 10);
+    const pago = b.status !== 'pendente';
+
+    const { data: lanc, error } = await supabase.from('lancamentos_negocio').insert({
+      empresa_id:      f.empresa_id,
+      user_id:         user.id,
+      tipo:            'saida',
+      categoria:       'folha',
+      descricao:       `Salário — ${f.nome}`,
+      valor,
+      data,
+      status:          pago ? 'pago' : 'pendente',
+      vencimento:      pago ? null : (b.vencimento || data),
+      pago_em:         pago ? data : null,
+      forma_pagamento: b.forma_pagamento || 'pix',
+      contraparte:     f.nome,
+      funcionario_id:  f.id,
+    }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, lancamento: lanc });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // INTEGRAÇÕES — CRUD
 // ─────────────────────────────────────────────────────────────────
 

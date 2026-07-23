@@ -157,6 +157,45 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
     }
   } catch {}
 
+  // 7b. FOLHA — salário de funcionário no dia de pagamento. Evento VIRTUAL
+  //     (ocorrenciasMensais), igual dívidas: não cria linha por mês. Some do
+  //     mês em que já houver pagamento lançado pra aquele funcionário.
+  try {
+    const { data: emps } = await supabase.from('empresas')
+      .select('id, nome, cor').eq('grupo_id', grupoId).eq('ativa', true);
+    const ids = (emps || []).map(e => e.id);
+    if (ids.length) {
+      const mapa = Object.fromEntries((emps || []).map(e => [e.id, e]));
+      const { data: funcs } = await supabase.from('funcionarios_negocio')
+        .select('id, empresa_id, nome, salario, dia_pagamento')
+        .in('empresa_id', ids).eq('ativo', true).not('dia_pagamento', 'is', null);
+
+      if ((funcs || []).length) {
+        // Pagamentos já lançados no intervalo → não lembrar de novo.
+        const { data: pagos } = await supabase.from('lancamentos_negocio')
+          .select('funcionario_id, data')
+          .in('funcionario_id', (funcs || []).map(f => f.id))
+          .gte('data', deStr).lte('data', ateStr);
+        const jaPago = new Set((pagos || []).map(p => `${p.funcionario_id}-${String(p.data).slice(0, 7)}`));
+
+        for (const f of funcs || []) {
+          const emp = mapa[f.empresa_id];
+          for (const d of ocorrenciasMensais(f.dia_pagamento, deStr, ateStr)) {
+            if (jaPago.has(`${f.id}-${d.slice(0, 7)}`)) continue;
+            eventos.push({
+              id: `folha-${f.id}-${d}`, source: 'folha',
+              titulo: `Salário: ${f.nome}${emp?.nome ? ` (${emp.nome})` : ''}`,
+              data: d, hora: null,
+              cor: emp?.cor || '#8b5cf6',
+              valor: f.salario != null ? f.salario / 100 : null,
+              deeplink: '/negocios/equipe', editavel: false,
+            });
+          }
+        }
+      }
+    }
+  } catch {}
+
   // 8. Transações (gastos/receitas) — OPT-IN. Só a agenda pede isso; o briefing
   //    matinal NÃO (senão listaria cada gasto do dia). Finanças = por grupo.
   if (incluirTransacoes) {
