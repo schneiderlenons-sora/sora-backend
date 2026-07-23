@@ -57,6 +57,7 @@ from (
   union select user_id, grupo_id from public.custos_negocio
   union select user_id, grupo_id from public.config_negocio
   union select user_id, grupo_id from public.dre_snapshots
+  union select user_id, grupo_id from public.insights_negocio
 ) s
 where s.user_id is not null and s.grupo_id is not null
   and not exists (
@@ -81,9 +82,16 @@ update public.dre_snapshots t
    set empresa_id = e.id from public.empresas e
  where e.user_id = t.user_id and e.grupo_id = t.grupo_id and t.empresa_id is null;
 
-update public.conciliacao_negocio t
-   set empresa_id = e.id from public.empresas e
- where e.user_id = t.user_id and e.grupo_id = t.grupo_id and t.empresa_id is null;
+-- ⚠️ conciliacao_negocio NÃO tem grupo_id (só user_id) — diferente das outras.
+-- Derivamos a empresa do EVENTO vinculado: a conciliação pertence à mesma
+-- empresa do evento que ela concilia. Casar por user_id seria ambíguo pra quem
+-- tem mais de uma empresa.
+update public.conciliacao_negocio c
+   set empresa_id = ev.empresa_id
+  from public.eventos_financeiros ev
+ where ev.id = c.evento_id
+   and c.empresa_id is null
+   and ev.empresa_id is not null;
 
 update public.insights_negocio t
    set empresa_id = e.id from public.empresas e
@@ -99,6 +107,23 @@ create index if not exists idx_custos_empresa       on public.custos_negocio(emp
 create index if not exists idx_dre_empresa          on public.dre_snapshots(empresa_id);
 create index if not exists idx_conciliacao_empresa  on public.conciliacao_negocio(empresa_id);
 create index if not exists idx_insights_empresa     on public.insights_negocio(empresa_id);
+
+-- ── 3b. dre_snapshots: unicidade por EMPRESA, não por usuário ──────
+-- Tinha unique(user_id, periodo). Com multi-empresa, duas empresas do mesmo
+-- dono colidiriam no mesmo mês (o snapshot de uma sobrescreveria o da outra).
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+     where conname = 'dre_snapshots_user_id_periodo_key'
+       and conrelid = 'public.dre_snapshots'::regclass
+  ) then
+    alter table public.dre_snapshots drop constraint dre_snapshots_user_id_periodo_key;
+  end if;
+end $$;
+
+create unique index if not exists uq_dre_empresa_periodo
+  on public.dre_snapshots(empresa_id, periodo);
 
 -- ── 4. config_negocio: PK user_id → empresa_id ─────────────────────
 -- É o que destrava o multi-empresa (antes: 1 config por USUÁRIO).
