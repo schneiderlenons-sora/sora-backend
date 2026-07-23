@@ -127,7 +127,37 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
     }
   } catch {}
 
-  // 7. Transações (gastos/receitas) — OPT-IN. Só a agenda pede isso; o briefing
+  // 7. Contas do NEGÓCIO (saída pendente com vencimento) — multi-empresa.
+  //    Escopo pelas empresas do grupo. `valor` vai em REAIS porque é a
+  //    convenção do feed, mas a tabela guarda em centavos → /100.
+  //    Tolerante: se a 091 ainda não rodou, o catch mantém o resto do feed.
+  try {
+    const { data: emps } = await supabase.from('empresas')
+      .select('id, nome, cor').eq('grupo_id', grupoId).eq('ativa', true);
+    const ids = (emps || []).map(e => e.id);
+    if (ids.length) {
+      const mapa = Object.fromEntries((emps || []).map(e => [e.id, e]));
+      const { data } = await supabase.from('lancamentos_negocio')
+        .select('id, empresa_id, descricao, valor, vencimento')
+        .in('empresa_id', ids)
+        .eq('tipo', 'saida').eq('status', 'pendente')
+        .not('vencimento', 'is', null)
+        .gte('vencimento', deStr).lte('vencimento', ateStr);
+      for (const l of data || []) {
+        const emp = mapa[l.empresa_id];
+        eventos.push({
+          id: `neg-${l.id}`, source: 'conta_negocio',
+          titulo: `${emp?.nome ? `${emp.nome}: ` : ''}${l.descricao}`,
+          data: l.vencimento, hora: null,
+          cor: emp?.cor || '#0ea5e9',
+          valor: l.valor != null ? l.valor / 100 : null,
+          deeplink: '/negocios/contas', editavel: false,
+        });
+      }
+    }
+  } catch {}
+
+  // 8. Transações (gastos/receitas) — OPT-IN. Só a agenda pede isso; o briefing
   //    matinal NÃO (senão listaria cada gasto do dia). Finanças = por grupo.
   if (incluirTransacoes) {
     try {
