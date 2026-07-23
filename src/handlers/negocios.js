@@ -312,33 +312,61 @@ async function ingerirEvento(integracao, payload) {
  * Calcula o DRE de um período (mês) para o user e cacheia em dre_snapshots.
  * periodo: 'YYYY-MM-01'
  */
-async function gerarDre(userId, grupoId, periodo) {
+// DRE POR EMPRESA (fase 5). Antes era por usuário — com multi-empresa isso
+// somaria negócios diferentes no mesmo demonstrativo. Agora também UNIFICA as
+// duas naturezas: eventos das integrações (digital) + livro caixa (físico).
+async function gerarDre(userId, grupoId, periodo, empresaId) {
   const inicio = periodo; // 'YYYY-MM-01'
   const fimDate = new Date(inicio);
   fimDate.setMonth(fimDate.getMonth() + 1);
   const fim = fimDate.toISOString().slice(0, 10);
 
-  // 1. Carrega eventos do período
+  // Empresa alvo — sem empresa não existe DRE. Sem o parâmetro, cai na
+  // primeira empresa ativa do usuário (compat com chamadas antigas).
+  let empId = empresaId;
+  if (!empId) {
+    const { data: emp } = await supabase.from('empresas')
+      .select('id').eq('user_id', userId).eq('ativa', true)
+      .order('created_at', { ascending: true }).limit(1).maybeSingle();
+    empId = emp?.id || null;
+  }
+  if (!empId) return null;
+
+  // 1. Eventos das integrações (negócio DIGITAL)
   const { data: eventos, error: errEv } = await supabase
     .from('eventos_financeiros')
     .select('*')
-    .eq('user_id', userId)
+    .eq('empresa_id', empId)
     .gte('data_evento', inicio)
     .lt('data_evento', fim);
   if (errEv) throw errEv;
 
-  // 2. Carrega custos do período
+  // 2. Custos (negócio digital)
   const { data: custos, error: errC } = await supabase
     .from('custos_negocio')
     .select('*')
-    .eq('user_id', userId)
+    .eq('empresa_id', empId)
     .gte('data', inicio)
     .lt('data', fim);
   if (errC) throw errC;
 
-  // 3. Config tributária
+  // 2b. LIVRO CAIXA (negócio FÍSICO): entrada vira receita, saída vira custo.
+  //     Só o que está PAGO entra — conta a pagar em aberto não é resultado
+  //     realizado. Tolerante: se a 091 não rodou, o DRE segue sem o caixa.
+  let lancamentos = [];
+  try {
+    const { data } = await supabase
+      .from('lancamentos_negocio')
+      .select('tipo, categoria, valor')
+      .eq('empresa_id', empId)
+      .eq('status', 'pago')
+      .gte('data', inicio).lt('data', fim);
+    lancamentos = data || [];
+  } catch { /* sem livro caixa ainda */ }
+
+  // 3. Config tributária — por EMPRESA (a PK mudou na migration 090)
   const { data: cfg } = await supabase
-    .from('config_negocio').select('*').eq('user_id', userId).maybeSingle();
+    .from('config_negocio').select('*').eq('empresa_id', empId).maybeSingle();
   const aliquota = cfg?.aliquota_simples ?? 6.0;
   const reservarImposto = cfg?.reservar_imposto ?? true;
 
@@ -372,17 +400,36 @@ async function gerarDre(userId, grupoId, periodo) {
     }
   }
 
+  // CAIXA (loja física): entradas somam na receita bruta ANTES do cálculo de
+  // taxas/imposto (venda de balcão não tem taxa de plataforma, então as taxas
+  // continuam zero pra essa parte); saídas viram custo por categoria.
+  let custos_caixa = 0;
+  const custos_caixa_cat = {};
+  for (const l of lancamentos) {
+    if (l.tipo === 'entrada') {
+      receita_bruta += l.valor;
+      total_vendas  += 1;
+    } else {
+      custos_caixa += l.valor;
+      const k = l.categoria || 'outros';
+      custos_caixa_cat[k] = (custos_caixa_cat[k] || 0) + l.valor;
+    }
+  }
+
   // Imposto: o que já foi retido + reserva manual sobre receita líquida
   const receita_apos_taxas = receita_bruta - taxas_plataforma - taxas_gateway - reembolsos - chargebacks - comissoes_afiliado;
   const imposto_reserva    = reservarImposto ? Math.round(receita_apos_taxas * (aliquota / 100)) : 0;
   const impostos_total     = imposto_ja_retido + imposto_reserva;
   const receita_liquida    = receita_apos_taxas - imposto_reserva;
 
-  // Custos
-  const custos_total = (custos || []).reduce((s, c) => s + c.valor, 0);
+  // Custos = custos do digital + saídas do caixa (físico)
+  const custos_total = (custos || []).reduce((s, c) => s + c.valor, 0) + custos_caixa;
   const custos_por_categoria = {};
   for (const c of custos || []) {
     custos_por_categoria[c.categoria] = (custos_por_categoria[c.categoria] || 0) + c.valor;
+  }
+  for (const [k, v] of Object.entries(custos_caixa_cat)) {
+    custos_por_categoria[k] = (custos_por_categoria[k] || 0) + v;
   }
 
   const lucro_liquido = receita_liquida - custos_total;
@@ -397,6 +444,7 @@ async function gerarDre(userId, grupoId, periodo) {
   const snapshot = {
     user_id: userId,
     grupo_id: grupoId,
+    empresa_id: empId,
     periodo: inicio,
     receita_bruta,
     taxas_plataforma,
@@ -427,7 +475,10 @@ async function gerarDre(userId, grupoId, periodo) {
 
   const { data, error } = await supabase
     .from('dre_snapshots')
-    .upsert(snapshot, { onConflict: 'user_id,periodo' })
+    // ⚠️ A unicidade virou (empresa_id, periodo) na migration 090 — com
+    // multi-empresa, duas empresas do mesmo dono colidiam no mesmo mês.
+    // Manter 'user_id,periodo' aqui quebra o upsert (constraint inexistente).
+    .upsert(snapshot, { onConflict: 'empresa_id,periodo' })
     .select()
     .maybeSingle();
   if (error) throw error;

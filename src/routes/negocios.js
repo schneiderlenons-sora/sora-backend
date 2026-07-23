@@ -148,6 +148,19 @@ async function empresaDoUsuario(userId, empresaId) {
   return data || null;
 }
 
+/** Empresa alvo de uma leitura: a informada (se for do usuário) ou, na falta,
+ *  a primeira ativa — mantém compatibilidade com chamadas sem empresa_id. */
+async function resolverEmpresaId(userId, empresaIdQuery) {
+  if (empresaIdQuery) {
+    const e = await empresaDoUsuario(userId, empresaIdQuery);
+    if (e) return e.id;
+  }
+  const { data } = await supabase.from('empresas')
+    .select('id').eq('user_id', userId).eq('ativa', true)
+    .order('created_at', { ascending: true }).limit(1).maybeSingle();
+  return data?.id || null;
+}
+
 function validarLancamento({ tipo, descricao, valor, data, status }) {
   if (!['entrada', 'saida'].includes(tipo)) return 'Tipo inválido.';
   if (!descricao || !String(descricao).trim()) return 'Descreva o lançamento.';
@@ -563,24 +576,29 @@ router.get('/dre/:phone', auth, async (req, res) => {
     const mesParam = req.query.periodo || new Date().toISOString().slice(0, 7);
     const periodo = `${mesParam}-01`;
 
+    // DRE é POR EMPRESA. Sem empresa_id, usa a primeira ativa (compat).
+    const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empId) return res.json(null); // sem empresa cadastrada → sem DRE
+
     // Tenta usar snapshot cacheado; se não houver, gera
     let { data: snap } = await supabase
       .from('dre_snapshots')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('empresa_id', empId)
       .eq('periodo', periodo)
       .maybeSingle();
 
     if (!snap) {
-      snap = await gerarDre(user.id, user.grupo_ativo, periodo);
+      snap = await gerarDre(user.id, user.grupo_ativo, periodo, empId);
     }
+    if (!snap) return res.json(null);
 
     // Delta vs mês anterior
     const anteriorDate = new Date(periodo);
     anteriorDate.setMonth(anteriorDate.getMonth() - 1);
     const anterior = anteriorDate.toISOString().slice(0, 10);
     const { data: prev } = await supabase
-      .from('dre_snapshots').select('lucro_liquido').eq('user_id', user.id).eq('periodo', anterior).maybeSingle();
+      .from('dre_snapshots').select('lucro_liquido').eq('empresa_id', empId).eq('periodo', anterior).maybeSingle();
     const delta_vs_anterior = prev?.lucro_liquido
       ? ((snap.lucro_liquido - prev.lucro_liquido) / Math.abs(prev.lucro_liquido)) * 100
       : 0;
@@ -591,7 +609,7 @@ router.get('/dre/:phone', auth, async (req, res) => {
     const { data: spark } = await supabase
       .from('eventos_financeiros')
       .select('data_evento, valor_liquido, tipo')
-      .eq('user_id', user.id)
+      .eq('empresa_id', empId)
       .gte('data_evento', trintaAtras.toISOString());
 
     const dias = Array.from({ length: 30 }, (_, i) => {
@@ -864,8 +882,11 @@ router.post('/dre/recalcular', auth, async (req, res) => {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const mes = (periodo || new Date().toISOString().slice(0, 7)) + '-01';
-    await supabase.from('dre_snapshots').delete().eq('user_id', user.id).eq('periodo', mes);
-    const snap = await gerarDre(user.id, user.grupo_ativo, mes);
+    // Recalcular é POR EMPRESA — senão apagaria o snapshot das outras.
+    const empId = await resolverEmpresaId(user.id, req.body.empresa_id);
+    if (!empId) return res.json(null);
+    await supabase.from('dre_snapshots').delete().eq('empresa_id', empId).eq('periodo', mes);
+    const snap = await gerarDre(user.id, user.grupo_ativo, mes, empId);
     res.json(snap);
   } catch (e) {
     res.status(500).json({ erro: e.message });
@@ -1075,10 +1096,11 @@ router.get('/wrapped/:phone', auth, async (req, res) => {
     const fimDate = new Date(inicio); fimDate.setMonth(fimDate.getMonth() + 1);
     const fim = fimDate.toISOString().slice(0, 10);
 
-    // Snapshot DRE
+    // Snapshot DRE (por empresa)
+    const empWrap = await resolverEmpresaId(user.id, req.query.empresa_id);
     let { data: snap } = await supabase
-      .from('dre_snapshots').select('*').eq('user_id', user.id).eq('periodo', inicio).maybeSingle();
-    if (!snap) snap = await gerarDre(user.id, user.grupo_ativo, inicio);
+      .from('dre_snapshots').select('*').eq('empresa_id', empWrap).eq('periodo', inicio).maybeSingle();
+    if (!snap) snap = await gerarDre(user.id, user.grupo_ativo, inicio, empWrap);
 
     // Mês anterior pra comparação
     const dAnt = new Date(inicio); dAnt.setMonth(dAnt.getMonth() - 1);
