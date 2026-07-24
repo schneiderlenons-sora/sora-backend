@@ -9,6 +9,7 @@ const TIPO_LABEL = {
   emprestimo:      'Empréstimo',
   financiamento:   'Financiamento',
   crediario:       'Crediário',
+  parcelamento:    'Parcelamento',
   cartao_rotativo: 'Cartão rotativo',
   cheque_especial: 'Cheque especial',
   consignado:      'Consignado',

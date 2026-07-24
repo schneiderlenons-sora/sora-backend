@@ -196,6 +196,35 @@ function interpretarRapido(message) {
   if ((m = msg.match(/(cancelar|parar)\s+recorr[eê]ncia\s+(.+)/i)))
     return { acao: 'cancelar_recorrencia', descricao: m[2].trim() };
 
+  // --- PARCELAMENTO SEM CARTÃO → vira um parcelamento em Dívidas ---
+  // ANTES do parcelado de cartão. Gatilhos EXPLÍCITOS (não chuta): "sem cartão"
+  // OU "parcelei ... com <pessoa>". Sempre exige "em Nx de Y"; senão vai pra IA.
+  // A cada vencimento o usuário escolhe de qual conta pagar (fluxo de dívida).
+  {
+    const semCartao = /\bsem\s+cart[ãa]o\b/i.test(msg);
+    const diaM = msg.match(/\bdia\s+(\d{1,2})\b/i);
+    const diaVenc = diaM ? parseInt(diaM[1]) : null;
+
+    // "parcelei <coisa> com <pessoa> em Nx de Y [dia D]"
+    let mm = msg.match(/parcelei\s+(.+?)\s+com\s+(.+?)\s+em\s+(\d+)\s*x\s+de\s+(\d[\d.,]*)/i);
+    if (mm) {
+      const n = parseInt(mm[3]), vp = parseValor(mm[4]);
+      const credor = mm[2].trim().replace(/^(o|a|os|as|meu|minha|meus|minhas|seu|sua)\s+/i, '').trim();
+      return { acao: 'criar_divida', tipo: 'parcelamento',
+        titulo: mm[1].trim(), credor: credor || mm[2].trim(),
+        valor_total: n * vp, valor_parcela: vp, parcelas_total: n, dia_vencimento: diaVenc };
+    }
+    // "comprei/parcelei <coisa> em Nx de Y" + tem "sem cartão" na mensagem
+    mm = msg.match(/(?:comprei|parcelei|fiz uma compra de)\s+(.+?)\s+em\s+(\d+)\s*x\s+de\s+(\d[\d.,]*)/i);
+    if (mm && semCartao) {
+      const n = parseInt(mm[2]), vp = parseValor(mm[3]);
+      const titulo = mm[1].trim().replace(/\bsem\s+cart[ãa]o\b/i, '').replace(/\s+/g, ' ').trim();
+      return { acao: 'criar_divida', tipo: 'parcelamento',
+        titulo: titulo || 'Compra parcelada', credor: null,
+        valor_total: n * vp, valor_parcela: vp, parcelas_total: n, dia_vencimento: diaVenc };
+    }
+  }
+
   // --- PARCELAS ---
   if ((m = msg.match(/(?:comprei|fiz uma compra de)\s+(.+?)\s+(?:no|na|pelo)\s+([\w\s]+?(?:\s+cr[eé]dito)?)\s+em\s+(\d+)x\s+de\s+(\d[\d.,]*)/i))) {
     const numParcelas  = parseInt(m[3]);
