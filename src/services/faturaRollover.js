@@ -1,0 +1,88 @@
+// =============================================================================
+// faturaRollover — pagamento parcial da fatura + rollover do saldo (SEM juros).
+//
+// Modelo (cartão MANUAL; Open Finance fica de fora — traz a fatura do banco):
+//   • fatura(mês)   = soma dos Gasto do cartão no mês (competência 'YYYY-MM')
+//   • pago(mês)     = soma de pagamentos_fatura do cartão naquela competência
+//   • restante(mês) = max(0, fatura − pago)
+//
+// Rollover: no vencimento, se restante > 0, abre fatura_rollover 'aguardando'
+// (24h pra confirmar no WhatsApp). Confirmou OU passou 24h → materializa: cria
+// um Gasto "Fatura anterior" no cartão no 1º dia do mês SEGUINTE, com o valor
+// que sobrou. É marcado `transferencia:true` → entra na SOMA da fatura (que
+// filtra por tipo 'Gasto') mas fica FORA dos relatórios de gasto (a compra
+// original já contou no mês dela). SEM juros (decisão de produto).
+// =============================================================================
+const supabase = require('../db/supabase');
+
+const TZ = 'America/Sao_Paulo';
+
+function ymHoje() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: TZ }).slice(0, 7);
+}
+function mesSeguinte(ym) {
+  const [y, m] = ym.split('-').map(Number);   // m é 1-based; new Date(y, m, 1) = mês seguinte
+  const d = new Date(y, m, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function somaFaturaMes(grupoId, cartaoNome, ym) {
+  const inicio = `${ym}-01`;
+  const [y, m] = ym.split('-').map(Number);
+  const prox = new Date(y, m, 1);
+  const fim = `${prox.getFullYear()}-${String(prox.getMonth() + 1).padStart(2, '0')}-01`;
+  const { data } = await supabase.from('transacoes').select('valor')
+    .eq('grupo_id', grupoId).eq('tipo', 'Gasto').ilike('carteira_nome', cartaoNome)
+    .gte('data', inicio).lt('data', fim);
+  return (data || []).reduce((s, t) => s + (Number(t.valor) || 0), 0);
+}
+
+async function pagoDaFatura(cartaoId, ym) {
+  const { data, error } = await supabase.from('pagamentos_fatura')
+    .select('valor').eq('cartao_id', cartaoId).eq('competencia', ym);
+  if (error) return 0; // tolerante à migration 096
+  return (data || []).reduce((s, p) => s + (Number(p.valor) || 0), 0);
+}
+
+const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+async function statusFatura(grupoId, cartao, ym) {
+  const fatura = cent(await somaFaturaMes(grupoId, cartao.nome, ym));
+  const pago = cent(await pagoDaFatura(cartao.id, ym));
+  const restante = Math.max(0, cent(fatura - pago));
+  return { fatura, pago, restante };
+}
+
+// Cria o lançamento "Fatura anterior" no mês seguinte e marca o rollover rolado.
+async function materializarRollover(row, cartaoNome) {
+  const alvo = mesSeguinte(row.competencia);
+  const idCurto = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const base = {
+    id_curto:      idCurto,
+    grupo_id:      row.grupo_id,
+    criado_por:    row.user_id || null,
+    tipo:          'Gasto',
+    categoria:     'Fatura anterior',
+    valor:         Number(row.valor),
+    observacao:    `Saldo não pago da fatura ${row.competencia}`,
+    carteira_nome: cartaoNome,
+    pago:          true,
+    data:          `${alvo}-01T12:00:00.000Z`,
+  };
+  // transferencia:true → soma na fatura (filtro por tipo 'Gasto') mas fora dos
+  // relatórios de gasto. Tolerante se a coluna 046 não existir.
+  let { data: tx, error } = await supabase.from('transacoes')
+    .insert({ ...base, transferencia: true }).select('id').single();
+  if (error && /transferencia/i.test(error.message || '')) {
+    ({ data: tx, error } = await supabase.from('transacoes').insert(base).select('id').single());
+  }
+  if (error) throw error;
+
+  await supabase.from('fatura_rollover').update({
+    status: 'rolado', rolado_em: new Date().toISOString(),
+    transacao_rollover_id: tx?.id || null,
+  }).eq('id', row.id);
+  return tx;
+}
+
+module.exports = { TZ, ymHoje, mesSeguinte, somaFaturaMes, pagoDaFatura, statusFatura, materializarRollover, cent };

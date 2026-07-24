@@ -4,6 +4,7 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta, registrarTransferencia, registrarFaturaExterna } = require('../services/contaDebito');
+const { ymHoje, statusFatura, materializarRollover } = require('../services/faturaRollover');
 const norm     = p => p?.replace(/\D/g, '');
 
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
@@ -160,8 +161,86 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
       debitos.push(d);
     }
 
+    // Registra o pagamento da fatura (rastreio parcial/rollover, migration 096).
+    // competencia = mês da fatura sendo paga (default mês atual, fuso SP).
+    const totalPago = itens.reduce((s, it) => s + it.valor, 0);
+    const competencia = /^\d{4}-\d{2}$/.test(req.body.competencia || '')
+      ? req.body.competencia
+      : new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
+    if (cartao_id && totalPago > 0) {
+      try {
+        await supabase.from('pagamentos_fatura').insert({
+          grupo_id: grupoId, user_id: req.userId, cartao_id, competencia,
+          valor: totalPago, transacao_id: debitos[0]?.tx?.id || null,
+        });
+      } catch { /* tolerante: migration 096 pode não ter rodado */ }
+    }
+
     // Retorna `debito` (1º) pra retrocompat + `debitos` (todos) pro split.
     res.json({ ok: true, debito: debitos[0], debitos });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// GET /api/wallets/fatura/status/:phone?cartao_id=&competencia=YYYY-MM
+// Retorna { fatura, pago, restante, rollover? } do cartão na competência
+// (default mês atual). Base do pagamento parcial + banner de rollover. (096)
+router.get('/fatura/status/:phone', auth, async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo;
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+    const cartaoId = req.query.cartao_id;
+    if (!cartaoId) return res.status(400).json({ erro: 'cartao_id obrigatório' });
+    const competencia = /^\d{4}-\d{2}$/.test(req.query.competencia || '') ? req.query.competencia : ymHoje();
+
+    const { data: cartao } = await supabase.from('wallets')
+      .select('id, nome, of_conta_id').eq('id', cartaoId).eq('grupo_id', grupoId).maybeSingle();
+    if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
+
+    const st = await statusFatura(grupoId, cartao, competencia);
+
+    // Rollover aguardando confirmação (se a tabela existir).
+    let rollover = null;
+    try {
+      const { data } = await supabase.from('fatura_rollover')
+        .select('id, valor, competencia, status, confirmar_ate')
+        .eq('cartao_id', cartaoId).eq('status', 'aguardando')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (data) rollover = data;
+    } catch { /* tolerante à 096 */ }
+
+    res.json({ ...st, competencia, rollover });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// POST /api/wallets/fatura/rolar — confirma o rollover (materializa agora).
+// Body: { rollover_id } OU { cartao_id, competencia } (cria+rola se ainda não existe).
+router.post('/fatura/rolar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const grupoId = req.grupoId || req.authUser?.grupoAtivo;
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+    const { rollover_id, cartao_id, competencia } = req.body;
+
+    let row = null;
+    if (rollover_id) {
+      const { data } = await supabase.from('fatura_rollover').select('*').eq('id', rollover_id).eq('grupo_id', grupoId).maybeSingle();
+      row = data;
+    } else if (cartao_id && /^\d{4}-\d{2}$/.test(competencia || '')) {
+      // Cria o rollover na hora (usuário pediu pra rolar direto do painel).
+      const { data: cartao } = await supabase.from('wallets').select('id, nome').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
+      if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
+      const st = await statusFatura(grupoId, cartao, competencia);
+      if (st.restante <= 0) return res.status(400).json({ erro: 'Fatura já quitada — nada a rolar.' });
+      const { data } = await supabase.from('fatura_rollover').upsert({
+        grupo_id: grupoId, user_id: req.userId, cartao_id, competencia, valor: st.restante, status: 'aguardando',
+      }, { onConflict: 'cartao_id,competencia' }).select().single();
+      row = data;
+    }
+    if (!row) return res.status(404).json({ erro: 'Rollover não encontrado.' });
+    if (row.status === 'rolado') return res.json({ ok: true, jaRolado: true });
+
+    const { data: cartao } = await supabase.from('wallets').select('nome').eq('id', row.cartao_id).maybeSingle();
+    const tx = await materializarRollover(row, cartao?.nome || 'cartão');
+    res.json({ ok: true, transacao_id: tx?.id || null });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

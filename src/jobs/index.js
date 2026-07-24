@@ -764,6 +764,77 @@ cron.schedule('0 9 * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1L — Todo dia às 09:00: ROLLOVER da fatura do cartão (rotativo s/ juros)
+// Passo A: cartão manual venceu e sobrou saldo → avisa e pede confirmação (24h).
+// Passo B: rollover 'aguardando' há +24h → rola sozinho e avisa.
+// Só cartões MANUAIS (Open Finance traz a fatura do banco). Migration 096.
+// ─────────────────────────────────────────────────────────────────
+const faturaRoll = require('../services/faturaRollover');
+cron.schedule('0 9 * * *', async () => {
+  console.log('💳 Processando rollover de fatura...');
+  const sp = agoraSP();
+  const diaHoje = sp.getDate();
+  // Competência que vence agora = mês ANTERIOR (compras do mês passado vencem neste mês).
+  const prev = new Date(sp.getFullYear(), sp.getMonth() - 1, 1);
+  const compAnterior = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+
+  const notificarDono = async (grupoId, texto, pendenteCtx) => {
+    const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', grupoId).maybeSingle();
+    if (!grupo?.dono_id) return;
+    const { data: user } = await supabase.from('users').select('phone').eq('id', grupo.dono_id).maybeSingle();
+    if (!user?.phone) return;
+    if (!(await avisosLigados(grupo.dono_id))) return;
+    await lembrete(user.phone, texto);
+    if (pendenteCtx) {
+      try { await criarPendente({ userId: grupo.dono_id, tipoPergunta: 'rolar_fatura', contexto: pendenteCtx, expiresInMin: 60 * 26 }); }
+      catch { /* noop */ }
+    }
+  };
+
+  // ── PASSO A: detectar vencimento com saldo restante ──
+  try {
+    const { data: cartoes } = await supabase.from('wallets')
+      .select('id, nome, grupo_id, dia_vencimento, of_conta_id')
+      .eq('tipo', 'Crédito').not('dia_vencimento', 'is', null).is('of_conta_id', null);
+
+    for (const c of cartoes || []) {
+      if (diaHoje < c.dia_vencimento) continue; // ainda não venceu neste mês
+      // Já existe rollover pra essa fatura? (dedup pela unique)
+      const { data: jaTem } = await supabase.from('fatura_rollover')
+        .select('id').eq('cartao_id', c.id).eq('competencia', compAnterior).maybeSingle();
+      if (jaTem) continue;
+
+      const st = await faturaRoll.statusFatura(c.grupo_id, c, compAnterior);
+      if (st.restante <= 0) continue;
+
+      const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', c.grupo_id).maybeSingle();
+      const { data: row } = await supabase.from('fatura_rollover').upsert({
+        grupo_id: c.grupo_id, user_id: grupo?.dono_id || null, cartao_id: c.id,
+        competencia: compAnterior, valor: st.restante, status: 'aguardando',
+        avisado_em: new Date().toISOString(),
+        confirmar_ate: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      }, { onConflict: 'cartao_id,competencia' }).select().single();
+
+      const txt = `💳 *Fatura do ${c.nome}*\n\nVocê pagou parte, mas sobraram *R$ ${st.restante.toFixed(2)}*.\n\nQuer que eu role esse saldo pra próxima fatura? Responda *sim*.\n\n_Se não responder em 24h, eu rolo automaticamente pra você não ficar sem controle._`;
+      await notificarDono(c.grupo_id, txt, { rollover_id: row?.id, cartao_id: c.id, cartao_nome: c.nome, valor: st.restante });
+    }
+  } catch (e) { console.warn('[rollover passo A]', e.message); }
+
+  // ── PASSO B: passou 24h sem confirmar → rola sozinho ──
+  try {
+    const { data: pendentes } = await supabase.from('fatura_rollover')
+      .select('*').eq('status', 'aguardando').lt('confirmar_ate', new Date().toISOString());
+    for (const row of pendentes || []) {
+      const { data: cartao } = await supabase.from('wallets').select('nome').eq('id', row.cartao_id).maybeSingle();
+      await faturaRoll.materializarRollover(row, cartao?.nome || 'cartão');
+      await notificarDono(row.grupo_id, `💳 Rolei *R$ ${Number(row.valor).toFixed(2)}* da fatura do ${cartao?.nome || 'cartão'} pra próxima fatura (você não confirmou em 24h). Está tudo registrado no painel.`);
+    }
+  } catch (e) { console.warn('[rollover passo B]', e.message); }
+
+  console.log('✅ Rollover de fatura processado.');
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 2 — Todo dia 1º às 00:01: reseta alertas de limite
 // ─────────────────────────────────────────────────────────────────
 cron.schedule('1 0 1 * *', async () => {

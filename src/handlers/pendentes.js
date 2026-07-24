@@ -78,6 +78,30 @@ async function resolverPendente(pendente, mensagem, ctx) {
   const msg = (mensagem || '').trim();
   const lower = msg.toLowerCase();
 
+  // ─── ROLAR FATURA (rollover do cartão, migration 096) ──────────
+  if (pendente.tipo_pergunta === 'rolar_fatura') {
+    const { rollover_id, cartao_nome, valor } = pendente.contexto || {};
+    if (/^(s|sim|pode|rola(r)?|isso|claro|quero|ok|beleza|manda|confirmo|👍)/i.test(lower)) {
+      try {
+        const { materializarRollover } = require('../services/faturaRollover');
+        const { data: row } = await supabase.from('fatura_rollover').select('*').eq('id', rollover_id).maybeSingle();
+        if (row && row.status === 'aguardando') await materializarRollover(row, cartao_nome || 'cartão');
+        await removerPendente(pendente.id);
+        await enviarTexto(phone, `✅ Pronto! Rolei R$ ${Number(valor || 0).toFixed(2)} pra próxima fatura do ${cartao_nome || 'cartão'}.`);
+      } catch (e) {
+        await removerPendente(pendente.id);
+        await enviarTexto(phone, `⚠️ Não consegui rolar agora: ${e.message}`);
+      }
+      return true;
+    }
+    if (/^(n|n[ãa]o|nao|depois|espera|ainda|vou pagar|deixa)/i.test(lower)) {
+      await removerPendente(pendente.id);
+      await enviarTexto(phone, '👍 Beleza. Se o restante não for pago, eu rolo pra próxima fatura automaticamente no fim do prazo.');
+      return true;
+    }
+    return false; // não bate — deixa a mensagem seguir (pode ser outra coisa)
+  }
+
   // ─── TIPO 1: ESCOLHER_CONTA ────────────────────────────────────
   if (pendente.tipo_pergunta === 'escolher_conta') {
     const opcoes = pendente.contexto?.opcoes || [];
