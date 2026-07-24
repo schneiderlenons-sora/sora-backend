@@ -129,7 +129,7 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
       : [{ wallet_id, valor }];
 
     const itens = lista
-      .map(p => ({ wallet_id: p.wallet_id, valor: parseFloat(p.valor) }))
+      .map(p => ({ wallet_id: p.wallet_id, valor: parseFloat(p.valor), descricao: (p.descricao || '').toString().trim().slice(0, 40) }))
       .filter(p => p.wallet_id && p.valor > 0);
 
     if (!itens.length) return res.status(400).json({ erro: 'Escolha a conta e o valor do pagamento.' });
@@ -139,11 +139,14 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
 
     // Debita cada conta (uma transação por conta). Se uma falhar, o erro sobe —
     // as anteriores já foram gravadas (débitos parciais são idempotentes por si).
+    // `descricao` (ex.: "Esposa", "Filho") vira parte da observação pra saber
+    // quem pagou o que quando a fatura é dividida.
     const debitos = [];
     for (const it of itens) {
+      const obs = `Fatura ${cartao?.nome || 'cartão'}${it.descricao ? ` · ${it.descricao}` : ''}`;
       const d = await debitarConta({
         grupoId, walletId: it.wallet_id, valor: it.valor,
-        categoria: 'Fatura cartão', observacao: `Fatura ${cartao?.nome || 'cartão'}`,
+        categoria: 'Fatura cartão', observacao: obs,
         userId: req.userId,
       });
       debitos.push(d);
