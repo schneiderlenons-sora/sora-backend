@@ -83,4 +83,39 @@ async function registrarTransferencia({ grupoId, origemNome, destinoNome, valor,
   return tx;
 }
 
-module.exports = { debitarConta, registrarTransferencia };
+// =============================================================================
+// registrarFaturaExterna — registra uma parte da fatura paga POR FORA (por
+// alguém cuja conta não está no painel — ex.: esposa/filho). É só informativo:
+// NÃO mexe em saldo (o dinheiro não é do usuário e não há conta pra debitar) e
+// fica FORA dos relatórios de gasto (transferencia=true). `carteira_nome` é
+// null de propósito — não é uma conta real, então não vira conta-fantasma nem
+// aparece no extrato de nenhuma conta. Quem pagou vai na observação.
+// =============================================================================
+async function registrarFaturaExterna({ grupoId, valor, observacao, userId }) {
+  const v = parseFloat(valor);
+  if (!grupoId || !v || v <= 0) return null;
+
+  const idCurto = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const base = {
+    id_curto:      idCurto,
+    grupo_id:      grupoId,
+    criado_por:    userId || null,
+    tipo:          'Gasto',
+    categoria:     'Fatura cartão',
+    valor:         v,
+    observacao:    observacao || 'Fatura (externo)',
+    carteira_nome: null,   // não sai de nenhuma conta do usuário
+    pago:          true,
+    data:          new Date().toISOString(),
+  };
+  let { data: tx, error } = await supabase.from('transacoes')
+    .insert({ ...base, transferencia: true }).select().single();
+  // Tolerante à migration 046 (coluna transferencia): grava sem ela se faltar.
+  if (error && /transferencia/i.test(error.message || '')) {
+    ({ data: tx, error } = await supabase.from('transacoes').insert(base).select().single());
+  }
+  if (error) throw error;
+  return { tx, externo: true };
+}
+
+module.exports = { debitarConta, registrarTransferencia, registrarFaturaExterna };

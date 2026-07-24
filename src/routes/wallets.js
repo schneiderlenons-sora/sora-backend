@@ -3,7 +3,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
-const { debitarConta, registrarTransferencia } = require('../services/contaDebito');
+const { debitarConta, registrarTransferencia, registrarFaturaExterna } = require('../services/contaDebito');
 const norm     = p => p?.replace(/\D/g, '');
 
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
@@ -116,7 +116,9 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 // Body aceita os dois formatos (retrocompatível):
 //   • { cartao_id, wallet_id, valor }                       ← conta única
 //   • { cartao_id, pagamentos: [{ wallet_id, valor }, ...] } ← dividido
-// O split cobre o caso "parte da fatura paga por uma conta, parte por outra".
+// Cada item do split pode ser de uma conta real (wallet_id → debita a conta) OU
+// EXTERNO (`externa: true` + descricao → só registra quem pagou, sem debitar
+// nenhum saldo — pra quando a parte foi paga por familiar fora do painel).
 router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { cartao_id, wallet_id, valor, pagamentos } = req.body;
@@ -129,26 +131,32 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
       : [{ wallet_id, valor }];
 
     const itens = lista
-      .map(p => ({ wallet_id: p.wallet_id, valor: parseFloat(p.valor), descricao: (p.descricao || '').toString().trim().slice(0, 40) }))
-      .filter(p => p.wallet_id && p.valor > 0);
+      .map(p => ({
+        wallet_id: p.wallet_id,
+        valor:     parseFloat(p.valor),
+        descricao: (p.descricao || '').toString().trim().slice(0, 40),
+        externa:   !!p.externa,
+      }))
+      // externo entra mesmo sem wallet_id; conta real precisa do wallet_id.
+      .filter(p => p.valor > 0 && (p.externa || p.wallet_id));
 
     if (!itens.length) return res.status(400).json({ erro: 'Escolha a conta e o valor do pagamento.' });
 
     const { data: cartao } = await supabase.from('wallets')
       .select('nome').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
 
-    // Debita cada conta (uma transação por conta). Se uma falhar, o erro sobe —
-    // as anteriores já foram gravadas (débitos parciais são idempotentes por si).
-    // `descricao` (ex.: "Esposa", "Filho") vira parte da observação pra saber
-    // quem pagou o que quando a fatura é dividida.
+    // Uma transação por item. Conta real → debita o saldo; externo → só registra
+    // (sem mexer em saldo). `descricao` (ex.: "Esposa") vira parte da observação
+    // pra saber quem pagou o quê. Se um falhar, o erro sobe (os já gravados ficam).
     const debitos = [];
     for (const it of itens) {
-      const obs = `Fatura ${cartao?.nome || 'cartão'}${it.descricao ? ` · ${it.descricao}` : ''}`;
-      const d = await debitarConta({
-        grupoId, walletId: it.wallet_id, valor: it.valor,
-        categoria: 'Fatura cartão', observacao: obs,
-        userId: req.userId,
-      });
+      const obs = `Fatura ${cartao?.nome || 'cartão'}${it.descricao ? ` · ${it.descricao}` : ''}${it.externa ? ' (externo)' : ''}`;
+      const d = it.externa
+        ? await registrarFaturaExterna({ grupoId, valor: it.valor, observacao: obs, userId: req.userId })
+        : await debitarConta({
+            grupoId, walletId: it.wallet_id, valor: it.valor,
+            categoria: 'Fatura cartão', observacao: obs, userId: req.userId,
+          });
       debitos.push(d);
     }
 
