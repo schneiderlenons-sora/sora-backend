@@ -231,10 +231,26 @@ router.post('/lancamentos', auth, async (req, res) => {
       pago_em:         status === 'pago' ? (b.pago_em || b.data) : null,
       forma_pagamento: b.forma_pagamento || null,
       contraparte:     b.contraparte || null,
+      conta_id:        b.conta_id || null,
       recorrente:      !!b.recorrente,
       recorrencia:     b.recorrencia || null,
       observacao:      b.observacao || null,
     }).select().single();
+    // Tolerante à migration 095: se a coluna conta_id ainda não existe, reinsere sem ela.
+    if (error && /conta_id/i.test(error.message || '')) {
+      const row = {
+        empresa_id: empresa.id, user_id: user.id, tipo: b.tipo,
+        categoria: b.categoria || null, descricao: String(b.descricao).trim(),
+        valor: Math.round(Number(b.valor)), data: b.data, status,
+        vencimento: b.vencimento || null,
+        pago_em: status === 'pago' ? (b.pago_em || b.data) : null,
+        forma_pagamento: b.forma_pagamento || null, contraparte: b.contraparte || null,
+        recorrente: !!b.recorrente, recorrencia: b.recorrencia || null, observacao: b.observacao || null,
+      };
+      const r2 = await supabase.from('lancamentos_negocio').insert(row).select().single();
+      if (r2.error) throw r2.error;
+      return res.json({ ok: true, lancamento: r2.data });
+    }
     if (error) throw error;
     res.json({ ok: true, lancamento: data });
   } catch (e) {
@@ -252,7 +268,7 @@ router.put('/lancamentos/:id', auth, async (req, res) => {
     const b = req.body || {};
     const patch = {};
     ['tipo', 'categoria', 'descricao', 'data', 'status', 'vencimento',
-     'forma_pagamento', 'contraparte', 'observacao', 'recorrencia'].forEach(k => {
+     'forma_pagamento', 'contraparte', 'conta_id', 'observacao', 'recorrencia'].forEach(k => {
       if (b[k] !== undefined) patch[k] = b[k];
     });
     if (b.valor !== undefined) patch.valor = Math.round(Number(b.valor));
@@ -662,7 +678,8 @@ router.get('/dre-detalhado/:phone', auth, async (req, res) => {
     const { data: cfg } = await supabase
       .from('config_negocio').select('*').eq('user_id', user.id).maybeSingle();
     const aliquota = cfg?.aliquota_simples ?? 6.0;
-    const reservarImposto = cfg?.reservar_imposto ?? true;
+    // Opt-in (default OFF) — sem config salvada, NÃO reserva imposto no DRE.
+    const reservarImposto = cfg?.reservar_imposto ?? false;
 
     // Helpers de agregação por plataforma
     const novo = () => ({ total: 0, por_plataforma: {} });
@@ -996,6 +1013,86 @@ router.delete('/custos/:id', auth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// CONTAS DO NEGÓCIO (caixas nomeadas por empresa) — migration 095
+// Cada lançamento pode apontar pra uma conta; saldo por conta é calculado
+// no frontend (saldo_inicial + entradas pagas − saídas pagas).
+// ─────────────────────────────────────────────────────────────────
+router.get('/contas/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+
+    const { data, error } = await supabase.from('contas_negocio')
+      .select('*').eq('empresa_id', empresa.id).eq('ativa', true)
+      .order('created_at', { ascending: true });
+    if (error) {
+      // Tolerante: tabela ainda não existe (migration 095 não rodou) → lista vazia.
+      if (/contas_negocio/i.test(error.message || '')) return res.json([]);
+      throw error;
+    }
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/contas', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    const b = req.body || {};
+    const empresa = await empresaDoUsuario(user.id, b.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    if (!b.nome || !String(b.nome).trim()) return res.status(400).json({ erro: 'Dê um nome pra conta.' });
+    const tipo = ['dinheiro', 'banco', 'cartao', 'outro'].includes(b.tipo) ? b.tipo : 'dinheiro';
+
+    const { data, error } = await supabase.from('contas_negocio').insert({
+      empresa_id:    empresa.id,
+      user_id:       user.id,
+      nome:          String(b.nome).trim().slice(0, 40),
+      tipo,
+      saldo_inicial: Math.round(Number(b.saldo_inicial) || 0),
+      cor:           b.cor || null,
+    }).select().single();
+    if (error) throw error;
+    res.json({ ok: true, conta: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.put('/contas/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    const b = req.body || {};
+    const patch = {};
+    if (b.nome !== undefined) patch.nome = String(b.nome).trim().slice(0, 40);
+    if (b.tipo !== undefined && ['dinheiro', 'banco', 'cartao', 'outro'].includes(b.tipo)) patch.tipo = b.tipo;
+    if (b.saldo_inicial !== undefined) patch.saldo_inicial = Math.round(Number(b.saldo_inicial) || 0);
+    if (b.cor !== undefined) patch.cor = b.cor || null;
+
+    const { data, error } = await supabase.from('contas_negocio')
+      .update(patch).eq('id', req.params.id).eq('user_id', user.id).select().maybeSingle();
+    if (error) throw error;
+    res.json({ ok: true, conta: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.delete('/contas/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    // Soft delete (ativa=false) — não perde o vínculo dos lançamentos históricos.
+    const { error } = await supabase.from('contas_negocio')
+      .update({ ativa: false }).eq('id', req.params.id).eq('user_id', user.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // CONFIG — regime tributário, alíquotas
 // ─────────────────────────────────────────────────────────────────
 
@@ -1009,7 +1106,9 @@ router.get('/config/:phone', auth, async (req, res) => {
       grupo_id: user.grupo_ativo,
       regime_tributario: 'mei',
       aliquota_simples: 6.0,
-      reservar_imposto: true,
+      // Imposto reservado é OPT-IN (default OFF): loja simples não deve ter
+      // desconto automático no DRE sem pedir. Quem quiser liga na config.
+      reservar_imposto: false,
       pct_reserva_imposto: 6.0,
     });
   } catch (e) {
