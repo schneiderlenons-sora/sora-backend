@@ -318,15 +318,22 @@ module.exports = async function handleWallets(data, ctx) {
       return;
     }
 
-    const { data: origem } = await supabase.from('wallets')
-      .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single();
+    // cheque_especial (migration 094): permite ir negativo até esse teto.
+    // Select tolerante (coluna pode não existir ainda → refaz sem ela).
+    let { data: origem, error: origemErr } = await supabase.from('wallets')
+      .select('id, saldo, cheque_especial').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single();
+    if (origemErr) {
+      ({ data: origem } = await supabase.from('wallets')
+        .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single());
+    }
 
     if (!origem) {
       await enviarTexto(phone, `❌ Conta *${nomeOrigem}* não encontrada.`);
       return;
     }
-    if (origem.saldo < valor) {
-      await enviarTexto(phone, `⚠️ Saldo insuficiente em *${nomeOrigem}*. Disponível: R$ ${origem.saldo.toFixed(2)}`);
+    const disponivel = (origem.saldo || 0) + Math.abs(Number(origem.cheque_especial) || 0);
+    if (disponivel < valor) {
+      await enviarTexto(phone, `⚠️ Saldo insuficiente em *${nomeOrigem}*. Disponível: R$ ${disponivel.toFixed(2)}`);
       return;
     }
 
