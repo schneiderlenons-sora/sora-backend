@@ -150,6 +150,68 @@ router.post('/avisos', auth, async (req, res) => {
   }
 });
 
+// =====================================================================
+// POST /api/user/resetar — limpa os dados da conta por MÓDULO, sem excluir
+// a conta (mantém login/plano/WhatsApp). Chama a RPC resetar_conta.
+//
+// Body: { financas?, negocios?, grow?, colecoes? } (booleans)
+//
+// Segurança:
+//   • Escopo SEMPRE pelo usuário autenticado (grupo_ativo + id) — nunca body.
+//   • Finanças/Negócios são por grupo (compartilhados). Se a conta for
+//     COMPARTILHADA (grupo com >1 membro), bloqueia esses módulos (409) pra
+//     não apagar dados do parceiro/família. Grow (por user_id) segue liberado.
+//   • Coleções são por grupo → só entram se o grupo for solo.
+// =====================================================================
+router.post('/resetar', auth, async (req, res) => {
+  try {
+    const user_id  = req.authUser?.id;
+    const grupo_id = req.authUser?.grupoAtivo;
+    if (!user_id)  return res.status(401).json({ erro: 'Não autenticado' });
+    if (!grupo_id) return res.status(400).json({ erro: 'Grupo ativo não encontrado.' });
+
+    const b = req.body || {};
+    const financas = !!b.financas;
+    const negocios = !!b.negocios;
+    const grow     = !!b.grow;
+    if (!financas && !negocios && !grow) {
+      return res.status(400).json({ erro: 'Escolha ao menos um módulo pra resetar.' });
+    }
+
+    // Conta compartilhada? (grupo com mais de um membro)
+    const { count: numMembros } = await supabase
+      .from('grupo_membros')
+      .select('id', { count: 'exact', head: true })
+      .eq('grupo_id', grupo_id);
+    const compartilhada = (numMembros || 0) > 1;
+
+    if (compartilhada && (financas || negocios)) {
+      return res.status(409).json({
+        erro: 'Conta compartilhada: saia do grupo (ou peça pra removerem você) antes de resetar Finanças ou Negócios — senão apagaria os dados dos outros membros. O Sora Grow pode ser resetado normalmente.',
+        motivo: 'grupo_compartilhado',
+      });
+    }
+
+    // Coleções são compartilhadas por grupo → só reseta junto com Grow em grupo solo.
+    const colecoes = grow && !compartilhada;
+
+    const { error } = await supabase.rpc('resetar_conta', {
+      p_grupo_id: grupo_id,
+      p_user_id:  user_id,
+      p_financas: financas,
+      p_negocios: negocios,
+      p_grow:     grow,
+      p_colecoes: colecoes,
+    });
+    if (error) return res.status(500).json({ erro: `Falha ao resetar: ${error.message}` });
+
+    res.json({ ok: true, resetado: { financas, negocios, grow, colecoes } });
+  } catch (err) {
+    console.error('[/api/user/resetar] erro:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // GET /api/user/:phone — POR ÚLTIMO: rota curinga (:phone casa qualquer
 // segmento). Se vier antes, captura /resumos, /avisos, etc. e quebra tudo.
 router.get('/:phone', auth, async (req, res) => {
