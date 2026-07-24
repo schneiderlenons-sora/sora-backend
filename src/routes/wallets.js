@@ -50,7 +50,7 @@ router.get('/:phone', auth, async (req, res) => {
 // POST /api/wallets
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { nome, tipo, saldo, limite,
+    const { nome, tipo, saldo, limite, cheque_especial,
             dia_fechamento, dia_vencimento, bandeira, ultimos4 } = req.body;
     const grupoId = req.grupoId; // grupo do usuário autenticado (exigirPermissao)
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
@@ -62,15 +62,30 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       .select('id, saldo').eq('grupo_id', grupoId).eq('nome', nome).maybeSingle();
 
     const row = { grupo_id: grupoId, nome, tipo, saldo, limite };
+    // Cheque especial (migration 094) — teto de saldo negativo da conta. Só
+    // inclui quando enviado; guarda em módulo (positivo). Tolerante: se a
+    // coluna não existe ainda, o upsert abaixo falha e cai no catch — por isso
+    // só adiciona ao row quando o cliente mandou (contas de crédito não mandam).
+    if (cheque_especial !== undefined) {
+      row.cheque_especial = Math.abs(Number(cheque_especial) || 0);
+    }
     // Campos de cartão de crédito (migration 023) — só inclui quando enviados
     if (dia_fechamento !== undefined) row.dia_fechamento = dia_fechamento || null;
     if (dia_vencimento !== undefined) row.dia_vencimento = dia_vencimento || null;
     if (bandeira       !== undefined) row.bandeira       = bandeira || null;
     if (ultimos4       !== undefined) row.ultimos4       = ultimos4 || null;
 
-    const { data, error } = await supabase.from('wallets')
+    let { data, error } = await supabase.from('wallets')
       .upsert(row, { onConflict: 'grupo_id,nome' })
       .select().single();
+    // Tolerante à migration 094: se a coluna cheque_especial ainda não existe,
+    // reenvia sem ela (não trava o salvar de conta até rodar a migration).
+    if (error && /cheque_especial/i.test(error.message || '')) {
+      const { cheque_especial: _drop, ...semCheque } = row;
+      ({ data, error } = await supabase.from('wallets')
+        .upsert(semCheque, { onConflict: 'grupo_id,nome' })
+        .select().single());
+    }
     if (error) throw error;
 
     // Define o dono SÓ na criação (não sobrescreve em edições/ajustes de saldo).
@@ -95,26 +110,47 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// POST /api/wallets/fatura/pagar — paga a fatura do cartão debitando de uma conta
-// (cria a transação de saída na conta escolhida e desconta o saldo).
+// POST /api/wallets/fatura/pagar — paga a fatura do cartão debitando de UMA ou
+// VÁRIAS contas (cria uma transação de saída por conta e desconta cada saldo).
+//
+// Body aceita os dois formatos (retrocompatível):
+//   • { cartao_id, wallet_id, valor }                       ← conta única
+//   • { cartao_id, pagamentos: [{ wallet_id, valor }, ...] } ← dividido
+// O split cobre o caso "parte da fatura paga por uma conta, parte por outra".
 router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { cartao_id, wallet_id, valor } = req.body;
+    const { cartao_id, wallet_id, valor, pagamentos } = req.body;
     const grupoId = req.grupoId;
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
-    if (!wallet_id) return res.status(400).json({ erro: 'Escolha a conta de onde sai o pagamento.' });
-    const v = parseFloat(valor);
-    if (!v || v <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
+
+    // Normaliza pro formato lista. Single vira lista de 1.
+    const lista = Array.isArray(pagamentos) && pagamentos.length
+      ? pagamentos
+      : [{ wallet_id, valor }];
+
+    const itens = lista
+      .map(p => ({ wallet_id: p.wallet_id, valor: parseFloat(p.valor) }))
+      .filter(p => p.wallet_id && p.valor > 0);
+
+    if (!itens.length) return res.status(400).json({ erro: 'Escolha a conta e o valor do pagamento.' });
 
     const { data: cartao } = await supabase.from('wallets')
       .select('nome').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
 
-    const debito = await debitarConta({
-      grupoId, walletId: wallet_id, valor: v,
-      categoria: 'Fatura cartão', observacao: `Fatura ${cartao?.nome || 'cartão'}`,
-      userId: req.userId,
-    });
-    res.json({ ok: true, debito });
+    // Debita cada conta (uma transação por conta). Se uma falhar, o erro sobe —
+    // as anteriores já foram gravadas (débitos parciais são idempotentes por si).
+    const debitos = [];
+    for (const it of itens) {
+      const d = await debitarConta({
+        grupoId, walletId: it.wallet_id, valor: it.valor,
+        categoria: 'Fatura cartão', observacao: `Fatura ${cartao?.nome || 'cartão'}`,
+        userId: req.userId,
+      });
+      debitos.push(d);
+    }
+
+    // Retorna `debito` (1º) pra retrocompat + `debitos` (todos) pro split.
+    res.json({ ok: true, debito: debitos[0], debitos });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -130,12 +166,24 @@ router.post('/transferir', auth, exigirPermissao('admin', 'escrita'), async (req
     const v = parseFloat(valor);
     if (!v || v <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
 
-    const { data: contas } = await supabase.from('wallets')
-      .select('id, nome, saldo').eq('grupo_id', grupoId).in('id', [origem_id, destino_id]);
+    // cheque_especial: teto de negativo (migration 094). Select tolerante: se a
+    // coluna não existe ainda, refaz com '*' e trata como 0.
+    let { data: contas, error: selErr } = await supabase.from('wallets')
+      .select('id, nome, saldo, cheque_especial').eq('grupo_id', grupoId).in('id', [origem_id, destino_id]);
+    if (selErr) {
+      ({ data: contas } = await supabase.from('wallets')
+        .select('*').eq('grupo_id', grupoId).in('id', [origem_id, destino_id]));
+    }
     const origem  = (contas || []).find(c => c.id === origem_id);
     const destino = (contas || []).find(c => c.id === destino_id);
     if (!origem || !destino) return res.status(404).json({ erro: 'Conta não encontrada.' });
-    if ((origem.saldo || 0) < v) return res.status(400).json({ erro: `Saldo insuficiente em ${origem.nome}.` });
+    // Permite ir negativo até o cheque especial: disponível = saldo + limite.
+    const chequeOrigem = Math.abs(Number(origem.cheque_especial) || 0);
+    const disponivel   = (origem.saldo || 0) + chequeOrigem;
+    if (disponivel < v) {
+      const extra = chequeOrigem > 0 ? ` (saldo + cheque especial: R$ ${disponivel.toFixed(2)})` : '';
+      return res.status(400).json({ erro: `Saldo insuficiente em ${origem.nome}${extra}.` });
+    }
 
     await supabase.from('wallets').update({ saldo: (origem.saldo || 0) - v }).eq('id', origem.id);
     await supabase.from('wallets').update({ saldo: (destino.saldo || 0) + v }).eq('id', destino.id);
