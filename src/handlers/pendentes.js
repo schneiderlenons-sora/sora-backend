@@ -102,6 +102,31 @@ async function resolverPendente(pendente, mensagem, ctx) {
     return false; // não bate — deixa a mensagem seguir (pode ser outra coisa)
   }
 
+  // ─── PARCELAMENTO: já pagou a 1ª parcela? (migration 097 / sem cartão) ──
+  if (pendente.tipo_pergunta === 'parcelamento_primeira') {
+    const { divida_id, titulo, valor_parcela, parcelas_total } = pendente.contexto || {};
+    if (/^(s|sim|paguei|já|ja|paga|foi|isso|claro|ok)/i.test(lower)) {
+      try {
+        // Marca a 1ª parcela como paga: registra o pagamento + incrementa contador.
+        await supabase.from('divida_pagamentos').insert({
+          divida_id, user_id: user?.id, numero_parcela: 1,
+          valor: valor_parcela || 0, tipo: 'parcela',
+          data_pagamento: new Date().toISOString().slice(0, 10),
+        });
+        await supabase.from('dividas').update({ parcelas_pagas: 1 }).eq('id', divida_id);
+      } catch { /* noop */ }
+      await removerPendente(pendente.id);
+      await enviarTexto(phone, `✅ Anotei a *1ª parcela* de ${titulo || 'parcelamento'} como paga. Faltam ${Math.max(0, (parcelas_total || 1) - 1)}.`);
+      return true;
+    }
+    if (/^(n|n[ãa]o|nao|ainda n|nada|zero)/i.test(lower)) {
+      await removerPendente(pendente.id);
+      await enviarTexto(phone, '👍 Beleza, deixei todas as parcelas em aberto. Vou te lembrar no vencimento.');
+      return true;
+    }
+    return false; // não bate — deixa a mensagem seguir
+  }
+
   // ─── TIPO 1: ESCOLHER_CONTA ────────────────────────────────────
   if (pendente.tipo_pergunta === 'escolher_conta') {
     const opcoes = pendente.contexto?.opcoes || [];

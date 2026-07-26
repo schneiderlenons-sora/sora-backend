@@ -1,6 +1,7 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/mensageiro');
 const { oferecerDesconto } = require('../services/descontoConta');
+const { criarPendente } = require('../services/pendentes');
 
 const fmt = v => `R$ ${(parseFloat(v) || 0).toFixed(2).replace('.', ',')}`;
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
@@ -56,6 +57,11 @@ module.exports = async function handleDividas(data, ctx) {
       return;
     }
     const vp = parcelas_total ? parseFloat(valor_total) / parseInt(parcelas_total, 10) : null;
+    const ehParcelamento = tipo === 'parcelamento';
+    // Parcelamento SEM dia de vencimento → usa o dia de hoje (senão não há
+    // lembrete). O usuário pode mudar depois. Dívida comum mantém null.
+    const diaVenc = dia_vencimento ? parseInt(dia_vencimento, 10)
+      : (ehParcelamento ? new Date().getDate() : null);
     const linha = {
       grupo_id:       grupoId,
       criado_por:     user.id,
@@ -67,7 +73,7 @@ module.exports = async function handleDividas(data, ctx) {
       parcelas_total: parcelas_total ? parseInt(parcelas_total, 10) : null,
       parcelas_pagas: 0,
       taxa_juros:     taxa_juros ? parseFloat(taxa_juros) : null,
-      dia_vencimento: dia_vencimento ? parseInt(dia_vencimento, 10) : null,
+      dia_vencimento: diaVenc,
       data_inicio:    new Date().toISOString().slice(0, 10),
       status:         'ativa',
     };
@@ -80,7 +86,7 @@ module.exports = async function handleDividas(data, ctx) {
     if (error) { await enviarTexto(phone, `❌ Erro ao criar dívida: ${error.message}`); return; }
 
     const partes = [
-      `✅ *Dívida cadastrada!*`,
+      ehParcelamento ? `✅ *Parcelamento cadastrado!*` : `✅ *Dívida cadastrada!*`,
       ``,
       `📌 ${nova.titulo}`,
       `🏷️ ${TIPO_LABEL[nova.tipo] || nova.tipo}`,
@@ -89,6 +95,21 @@ module.exports = async function handleDividas(data, ctx) {
     if (nova.parcelas_total) partes.push(`📊 ${nova.parcelas_total}x de ${fmt(nova.valor_parcela)}`);
     if (nova.dia_vencimento) partes.push(`📅 Vencimento: todo dia ${nova.dia_vencimento}`);
     partes.push('', '🔔 Lembretes ativos. Para desligar: *cancelar lembrete ' + nova.titulo + '*');
+
+    // Parcelamento: pergunta se a 1ª parcela já foi paga (pra anotar no painel).
+    if (ehParcelamento && nova.parcelas_total) {
+      partes.push('', `Você já pagou a *1ª parcela*? Responda *sim* ou *não*.`);
+      await enviarTexto(phone, partes.join('\n'));
+      try {
+        await criarPendente({
+          userId: user.id, tipoPergunta: 'parcelamento_primeira',
+          contexto: { divida_id: nova.id, titulo: nova.titulo, valor_parcela: nova.valor_parcela, parcelas_total: nova.parcelas_total },
+          expiresInMin: 60 * 12,
+        });
+      } catch { /* noop */ }
+      return;
+    }
+
     await enviarTexto(phone, partes.join('\n'));
     return;
   }
