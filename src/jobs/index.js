@@ -778,13 +778,15 @@ cron.schedule('0 9 * * *', async () => {
   const prev = new Date(sp.getFullYear(), sp.getMonth() - 1, 1);
   const compAnterior = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
 
-  const notificarDono = async (grupoId, texto, pendenteCtx) => {
+  // `core` = resumo em 1 linha pro {{1}} do template lembretes_gerais (fora da
+  // janela de 24h). `texto` = versão rica usada dentro da janela.
+  const notificarDono = async (grupoId, texto, pendenteCtx, core) => {
     const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', grupoId).maybeSingle();
     if (!grupo?.dono_id) return;
     const { data: user } = await supabase.from('users').select('phone').eq('id', grupo.dono_id).maybeSingle();
     if (!user?.phone) return;
     if (!(await avisosLigados(grupo.dono_id))) return;
-    await lembrete(user.phone, texto);
+    await lembrete(user.phone, texto, core);
     if (pendenteCtx) {
       try { await criarPendente({ userId: grupo.dono_id, tipoPergunta: 'rolar_fatura', contexto: pendenteCtx, expiresInMin: 60 * 26 }); }
       catch { /* noop */ }
@@ -816,7 +818,8 @@ cron.schedule('0 9 * * *', async () => {
       }, { onConflict: 'cartao_id,competencia' }).select().single();
 
       const txt = `💳 *Fatura do ${c.nome}*\n\nVocê pagou parte, mas sobraram *R$ ${st.restante.toFixed(2)}*.\n\nQuer que eu role esse saldo pra próxima fatura? Responda *sim*.\n\n_Se não responder em 24h, eu rolo automaticamente pra você não ficar sem controle._`;
-      await notificarDono(c.grupo_id, txt, { rollover_id: row?.id, cartao_id: c.id, cartao_nome: c.nome, valor: st.restante });
+      const core = `Sobraram R$ ${st.restante.toFixed(2)} da fatura do ${c.nome}. Quer rolar pra próxima? Responda sim (senão rolo sozinho em 24h).`;
+      await notificarDono(c.grupo_id, txt, { rollover_id: row?.id, cartao_id: c.id, cartao_nome: c.nome, valor: st.restante }, core);
     }
   } catch (e) { console.warn('[rollover passo A]', e.message); }
 
@@ -827,7 +830,14 @@ cron.schedule('0 9 * * *', async () => {
     for (const row of pendentes || []) {
       const { data: cartao } = await supabase.from('wallets').select('nome').eq('id', row.cartao_id).maybeSingle();
       await faturaRoll.materializarRollover(row, cartao?.nome || 'cartão');
-      await notificarDono(row.grupo_id, `💳 Rolei *R$ ${Number(row.valor).toFixed(2)}* da fatura do ${cartao?.nome || 'cartão'} pra próxima fatura (você não confirmou em 24h). Está tudo registrado no painel.`);
+      const nome = cartao?.nome || 'cartão';
+      const val = Number(row.valor).toFixed(2);
+      await notificarDono(
+        row.grupo_id,
+        `💳 Rolei *R$ ${val}* da fatura do ${nome} pra próxima fatura (você não confirmou em 24h). Está tudo registrado no painel.`,
+        null,
+        `Rolei R$ ${val} da fatura do ${nome} pra próxima fatura (não confirmado em 24h). Registrado no painel.`,
+      );
     }
   } catch (e) { console.warn('[rollover passo B]', e.message); }
 
