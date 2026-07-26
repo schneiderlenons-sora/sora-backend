@@ -56,7 +56,7 @@ module.exports = async function handleDividas(data, ctx) {
       return;
     }
     const vp = parcelas_total ? parseFloat(valor_total) / parseInt(parcelas_total, 10) : null;
-    const { data: nova, error } = await supabase.from('dividas').insert({
+    const linha = {
       grupo_id:       grupoId,
       criado_por:     user.id,
       titulo:         titulo.trim(),
@@ -70,7 +70,13 @@ module.exports = async function handleDividas(data, ctx) {
       dia_vencimento: dia_vencimento ? parseInt(dia_vencimento, 10) : null,
       data_inicio:    new Date().toISOString().slice(0, 10),
       status:         'ativa',
-    }).select().single();
+    };
+    let { data: nova, error } = await supabase.from('dividas').insert(linha).select().single();
+    // Fallback: se o CHECK ainda não conhece 'parcelamento' (migration 097 não
+    // rodou), cria como 'outro' pra não travar o usuário.
+    if (error && /dividas_tipo_check/i.test(error.message || '')) {
+      ({ data: nova, error } = await supabase.from('dividas').insert({ ...linha, tipo: 'outro' }).select().single());
+    }
     if (error) { await enviarTexto(phone, `❌ Erro ao criar dívida: ${error.message}`); return; }
 
     const partes = [

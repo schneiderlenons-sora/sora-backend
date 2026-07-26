@@ -113,6 +113,10 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       delete payload.imagem_url;
       r = await supabase.from('dividas').insert(payload).select().single();
     }
+    // Fallback: CHECK ainda sem 'parcelamento' (migration 097 não rodou) → 'outro'.
+    if (r.error && /dividas_tipo_check/i.test(r.error.message || '')) {
+      r = await supabase.from('dividas').insert({ ...payload, tipo: 'outro' }).select().single();
+    }
     if (r.error) throw r.error;
     res.json(r.data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
