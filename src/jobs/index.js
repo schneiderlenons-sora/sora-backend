@@ -706,7 +706,7 @@ cron.schedule('0 9 * * *', async () => {
   // Busca todas as dívidas ativas com lembrete ligado e dia_vencimento definido
   const { data: dividas } = await supabase
     .from('dividas')
-    .select('id, grupo_id, titulo, credor, valor_parcela, parcelas_total, parcelas_pagas, dia_vencimento, ultimo_lembrete_em')
+    .select('id, grupo_id, titulo, credor, valor_parcela, parcelas_total, parcelas_pagas, dia_vencimento, data_inicio, ultimo_lembrete_em')
     .in('status', ['ativa', 'em_atraso'])
     .eq('lembretes_ativos', true)
     .not('dia_vencimento', 'is', null);
@@ -718,6 +718,11 @@ cron.schedule('0 9 * * *', async () => {
     // Calcula próximo vencimento
     const venc = new Date(hoje.getFullYear(), hoje.getMonth(), d.dia_vencimento);
     if (d.dia_vencimento < diaHoje) venc.setMonth(venc.getMonth() + 1);
+    // 1ª parcela nunca vence no mês da compra: se o venc cair em/antes do
+    // data_inicio, pula pro mês seguinte (não lembra parcelado no dia da compra).
+    if (d.data_inicio && venc.getTime() <= new Date(d.data_inicio + 'T00:00:00').getTime()) {
+      venc.setMonth(venc.getMonth() + 1);
+    }
     const diffDias = Math.round((venc - new Date(hoje.getFullYear(), hoje.getMonth(), diaHoje)) / 86400000);
 
     // Janelas: 3 dias antes, no dia, ou atrasada (>=1 dia depois do venc do mês passado)

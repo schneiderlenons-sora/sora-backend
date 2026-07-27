@@ -87,10 +87,13 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
   // 4. Dívidas (parcela do mês)
   try {
     const { data } = await supabase.from('dividas')
-      .select('id, titulo, valor_parcela, dia_vencimento, status').eq('grupo_id', grupoId).not('dia_vencimento', 'is', null);
+      .select('id, titulo, valor_parcela, dia_vencimento, status, data_inicio').eq('grupo_id', grupoId).not('dia_vencimento', 'is', null);
     for (const dv of data || []) {
       if (dv.status === 'quitada') continue;
       for (const d of ocorrenciasMensais(dv.dia_vencimento, deStr, ateStr)) {
+        // 1ª parcela nunca vence no mês da compra — pula a ocorrência em/antes
+        // do data_inicio (senão o parcelado aparece vencendo 1 dia após comprar).
+        if (dv.data_inicio && d <= dv.data_inicio) continue;
         eventos.push({ id: `div-${dv.id}-${d}`, source: 'divida', titulo: `Dívida: ${dv.titulo}`, data: d, hora: null,
           cor: '#ea580c', valor: dv.valor_parcela || null, deeplink: '/dividas', editavel: false });
       }
