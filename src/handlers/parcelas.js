@@ -51,7 +51,7 @@ module.exports = async function handleParcelas(data, ctx) {
     const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
     const semRuido = (s) => norm(s).replace(/\b(cartao|credito|debito|fatura|conta|banco|meu|minha|do|da|de|no|na|o|a)\b/g, '').replace(/\s+/g, ' ').trim();
     const { data: todosCartoes } = await supabase.from('wallets')
-      .select('id, nome, dia_fechamento, dia_vencimento').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
+      .select('id, nome, dia_fechamento, dia_vencimento, of_conta_id, saldo').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
       .order('created_at', { ascending: true });
     let cartoes = todosCartoes || [];
     const termoN = semRuido(termo);
@@ -74,70 +74,58 @@ module.exports = async function handleParcelas(data, ctx) {
       return;
     }
     const cartao = cartoes[0];
-    const temCiclo = !!cartao.dia_fechamento;
 
-    // Calcula o intervalo do ciclo (aberto = offset 0; fechado = offset -1).
-    function intervalo(offset) {
-      if (temCiclo) { const c = cicloFatura(cartao.dia_fechamento, offset); return { ini: c.ini, fimExcl: c.fimExcl, label: c.label, fim: c.fim }; }
-      // Fallback sem dia de fechamento: mês calendário (offset desloca meses).
-      const [Y, M] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
-      const ini = new Date(Date.UTC(Y, (M - 1) + offset, 1, 12));
-      const fimExcl = new Date(Date.UTC(Y, (M - 1) + offset + 1, 1, 12));
-      return { ini: ini.toISOString().slice(0, 10), fimExcl: fimExcl.toISOString().slice(0, 10), label: null, fim: new Date(Date.UTC(Y, (M - 1) + offset + 1, 0, 12)) };
+    // Fatura pelo MÊS-CALENDÁRIO — MESMA base do painel e do rollover (096).
+    // Antes usávamos o ciclo de fechamento (dia_fechamento) e divergia do painel:
+    // a fatura aparecia lá (soma do mês) mas o ciclo ABERTO estava vazio →
+    // "fatura zerada". Espelha o painel: cartão OF usa −saldo; manual usa a soma
+    // do mês menos o que já foi pago. `fechada` = mês anterior.
+    const { somaFaturaMes, pagoDaFatura, ymHoje, cent } = require('../services/faturaRollover');
+    const nowYM = ymHoje();
+    const [cy, cmo] = nowYM.split('-').map(Number);
+    const mesAnterior = `${cmo === 1 ? cy - 1 : cy}-${String(cmo === 1 ? 12 : cmo - 1).padStart(2, '0')}`;
+    const competencia = fechada ? mesAnterior : nowYM;
+    const ehOF = !!cartao.of_conta_id;
+
+    let fatura, jaPago = 0;
+    if (ehOF && !fechada && typeof cartao.saldo === 'number') {
+      // Open Finance: saldo = −fatura (já sem parcelas a vencer). Igual ao painel.
+      fatura = Math.max(0, cent(-(cartao.saldo)));
+    } else {
+      const base = await somaFaturaMes(grupoId, cartao.nome, competencia);
+      jaPago = await pagoDaFatura(cartao.id, competencia);
+      fatura = Math.max(0, cent(base - jaPago));
     }
-
-    const alvo = intervalo(fechada ? -1 : 0);
-    const fatura = await somarFatura(grupoId, cartao.nome, alvo.ini, alvo.fimExcl);
-    const qualTxt = fechada ? 'fatura fechada' : 'fatura';
+    const qualTxt = fechada ? 'fatura do mês passado' : 'fatura';
 
     if (fatura <= 0) {
-      await enviarTexto(phone, `🎉 A ${qualTxt} do *${cartao.nome}* está zerada${alvo.label ? ` (ciclo ${alvo.label})` : ''}. Nada a pagar!`);
+      await enviarTexto(phone,
+        `🎉 A ${qualTxt} do *${cartao.nome}* está ${jaPago > 0 ? 'quitada' : 'zerada'}` +
+        `${jaPago > 0 ? ` (você já pagou R$ ${jaPago.toFixed(2)})` : ''}. Nada a pagar!`);
       return;
     }
 
     // Pagamento PARCIAL: "paguei 100 da fatura..." → paga só R$100 (limita à fatura).
     const parcial = !!(data.valor && data.valor > 0);
     const valorPagar = parcial ? Math.min(data.valor, fatura) : fatura;
-    // Competência (mês-calendário, fuso SP) pra registrar em pagamentos_fatura e o
-    // painel refletir o "restante". Aberta = mês atual; fechada = mês anterior.
-    const nowYM = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
-    const [cy, cmo] = nowYM.split('-').map(Number);
-    const competencia = fechada ? `${cmo === 1 ? cy - 1 : cy}-${String(cmo === 1 ? 12 : cmo - 1).padStart(2, '0')}` : nowYM;
 
-    // Vencimento da fatura fechada (se houver dia de vencimento).
+    // Vencimento (rótulo) a partir do dia_vencimento do cartão.
     let vencTxt = '';
-    if (fechada && temCiclo && cartao.dia_vencimento) {
-      const v = vencimentoApos(alvo.fim, cartao.dia_vencimento);
-      vencTxt = `\n⏰ Vence em ${String(v.getUTCDate()).padStart(2, '0')}/${String(v.getUTCMonth() + 1).padStart(2, '0')}`;
+    if (cartao.dia_vencimento) {
+      const dv = Math.min(Math.max(parseInt(cartao.dia_vencimento) || 10, 1), 28);
+      vencTxt = `\n⏰ Vence dia ${dv}`;
     }
 
     const introValor = parcial
       ? `💳 Pagar *R$ ${valorPagar.toFixed(2)}* da fatura do *${cartao.nome}* (fatura: R$ ${fatura.toFixed(2)})`
-      : `💳 *Fatura ${cartao.nome}${fechada ? ' (fechada)' : ''}: R$ ${fatura.toFixed(2)}*`;
+      : `💳 *Fatura ${cartao.nome}${fechada ? ' (mês passado)' : ''}: R$ ${fatura.toFixed(2)}*`;
     await oferecerDesconto({
       user, phone, grupoId, valor: valorPagar,
-      categoria: 'Fatura cartão', observacao: `Fatura ${cartao.nome}${fechada ? ' (fechada)' : ''}`,
+      categoria: 'Fatura cartão', observacao: `Fatura ${cartao.nome}${fechada ? ' (mês passado)' : ''}`,
       extra: { cartao_id: cartao.id, competencia },
       permiteExterno: true, // fatura pode ter sido paga por outra pessoa
-      intro: `${introValor}${alvo.label ? `\n📅 Ciclo: ${alvo.label}` : ''}${vencTxt}\nCom qual conta você pagou?`,
+      intro: `${introValor}${vencTxt}\nCom qual conta você pagou?`,
     });
-
-    // Aviso proativo: ao pagar a ABERTA, se a FECHADA anterior ainda está
-    // pendente e dentro do prazo (não venceu), lembra que dá pra pagar.
-    if (!fechada && temCiclo && cartao.dia_vencimento) {
-      const ant = intervalo(-1);
-      const valAnt = await somarFatura(grupoId, cartao.nome, ant.ini, ant.fimExcl);
-      if (valAnt > 0) {
-        const v = vencimentoApos(ant.fim, cartao.dia_vencimento);
-        const hojeSP = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) + 'T12:00:00Z');
-        if (v >= hojeSP) {
-          await enviarTexto(phone,
-            `💡 Você também tem a *fatura fechada* (${ant.label}) de *R$ ${valAnt.toFixed(2)}*, ` +
-            `que vence em ${String(v.getUTCDate()).padStart(2, '0')}/${String(v.getUTCMonth() + 1).padStart(2, '0')}.\n` +
-            `Pra pagar essa: *pagar fatura fechada ${cartao.nome.toLowerCase()}*`);
-        }
-      }
-    }
     return;
   }
 
