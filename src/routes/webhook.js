@@ -613,7 +613,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       case 'set_limite':
       case 'set_meta':
       case 'meus_limites':
-        require('../handlers/limites')(data, ctx);
+        await require('../handlers/limites')(data, ctx);
         break;
 
       // Recorrências e lembretes
@@ -632,7 +632,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       case 'trocar_grupo':
       case 'listar_membros':
       case 'remover_membro':
-        require('../handlers/grupos')(data, ctx);
+        await require('../handlers/grupos')(data, ctx);
         break;
 
       // Dívidas
@@ -642,12 +642,12 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       case 'quitar_divida':
       case 'cancelar_lembrete_divida':
       case 'ativar_lembrete_divida':
-        require('../handlers/dividas')(data, ctx);
+        await require('../handlers/dividas')(data, ctx);
         break;
 
       // Metas financeiras (poupança)
       case 'aporte_meta':
-        require('../handlers/metas')(data, ctx);
+        await require('../handlers/metas')(data, ctx);
         break;
 
       // Investimentos (Black)
@@ -661,7 +661,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       case 'sugerir_alocacao':
       case 'gerar_dicas':
       case 'ver_dividendos':
-        require('../handlers/investimentos')(data, ctx);
+        await require('../handlers/investimentos')(data, ctx);
         break;
 
       default:
