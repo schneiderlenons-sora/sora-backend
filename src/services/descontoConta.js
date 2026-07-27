@@ -12,7 +12,7 @@ const { criarPendente } = require('./pendentes');
 
 const fmt = (v) => `R$ ${Number(v || 0).toFixed(2)}`;
 
-async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observacao, intro, extra }) {
+async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observacao, intro, extra, permiteExterno }) {
   if (!user?.id || !grupoId || !valor) return;
 
   const { data: contas } = await supabase.from('wallets')
@@ -20,21 +20,25 @@ async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observ
   const opcoes = (contas || [])
     .filter(c => c.tipo !== 'Crédito')
     .map(c => ({ id: c.id, nome: c.nome, saldo: c.saldo }));
-  if (!opcoes.length) return;
+  // Sem conta nenhuma: só segue se dá pra registrar "pago por outra pessoa"
+  // (ex.: fatura). Senão não há o que perguntar.
+  if (!opcoes.length && !permiteExterno) return;
 
   await criarPendente({
     userId: user.id,
     tipoPergunta: 'descontar_destino',
     // `extra` (ex.: cartao_id + competencia da fatura) segue no contexto pra o
-    // pendente registrar pagamentos_fatura ao debitar.
-    contexto: { valor, categoria, observacao, opcoes, ...(extra || {}) },
+    // pendente registrar pagamentos_fatura ao debitar. `permiteExterno` habilita
+    // a opção "pago por outra pessoa" (não desconta de conta).
+    contexto: { valor, categoria, observacao, opcoes, permiteExterno: !!permiteExterno, ...(extra || {}) },
     expiresInMin: 15,
   });
 
   const cabecalho = intro || '💳 Quer *descontar de uma conta*?';
-  const lista = opcoes.map((o, i) => `${i + 1}. ${o.nome} — ${fmt(o.saldo)}`).join('\n');
+  const linhas = opcoes.map((o, i) => `${i + 1}. ${o.nome} — ${fmt(o.saldo)}`);
+  if (permiteExterno) linhas.push(`${opcoes.length + 1}. 👤 Pago por outra pessoa (não desconta)`);
   await enviarTexto(phone,
-    `${cabecalho}\n\n${lista}\n\nResponda o *número* da conta, ou *não*.`);
+    `${cabecalho}\n\n${linhas.join('\n')}\n\nResponda o *número*, ou *não*.`);
 }
 
 module.exports = { oferecerDesconto };

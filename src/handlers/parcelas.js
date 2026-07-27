@@ -45,9 +45,21 @@ module.exports = async function handleParcelas(data, ctx) {
   if (data.acao === 'pagar_fatura') {
     const termo = (data.termo || '').trim();
     const fechada = !!data.fechada;   // true = ciclo fechado anterior
-    const { data: cartoes } = await supabase.from('wallets')
+    // Match tolerante: `ilike` do Postgres é case-insensitive mas NÃO ignora
+    // acento — "itau" não casava com "Itaú Crédito". Buscamos todos os cartões
+    // e casamos em JS sem acento e sem ruído ("cartão/crédito/fatura/do/da…").
+    const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    const semRuido = (s) => norm(s).replace(/\b(cartao|credito|debito|fatura|conta|banco|meu|minha|do|da|de|no|na|o|a)\b/g, '').replace(/\s+/g, ' ').trim();
+    const { data: todosCartoes } = await supabase.from('wallets')
       .select('id, nome, dia_fechamento, dia_vencimento').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
-      .ilike('nome', `%${termo}%`).order('created_at', { ascending: true });
+      .order('created_at', { ascending: true });
+    let cartoes = todosCartoes || [];
+    const termoN = semRuido(termo);
+    if (termoN) {
+      const exato = cartoes.filter((c) => semRuido(c.nome) === termoN);
+      const contem = cartoes.filter((c) => { const n = semRuido(c.nome); return n && (n.includes(termoN) || termoN.includes(n)); });
+      cartoes = exato.length ? exato : contem;
+    }
     if (!cartoes?.length) {
       await enviarTexto(phone, termo
         ? `❌ Não encontrei cartão com *"${termo}"*. Veja os seus: 🌐 forsora.com/cartao-de-credito`
@@ -106,7 +118,8 @@ module.exports = async function handleParcelas(data, ctx) {
       user, phone, grupoId, valor: valorPagar,
       categoria: 'Fatura cartão', observacao: `Fatura ${cartao.nome}${fechada ? ' (fechada)' : ''}`,
       extra: { cartao_id: cartao.id, competencia },
-      intro: `${introValor}${alvo.label ? `\n📅 Ciclo: ${alvo.label}` : ''}${vencTxt}\nDe qual conta você quer pagar?`,
+      permiteExterno: true, // fatura pode ter sido paga por outra pessoa
+      intro: `${introValor}${alvo.label ? `\n📅 Ciclo: ${alvo.label}` : ''}${vencTxt}\nCom qual conta você pagou?`,
     });
 
     // Aviso proativo: ao pagar a ABERTA, se a FECHADA anterior ainda está

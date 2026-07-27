@@ -231,9 +231,45 @@ async function resolverPendente(pendente, mensagem, ctx) {
       return true;
     }
 
+    const num = parseInt(msg, 10);
+
+    // "Pago por outra pessoa" (só quando permiteExterno, ex.: fatura): registra
+    // sem descontar de conta nenhuma. É a opção nº (opcoes.length + 1) ou texto.
+    const permiteExterno = !!pendente.contexto?.permiteExterno;
+    const externoNum = opcoes.length + 1;
+    const pediuExterno = permiteExterno && (
+      (!isNaN(num) && num === externoNum) ||
+      /(outra pessoa|outra conta|algu[eé]m|alguem|terceiro|externo|amigo|esposa|marido|namorad|\bpai\b|m[ãa]e|filho|por fora|nao ?fui eu|não ?fui eu)/i.test(lower)
+    );
+    if (pediuExterno) {
+      let tx = null;
+      try {
+        const { registrarFaturaExterna } = require('../services/contaDebito');
+        const r = await registrarFaturaExterna({
+          grupoId, valor,
+          observacao: `${observacao || 'Fatura'} — paga por outra pessoa`,
+          userId: user?.id,
+        });
+        tx = r?.tx;
+      } catch (e) { /* tolerante */ }
+      const { cartao_id, competencia } = pendente.contexto || {};
+      if (cartao_id && competencia) {
+        try {
+          await supabase.from('pagamentos_fatura').insert({
+            grupo_id: grupoId, user_id: user?.id, cartao_id, competencia,
+            valor: Number(valor) || 0, transacao_id: tx?.id || null,
+          });
+        } catch { /* tolerante à migration 096 */ }
+      }
+      await removerPendente(pendente.id);
+      await enviarTexto(phone,
+        `✅ Anotei que *R$ ${Number(valor || 0).toFixed(2)}* foi *pago por outra pessoa*. ` +
+        `Não descontei de nenhuma conta — só registrei nas suas transações 📊`);
+      return true;
+    }
+
     // Escolha por número ou nome
     let escolhida = null;
-    const num = parseInt(msg, 10);
     if (!isNaN(num) && num >= 1 && num <= opcoes.length) escolhida = opcoes[num - 1];
     else escolhida = opcoes.find((o) =>
       o.nome.toLowerCase() === lower ||
