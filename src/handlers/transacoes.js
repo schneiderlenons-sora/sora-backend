@@ -260,6 +260,29 @@ function temPalavra(texto, trecho) {
   return new RegExp(`(^|\\s)${esc}(\\s|$)`).test(texto);
 }
 
+// Palavras de meio de pagamento — não fazem parte da descrição nem devem
+// influenciar a categoria (o usuário só disse COMO pagou).
+const PALAVRAS_PAGAMENTO = new Set(['debito', 'credito', 'pix', 'dinheiro']);
+
+// Remove de um texto o nome da conta resolvida (sem acento, tolerante) e as
+// palavras de meio de pagamento. Usado pra (a) categorizar sem o nome da conta
+// poluir — ex.: "mercado pago" fazia o gasto cair em "Mercado" — e (b) deixar a
+// descrição limpa: "ifood itau credito" → "ifood".
+function limparReferenciaConta(texto, contaNome) {
+  const contaWords = new Set(
+    (contaNome ? normTxt(contaNome).split(/\s+/) : []).filter((w) => w.length > 1)
+  );
+  const out = [];
+  for (const w of String(texto || '').split(/\s+/)) {
+    const n = normTxt(w.replace(/[.,;]+$/, ''));
+    if (!n) continue;
+    if (contaWords.has(n)) continue;      // parte do nome da conta
+    if (PALAVRAS_PAGAMENTO.has(n)) continue; // débito/crédito/pix/dinheiro
+    out.push(w);
+  }
+  return out.join(' ').replace(/\s+/g, ' ').trim();
+}
+
 // Distância de edição (Levenshtein) — usada no fuzzy match de conta com typo
 // (ex.: "nubanck" → "nubank"). Iterativo, O(m*n), sem dependências.
 function levenshtein(a, b) {
@@ -411,24 +434,15 @@ module.exports = async function handleTransacoes(data, ctx) {
     const dataTsISO = dataIso ? new Date(dataIso + 'T12:00:00.000Z').toISOString() : new Date().toISOString();
     const dataFmt = new Date(dataTsISO).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 
-    // Refina categoria pelas categorias/subcategorias reais do grupo
-    // (ex: subcategoria "Shein"). Só sobrescreve se achar algo melhor que Outros.
-    const catRefinada = await refinarCategoria(grupoId, ctx.mensagem || data.observacao);
-    if (catRefinada) data.categoria = catRefinada;
-
-    // Fallback local-first: se ainda ficou vazio/"Outros", tenta pelo motor de
-    // descrição (mesmo do OFX/Pluggy) — ex.: "paguei a enel" → Contas.
-    if (!data.categoria || /^outros$/i.test(limpaCat(data.categoria))) {
-      const sugestao = categorizarDescricao(ctx.mensagem || data.observacao || '');
-      if (sugestao) data.categoria = sugestao;
-    }
-
-    // Estratégia de escolha de carteira:
-    //   1) Se a mensagem cita banco → usa esse
-    //   2) Se user tem wallet_padrao → usa esse
-    //   3) Se user só tem 1 conta cadastrada → usa essa (e marca como padrão!)
-    //   4) Se user não tem contas → cria 'Dinheiro' automaticamente
-    //   5) Múltiplas contas, sem padrão → PERGUNTA via menu interativo
+    // ── Resolve a conta ANTES de categorizar ──────────────────────
+    // A categorização e a descrição precisam do texto SEM o nome da conta:
+    // "mercado pago" fazia o gasto cair em "Mercado" e "itau credito" grudava
+    // na descrição. Estratégia de conta:
+    //   1) cita banco no texto → usa esse
+    //   2) user tem wallet_padrao → usa esse
+    //   3) user só tem 1 conta → usa essa (e marca como padrão)
+    //   4) user não tem contas → 'Dinheiro'
+    //   5) múltiplas, sem padrão → PERGUNTA (menu, mais abaixo)
     let precisaPerguntar = false;
     let contasAtivas   = [];
     let receitaRedirecionada = false; // recebimento que ia pra cartão → mandado p/ conta
@@ -439,27 +453,38 @@ module.exports = async function handleTransacoes(data, ctx) {
     let carteiraNome = data.carteira_nome
       ? await resolverCarteiraReal(grupoId, data.carteira_nome)
       : null;
-
     // Caso 1: conta citada solta no texto (ex: "...na shein nubank" → Nubank)
     if (!carteiraNome) carteiraNome = await detectarContaNoTexto(grupoId, ctx.mensagem);
-
-    // O usuário TENTOU citar uma conta (a IA extraiu algo) mas não casou com
-    // NENHUMA conta real, nem por fuzzy → NÃO chutamos na padrão; vamos
-    // PERGUNTAR de qual conta foi (listando as contas pra escolher).
+    // O usuário TENTOU citar uma conta mas não casou com nenhuma real → NÃO
+    // chutamos na padrão; PERGUNTAMOS de qual conta foi (mais abaixo).
     const contaCitadaNaoResolvida = !!data.carteira_nome && !carteiraNome;
+
+    // Texto limpo (sem o nome da conta resolvida + "débito/crédito/pix/dinheiro")
+    // usado pra categorizar E pra virar a descrição.
+    const textoCat = limparReferenciaConta(ctx.mensagem || data.observacao || '', carteiraNome);
+
+    // Refina categoria pelas categorias/subcategorias reais do grupo
+    // (ex: subcategoria "Shein"). Só sobrescreve se achar algo melhor que Outros.
+    const catRefinada = await refinarCategoria(grupoId, textoCat);
+    if (catRefinada) data.categoria = catRefinada;
+
+    // Fallback local-first: se ainda ficou vazio/"Outros", tenta pelo motor de
+    // descrição (mesmo do OFX/Pluggy) — ex.: "paguei a enel" → Contas.
+    if (!data.categoria || /^outros$/i.test(limpaCat(data.categoria))) {
+      const sugestao = categorizarDescricao(textoCat);
+      if (sugestao) data.categoria = sugestao;
+    }
+
+    // Descrição limpa: tira o nome da conta + meio de pagamento
+    // ("ifood itau credito" → "ifood", "cachorro quente débito" → "cachorro quente").
+    if (data.observacao) {
+      const limpa = limparReferenciaConta(data.observacao, carteiraNome);
+      if (limpa) data.observacao = limpa;
+    }
 
     // Caso 2: wallet padrão — só quando o user NÃO tentou especificar conta.
     if (!carteiraNome && !contaCitadaNaoResolvida) {
       carteiraNome = await buscarWalletPadrao(user?.id);
-    }
-
-    // Conta resolvida → remove o nome dela da observação pra não sobrar
-    // "... nubank" na descrição (vira só "quiosque"/"shein"). Qualquer origem.
-    if (carteiraNome && data.observacao) {
-      const esc = carteiraNome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      data.observacao = data.observacao
-        .replace(new RegExp(`\\b${esc}\\b`, 'gi'), '')
-        .replace(/\s+/g, ' ').trim();
     }
 
     // REGRA: recebimento NÃO cai em cartão de crédito (não dá pra receber num
