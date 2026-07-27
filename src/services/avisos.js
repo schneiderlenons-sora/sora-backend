@@ -22,4 +22,24 @@ async function avisosLigados(userId) {
   return v;
 }
 
-module.exports = { avisosLigados };
+// briefingLigado(userId) → true quando o usuário tem o briefing matinal ATIVO.
+// Usado pra NÃO duplicar o "vence hoje": se o briefing está ligado, ele já lista
+// o que vence hoje, então os crons por-item mandam só antecedência/atraso. Se
+// desligado, os crons voltam a mandar "vence hoje" (fallback). Default: false
+// (sem briefing → crons mandam tudo). Cache curto igual ao avisosLigados.
+const cacheBrief = new Map();
+async function briefingLigado(userId) {
+  if (!userId) return false;
+  const c = cacheBrief.get(userId);
+  if (c && Date.now() - c.t < TTL) return c.v;
+  let v = false;
+  try {
+    const { data } = await supabase.from('users')
+      .select('agenda_briefing_ativo, agenda_briefing_horario').eq('id', userId).maybeSingle();
+    if (data) v = data.agenda_briefing_ativo === true && !!data.agenda_briefing_horario;
+  } catch { /* coluna ausente → briefing off */ }
+  cacheBrief.set(userId, { v, t: Date.now() });
+  return v;
+}
+
+module.exports = { avisosLigados, briefingLigado };

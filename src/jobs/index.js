@@ -2,7 +2,7 @@ const cron      = require('node-cron');
 const supabase  = require('../db/supabase');
 const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
-const { avisosLigados } = require('../services/avisos');
+const { avisosLigados, briefingLigado } = require('../services/avisos');
 const { enviarProativo } = require('../services/proativo');
 const yahooFinance    = require('yahoo-finance2').default;
 
@@ -145,10 +145,16 @@ async function processarFaturas(hoje, diaHoje, fimHoje) {
       });
       await supabase.from('wallets').update({ ultimo_aviso_fechamento: hojeStr }).eq('id', c.id);
     } else if (vence) {
-      await avisarFatura({
-        titulo: `⏰ *Fatura do ${c.nome} vence hoje*`,
-        venc: c.dia_vencimento, total, emAberto, contasAtivas, dono, nomeCartao: c.nome,
-      });
+      // "Vence hoje" é responsabilidade do BRIEFING matinal (que lista o que
+      // vence hoje). Se o usuário tem briefing ligado, não repetimos aqui; se
+      // desligado, mandamos como fallback. Marca o dia dos dois jeitos pra não
+      // reprocessar o cartão o dia todo.
+      if (!(await briefingLigado(dono.id))) {
+        await avisarFatura({
+          titulo: `⏰ *Fatura do ${c.nome} vence hoje*`,
+          venc: c.dia_vencimento, total, emAberto, contasAtivas, dono, nomeCartao: c.nome,
+        });
+      }
       await supabase.from('wallets').update({ ultimo_aviso_vencimento: hojeStr }).eq('id', c.id);
     }
   }
@@ -177,6 +183,10 @@ cron.schedule('0 * * * *', async () => {
     .select('*')
     .in('dia_vencimento', diasAlvo)
     .eq('ativa', true);
+
+  // Acumula os lançamentos automáticos (valor fixo) por telefone pra mandar UM
+  // aviso agrupado no fim ("Lancei hoje: Spotify, Netflix…") em vez de 1 por item.
+  const autoLancados = new Map(); // phone -> [{ descricao, valor, tipo, idCurto }]
 
   for (const rec of recorrencias || []) {
     // ── VARIÁVEL: conta recorrente cujo valor muda (luz, água, cartão, freela). ──
@@ -256,8 +266,25 @@ cron.schedule('0 * * * *', async () => {
 
     const phone = await phoneDoUser(rec.criado_por, rec.grupo_id);
     if (phone && await avisosLigados(rec.criado_por)) {
-      const txt = `🔁 *Lançamento automático:*\n${rec.tipo === 'Gasto' ? '🔴' : '🟢'} ${rec.descricao} — R$ ${rec.valor.toFixed(2)}\nID: \`${idCurto}\``;
-      await lembrete(phone, txt, `🔁 Lançamento automático: ${rec.descricao} — R$ ${rec.valor.toFixed(2)}`);
+      if (!autoLancados.has(phone)) autoLancados.set(phone, []);
+      autoLancados.get(phone).push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo, idCurto });
+    }
+  }
+
+  // Aviso agrupado dos lançamentos automáticos do dia (1 mensagem por telefone).
+  for (const [phone, itens] of autoLancados) {
+    if (!itens.length) continue;
+    if (itens.length === 1) {
+      const it = itens[0];
+      const txt = `🔁 *Lançamento automático:*\n${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${it.valor.toFixed(2)}\nID: \`${it.idCurto}\``;
+      await lembrete(phone, txt, `🔁 Lançamento automático: ${it.descricao} — R$ ${it.valor.toFixed(2)}`);
+    } else {
+      const linhas = itens.map(it => `${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${it.valor.toFixed(2)}`);
+      const total = itens.reduce((s, it) => s + (it.tipo === 'Gasto' ? it.valor : 0), 0);
+      const txt = `🔁 *Lançamentos automáticos de hoje* (${itens.length}):\n\n${linhas.join('\n')}` +
+        (total > 0 ? `\n\n💸 Total em gastos fixos: R$ ${total.toFixed(2)}` : '');
+      const core = `🔁 Lancei automaticamente hoje: ${itens.map(it => it.descricao).join(', ')}.`;
+      await lembrete(phone, txt, core);
     }
   }
 
@@ -618,7 +645,7 @@ cron.schedule('*/15 * * * *', async () => {
     await supabase.from('users').update({ agenda_briefing_ultimo: sp.dataStr }).eq('id', u.id);
 
     const cfg = await growShareCfg(u.grupo_ativo);
-    const eventos = await montarFeed(u.grupo_ativo, sp.dataStr, sp.dataStr, { userId: u.id, casaCompartilhada: cfg.casa });
+    const eventos = await montarFeed(u.grupo_ativo, sp.dataStr, sp.dataStr, { userId: u.id, casaCompartilhada: cfg.casa, paraBriefing: true });
     if (!eventos.length) continue; // nada hoje — não enche o saco
 
     eventos.sort((a, b) => (a.hora || '99:99').localeCompare(b.hora || '99:99'));
@@ -727,9 +754,11 @@ cron.schedule('0 9 * * *', async () => {
 
     // Janelas: 3 dias antes, no dia, ou atrasada (>=1 dia depois do venc do mês passado)
     let mensagem = null;
+    let venceHoje = false;
     if (diffDias === 3) {
       mensagem = `🔔 *Lembrete de dívida*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : ''}\n📅 Vence em *3 dias* (dia ${d.dia_vencimento})\n\nPara pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*\nPra parar de receber: *cancelar lembrete divida ${d.titulo}*`;
     } else if (diffDias === 0) {
+      venceHoje = true; // o "vence hoje" é do briefing; aqui só se briefing off (ver abaixo)
       mensagem = `🚨 *VENCE HOJE*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : 'sem valor de parcela'}\n\nNão esqueça! Para pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*`;
     } else {
       // Atrasada: vencimento foi no mês anterior (diffDias > 25 significa que rolou pro proximo mes)
@@ -761,6 +790,9 @@ cron.schedule('0 9 * * *', async () => {
     const { data: user } = await supabase.from('users').select('phone, lembretes_dividas').eq('id', grupo.dono_id).single();
     if (!user?.phone || user.lembretes_dividas === false) continue;
     if (!(await avisosLigados(grupo.dono_id))) continue; // kill-switch
+    // "Vence hoje" é do briefing matinal — se ligado, não duplica aqui (só
+    // antecedência de 3 dias e atraso seguem no cron). Briefing off → manda.
+    if (venceHoje && await briefingLigado(grupo.dono_id)) continue;
 
     await lembrete(user.phone, mensagem);
     await supabase.from('dividas').update({ ultimo_lembrete_em: hojeStr }).eq('id', d.id);

@@ -35,7 +35,7 @@ function ocorrenciasMensais(dia, deStr, ateStr) {
 // (filtram por userId quando informado). Manutenções (Casa) seguem o toggle do
 // grupo. Recorrências/dívidas/faturas são finanças → sempre por grupo.
 async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
-  const { userId = null, casaCompartilhada = false, incluirTransacoes = false } = opts;
+  const { userId = null, casaCompartilhada = false, incluirTransacoes = false, paraBriefing = false } = opts;
   const eventos = [];
 
   // 1. Compromissos nativos (editáveis) — pessoais
@@ -70,19 +70,24 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
     }
   } catch {}
 
-  // 3. Recorrências (contas e receitas fixas)
-  try {
-    const { data } = await supabase.from('recorrencias')
-      .select('id, tipo, descricao, valor, dia_vencimento, ativa').eq('grupo_id', grupoId).eq('ativa', true);
-    for (const r of data || []) {
-      const desp = r.tipo !== 'receita';
-      for (const d of ocorrenciasMensais(r.dia_vencimento, deStr, ateStr)) {
-        eventos.push({ id: `rec-${r.id}-${d}`, source: 'recorrencia',
-          titulo: r.descricao || (desp ? 'Conta fixa' : 'Receita fixa'), data: d, hora: null,
-          cor: desp ? '#dc2626' : '#16a34a', valor: r.valor || null, deeplink: '/transacoes', editavel: false });
+  // 3. Recorrências (contas e receitas fixas) — FORA do briefing: elas são
+  //    lançadas automaticamente (JOB 1A) e já mandam a confirmação; listá-las no
+  //    briefing como "agenda de hoje" duplicava a mesma info. Seguem na agenda
+  //    VISUAL do painel (paraBriefing=false).
+  if (!paraBriefing) {
+    try {
+      const { data } = await supabase.from('recorrencias')
+        .select('id, tipo, descricao, valor, dia_vencimento, ativa').eq('grupo_id', grupoId).eq('ativa', true);
+      for (const r of data || []) {
+        const desp = r.tipo !== 'receita';
+        for (const d of ocorrenciasMensais(r.dia_vencimento, deStr, ateStr)) {
+          eventos.push({ id: `rec-${r.id}-${d}`, source: 'recorrencia',
+            titulo: r.descricao || (desp ? 'Conta fixa' : 'Receita fixa'), data: d, hora: null,
+            cor: desp ? '#dc2626' : '#16a34a', valor: r.valor || null, deeplink: '/transacoes', editavel: false });
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   // 4. Dívidas (parcela do mês)
   try {
@@ -223,7 +228,19 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
     } catch {}
   }
 
-  return eventos;
+  // Dedup — rede de segurança: eventos idênticos (mesma fonte, título, dia e
+  // valor) viram um só, pra nunca duplicar no briefing/agenda mesmo com dados
+  // repetidos (ex.: a mesma dívida entrando 2×).
+  const vistos = new Set();
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const unicos = [];
+  for (const e of eventos) {
+    const chave = `${e.source}|${norm(e.titulo)}|${e.data}|${e.valor ?? ''}|${e.hora ?? ''}`;
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    unicos.push(e);
+  }
+  return unicos;
 }
 
 module.exports = { montarFeed, isoLocal, ocorrenciasMensais };
