@@ -12,7 +12,7 @@ const { criarPendente } = require('./pendentes');
 
 const fmt = (v) => `R$ ${Number(v || 0).toFixed(2)}`;
 
-async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observacao, intro }) {
+async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observacao, intro, extra }) {
   if (!user?.id || !grupoId || !valor) return;
 
   const { data: contas } = await supabase.from('wallets')
@@ -25,7 +25,9 @@ async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observ
   await criarPendente({
     userId: user.id,
     tipoPergunta: 'descontar_destino',
-    contexto: { valor, categoria, observacao, opcoes },
+    // `extra` (ex.: cartao_id + competencia da fatura) segue no contexto pra o
+    // pendente registrar pagamentos_fatura ao debitar.
+    contexto: { valor, categoria, observacao, opcoes, ...(extra || {}) },
     expiresInMin: 15,
   });
 

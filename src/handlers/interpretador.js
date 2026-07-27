@@ -271,15 +271,19 @@ function interpretarRapido(message) {
   if ((m = msg.match(/definir\s+fatura\s+dia\s+(\d{1,2})/i)))
     return { acao: 'set_fatura_dia', dia: parseInt(m[1]) };
 
-  // "pagar fatura" (aberta) / "pagar fatura fechada/anterior" (a que vence agora).
+  // PAGAR FATURA (aberta / fechada), inclusive PARCIAL e no passado:
+  //   "pagar/quitar/paguei/quitei [a/minha] fatura [fechada] [do X]"  → paga tudo
+  //   "paguei 100 [reais] da fatura [do X]"                           → parcial (R$100)
   // Cartão é OPCIONAL — sem ele, o handler usa o único cartão ou pergunta qual.
-  if ((m = msg.match(/^(?:pagar|quitar)\s+(?:a\s+|minha\s+)?fatura(?:\s+(?:d[oae]\s+)?(.+))?$/i))) {
-    let termo = (m[1] || '').trim();
-    const fechada = /\b(fechada|anterior|passada|vencida|vencendo|atrasada)\b/i.test(termo) || /\bm[êe]s\s+passado\b/i.test(termo);
-    if (fechada) termo = termo
+  // Vem ANTES do gasto genérico ("paguei 100 ...") pra não virar despesa solta.
+  if ((m = msg.match(/^(?:pag(?:uei|o|ar|a)|quit(?:ei|ar|o))\s+(?:(\d[\d.,]*)(?:\s*(?:reais|conto?s?|pila|r\$))?\s+)?(?:d[ae]\s+|a\s+|minha\s+|toda\s+a\s+|o\s+)?fatura\b(.*)$/i))) {
+    const valor = m[1] ? parseValor(m[1]) : null;
+    const resto = (m[2] || '').trim();
+    const fechada = /\b(fechada|anterior|passada|vencida|vencendo|atrasada)\b/i.test(resto) || /\bm[êe]s\s+passado\b/i.test(resto);
+    const termo = resto
       .replace(/\b(fechada|anterior|passada|vencida|vencendo|atrasada|do\s+m[êe]s\s+passado|m[êe]s\s+passado)\b/gi, '')
       .replace(/^\s*d[oae]\s+/i, '').replace(/\s+/g, ' ').trim();
-    return { acao: 'pagar_fatura', termo, fechada };
+    return { acao: 'pagar_fatura', termo, fechada, valor };
   }
 
   // --- DÍVIDAS ---

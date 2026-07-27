@@ -241,18 +241,33 @@ async function resolverPendente(pendente, mensagem, ctx) {
       lower.includes(o.nome.toLowerCase()));
     if (!escolhida) return false; // não bate com conta — deixa seguir
 
+    let debito = null;
     try {
       const { debitarConta } = require('../services/contaDebito');
-      await debitarConta({ grupoId, walletId: escolhida.id, valor, categoria, observacao, userId: user?.id });
+      debito = await debitarConta({ grupoId, walletId: escolhida.id, valor, categoria, observacao, userId: user?.id });
     } catch (e) {
       await removerPendente(pendente.id);
       await enviarTexto(phone, `⚠️ Não consegui descontar de *${escolhida.nome}*: ${e.message}`);
       return true;
     }
+    // Pagamento de FATURA (contexto com cartao_id): registra pagamentos_fatura
+    // pra o painel refletir o "restante" (igual ao pagamento pelo painel).
+    const { cartao_id, competencia } = pendente.contexto || {};
+    if (cartao_id && competencia) {
+      try {
+        await supabase.from('pagamentos_fatura').insert({
+          grupo_id: grupoId, user_id: user?.id, cartao_id, competencia,
+          valor: Number(valor) || 0, transacao_id: debito?.tx?.id || null,
+        });
+      } catch { /* tolerante à migration 096 */ }
+    }
     await removerPendente(pendente.id);
+    const ehFatura = categoria === 'Fatura cartão';
     await enviarTexto(phone,
-      `✅ Descontei *R$ ${Number(valor || 0).toFixed(2)}* de *${escolhida.nome}*.\n` +
-      `Já aparece nas suas transações 📊`);
+      (ehFatura
+        ? `✅ *Pagamento da fatura registrado!* Debitei *R$ ${Number(valor || 0).toFixed(2)}* de *${escolhida.nome}*.`
+        : `✅ Descontei *R$ ${Number(valor || 0).toFixed(2)}* de *${escolhida.nome}*.`) +
+      `\nJá aparece nas suas transações 📊`);
     return true;
   }
 

@@ -83,6 +83,15 @@ module.exports = async function handleParcelas(data, ctx) {
       return;
     }
 
+    // Pagamento PARCIAL: "paguei 100 da fatura..." → paga só R$100 (limita à fatura).
+    const parcial = !!(data.valor && data.valor > 0);
+    const valorPagar = parcial ? Math.min(data.valor, fatura) : fatura;
+    // Competência (mês-calendário, fuso SP) pra registrar em pagamentos_fatura e o
+    // painel refletir o "restante". Aberta = mês atual; fechada = mês anterior.
+    const nowYM = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
+    const [cy, cmo] = nowYM.split('-').map(Number);
+    const competencia = fechada ? `${cmo === 1 ? cy - 1 : cy}-${String(cmo === 1 ? 12 : cmo - 1).padStart(2, '0')}` : nowYM;
+
     // Vencimento da fatura fechada (se houver dia de vencimento).
     let vencTxt = '';
     if (fechada && temCiclo && cartao.dia_vencimento) {
@@ -90,11 +99,14 @@ module.exports = async function handleParcelas(data, ctx) {
       vencTxt = `\n⏰ Vence em ${String(v.getUTCDate()).padStart(2, '0')}/${String(v.getUTCMonth() + 1).padStart(2, '0')}`;
     }
 
+    const introValor = parcial
+      ? `💳 Pagar *R$ ${valorPagar.toFixed(2)}* da fatura do *${cartao.nome}* (fatura: R$ ${fatura.toFixed(2)})`
+      : `💳 *Fatura ${cartao.nome}${fechada ? ' (fechada)' : ''}: R$ ${fatura.toFixed(2)}*`;
     await oferecerDesconto({
-      user, phone, grupoId, valor: fatura,
+      user, phone, grupoId, valor: valorPagar,
       categoria: 'Fatura cartão', observacao: `Fatura ${cartao.nome}${fechada ? ' (fechada)' : ''}`,
-      intro: `💳 *Fatura ${cartao.nome}${fechada ? ' (fechada)' : ''}: R$ ${fatura.toFixed(2)}*` +
-        `${alvo.label ? `\n📅 Ciclo: ${alvo.label}` : ''}${vencTxt}\nDe qual conta você quer pagar?`,
+      extra: { cartao_id: cartao.id, competencia },
+      intro: `${introValor}${alvo.label ? `\n📅 Ciclo: ${alvo.label}` : ''}${vencTxt}\nDe qual conta você quer pagar?`,
     });
 
     // Aviso proativo: ao pagar a ABERTA, se a FECHADA anterior ainda está
