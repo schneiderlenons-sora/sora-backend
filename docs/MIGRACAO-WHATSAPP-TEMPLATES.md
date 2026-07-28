@@ -69,6 +69,27 @@
 - **Botão:** URL `Abrir agenda` → `https://forsora.com/grow/agenda`
 - **Params:** `[nome, resumoDoDia]`.
 
+## 4b. `recorrencias_hoje`  — a aprovar (`jobs/index.js`, JOB 1A)
+
+- **Nome:** `recorrencias_hoje` · Utilidade · pt_BR
+- **Cabeçalho:** Imagem (a capa da Sora — o código manda `headerImage` sempre).
+- **Corpo (a variável NÃO pode ficar no início/fim → tem texto fixo antes e depois):**
+  ```
+  Olá! Veja suas recorrências de hoje 👇
+
+  {{1}}
+
+  Pra confirmar um valor, responda *confirmar <nome> <valor>*
+  (ex: confirmar vendas 1890,54) — ou edite direto nas suas transações. 😉
+  ```
+- **Botão:** URL (estática) `Abrir transações` → `https://forsora.com/transacoes`
+- **Params:** `[lista]` — o `{{1}}` é SÓ a lista dos itens, ex.:
+  `💡 A confirmar o valor: Vendas (estimei R$ 1.700,00), Anúncios Facebook (estimei R$ 1.000,00)`
+- **Amostra da variável (o que a Meta pede em "Amostras de variáveis" → {{1}}):**
+  `💡 A confirmar o valor: Vendas (estimei R$ 1.700,00), Anúncios Facebook (estimei R$ 1.000,00)`
+- **Enquanto não aprovar:** o código tenta esse template e, se falhar, cai no
+  `lembretes_gerais` (linha única) automaticamente — não fica sem lembrete.
+
 ## 5. `recuperacao_pagamento`  — a ligar (`recuperacaoPagamento.js`)
 
 - **Nome:** `recuperacao_pagamento` · Utilidade · pt_BR

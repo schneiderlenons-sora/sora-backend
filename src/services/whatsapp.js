@@ -179,7 +179,8 @@ async function enviarTemplate(phone, name, bodyParams = [], lang = 'pt_BR', opts
     const template = { name, language: { code: lang } };
     if (components.length) template.components = components;
     await postMessage({ to: to(phone), type: 'template', template });
-  } catch {/* já logado em postMessage */}
+    return true;
+  } catch {/* já logado em postMessage */ return false; }
 }
 
 // ── Download de mídia recebida (áudio/imagem) ────────────────────────────────

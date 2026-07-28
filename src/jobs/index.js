@@ -3,7 +3,7 @@ const supabase  = require('../db/supabase');
 const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { avisosLigados, briefingLigado } = require('../services/avisos');
-const { enviarProativo } = require('../services/proativo');
+const { enviarProativo, provedor } = require('../services/proativo');
 const yahooFinance    = require('yahoo-finance2').default;
 
 // Gera ID curto de 6 caracteres
@@ -270,20 +270,33 @@ cron.schedule('0 * * * *', async () => {
       }
       const txt = `🔁 *Recorrências de hoje*\n\n${partes.join('\n')}`;
 
-      // `core` (linha única do template) — carrega TUDO: estimativas, comando de
-      // confirmar com exemplo e a dica de editar no painel.
-      const segs = [];
-      if (lancados.length) {
-        segs.push(`✅ Lancei: ${lancados.map(it => `${it.descricao} R$ ${money(it.valor)}`).join(', ')}`);
-      }
+      // LISTA dos itens (SEM instrução) — vira o {{1}} do template dedicado
+      // (a instrução de confirmar já está no CORPO FIXO do template).
+      const listaSegs = [];
+      if (lancados.length) listaSegs.push(`✅ Lancei: ${lancados.map(it => `${it.descricao} R$ ${money(it.valor)}`).join(', ')}`);
+      if (confirmar.length) listaSegs.push(`💡 A confirmar o valor: ${confirmar.map(it => `${it.descricao} (estimei R$ ${money(it.valor)})`).join(', ')}`);
+      const listaParam = listaSegs.join('. ');
+
+      // `core` (fallback lembretes_gerais, linha única) — lista + a instrução de
+      // confirmar, porque esse template genérico não tem corpo fixo.
+      let core = `🔁 Recorrências de hoje. ${listaParam}.`;
       if (confirmar.length) {
-        const lista = confirmar.map(it => `${it.descricao} (estimei R$ ${money(it.valor)})`).join(', ');
         const ex = confirmar[0];
         const exVal = ex.valor ? Number(ex.valor).toFixed(2).replace('.', ',') : '1890,54';
-        segs.push(`💡 A confirmar o valor: ${lista}. Responda "confirmar <nome> <valor>" (ex: confirmar ${ex.descricao.toLowerCase()} ${exVal}) — ou edite nas suas transações no painel`);
+        core += ` Responda "confirmar <nome> <valor>" (ex: confirmar ${ex.descricao.toLowerCase()} ${exVal}) — ou edite nas suas transações no painel.`;
       }
-      const core = `🔁 Recorrências de hoje. ${segs.join('. ')}.`;
-      await lembrete(phone, txt, core);
+
+      // Com algo a confirmar, tenta o template dedicado `recorrencias_hoje`
+      // (texto fixo bonito + botão "Abrir transações"); {{1}} = só a LISTA. Se
+      // ainda não foi aprovado na Meta, o envio falha e caímos no `lembretes_gerais`
+      // (core). Assim dá pra subir antes da aprovação e ele "liga" ao aprovar.
+      let entregue = false;
+      if (confirmar.length && provedor() === 'meta') {
+        entregue = await enviarProativo(phone, {
+          template: { name: 'recorrencias_hoje', params: [listaParam], opts: { headerImage: CAPA } },
+        });
+      }
+      if (!entregue) await lembrete(phone, txt, core);
     }
   }
 
