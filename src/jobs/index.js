@@ -248,20 +248,41 @@ cron.schedule('0 * * * *', async () => {
     }
 
     // UMA mensagem por telefone: o que a Sora lançou + o que falta confirmar.
+    const money = (v) => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     for (const [phone, { lancados, confirmar }] of porPhone) {
       if (!lancados.length && !confirmar.length) continue;
       const partes = [];
       if (lancados.length) {
         partes.push('✅ *Lancei automaticamente:*');
-        for (const it of lancados) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${Number(it.valor || 0).toFixed(2)}`);
+        for (const it of lancados) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${money(it.valor)}`);
       }
       if (confirmar.length) {
         if (partes.length) partes.push('');
         partes.push('💡 *A confirmar o valor* (responda *confirmar <nome> <valor>*):');
-        for (const it of confirmar) partes.push(`• ${it.descricao} — estimei R$ ${Number(it.valor || 0).toFixed(2)}`);
+        for (const it of confirmar) partes.push(`• ${it.descricao} — estimei R$ ${money(it.valor)}`);
       }
-      const txt  = `🔁 *Recorrências de hoje*\n\n${partes.join('\n')}`;
-      const core = `🔁 Recorrências de hoje: ${[...lancados, ...confirmar].map(it => it.descricao).join(', ')}.`;
+      // Texto rico (Z-API / dentro da janela). Fora da janela vira o `core`
+      // de uma linha só (template da Meta não aceita quebra de linha no param).
+      if (confirmar.length) {
+        const exC = confirmar[0];
+        const exVal = exC.valor ? Number(exC.valor).toFixed(2).replace('.', ',') : '1890,54';
+        partes.push('', `_Ex.: *confirmar ${exC.descricao.toLowerCase()} ${exVal}* — ou edite direto nas suas transações no painel._ 😉`);
+      }
+      const txt = `🔁 *Recorrências de hoje*\n\n${partes.join('\n')}`;
+
+      // `core` (linha única do template) — carrega TUDO: estimativas, comando de
+      // confirmar com exemplo e a dica de editar no painel.
+      const segs = [];
+      if (lancados.length) {
+        segs.push(`✅ Lancei: ${lancados.map(it => `${it.descricao} R$ ${money(it.valor)}`).join(', ')}`);
+      }
+      if (confirmar.length) {
+        const lista = confirmar.map(it => `${it.descricao} (estimei R$ ${money(it.valor)})`).join(', ');
+        const ex = confirmar[0];
+        const exVal = ex.valor ? Number(ex.valor).toFixed(2).replace('.', ',') : '1890,54';
+        segs.push(`💡 A confirmar o valor: ${lista}. Responda "confirmar <nome> <valor>" (ex: confirmar ${ex.descricao.toLowerCase()} ${exVal}) — ou edite nas suas transações no painel`);
+      }
+      const core = `🔁 Recorrências de hoje. ${segs.join('. ')}.`;
       await lembrete(phone, txt, core);
     }
   }
