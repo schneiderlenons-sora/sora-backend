@@ -170,120 +170,98 @@ cron.schedule('0 * * * *', async () => {
   const inicioHoje = new Date(hoje); inicioHoje.setHours(0,0,0,0);
   const fimHoje    = new Date(hoje); fimHoje.setHours(23,59,59,999);
 
-  // ── 1A. CONTAS FIXAS (recorrências) ────────────────────────────
-  // Dias que vencem HOJE: o próprio dia + (se hoje é o ÚLTIMO dia do mês) todos os
-  // dias que não existem neste mês. Assim um fixo do dia 31 cai em 28/fev, 30/abr…
-  // em vez de nunca rodar. Mesma semântica do ocorrenciasMensais (Agenda).
-  const diasNoMes = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate();
-  const diasAlvo  = [diaHoje];
-  if (diaHoje === diasNoMes) for (let d = diaHoje + 1; d <= 31; d++) diasAlvo.push(d);
+  // ── 1A. RECORRÊNCIAS (contas/receitas fixas) — só de MANHÃ, no fuso SP ──
+  // Antes rodava TODA hora e com data UTC: às 21h BR (já 00h UTC do dia seguinte)
+  // disparava a VÉSPERA do dia agendado, e o previsto variável reavisava de hora
+  // em hora (o "confirmar" tira o prefixo [Previsto] e quebrava o dedup antigo).
+  // Agora: janela da manhã (8h–10h SP) + dia pelo fuso SP → cai na manhã do dia
+  // certo; e o dedup do variável é por MÊS na própria recorrência (à prova de
+  // confirmação/restart). Fixos e variáveis vão numa ÚNICA mensagem por telefone.
+  const sp = agoraSP();                        // { dataStr:'YYYY-MM-DD', minutos }
+  const horaSP = Math.floor(sp.minutos / 60);
+  const ymSP   = sp.dataStr.slice(0, 7);       // 'YYYY-MM'
+  if (horaSP >= 8 && horaSP <= 10) {
+    const [ySP, mSP] = sp.dataStr.split('-').map(Number);
+    const diaHojeSP  = mSP && sp.dataStr ? parseInt(sp.dataStr.slice(8, 10), 10) : 1;
+    const diasNoMes  = new Date(ySP, mSP, 0).getDate();
+    const diasAlvo   = [diaHojeSP];
+    if (diaHojeSP === diasNoMes) for (let d = diaHojeSP + 1; d <= 31; d++) diasAlvo.push(d);
 
-  const { data: recorrencias } = await supabase
-    .from('recorrencias')
-    .select('*')
-    .in('dia_vencimento', diasAlvo)
-    .eq('ativa', true);
+    const { data: recorrencias } = await supabase
+      .from('recorrencias').select('*').in('dia_vencimento', diasAlvo).eq('ativa', true);
 
-  // Acumula os lançamentos automáticos (valor fixo) por telefone pra mandar UM
-  // aviso agrupado no fim ("Lancei hoje: Spotify, Netflix…") em vez de 1 por item.
-  const autoLancados = new Map(); // phone -> [{ descricao, valor, tipo, idCurto }]
+    // Acumula por telefone → UMA mensagem (fixos lançados + variáveis a confirmar).
+    const porPhone = new Map(); // phone -> { lancados:[], confirmar:[] }
+    const bucket = (p) => { if (!porPhone.has(p)) porPhone.set(p, { lancados: [], confirmar: [] }); return porPhone.get(p); };
 
-  for (const rec of recorrencias || []) {
-    // ── VARIÁVEL: conta recorrente cujo valor muda (luz, água, cartão, freela). ──
-    // No vencimento cria um lançamento PREVISTO/PENDENTE com o valor estimado e
-    // NÃO debita a carteira — o usuário confirma o valor real no painel. Dedup
-    // por mês (não recria o previsto se já existe um neste mês).
-    if (rec.valor_variavel) {
-      const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString();
-      const obsPrev = `[Previsto] ${rec.descricao}`;
-      const { data: jaPrevisto } = await supabase.from('transacoes')
-        .select('id').eq('grupo_id', rec.grupo_id).eq('observacao', obsPrev)
-        .gte('data', inicioMes).limit(1);
-      if (jaPrevisto && jaPrevisto.length) continue;
-
-      const idCurtoP = gerarId();
-      await supabase.from('transacoes').insert({
-        id_curto:      idCurtoP,
-        grupo_id:      rec.grupo_id,
-        tipo:          rec.tipo,
-        categoria:     rec.categoria || 'Outros',
-        valor:         rec.valor || 0,   // estimativa — o usuário confirma o valor real
-        observacao:    obsPrev,
-        carteira_nome: rec.carteira || 'Dinheiro',
-        pago:          false,            // pendente → não mexe no saldo até confirmar
-        data:          new Date().toISOString(),
-      });
-
-      const phoneP = await phoneDoUser(rec.criado_por, rec.grupo_id);
-      if (phoneP && await avisosLigados(rec.criado_por)) {
-        const est   = rec.valor ? ` (estimei R$ ${Number(rec.valor).toFixed(2)})` : '';
-        const emoji = rec.tipo === 'Gasto' ? '💡' : '💰';
-        const verbo = rec.tipo === 'Gasto' ? 'vence' : 'cai';
-        const exemplo = rec.valor ? Number(rec.valor).toFixed(2).replace('.', ',') : '243';
-        const txt =
-          `${emoji} *${rec.descricao}* ${verbo} hoje${est}.\n` +
-          `Quando souber o valor real, responda: *confirmar ${rec.descricao} <valor>*\n` +
-          `Ex.: *confirmar ${rec.descricao} ${exemplo}* — ou ajuste no painel. ID: \`${idCurtoP}\``;
-        const core = `${emoji} ${rec.descricao} ${verbo} hoje${est}. Responda "confirmar ${rec.descricao} <valor>" pra registrar.`;
-        await lembrete(phoneP, txt, core);
+    for (const rec of recorrencias || []) {
+      // ── VARIÁVEL: valor muda (luz, água, vendas). Cria PREVISTO/pendente e pede
+      // o valor real. Dedup por MÊS na recorrência (ultimo_previsto_ym) — imune ao
+      // "confirmar" que remove o [Previsto].
+      if (rec.valor_variavel) {
+        if (rec.ultimo_previsto_ym === ymSP) continue; // já previsto este mês
+        // Fallback pré-migration (coluna ausente): dedup pela observação do mês.
+        if (rec.ultimo_previsto_ym === undefined) {
+          const inicioMes = new Date(ySP, mSP - 1, 1).toISOString();
+          const { data: jaP } = await supabase.from('transacoes').select('id')
+            .eq('grupo_id', rec.grupo_id).eq('observacao', `[Previsto] ${rec.descricao}`)
+            .gte('data', inicioMes).limit(1);
+          if (jaP && jaP.length) continue;
+        }
+        await supabase.from('transacoes').insert({
+          id_curto: gerarId(), grupo_id: rec.grupo_id, tipo: rec.tipo,
+          categoria: rec.categoria || 'Outros', valor: rec.valor || 0,
+          observacao: `[Previsto] ${rec.descricao}`, carteira_nome: rec.carteira || 'Dinheiro',
+          pago: false, data: new Date().toISOString(),
+        });
+        try { await supabase.from('recorrencias').update({ ultimo_previsto_ym: ymSP }).eq('id', rec.id); } catch {}
+        const phoneP = await phoneDoUser(rec.criado_por, rec.grupo_id);
+        if (phoneP && await avisosLigados(rec.criado_por)) {
+          bucket(phoneP).confirmar.push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo });
+        }
+        continue;
       }
-      continue;
+
+      // ── FIXO: lança automaticamente. Dedup por transação já lançada hoje.
+      const { data: jaLancado } = await supabase.from('transacoes').select('id')
+        .eq('grupo_id', rec.grupo_id).eq('categoria', rec.categoria).eq('valor', rec.valor)
+        .gte('data', inicioHoje.toISOString()).lte('data', fimHoje.toISOString()).maybeSingle();
+      if (jaLancado) continue;
+
+      const idCurto = gerarId();
+      await supabase.from('transacoes').insert({
+        id_curto: idCurto, grupo_id: rec.grupo_id, tipo: rec.tipo,
+        categoria: rec.categoria || 'Outros', valor: rec.valor,
+        observacao: `[Recorrente] ${rec.descricao}`, carteira_nome: rec.carteira || 'Dinheiro',
+        pago: true, data: new Date().toISOString(),
+      });
+      const { data: wallet } = await supabase.from('wallets')
+        .select('id, saldo').eq('grupo_id', rec.grupo_id).ilike('nome', rec.carteira || 'Dinheiro').maybeSingle();
+      if (wallet) {
+        const mult = rec.tipo === 'Gasto' ? -1 : 1;
+        await supabase.from('wallets').update({ saldo: wallet.saldo + (rec.valor * mult) }).eq('id', wallet.id);
+      }
+      const phone = await phoneDoUser(rec.criado_por, rec.grupo_id);
+      if (phone && await avisosLigados(rec.criado_por)) {
+        bucket(phone).lancados.push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo, idCurto });
+      }
     }
 
-    // Verifica se já foi lançado hoje
-    const { data: jaLancado } = await supabase
-      .from('transacoes')
-      .select('id')
-      .eq('grupo_id', rec.grupo_id)
-      .eq('categoria', rec.categoria)
-      .eq('valor', rec.valor)
-      .gte('data', inicioHoje.toISOString())
-      .lte('data', fimHoje.toISOString())
-      .single();
-
-    if (jaLancado) continue;
-
-    const idCurto = gerarId();
-    await supabase.from('transacoes').insert({
-      id_curto:      idCurto,
-      grupo_id:      rec.grupo_id,
-      tipo:          rec.tipo,
-      categoria:     rec.categoria || 'Outros',
-      valor:         rec.valor,
-      observacao:    `[Recorrente] ${rec.descricao}`,
-      carteira_nome: rec.carteira || 'Dinheiro',
-      pago:          true,
-      data:          new Date().toISOString()
-    });
-
-    // Atualiza saldo da carteira
-    const { data: wallet } = await supabase.from('wallets')
-      .select('id, saldo').eq('grupo_id', rec.grupo_id).ilike('nome', rec.carteira || 'Dinheiro').single();
-    if (wallet) {
-      const mult = rec.tipo === 'Gasto' ? -1 : 1;
-      await supabase.from('wallets').update({ saldo: wallet.saldo + (rec.valor * mult) }).eq('id', wallet.id);
-    }
-
-    const phone = await phoneDoUser(rec.criado_por, rec.grupo_id);
-    if (phone && await avisosLigados(rec.criado_por)) {
-      if (!autoLancados.has(phone)) autoLancados.set(phone, []);
-      autoLancados.get(phone).push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo, idCurto });
-    }
-  }
-
-  // Aviso agrupado dos lançamentos automáticos do dia (1 mensagem por telefone).
-  for (const [phone, itens] of autoLancados) {
-    if (!itens.length) continue;
-    if (itens.length === 1) {
-      const it = itens[0];
-      const txt = `🔁 *Lançamento automático:*\n${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${it.valor.toFixed(2)}\nID: \`${it.idCurto}\``;
-      await lembrete(phone, txt, `🔁 Lançamento automático: ${it.descricao} — R$ ${it.valor.toFixed(2)}`);
-    } else {
-      const linhas = itens.map(it => `${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${it.valor.toFixed(2)}`);
-      const total = itens.reduce((s, it) => s + (it.tipo === 'Gasto' ? it.valor : 0), 0);
-      const txt = `🔁 *Lançamentos automáticos de hoje* (${itens.length}):\n\n${linhas.join('\n')}` +
-        (total > 0 ? `\n\n💸 Total em gastos fixos: R$ ${total.toFixed(2)}` : '');
-      const core = `🔁 Lancei automaticamente hoje: ${itens.map(it => it.descricao).join(', ')}.`;
+    // UMA mensagem por telefone: o que a Sora lançou + o que falta confirmar.
+    for (const [phone, { lancados, confirmar }] of porPhone) {
+      if (!lancados.length && !confirmar.length) continue;
+      const partes = [];
+      if (lancados.length) {
+        partes.push('✅ *Lancei automaticamente:*');
+        for (const it of lancados) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${Number(it.valor || 0).toFixed(2)}`);
+      }
+      if (confirmar.length) {
+        if (partes.length) partes.push('');
+        partes.push('💡 *A confirmar o valor* (responda *confirmar <nome> <valor>*):');
+        for (const it of confirmar) partes.push(`• ${it.descricao} — estimei R$ ${Number(it.valor || 0).toFixed(2)}`);
+      }
+      const txt  = `🔁 *Recorrências de hoje*\n\n${partes.join('\n')}`;
+      const core = `🔁 Recorrências de hoje: ${[...lancados, ...confirmar].map(it => it.descricao).join(', ')}.`;
       await lembrete(phone, txt, core);
     }
   }
