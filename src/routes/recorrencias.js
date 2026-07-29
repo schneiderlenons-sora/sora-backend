@@ -79,6 +79,26 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// PUT /api/recorrencias/:id — edita uma recorrência existente (categoria,
+// valor, dia, descrição, conta). Antes só dava pra excluir e recriar.
+router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { categoria, valor, dia_vencimento, descricao, carteira } = req.body;
+    const patch = {};
+    if (categoria !== undefined)      patch.categoria      = categoria || 'Outros';
+    if (valor !== undefined)          patch.valor          = parseFloat(valor) || 0;
+    if (dia_vencimento !== undefined) patch.dia_vencimento = Math.max(1, Math.min(31, parseInt(dia_vencimento, 10) || 5));
+    if (descricao !== undefined)      patch.descricao      = String(descricao).trim().slice(0, 120);
+    if (carteira !== undefined)       patch.carteira       = carteira || 'Dinheiro';
+    if (!Object.keys(patch).length) return res.json({ ok: true });
+
+    const { data, error } = await supabase.from('recorrencias').update(patch)
+      .eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // DELETE /api/recorrencias/:id — cancela (ativa=false). phone no body p/ permissão.
 router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {

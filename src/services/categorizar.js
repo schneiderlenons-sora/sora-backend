@@ -50,7 +50,7 @@ const REGRAS = [
   { cat: 'Assinaturas',    kws: ['ec sora', 'forsora', 'sora ai'] },
 
   // ── Trabalho / Negócio (anúncios e ferramentas) ──
-  { cat: 'Facebook Ads',   kws: ['facebk', 'facebook ad', 'fb ads', 'meta ads', 'meta plataform', 'instagram ad'] },
+  { cat: 'Facebook Ads',   kws: ['facebk', 'facebook ad', 'fb ads', 'meta ads', 'meta plataform', 'instagram ad', 'anuncio facebook', 'anuncios facebook', 'anuncio instagram', 'anuncios instagram', 'facebook'] },
   { cat: 'Google Ads',     kws: ['google ads', 'googleads', 'google adwords'] },
   { cat: 'Empreendimento', kws: ['tiktok ads', 'kwai for business', 'linkedin ads', 'mailchimp', 'fornecedor', 'frete', 'transportadora', 'embalagem', 'correios sedex'] },
 
