@@ -393,7 +393,7 @@ module.exports = async function handleWallets(data, ctx) {
   // Cartões pela FATURA ABERTA (ciclo de fechamento); contas pelo gasto do MÊS.
   if (data.acao === 'gastos_carteiras') {
     const { data: wallets } = await supabase.from('wallets')
-      .select('nome, tipo, limite, dia_fechamento').eq('grupo_id', grupoId).order('nome');
+      .select('nome, tipo, limite, dia_fechamento, dia_vencimento').eq('grupo_id', grupoId).order('nome');
 
     if (!wallets?.length) {
       await enviarTexto(phone,
@@ -402,7 +402,8 @@ module.exports = async function handleWallets(data, ctx) {
       return;
     }
 
-    const { cicloFatura } = require('./parcelas');
+    // Cartão pelo CICLO da fatura atual (fonte única); conta pelo mês.
+    const { competenciaAtual, cicloPorCompetencia } = require('../services/cicloFatura');
     const [Y, M] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
     const iniMes = new Date(Date.UTC(Y, M - 1, 1, 12)).toISOString().slice(0, 10);
     const fimMes = new Date(Date.UTC(Y, M, 1, 12)).toISOString().slice(0, 10);
@@ -410,7 +411,7 @@ module.exports = async function handleWallets(data, ctx) {
     const cartoes = [], contas = [];
     for (const w of wallets) {
       if (w.tipo === 'Crédito') {
-        const c = w.dia_fechamento ? cicloFatura(w.dia_fechamento, 0) : { ini: iniMes, fimExcl: fimMes };
+        const c = cicloPorCompetencia(w, competenciaAtual(w));
         const fatura = await somarGastosCarteira(grupoId, w.nome, c.ini, c.fimExcl);
         cartoes.push({ nome: w.nome, fatura, limite: w.limite });
       } else {

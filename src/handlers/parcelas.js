@@ -5,37 +5,10 @@ const { oferecerDesconto } = require('../services/descontoConta');
 
 const gerarId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
-// Ciclo da fatura pelo dia de fechamento (fuso SP). offset 0 = ciclo ABERTO
-// (atual); offset -1 = ciclo FECHADO anterior. Vai do dia seguinte ao fechamento
-// anterior até o fechamento do ciclo. Retorna datas YYYY-MM-DD + fim (Date).
-function cicloFatura(diaFechamento, offset = 0) {
-  const fech = Math.min(Math.max(parseInt(diaFechamento) || 1, 1), 28);
-  const [Y, M, D] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
-  const iso = d => d.toISOString().slice(0, 10);
-  const fimMonthIdx = ((D > fech) ? (M - 1) + 1 : (M - 1)) + offset; // M 1-based → index 0-based
-  const fim = new Date(Date.UTC(Y, fimMonthIdx, fech, 12));
-  const ini = new Date(Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth() - 1, fech + 1, 12));
-  const fimExcl = new Date(fim); fimExcl.setUTCDate(fimExcl.getUTCDate() + 1);
-  const dm = d => `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-  return { ini: iso(ini), fimExcl: iso(fimExcl), label: `${dm(ini)} a ${dm(fim)}`, fim };
-}
-
-// Vencimento de uma fatura que fechou em `fimDate`: o próximo dia `diaVenc`
-// APÓS o fechamento (mesmo mês se venc>fech, senão mês seguinte). Date (UTC).
-function vencimentoApos(fimDate, diaVenc) {
-  const dv = Math.min(Math.max(parseInt(diaVenc) || 10, 1), 28);
-  let v = new Date(Date.UTC(fimDate.getUTCFullYear(), fimDate.getUTCMonth(), dv, 12));
-  if (v <= fimDate) v = new Date(Date.UTC(fimDate.getUTCFullYear(), fimDate.getUTCMonth() + 1, dv, 12));
-  return v;
-}
-
-// Soma os gastos do cartão num intervalo [ini, fimExcl).
-async function somarFatura(grupoId, nomeCartao, ini, fimExcl) {
-  const { data: txs } = await supabase.from('transacoes')
-    .select('valor').eq('grupo_id', grupoId).eq('tipo', 'Gasto')
-    .ilike('carteira_nome', nomeCartao).gte('data', ini).lt('data', fimExcl);
-  return (txs || []).reduce((s, t) => s + (t.valor || 0), 0);
-}
+// O ciclo da fatura mora em services/cicloFatura.js (fonte única compartilhada
+// com o painel e os crons). Os helpers locais que existiam aqui clampavam o dia
+// em 28 e estouravam o mês — 10 cartões da base fecham depois do dia 28.
+const { competenciaAtual, competenciaVizinha, cicloPorCompetencia } = require('../services/cicloFatura');
 
 module.exports = async function handleParcelas(data, ctx) {
   const { phone, grupoId, user } = ctx;
@@ -75,16 +48,14 @@ module.exports = async function handleParcelas(data, ctx) {
     }
     const cartao = cartoes[0];
 
-    // Fatura pelo MÊS-CALENDÁRIO — MESMA base do painel e do rollover (096).
-    // Antes usávamos o ciclo de fechamento (dia_fechamento) e divergia do painel:
-    // a fatura aparecia lá (soma do mês) mas o ciclo ABERTO estava vazio →
-    // "fatura zerada". Espelha o painel: cartão OF usa −saldo; manual usa a soma
-    // do mês menos o que já foi pago. `fechada` = mês anterior.
-    const { somaFaturaMes, pagoDaFatura, ymHoje, cent } = require('../services/faturaRollover');
-    const nowYM = ymHoje();
-    const [cy, cmo] = nowYM.split('-').map(Number);
-    const mesAnterior = `${cmo === 1 ? cy - 1 : cy}-${String(cmo === 1 ? 12 : cmo - 1).padStart(2, '0')}`;
-    const competencia = fechada ? mesAnterior : nowYM;
+    // Fatura pelo CICLO REAL de fechamento — MESMA fonte do painel, do rollover
+    // (096) e dos crons (services/cicloFatura + statusFatura). Antes isto usava
+    // mês-calendário justamente pra não divergir do painel; agora os dois falam
+    // a mesma língua. `fechada` = a fatura ANTERIOR (ciclo anterior).
+    const { statusFatura, cent } = require('../services/faturaRollover');
+    const compAtual = competenciaAtual(cartao);
+    const competencia = fechada ? competenciaVizinha(cartao, compAtual, -1) : compAtual;
+    const ciclo = cicloPorCompetencia(cartao, competencia);
     const ehOF = !!cartao.of_conta_id;
 
     let fatura, jaPago = 0;
@@ -92,11 +63,11 @@ module.exports = async function handleParcelas(data, ctx) {
       // Open Finance: saldo = −fatura (já sem parcelas a vencer). Igual ao painel.
       fatura = Math.max(0, cent(-(cartao.saldo)));
     } else {
-      const base = await somaFaturaMes(grupoId, cartao.nome, competencia);
-      jaPago = await pagoDaFatura(cartao.id, competencia);
-      fatura = Math.max(0, cent(base - jaPago));
+      const st = await statusFatura(grupoId, cartao, competencia);
+      jaPago = st.pago;
+      fatura = st.restante;
     }
-    const qualTxt = fechada ? 'fatura do mês passado' : 'fatura';
+    const qualTxt = fechada ? 'fatura anterior' : 'fatura';
 
     if (fatura <= 0) {
       await enviarTexto(phone,
@@ -109,19 +80,17 @@ module.exports = async function handleParcelas(data, ctx) {
     const parcial = !!(data.valor && data.valor > 0);
     const valorPagar = parcial ? Math.min(data.valor, fatura) : fatura;
 
-    // Vencimento (rótulo) a partir do dia_vencimento do cartão.
-    let vencTxt = '';
-    if (cartao.dia_vencimento) {
-      const dv = Math.min(Math.max(parseInt(cartao.dia_vencimento) || 10, 1), 28);
-      vencTxt = `\n⏰ Vence dia ${dv}`;
-    }
+    // Período do ciclo + vencimento — deixa claro QUAL fatura está sendo paga.
+    const [vy, vm, vd] = ciclo.venc.split('-');
+    const vencTxt = `\n⏰ Vence em ${vd}/${vm}`
+      + (ciclo.porCiclo ? `\n📅 Ciclo: ${ciclo.label}` : '');
 
     const introValor = parcial
       ? `💳 Pagar *R$ ${valorPagar.toFixed(2)}* da fatura do *${cartao.nome}* (fatura: R$ ${fatura.toFixed(2)})`
-      : `💳 *Fatura ${cartao.nome}${fechada ? ' (mês passado)' : ''}: R$ ${fatura.toFixed(2)}*`;
+      : `💳 *Fatura ${cartao.nome}${fechada ? ' (anterior)' : ''}: R$ ${fatura.toFixed(2)}*`;
     await oferecerDesconto({
       user, phone, grupoId, valor: valorPagar,
-      categoria: 'Fatura cartão', observacao: `Fatura ${cartao.nome}${fechada ? ' (mês passado)' : ''}`,
+      categoria: 'Fatura cartão', observacao: `Fatura ${cartao.nome}${fechada ? ' (anterior)' : ''}`,
       extra: { cartao_id: cartao.id, competencia },
       permiteExterno: true, // fatura pode ter sido paga por outra pessoa
       intro: `${introValor}${vencTxt}\nCom qual conta você pagou?`,
@@ -367,5 +336,5 @@ module.exports = async function handleParcelas(data, ctx) {
   }
 };
 
-module.exports.cicloFatura = cicloFatura;
-module.exports.somarFatura = somarFatura;
+// (cicloFatura/somarFatura/vencimentoApos saíram daqui — agora vivem em
+//  services/cicloFatura.js + faturaRollover.somaFaturaCiclo, fonte única.)

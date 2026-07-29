@@ -4,7 +4,8 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta, registrarTransferencia, registrarFaturaExterna } = require('../services/contaDebito');
-const { ymHoje, statusFatura, materializarRollover } = require('../services/faturaRollover');
+const { statusFatura, materializarRollover } = require('../services/faturaRollover');
+const { competenciaAtual, cicloPorCompetencia, competenciaVizinha, hojeSP } = require('../services/cicloFatura');
 const norm     = p => p?.replace(/\D/g, '');
 
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
@@ -144,7 +145,7 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
     if (!itens.length) return res.status(400).json({ erro: 'Escolha a conta e o valor do pagamento.' });
 
     const { data: cartao } = await supabase.from('wallets')
-      .select('nome').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
+      .select('id, nome, dia_fechamento, dia_vencimento').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
 
     // Uma transação por item. Conta real → debita o saldo; externo → só registra
     // (sem mexer em saldo). `descricao` (ex.: "Esposa") vira parte da observação
@@ -162,11 +163,12 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
     }
 
     // Registra o pagamento da fatura (rastreio parcial/rollover, migration 096).
-    // competencia = mês da fatura sendo paga (default mês atual, fuso SP).
+    // competencia = a fatura sendo paga; sem ela no body, a ATUAL do cartão
+    // (próximo vencimento pelo ciclo real — não o mês-calendário).
     const totalPago = itens.reduce((s, it) => s + it.valor, 0);
     const competencia = /^\d{4}-\d{2}$/.test(req.body.competencia || '')
       ? req.body.competencia
-      : new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
+      : competenciaAtual(cartao || {});
     if (cartao_id && totalPago > 0) {
       try {
         await supabase.from('pagamentos_fatura').insert({
@@ -182,19 +184,24 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
 });
 
 // GET /api/wallets/fatura/status/:phone?cartao_id=&competencia=YYYY-MM
-// Retorna { fatura, pago, restante, rollover? } do cartão na competência
-// (default mês atual). Base do pagamento parcial + banner de rollover. (096)
+// Retorna { fatura, pago, restante, ciclo, rollover? } do cartão na competência
+// (default = a fatura ATUAL do cartão pelo ciclo real, não o mês-calendário).
+// Base do pagamento parcial + banner de rollover. (096)
 router.get('/fatura/status/:phone', auth, async (req, res) => {
   try {
     const grupoId = req.authUser?.grupoAtivo;
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     const cartaoId = req.query.cartao_id;
     if (!cartaoId) return res.status(400).json({ erro: 'cartao_id obrigatório' });
-    const competencia = /^\d{4}-\d{2}$/.test(req.query.competencia || '') ? req.query.competencia : ymHoje();
 
     const { data: cartao } = await supabase.from('wallets')
-      .select('id, nome, of_conta_id').eq('id', cartaoId).eq('grupo_id', grupoId).maybeSingle();
+      .select('id, nome, of_conta_id, saldo, dia_fechamento, dia_vencimento')
+      .eq('id', cartaoId).eq('grupo_id', grupoId).maybeSingle();
     if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
+
+    const competencia = /^\d{4}-\d{2}$/.test(req.query.competencia || '')
+      ? req.query.competencia
+      : competenciaAtual(cartao);
 
     const st = await statusFatura(grupoId, cartao, competencia);
 
@@ -212,6 +219,86 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// GET /api/wallets/faturas/:phone?offset=0
+// Faturas de TODOS os cartões do grupo em UMA chamada (o painel fazia N
+// chamadas de /fatura/status, uma por cartão). `offset` navega entre faturas
+// pelo CICLO: 0 = a atual (próximo vencimento), -1 = anterior, +1 = próxima.
+//
+// Cada item traz o período do ciclo (`ini`/`fim`/`label`) pra a UI poder
+// mostrar "Fatura de agosto · 25/06 a 24/07" sem recalcular nada.
+// Cartão do Open Finance: a fatura vem do BANCO (`-saldo`, já sem parcelas a
+// vencer) — não somamos transações. Cartão sem dia_fechamento → mês-calendário.
+router.get('/faturas/:phone', auth, async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo || req.grupoId;
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const hoje = hojeSP();
+
+    const { data: cartoes } = await supabase.from('wallets')
+      .select('id, nome, saldo, limite, of_conta_id, dia_fechamento, dia_vencimento')
+      .eq('grupo_id', grupoId).eq('tipo', 'Crédito').order('created_at', { ascending: true });
+
+    const faturas = [];
+    for (const c of cartoes || []) {
+      const compAtual = competenciaAtual(c);
+      const competencia = offset === 0 ? compAtual : competenciaVizinha(c, compAtual, offset);
+      const ciclo = cicloPorCompetencia(c, competencia);
+      const ehOF = !!c.of_conta_id;
+
+      let fatura, pago = 0, restante;
+      if (ehOF && offset === 0 && typeof c.saldo === 'number') {
+        // Open Finance na fatura atual: o banco é a fonte (saldo = −fatura).
+        fatura = Math.max(0, Math.round(-(c.saldo) * 100) / 100);
+        restante = fatura;
+      } else {
+        const st = await statusFatura(grupoId, c, competencia);
+        fatura = st.fatura; pago = st.pago; restante = st.restante;
+      }
+
+      // Fatura ANTERIOR que já venceu e ainda tem saldo: sem isto ela sumiria da
+      // tela (a "atual" é sempre a próxima a vencer, que pode estar vazia) e o
+      // usuário perderia de vista uma dívida real até o rollover rodar.
+      let vencida = null;
+      if (!ehOF && offset === 0) {
+        try {
+          const compAnt = competenciaVizinha(c, competencia, -1);
+          const cicloAnt = cicloPorCompetencia(c, compAnt);
+          if (cicloAnt.venc < hoje) {
+            const stAnt = await statusFatura(grupoId, c, compAnt);
+            if (stAnt.restante > 0.01) {
+              vencida = { competencia: compAnt, venc: cicloAnt.venc, restante: stAnt.restante, label: cicloAnt.label };
+            }
+          }
+        } catch { /* informativo — nunca derruba a listagem */ }
+      }
+
+      faturas.push({
+        cartao_id: c.id, nome: c.nome, limite: c.limite ?? null,
+        competencia, ini: ciclo.ini, fim: ciclo.fim, fimExcl: ciclo.fimExcl,
+        venc: ciclo.venc, label: ciclo.label, porCiclo: ciclo.porCiclo,
+        of: ehOF, fatura, pago, restante, vencida,
+      });
+    }
+
+    // Rollovers aguardando confirmação (1 query pra todos os cartões).
+    try {
+      const ids = (cartoes || []).map(c => c.id);
+      if (ids.length) {
+        const { data: rolls } = await supabase.from('fatura_rollover')
+          .select('id, cartao_id, valor, competencia, status, confirmar_ate')
+          .in('cartao_id', ids).eq('status', 'aguardando');
+        for (const r of rolls || []) {
+          const f = faturas.find(x => x.cartao_id === r.cartao_id);
+          if (f) f.rollover = r;
+        }
+      }
+    } catch { /* tolerante à 096 */ }
+
+    res.json({ offset, faturas });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // POST /api/wallets/fatura/rolar — confirma o rollover (materializa agora).
 // Body: { rollover_id } OU { cartao_id, competencia } (cria+rola se ainda não existe).
 router.post('/fatura/rolar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
@@ -226,7 +313,9 @@ router.post('/fatura/rolar', auth, exigirPermissao('admin', 'escrita'), async (r
       row = data;
     } else if (cartao_id && /^\d{4}-\d{2}$/.test(competencia || '')) {
       // Cria o rollover na hora (usuário pediu pra rolar direto do painel).
-      const { data: cartao } = await supabase.from('wallets').select('id, nome').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
+      const { data: cartao } = await supabase.from('wallets')
+        .select('id, nome, dia_fechamento, dia_vencimento')
+        .eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
       if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
       const st = await statusFatura(grupoId, cartao, competencia);
       if (st.restante <= 0) return res.status(400).json({ erro: 'Fatura já quitada — nada a rolar.' });
@@ -238,8 +327,9 @@ router.post('/fatura/rolar', auth, exigirPermissao('admin', 'escrita'), async (r
     if (!row) return res.status(404).json({ erro: 'Rollover não encontrado.' });
     if (row.status === 'rolado') return res.json({ ok: true, jaRolado: true });
 
-    const { data: cartao } = await supabase.from('wallets').select('nome').eq('id', row.cartao_id).maybeSingle();
-    const tx = await materializarRollover(row, cartao?.nome || 'cartão');
+    const { data: cartao } = await supabase.from('wallets')
+      .select('id, nome, dia_fechamento, dia_vencimento').eq('id', row.cartao_id).maybeSingle();
+    const tx = await materializarRollover(row, cartao?.nome || 'cartão', cartao);
     res.json({ ok: true, transacao_id: tx?.id || null });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

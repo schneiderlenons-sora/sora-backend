@@ -85,7 +85,13 @@ async function resolverPendente(pendente, mensagem, ctx) {
       try {
         const { materializarRollover } = require('../services/faturaRollover');
         const { data: row } = await supabase.from('fatura_rollover').select('*').eq('id', rollover_id).maybeSingle();
-        if (row && row.status === 'aguardando') await materializarRollover(row, cartao_nome || 'cartão');
+        if (row && row.status === 'aguardando') {
+          // O cartão traz os dias do ciclo — o "Fatura anterior" é ancorado no
+          // INÍCIO do ciclo seguinte (senão pode cair na fatura errada).
+          const { data: cartao } = await supabase.from('wallets')
+            .select('id, nome, dia_fechamento, dia_vencimento').eq('id', row.cartao_id).maybeSingle();
+          await materializarRollover(row, cartao?.nome || cartao_nome || 'cartão', cartao);
+        }
         await removerPendente(pendente.id);
         await enviarTexto(phone, `✅ Pronto! Rolei R$ ${Number(valor || 0).toFixed(2)} pra próxima fatura do ${cartao_nome || 'cartão'}.`);
       } catch (e) {

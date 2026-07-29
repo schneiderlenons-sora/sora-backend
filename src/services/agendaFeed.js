@@ -105,14 +105,37 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
     }
   } catch {}
 
-  // 5. Cartões — fatura: fecha + vence
+  // 5. Cartões — fatura: fecha + vence.
+  //    Só tipo 'Crédito' (antes qualquer wallet com esses dias virava evento) e
+  //    o vencimento leva o VALOR da fatura daquele ciclo, pra a agenda e o
+  //    briefing mostrarem quanto vai vencer.
   try {
+    const { statusFatura, cent } = require('./faturaRollover');
+    const { competenciaAtual, cicloPorCompetencia } = require('./cicloFatura');
     const { data } = await supabase.from('wallets')
-      .select('id, nome, dia_fechamento, dia_vencimento').eq('grupo_id', grupoId);
+      .select('id, nome, saldo, of_conta_id, dia_fechamento, dia_vencimento')
+      .eq('grupo_id', grupoId).eq('tipo', 'Crédito');
     for (const w of data || []) {
+      // Valor da fatura em aberto (só o vencimento mais próximo — não vale a
+      // pena somar ciclo a ciclo pra um feed que pode varrer meses).
+      let valorFatura = null;
+      try {
+        const comp = competenciaAtual(w);
+        if (w.of_conta_id && typeof w.saldo === 'number') {
+          valorFatura = Math.max(0, cent(-(w.saldo))) || null;
+        } else {
+          const st = await statusFatura(grupoId, w, comp);
+          valorFatura = st.restante || null;
+        }
+      } catch { /* tolerante: o evento vale mesmo sem o valor */ }
+      const vencAtual = (() => {
+        try { return cicloPorCompetencia(w, competenciaAtual(w)).venc; } catch { return null; }
+      })();
+
       for (const d of ocorrenciasMensais(w.dia_vencimento, deStr, ateStr))
         eventos.push({ id: `fat-${w.id}-${d}`, source: 'fatura', titulo: `Fatura ${w.nome} vence`, data: d, hora: null,
-          cor: '#2563eb', deeplink: '/cartao-de-credito', editavel: false });
+          cor: '#2563eb', valor: d === vencAtual ? valorFatura : null,
+          deeplink: '/cartao-de-credito', editavel: false });
       for (const d of ocorrenciasMensais(w.dia_fechamento, deStr, ateStr))
         eventos.push({ id: `fec-${w.id}-${d}`, source: 'fechamento', titulo: `Fecha fatura ${w.nome}`, data: d, hora: null,
           cor: '#60a5fa', deeplink: '/cartao-de-credito', editavel: false });

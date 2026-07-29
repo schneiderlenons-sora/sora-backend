@@ -65,64 +65,73 @@ async function donoDoItem(userId, grupoId) {
   return donoDoGrupo(grupoId);
 }
 
-// Envia o aviso de fatura (fechamento ou vencimento) e, se houver contas
-// bancárias, cria um pendente pra Sora pagar quando o user responder o número.
-async function avisarFatura({ titulo, venc, total, emAberto, contasAtivas, dono, nomeCartao }) {
-  const vencLinha = venc ? `\n📅 Vence dia ${venc}` : '';
-  if (!contasAtivas.length) {
-    await lembrete(dono.phone,
-      `${titulo}\n💵 Total: R$ ${total.toFixed(2)}${vencLinha}\n\n` +
-      `Você ainda não tem conta bancária cadastrada pra eu debitar — quando cadastrar, eu pago pra você.`);
-    return;
-  }
-  const opcoesTexto = contasAtivas
-    .map((x, i) => `${i + 1}️⃣ ${x.nome} (R$ ${(x.saldo || 0).toFixed(2)})`).join('\n');
-  await lembrete(dono.phone,
-    `${titulo}\n💵 Total: R$ ${total.toFixed(2)}${vencLinha}\n\n` +
-    `❓ *Quer que eu pague? De qual conta?*\n${opcoesTexto}\n\n` +
-    `Responde com o número ou o nome — ou ignore se for pagar por fora.`);
-  await criarPendente({
-    userId: dono.id,
-    tipoPergunta: 'pagar_parcela_conta',
-    contexto: {
-      ids: emAberto.map(t => t.id),
-      termo: nomeCartao || 'fatura',
-      total,
-      modo: 'fatura',
-      opcoes: contasAtivas.map(x => ({ id: x.id, nome: x.nome })),
-    },
-    expiresInMin: 3 * 24 * 60, // 3 dias — oferta de pagar fatura não expira em 10min
+// Envia o aviso de fatura (fechamento ou vencimento) e oferece o pagamento.
+//
+// Usa o MESMO caminho do "paguei a fatura" do WhatsApp (`oferecerDesconto` →
+// pendente `descontar_destino`): lista as contas, debita a escolhida e registra
+// em `pagamentos_fatura` com a competência certa. Antes criava um pendente
+// `pagar_parcela_conta` que só marcava transações `pago=false` — que em cartão
+// não existem, então respondia "Fatura paga! R$ 0,00".
+async function avisarFatura({ titulo, ciclo, total, dono, cartao, competencia }) {
+  const [, vm, vd] = ciclo.venc.split('-');
+  const detalhe = `\n💵 Total: R$ ${total.toFixed(2)}`
+    + `\n📅 Vence em ${vd}/${vm}`
+    + (ciclo.porCiclo ? `\n🧾 Ciclo: ${ciclo.label}` : '');
+
+  const { oferecerDesconto } = require('../services/descontoConta');
+  const ofereceu = await oferecerDesconto({
+    user: { id: dono.id }, phone: dono.phone, grupoId: cartao.grupo_id,
+    valor: total,
+    categoria: 'Fatura cartão',
+    observacao: `Fatura ${cartao.nome}`,
+    extra: { cartao_id: cartao.id, competencia },
+    permiteExterno: true,          // a fatura pode ter sido paga por outra pessoa
+    expiresInMin: 3 * 24 * 60,     // 3 dias — oferta de fatura não expira em 15min
+    intro: `${titulo}${detalhe}\n\nCom qual conta você quer pagar?`,
   });
+
+  // Sem conta cadastrada o oferecerDesconto não pergunta nada — avisa mesmo assim.
+  if (!ofereceu) {
+    await lembrete(dono.phone,
+      `${titulo}${detalhe}\n\n` +
+      `Você ainda não tem conta bancária cadastrada pra eu debitar — quando cadastrar, eu pago pra você.`);
+  }
 }
 
 // Processa fechamento e vencimento das faturas dos cartões de crédito.
-// Por cartão (wallets.dia_fechamento / dia_vencimento), lê as transações
-// não-pagas até hoje (fatura em aberto) e avisa/oferece pagamento.
-async function processarFaturas(hoje, diaHoje, fimHoje) {
-  const hojeStr = hoje.toISOString().slice(0, 10);
+//
+// O período é o CICLO REAL (services/cicloFatura) e o valor vem do
+// statusFatura (fatura do ciclo − o que já foi pago). Antes somava transações
+// com `pago=false`, mas gasto em cartão nasce `pago=true` → o total dava 0 e o
+// aviso praticamente NUNCA saía. Também não dava pra detectar o fechamento de
+// um cartão que fecha dia 31 em fevereiro (comparava o dia cru).
+async function processarFaturas() {
+  const { competenciaAtual, cicloPorCompetencia, hojeSP } = require('../services/cicloFatura');
+  const faturaRoll = require('../services/faturaRollover');
+  const hojeStr = hojeSP();   // fuso SP — `hoje.getDate()` em UTC virava o dia à noite
 
+  // Traz todos os cartões com ciclo definido e decide em JS (o helper clampa o
+  // dia ao último do mês, então fech=31 fecha em 28/02).
   const { data: cartoes } = await supabase.from('wallets')
-    .select('id, nome, grupo_id, criado_por, dia_fechamento, dia_vencimento, ultimo_aviso_fechamento, ultimo_aviso_vencimento')
+    .select('id, nome, grupo_id, criado_por, saldo, of_conta_id, dia_fechamento, dia_vencimento, ultimo_aviso_fechamento, ultimo_aviso_vencimento')
     .eq('tipo', 'Crédito')
-    .or(`dia_fechamento.eq.${diaHoje},dia_vencimento.eq.${diaHoje}`);
+    .not('dia_fechamento', 'is', null);
 
   for (const c of cartoes || []) {
-    const fecha = c.dia_fechamento === diaHoje && c.ultimo_aviso_fechamento !== hojeStr;
-    const vence = c.dia_vencimento === diaHoje && c.ultimo_aviso_vencimento !== hojeStr;
+    const competencia = competenciaAtual(c, hojeStr);
+    const ciclo = cicloPorCompetencia(c, competencia);
+    const fecha = ciclo.fim  === hojeStr && c.ultimo_aviso_fechamento !== hojeStr;
+    const vence = ciclo.venc === hojeStr && c.ultimo_aviso_vencimento !== hojeStr;
     if (!fecha && !vence) continue;
 
-    // Fatura em aberto = gastos não-pagos do cartão até hoje (parcelas futuras
-    // ficam de fora, pois têm data nos meses seguintes).
-    const { data: txs } = await supabase.from('transacoes')
-      .select('id, valor')
-      .eq('grupo_id', c.grupo_id)
-      .eq('tipo', 'Gasto')
-      .eq('pago', false)
-      .ilike('carteira_nome', c.nome)
-      .lte('data', fimHoje.toISOString());
-
-    const emAberto = txs || [];
-    const total = emAberto.reduce((s, t) => s + (t.valor || 0), 0);
+    // Valor a pagar: OF vem do banco (−saldo); manual = fatura do ciclo − pago.
+    let total;
+    if (c.of_conta_id && typeof c.saldo === 'number') {
+      total = Math.max(0, faturaRoll.cent(-(c.saldo)));
+    } else {
+      const st = await faturaRoll.statusFatura(c.grupo_id, c, competencia);
+      total = st.restante;
+    }
     if (total <= 0) continue;
 
     // Aviso/cobrança da fatura vai pro DONO do cartão (não pro dono do grupo).
@@ -130,18 +139,11 @@ async function processarFaturas(hoje, diaHoje, fimHoje) {
     if (!dono?.phone) continue;
     if (!(await avisosLigados(dono.id))) continue; // kill-switch de avisos
 
-    const { data: contas } = await supabase.from('wallets')
-      .select('id, nome, saldo, arquivada')
-      .eq('grupo_id', c.grupo_id)
-      .neq('tipo', 'Crédito')
-      .order('created_at', { ascending: true });
-    const contasAtivas = (contas || []).filter(x => !x.arquivada);
-
     // Fechamento tem prioridade se cair no mesmo dia do vencimento.
     if (fecha) {
       await avisarFatura({
         titulo: `💳 *Fatura do ${c.nome} fechou*`,
-        venc: c.dia_vencimento, total, emAberto, contasAtivas, dono, nomeCartao: c.nome,
+        ciclo, total, dono, cartao: c, competencia,
       });
       await supabase.from('wallets').update({ ultimo_aviso_fechamento: hojeStr }).eq('id', c.id);
     } else if (vence) {
@@ -152,7 +154,7 @@ async function processarFaturas(hoje, diaHoje, fimHoje) {
       if (!(await briefingLigado(dono.id))) {
         await avisarFatura({
           titulo: `⏰ *Fatura do ${c.nome} vence hoje*`,
-          venc: c.dia_vencimento, total, emAberto, contasAtivas, dono, nomeCartao: c.nome,
+          ciclo, total, dono, cartao: c, competencia,
         });
       }
       await supabase.from('wallets').update({ ultimo_aviso_vencimento: hojeStr }).eq('id', c.id);
@@ -166,7 +168,6 @@ async function processarFaturas(hoje, diaHoje, fimHoje) {
 cron.schedule('0 * * * *', async () => {
   console.log('⏰ Processando tarefas agendadas...');
   const hoje      = new Date();
-  const diaHoje   = hoje.getDate();
   const inicioHoje = new Date(hoje); inicioHoje.setHours(0,0,0,0);
   const fimHoje    = new Date(hoje); fimHoje.setHours(23,59,59,999);
 
@@ -352,7 +353,7 @@ cron.schedule('0 * * * *', async () => {
   // Por cartão: avisa quando fecha e quando vence, oferecendo pagar
   // (debita a conta escolhida e libera o limite). Ver processarFaturas.
   try {
-    await processarFaturas(hoje, diaHoje, fimHoje);
+    await processarFaturas();
   } catch (e) {
     console.warn('[jobs] processarFaturas falhou:', e.message);
   }
@@ -821,11 +822,8 @@ cron.schedule('0 9 * * *', async () => {
 const faturaRoll = require('../services/faturaRollover');
 cron.schedule('0 9 * * *', async () => {
   console.log('💳 Processando rollover de fatura...');
-  const sp = agoraSP();
-  const diaHoje = sp.getDate();
-  // Competência que vence agora = mês ANTERIOR (compras do mês passado vencem neste mês).
-  const prev = new Date(sp.getFullYear(), sp.getMonth() - 1, 1);
-  const compAnterior = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+  const { competenciaAtual, cicloPorCompetencia, competenciaVizinha, hojeSP } = require('../services/cicloFatura');
+  const hojeStr = hojeSP();
 
   // `core` = resumo em 1 linha pro {{1}} do template lembretes_gerais (fora da
   // janela de 24h). `texto` = versão rica usada dentro da janela.
@@ -845,23 +843,28 @@ cron.schedule('0 9 * * *', async () => {
   // ── PASSO A: detectar vencimento com saldo restante ──
   try {
     const { data: cartoes } = await supabase.from('wallets')
-      .select('id, nome, grupo_id, dia_vencimento, of_conta_id')
+      .select('id, nome, grupo_id, dia_fechamento, dia_vencimento, of_conta_id')
       .eq('tipo', 'Crédito').not('dia_vencimento', 'is', null).is('of_conta_id', null);
 
     for (const c of cartoes || []) {
-      if (diaHoje < c.dia_vencimento) continue; // ainda não venceu neste mês
+      // A fatura a cobrar é a ANTERIOR à atual — a atual, por definição, ainda
+      // não venceu (competenciaAtual = próximo vencimento ≥ hoje).
+      const compVencida = competenciaVizinha(c, competenciaAtual(c, hojeStr), -1);
+      const cicloVencido = cicloPorCompetencia(c, compVencida);
+      if (cicloVencido.venc >= hojeStr) continue; // ainda não venceu
+
       // Já existe rollover pra essa fatura? (dedup pela unique)
       const { data: jaTem } = await supabase.from('fatura_rollover')
-        .select('id').eq('cartao_id', c.id).eq('competencia', compAnterior).maybeSingle();
+        .select('id').eq('cartao_id', c.id).eq('competencia', compVencida).maybeSingle();
       if (jaTem) continue;
 
-      const st = await faturaRoll.statusFatura(c.grupo_id, c, compAnterior);
+      const st = await faturaRoll.statusFatura(c.grupo_id, c, compVencida);
       if (st.restante <= 0) continue;
 
       const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', c.grupo_id).maybeSingle();
       const { data: row } = await supabase.from('fatura_rollover').upsert({
         grupo_id: c.grupo_id, user_id: grupo?.dono_id || null, cartao_id: c.id,
-        competencia: compAnterior, valor: st.restante, status: 'aguardando',
+        competencia: compVencida, valor: st.restante, status: 'aguardando',
         avisado_em: new Date().toISOString(),
         confirmar_ate: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
       }, { onConflict: 'cartao_id,competencia' }).select().single();
@@ -877,8 +880,9 @@ cron.schedule('0 9 * * *', async () => {
     const { data: pendentes } = await supabase.from('fatura_rollover')
       .select('*').eq('status', 'aguardando').lt('confirmar_ate', new Date().toISOString());
     for (const row of pendentes || []) {
-      const { data: cartao } = await supabase.from('wallets').select('nome').eq('id', row.cartao_id).maybeSingle();
-      await faturaRoll.materializarRollover(row, cartao?.nome || 'cartão');
+      const { data: cartao } = await supabase.from('wallets')
+        .select('id, nome, dia_fechamento, dia_vencimento').eq('id', row.cartao_id).maybeSingle();
+      await faturaRoll.materializarRollover(row, cartao?.nome || 'cartão', cartao);
       const nome = cartao?.nome || 'cartão';
       const val = Number(row.valor).toFixed(2);
       await notificarDono(

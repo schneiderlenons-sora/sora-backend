@@ -2,18 +2,24 @@
 // faturaRollover — pagamento parcial da fatura + rollover do saldo (SEM juros).
 //
 // Modelo (cartão MANUAL; Open Finance fica de fora — traz a fatura do banco):
-//   • fatura(mês)   = soma dos Gasto do cartão no mês (competência 'YYYY-MM')
-//   • pago(mês)     = soma de pagamentos_fatura do cartão naquela competência
-//   • restante(mês) = max(0, fatura − pago)
+//   • fatura(comp)   = soma dos Gasto do cartão no CICLO daquela competência
+//   • pago(comp)     = soma de pagamentos_fatura do cartão naquela competência
+//   • restante(comp) = max(0, fatura − pago)
+//
+// ⚠️ O período é o CICLO REAL de fechamento (services/cicloFatura.js), não o
+// mês-calendário: uma compra em 30/07 e outra em 01/08 caem na MESMA fatura
+// quando o cartão fecha dia 5. `competencia` = 'YYYY-MM' do VENCIMENTO.
+// Cartão sem dia_fechamento cai no mês-calendário (comportamento legado).
 //
 // Rollover: no vencimento, se restante > 0, abre fatura_rollover 'aguardando'
 // (24h pra confirmar no WhatsApp). Confirmou OU passou 24h → materializa: cria
-// um Gasto "Fatura anterior" no cartão no 1º dia do mês SEGUINTE, com o valor
+// um Gasto "Fatura anterior" no cartão no INÍCIO do ciclo seguinte, com o valor
 // que sobrou. É marcado `transferencia:true` → entra na SOMA da fatura (que
 // filtra por tipo 'Gasto') mas fica FORA dos relatórios de gasto (a compra
 // original já contou no mês dela). SEM juros (decisão de produto).
 // =============================================================================
 const supabase = require('../db/supabase');
+const { cicloPorCompetencia, competenciaVizinha } = require('./cicloFatura');
 
 const TZ = 'America/Sao_Paulo';
 
@@ -26,14 +32,13 @@ function mesSeguinte(ym) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-async function somaFaturaMes(grupoId, cartaoNome, ym) {
-  const inicio = `${ym}-01`;
-  const [y, m] = ym.split('-').map(Number);
-  const prox = new Date(y, m, 1);
-  const fim = `${prox.getFullYear()}-${String(prox.getMonth() + 1).padStart(2, '0')}-01`;
+// Soma os Gasto do cartão dentro de um intervalo [ini, fimExcl) — o ciclo.
+// NÃO filtra `transferencia`: de propósito, pra o "Fatura anterior" (rollover)
+// entrar na soma da fatura seguinte.
+async function somaFaturaCiclo(grupoId, cartaoNome, ciclo) {
   const { data } = await supabase.from('transacoes').select('valor')
     .eq('grupo_id', grupoId).eq('tipo', 'Gasto').ilike('carteira_nome', cartaoNome)
-    .gte('data', inicio).lt('data', fim);
+    .gte('data', ciclo.ini).lt('data', ciclo.fimExcl);
   return (data || []).reduce((s, t) => s + (Number(t.valor) || 0), 0);
 }
 
@@ -46,16 +51,27 @@ async function pagoDaFatura(cartaoId, ym) {
 
 const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
 
+// Status da fatura de uma competência. `cartao` precisa de { id, nome,
+// dia_fechamento, dia_vencimento } — o ciclo sai daí. Devolve o `ciclo` junto
+// pra quem chama poder exibir o período sem recalcular.
 async function statusFatura(grupoId, cartao, ym) {
-  const fatura = cent(await somaFaturaMes(grupoId, cartao.nome, ym));
+  const ciclo = cicloPorCompetencia(cartao, ym);
+  const fatura = cent(await somaFaturaCiclo(grupoId, cartao.nome, ciclo));
   const pago = cent(await pagoDaFatura(cartao.id, ym));
   const restante = Math.max(0, cent(fatura - pago));
-  return { fatura, pago, restante };
+  return { fatura, pago, restante, ciclo };
 }
 
-// Cria o lançamento "Fatura anterior" no mês seguinte e marca o rollover rolado.
-async function materializarRollover(row, cartaoNome) {
-  const alvo = mesSeguinte(row.competencia);
+// Cria o lançamento "Fatura anterior" na fatura SEGUINTE e marca o rollover
+// rolado. A data é o INÍCIO do ciclo seguinte (antes era o dia 1 do mês, que
+// com ciclo real podia cair na fatura errada).
+async function materializarRollover(row, cartaoNome, cartao) {
+  const compAlvo = cartao?.dia_fechamento
+    ? competenciaVizinha(cartao, row.competencia, 1)
+    : mesSeguinte(row.competencia);
+  const cicloAlvo = cicloPorCompetencia(
+    cartao || { dia_vencimento: null }, compAlvo,
+  );
   const idCurto = Math.random().toString(36).substring(2, 8).toUpperCase();
   const base = {
     id_curto:      idCurto,
@@ -67,7 +83,7 @@ async function materializarRollover(row, cartaoNome) {
     observacao:    `Saldo não pago da fatura ${row.competencia}`,
     carteira_nome: cartaoNome,
     pago:          true,
-    data:          `${alvo}-01T12:00:00.000Z`,
+    data:          `${cicloAlvo.ini}T12:00:00.000Z`,
   };
   // transferencia:true → soma na fatura (filtro por tipo 'Gasto') mas fora dos
   // relatórios de gasto. Tolerante se a coluna 046 não existir.
@@ -85,4 +101,4 @@ async function materializarRollover(row, cartaoNome) {
   return tx;
 }
 
-module.exports = { TZ, ymHoje, mesSeguinte, somaFaturaMes, pagoDaFatura, statusFatura, materializarRollover, cent };
+module.exports = { TZ, ymHoje, mesSeguinte, somaFaturaCiclo, pagoDaFatura, statusFatura, materializarRollover, cent };

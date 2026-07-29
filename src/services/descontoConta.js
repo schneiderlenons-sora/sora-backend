@@ -12,8 +12,10 @@ const { criarPendente } = require('./pendentes');
 
 const fmt = (v) => `R$ ${Number(v || 0).toFixed(2)}`;
 
-async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observacao, intro, extra, permiteExterno }) {
-  if (!user?.id || !grupoId || !valor) return;
+// Retorna `true` se realmente perguntou (quem chama pode dar outro aviso se
+// não houver conta pra oferecer — é o que o cron de fatura faz).
+async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observacao, intro, extra, permiteExterno, expiresInMin }) {
+  if (!user?.id || !grupoId || !valor) return false;
 
   const { data: contas } = await supabase.from('wallets')
     .select('id, nome, saldo, tipo').eq('grupo_id', grupoId).order('nome');
@@ -22,7 +24,7 @@ async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observ
     .map(c => ({ id: c.id, nome: c.nome, saldo: c.saldo }));
   // Sem conta nenhuma: só segue se dá pra registrar "pago por outra pessoa"
   // (ex.: fatura). Senão não há o que perguntar.
-  if (!opcoes.length && !permiteExterno) return;
+  if (!opcoes.length && !permiteExterno) return false;
 
   await criarPendente({
     userId: user.id,
@@ -31,7 +33,9 @@ async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observ
     // pendente registrar pagamentos_fatura ao debitar. `permiteExterno` habilita
     // a opção "pago por outra pessoa" (não desconta de conta).
     contexto: { valor, categoria, observacao, opcoes, permiteExterno: !!permiteExterno, ...(extra || {}) },
-    expiresInMin: 15,
+    // Padrão 15min; o aviso proativo de fatura pede dias (não pode expirar antes
+    // do usuário ver a mensagem).
+    expiresInMin: expiresInMin || 15,
   });
 
   const cabecalho = intro || '💳 Quer *descontar de uma conta*?';
@@ -39,6 +43,7 @@ async function oferecerDesconto({ user, phone, grupoId, valor, categoria, observ
   if (permiteExterno) linhas.push(`${opcoes.length + 1}. 👤 Pago por outra pessoa (não desconta)`);
   await enviarTexto(phone,
     `${cabecalho}\n\n${linhas.join('\n')}\n\nResponda o *número*, ou *não*.`);
+  return true;
 }
 
 module.exports = { oferecerDesconto };

@@ -8,6 +8,7 @@
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "eval": "node evals/interpretador.eval.js",
+    "eval:ciclo": "node evals/cicloFatura.eval.js",
     "test": "echo \"Sem testes por enquanto\" && exit 0"
   },
   "engines": {
