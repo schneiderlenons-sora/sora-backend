@@ -91,8 +91,13 @@ router.post('/broadcast', async (req, res) => {
   if (!planos.length) return res.status(400).json({ erro: 'Selecione ao menos um plano.' });
 
   // Destinatários: usuários com telefone e plano no filtro (dedup por número).
-  const { data: rows, error } = await supabase
-    .from('users').select('phone').in('plano', planos).not('phone', 'is', null);
+  // `apenasRecorrentes` corta o VITALÍCIO — ele tem plano='premium' no banco
+  // (29 contas), então filtrar só por plano mandaria aviso de recurso de
+  // assinatura pra quem não tem assinatura. Ex.: o comunicado do Open Finance.
+  const apenasRecorrentes = !!req.body?.apenasRecorrentes;
+  let q = supabase.from('users').select('phone').in('plano', planos).not('phone', 'is', null);
+  if (apenasRecorrentes) q = q.or('vitalicio.is.null,vitalicio.eq.false');
+  const { data: rows, error } = await q;
   if (error) return res.status(500).json({ erro: error.message });
   const alvos = [...new Set((rows || []).map((u) => String(u.phone || '').replace(/\D/g, '')).filter((p) => p.length >= 10))];
 

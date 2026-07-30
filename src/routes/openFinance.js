@@ -36,12 +36,24 @@ function exigirConfigurado(req, res, next) {
   next();
 }
 
-// Teste fechado: só o dono (allowlist) usa.
-const { liberadoOpenFinance } = require('../config/openFinanceAccess');
+// Recurso de assinatura RECORRENTE (Básico 1 conexão, Premium 3). Vitalício
+// fica de fora — cada conexão tem custo mensal nosso no agregador.
+const { acessoOpenFinance } = require('../config/openFinanceAccess');
+const MSG_SEM_ACESSO = {
+  vitalicio: 'O Open Finance faz parte dos planos por assinatura. No plano vitalício você continua lançando pelo WhatsApp e importando extrato (OFX).',
+  plano: 'O Open Finance está nos planos Básico e Premium. Assine pra conectar seu banco.',
+  sem_usuario: 'Open Finance ainda não está disponível na sua conta.',
+};
 async function exigirAcesso(req, res, next) {
-  if (!(await liberadoOpenFinance(req.authUser?.id))) {
-    return res.status(403).json({ erro: 'sem_acesso', mensagem: 'Open Finance ainda não está disponível na sua conta.' });
+  const acesso = await acessoOpenFinance(req.authUser?.id);
+  if (!acesso.liberado) {
+    return res.status(403).json({
+      erro: 'sem_acesso',
+      motivo: acesso.motivo,
+      mensagem: MSG_SEM_ACESSO[acesso.motivo] || MSG_SEM_ACESSO.sem_usuario,
+    });
   }
+  req.ofAcesso = acesso; // o /conectar usa o limite
   next();
 }
 
@@ -124,6 +136,22 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
   try {
     const { institution_id, cpf, cnpj, instituicao_nome, credenciais } = req.body || {};
     if (!institution_id) return res.status(400).json({ erro: 'Escolha um banco (institution_id).' });
+
+    // Limite de conexões do plano. Checado ANTES de criar o consentimento: uma
+    // conexão criada na Polp e recusada aqui viraria custo sem uso.
+    const limite = req.ofAcesso?.limite ?? 0;
+    const { count } = await supabase.from('of_conexoes')
+      .select('id', { count: 'exact', head: true }).eq('grupo_id', req.grupoId);
+    if ((count || 0) >= limite) {
+      return res.status(409).json({
+        erro: 'limite_conexoes',
+        limite,
+        conectadas: count || 0,
+        mensagem: `Seu plano permite ${limite} ${limite === 1 ? 'conexão' : 'conexões'} de banco. ` +
+          'Desconecte um banco pra trocar, ou faça upgrade pra conectar mais.',
+      });
+    }
+
     const p = provDaReq(req);
     const { id, status, urlToAuthenticate, produtos, produtosPedidos } = await p.criarConexao({
       institutionId: institution_id, cpf, cnpj, credenciais,
