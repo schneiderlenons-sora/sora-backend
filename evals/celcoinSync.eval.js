@@ -1,0 +1,271 @@
+// =============================================================================
+// EVAL do sync Celcoin (services/polpCelcoinSync) — normalização pura, sem banco.
+//
+// Os payloads abaixo são os EXEMPLOS LITERAIS da doc da Polp
+// (https://polp.com.br/docs/celcoin, ver docs/CELCOIN-API.md). Se a Polp mudar o
+// contrato, este eval quebra antes do dinheiro aparecer errado no painel.
+//
+// Rodar:   npm run eval:celcoin
+// Sai com código != 0 se algo falhar.
+// =============================================================================
+
+const S = require('../src/services/polpCelcoinSync');
+
+const falhas = [];
+const ok = (cond, msg) => { if (!cond) falhas.push(msg); };
+const quase = (a, b, tol = 0.01) => Math.abs(Number(a) - Number(b)) < tol;
+
+// ── 1. money(): dinheiro é STRING em { amount, currency } ───────────────────
+console.log('── 1. money() ──');
+ok(S.money({ amount: '1500.00', currency: 'BRL' }) === 1500, 'money("1500.00") ≠ 1500');
+ok(S.money('0.00') === 0, 'money("0.00") deveria ser 0');
+ok(S.money(null) === null, 'money(null) tem de ser null (não-sincronizado ≠ zero)');
+ok(S.money({ amount: null }) === null, 'amount null → null');
+ok(S.money(42) === 42, 'número puro');
+console.log('  ok');
+
+// ── 2. pct(): a doc usa DOIS formatos pro mesmo conceito ────────────────────
+// "post_fixed_indexer_percentage: 1.000000 = 100% do CDI" (descrição do campo)
+// × "100 para 100% do CDI" (tabela de exemplos). Aceitamos os dois.
+console.log('── 2. pct() — ambiguidade da doc ──');
+ok(S.pct('1.000000') === 100, 'pct 1.000000 → 100');
+ok(S.pct('100') === 100, 'pct 100 → 100');
+ok(S.pct('1.020000') === 102, 'pct 1.02 → 102 (102% do CDI)');
+ok(S.pct('0.150000') === 15, 'pct 0.15 → 15');
+ok(S.pct('16.76') === 16.76, 'pct 16.76 → 16.76');
+ok(S.pct(null) === null, 'pct null');
+console.log('  ok');
+
+// ── 3. cetParaMensal(): dividas.taxa_juros é % ao MÊS; CET é ANUAL ─────────
+console.log('── 3. cetParaMensal() ──');
+ok(quase(S.cetParaMensal('0.290000'), 2.1447), 'CET 29% a.a. → ~2,1447% a.m.');
+ok(quase(S.cetParaMensal('29'), 2.1447), 'CET no formato "29" dá o mesmo');
+ok(S.cetParaMensal(null) === null, 'sem CET → null');
+ok(S.cetParaMensal('0') === null, 'CET 0 → null');
+console.log(`  ok (29% a.a. = ${S.cetParaMensal('0.290000')}% a.m.)`);
+
+// ── 4. limiteTotalDoCartao(): limits[] é ARRAY por modalidade ──────────────
+console.log('── 4. limiteTotalDoCartao() ──');
+const L = S.limiteTotalDoCartao([
+  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'INDIVIDUAL',
+    limit_amount: { amount: '999.00' }, line_name: 'SAQUE_CREDITO_BRASIL' },
+  { credit_line_limit_type: 'LIMITE_CREDITO_TOTAL', consolidation_type: 'CONSOLIDADO',
+    limit_amount: { amount: '5000.00' }, used_amount: { amount: '1200.00' },
+    available_amount: { amount: '3800.00' }, line_name: 'CREDITO_A_VISTA' },
+]);
+ok(L.limite === 5000 && L.usado === 1200 && L.disponivel === 3800,
+  `limite total errado: ${JSON.stringify(L)} — não pode pegar a linha de SAQUE`);
+ok(S.limiteTotalDoCartao([]).limite === null, 'limits vazio → null');
+ok(S.limiteTotalDoCartao(null).limite === null, 'limits null → null');
+console.log('  ok');
+
+// ── 5. Fatura em aberto = próximo vencimento ≥ hoje ────────────────────────
+console.log('── 5. escolherFaturaAberta() ──');
+const BILLS3 = [{ id: 'b1', due_date: '2026-06-10' }, { id: 'b2', due_date: '2026-08-10' }, { id: 'b3', due_date: '2026-07-10' }];
+ok(S.escolherFaturaAberta(BILLS3, '2026-07-05').id === 'b3', 'antes do venc → b3');
+ok(S.escolherFaturaAberta(BILLS3, '2026-07-10').id === 'b3', 'vence HOJE ainda é a aberta');
+ok(S.escolherFaturaAberta(BILLS3, '2026-07-11').id === 'b2', 'venceu → próxima');
+ok(S.escolherFaturaAberta(BILLS3, '2027-01-01').id === 'b2', 'todas passadas → mais recente');
+ok(S.escolherFaturaAberta([], '2026-07-05') === null, 'sem bills → null');
+ok(S.pagoDaFatura({ payments: [{ amount: '100.00' }, { amount: '46.89' }] }) === 146.89, 'soma payments[]');
+console.log('  ok');
+
+// ── 6. CONTA (exemplo literal de /consents/{id}/accounts) ──────────────────
+console.log('── 6. normalizeConta() ──');
+const CONTA = {
+  id: '550e8400-e29b-41d4-a716-446655440001', brand_name: 'Itaú Unibanco',
+  type: 'CONTA_DEPOSITO_A_VISTA',
+  identification: { type: 'CONTA_DEPOSITO_A_VISTA', subtype: 'INDIVIDUAL', currency: 'BRL' },
+  balance: {
+    available_amount: { amount: '1500.00', currency: 'BRL' },
+    blocked_amount: { amount: '0.00', currency: 'BRL' },
+    automatically_invested_amount: { amount: '200.00', currency: 'BRL' },
+  },
+  overdraft_limit: {
+    overdraft_contracted_limit: { amount: '500.00', currency: 'BRL' },
+    overdraft_used_limit: { amount: '0.00', currency: 'BRL' },
+  },
+};
+const c = S.normalizeConta(CONTA);
+ok(c.saldo === 1500, 'saldo = available_amount; NÃO somar automatically_invested (é investimento)');
+ok(c.tipo === 'Corrente', 'CONTA_DEPOSITO_A_VISTA → Corrente');
+ok(c.nome === 'Itaú Unibanco', 'nome = brand_name');
+ok(c.extras.cheque_especial === 500, 'cheque especial contratado');
+const c2 = S.normalizeConta({ id: 'x', brand_name: 'Nubank', type: 'CONTA_POUPANCA' });
+ok(c2.saldo === null && c2.sincronizado === false, 'sem balance → saldo null (não 0)');
+ok(c2.tipo === 'Poupança' && c2.nome === 'Nubank Poupança', 'poupança identificada no nome');
+console.log('  ok');
+
+// ── 7. CARTÃO + FATURA (o núcleo — datas que a Pluggy não dava) ────────────
+console.log('── 7. normalizeCartao() ──');
+const CARD = {
+  id: '660e8400', brand_name: 'Itaú Unibanco', name: 'Cartão Universitário',
+  credit_card_network: 'VISA', product_type: 'GOLD',
+  identification: { name: 'Cartão Universitário', credit_card_network: 'VISA',
+    payment_methods: [{ identification_number: '4453', is_multiple_credit_card: true }] },
+  limits: [{ credit_line_limit_type: 'LIMITE_CREDITO_TOTAL', consolidation_type: 'INDIVIDUAL',
+    limit_amount: { amount: '5000.00' }, used_amount: { amount: '1200.00' },
+    available_amount: { amount: '3800.00' }, line_name: 'CREDITO_A_VISTA' }],
+};
+const BILLS = [
+  { id: 'bA', due_date: '2026-08-10', bill_closing_date: '2026-08-03', is_instalment: false,
+    bill_minimum_amount: { amount: '150.00' }, bill_total_amount: { amount: '1500.00' },
+    payments: [{ amount: '500.00', paymentDate: '2026-08-05', paymentMode: 'PIX' }] },
+  { id: 'bB', due_date: '2026-07-10', bill_closing_date: '2026-07-03',
+    bill_total_amount: { amount: '900.00' }, payments: [{ amount: '900.00' }] },
+];
+const k = S.normalizeCartao(CARD, BILLS, '2026-08-06');
+ok(k.tipo === 'Crédito', 'tipo Crédito');
+ok(k.extras.limite === 5000, 'limite do LIMITE_CREDITO_TOTAL');
+ok(k.extras.bandeira === 'Visa', 'VISA → Visa');
+ok(k.extras.ultimos4 === '4453', 'últimos 4 de payment_methods');
+ok(k.extras.dia_fechamento === 3, 'dia_fechamento vem de bill_closing_date (Pluggy mandava null)');
+ok(k.extras.dia_vencimento === 10, 'dia_vencimento vem de due_date');
+ok(k.extras.pagamento_minimo === 150, 'pagamento mínimo real do banco');
+ok(k.faturaAberta && k.faturaAberta.billId === 'bA', 'fatura aberta = a que vence 10/08');
+ok(k.faturaAberta.restante === 1000, 'restante = 1500 − 500 pago');
+ok(k.saldoFatura === -1000, 'saldo negativo = fatura a pagar (o painel lê −saldo)');
+const k2 = S.normalizeCartao(CARD, [], '2026-08-06');
+ok(k2.saldoFatura === null, 'sem fatura publicada → saldo null (não zera o cartão)');
+ok(k2.extras.limite === 5000, 'limite continua vindo sem bills');
+console.log('  ok');
+
+// ── 8. TRANSAÇÃO DE CONTA ─────────────────────────────────────────────────
+console.log('── 8. normalizeTxConta() ──');
+const g = S.normalizeTxConta({ id: 't1', transaction_name: 'MERCADO SAO JOSE',
+  credit_debit_type: 'DEBITO', completed_authorised_payment_type: 'TRANSACAO_EFETIVADA',
+  transaction_amount: { amount: '87.50' }, transaction_date_time: '2026-07-20T10:00:00Z',
+  category_ref: 'FOOD_AND_DRINK_GROCERIES' });
+ok(g.ehGasto === true && g.valor === 87.5, 'DEBITO → Gasto 87,50');
+ok(g.categoria === 'Supermercado', `categoria via taxonomia (veio ${g && g.categoria})`);
+ok(S.normalizeTxConta({ id: 't3', completed_authorised_payment_type: 'LANCAMENTO_FUTURO',
+  transaction_amount: { amount: '99.00' }, credit_debit_type: 'DEBITO' }) === null,
+  'LANCAMENTO_FUTURO NÃO pode ser importado');
+const pg = S.normalizeTxConta({ id: 't4', transaction_name: 'PAGAMENTO FATURA',
+  credit_debit_type: 'DEBITO', completed_authorised_payment_type: 'TRANSACAO_EFETIVADA',
+  transaction_amount: { amount: '1000.00' }, transaction_date_time: '2026-07-10T10:00:00Z',
+  category_ref: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' });
+ok(pg.transferencia === true && pg.categoria === 'Fatura cartão', 'pagamento de fatura = transferência');
+console.log('  ok');
+
+// ── 9. TRANSAÇÃO DE CARTÃO ────────────────────────────────────────────────
+console.log('── 9. normalizeTxCartao() ──');
+const HOJE = '2026-07-25';
+const intl = S.normalizeTxCartao({ id: 'c2', transaction_name: 'OPENAI',
+  credit_debit_type: 'DEBITO', transaction_type: 'PAGAMENTO',
+  brazilian_amount: { amount: '110.00', currency: 'BRL' },
+  amount: { amount: '20.00', currency: 'USD' },
+  transaction_date_time: '2026-07-21T10:00:00Z' }, HOJE);
+ok(intl.valor === 110, 'compra internacional usa brazilian_amount (110), não amount (20 USD)');
+const pf = S.normalizeTxCartao({ id: 'c3', transaction_name: 'PAGAMENTO RECEBIDO',
+  credit_debit_type: 'CREDITO', transaction_type: 'PAGAMENTO_FATURA',
+  brazilian_amount: { amount: '1000.00' }, transaction_date_time: '2026-07-15T10:00:00Z' }, HOJE);
+ok(pf.transferencia === true && pf.ehGasto === false, 'PAGAMENTO_FATURA = transferência, não gasto');
+ok(S.normalizeTxCartao({ id: 'c4', transaction_name: 'HOTEIS.COM 12/12',
+  credit_debit_type: 'DEBITO', transaction_type: 'PAGAMENTO',
+  brazilian_amount: { amount: '250.00' }, transaction_date_time: '2027-03-13T10:00:00Z',
+  charge_identificator: 12, charge_number: 12 }, HOJE) === null,
+  'parcela a vencer (data futura) NÃO pode virar gasto');
+console.log('  ok');
+
+// ── 10. EMPRÉSTIMO → dividas (exemplo literal de /consents/{id}/loans) ────
+console.log('── 10. normalizeDivida() ──');
+const LOAN = {
+  id: '770e8400', brand_name: 'Itaú Unibanco', product_type: 'EMPRESTIMOS',
+  product_sub_type: 'CREDITO_PESSOAL_COM_CONSIGNACAO',
+  contract: { contract_number: '1324926521496', product_name: 'Crédito Pessoal Consignado',
+    contract_date: '2018-01-05', contract_amount: '50000.0000', instalment_periodicity: 'MENSAL',
+    cet: '0.290000', amortization_scheduled: 'PRICE', due_date: '2028-01-15',
+    first_instalment_due_date: '2018-02-15', next_instalment_amount: '1250.0000',
+    interest_rates: [{ referential_rate_indexer_type: 'PRE_FIXADO', pre_fixed_rate: '0.150000' }] },
+  scheduled_instalments: { total_number_of_instalments: 48, contract_remaining_number: 36,
+    paid_instalments: 12, due_instalments: 1, past_due_instalments: 0 },
+  payments: { paid_instalments: 12, contract_outstanding_balance: '45000.00' },
+};
+const d = S.normalizeDivida(LOAN, 'emprestimo');
+ok(d.tipo === 'consignado', 'CREDITO_PESSOAL_COM_CONSIGNACAO → consignado (CHECK da tabela)');
+ok(d.valor_total === 50000 && d.valor_parcela === 1250, 'valor total e parcela');
+ok(d.parcelas_total === 48 && d.parcelas_pagas === 12, '48 parcelas, 12 pagas');
+ok(quase(d.taxa_juros, 2.1447), 'CET anual convertido pra % MENSAL (a Sora guarda mensal)');
+ok(d.indexador === 'pre', 'PRE_FIXADO → pre');
+ok(d.dia_vencimento === 15, 'dia do first_instalment_due_date');
+ok(d.status === 'ativa', 'status ativa');
+ok(/Saldo devedor: R\$ 45000/.test(d.observacao), 'saldo devedor real na observação');
+ok(S.normalizeDivida({ id: 'x', contract: {} }, 'emprestimo') === null,
+  'sem contract_amount → null (a tabela exige valor_total > 0)');
+ok(S.normalizeDivida({ ...LOAN, scheduled_instalments: { ...LOAN.scheduled_instalments, past_due_instalments: 2 } },
+  'emprestimo').status === 'em_atraso', 'past_due_instalments → em_atraso');
+ok(S.normalizeDivida({ ...LOAN, product_sub_type: 'AQUISICAO_BENS_VEICULOS_AUTOMOTORES' },
+  'financiamento').tipo === 'financiamento', 'veículo → financiamento');
+console.log('  ok');
+
+// ── 11. INVESTIMENTOS: os 5 tipos → aba Investimentos ─────────────────────
+console.log('── 11. normalizeInvestimento() — 5 famílias ──');
+const cdb = S.normalizeInvestimento({ __familia: 'bank_fixed_income', id: 'i1',
+  brand_name: 'Itaú', investment_type: 'CDB',
+  product: { isin_code: 'BRITAUCDB001', due_date: '2027-06-01', purchase_date: '2024-06-15',
+    remuneration: { indexer: 'CDI', post_fixed_indexer_percentage: '1.020000' } },
+  balance: { quantity: '10', updated_unit_price: { amount: '1180.00' },
+    gross_amount: { amount: '11800.00' }, net_amount: { amount: '11500.00' },
+    purchase_unit_price: { amount: '1000.00' } } });
+ok(cdb.tipo === 'CDB', 'CDB/RDB/LCI/LCA → CDB');
+ok(cdb.valor_atual === 11500, 'valor_atual = net_amount (LÍQUIDO), não gross');
+ok(cdb.valor_aportado === 10000, 'aportado = qtd × purchase_unit_price');
+ok(cdb.percentual_indexador === 102, '1.02 → 102% do CDI');
+ok(cdb.data_vencimento === '2027-06-01', 'vencimento do título');
+ok(quase(cdb.rentabilidade, 15), 'rentabilidade 15%');
+
+const deb = S.normalizeInvestimento({ __familia: 'credit_fixed_income', id: 'i2',
+  investment_type: 'DEBENTURES',
+  product: { due_date: '2030-01-01', remuneration: { indexer: 'IPCA', pre_fixed_rate: '6.50', post_fixed_indexer_percentage: '100' } },
+  balance: { quantity: '5', gross_amount: { amount: '5500.00' }, net_amount: { amount: '5300.00' },
+    purchase_unit_price: { amount: '1000.00' } } });
+ok(deb.tipo === 'Renda Fixa', 'DEBENTURES/CRI/CRA → Renda Fixa');
+ok(deb.taxa_anual === 6.5 && deb.percentual_indexador === 100, 'IPCA + 6,5%');
+
+const fun = S.normalizeInvestimento({ __familia: 'fund', id: 'i3', anbima_category: 'MULTIMERCADO',
+  product: { name: 'BTG Absoluto FIC FIM', anbima_category: 'MULTIMERCADO' },
+  balance: { quota_quantity: '1500.5', gross_amount: { amount: '18000.00' },
+    net_amount: { amount: '17500.00' }, quota_gross_price_value: { amount: '12.00' } } });
+ok(fun.tipo === 'Fundos', 'fund → Fundos');
+ok(fun.quantidade === 1500.5 && fun.preco_unitario === 12, 'cotas e preço da cota');
+ok(fun.setor === 'MULTIMERCADO', 'categoria ANBIMA vai em setor');
+ok(fun.rentabilidade === 0, 'sem purchase_price → rentabilidade 0 (não inventar)');
+
+const tes = S.normalizeInvestimento({ __familia: 'treasure_title', id: 'i4',
+  product: { product_name: 'Tesouro Selic 2029', due_date: '2029-03-01', purchase_date: '2024-03-01',
+    remuneration: { indexer: 'SELIC', post_fixed_indexer_percentage: '1.000000' } },
+  balance: { quantity: '3.5', updated_unit_price: { amount: '15000.00' },
+    gross_amount: { amount: '52500.00' }, net_amount: { amount: '51000.00' },
+    purchase_unit_price: { amount: '12000.00' } } });
+ok(tes.tipo === 'Tesouro Direto', 'treasure_title → Tesouro Direto');
+ok(tes.nome === 'Tesouro Selic 2029', 'nome do produto');
+ok(tes.valor_atual === 51000 && tes.valor_aportado === 42000, 'posição e aporte');
+
+const acao = S.normalizeInvestimento({ __familia: 'variable_income', id: 'i5',
+  product: { ticker: 'PETR4', isin_code: 'BRPETRACNPR6' },
+  balance: { quantity: '100', gross_amount: { amount: '3800.00' }, closing_price: { amount: '38.00' } } });
+ok(acao.tipo === 'Ações' && acao.ticker === 'PETR4', 'ticker comum → Ações');
+ok(acao.valor_atual === 3800, 'renda variável não tem net_amount → usa gross');
+ok(S.normalizeInvestimento({ __familia: 'variable_income', id: 'i6', product: { ticker: 'MXRF11' },
+  balance: { gross_amount: { amount: '2000.00' } } }).tipo === 'FIIs', 'ticker …11 → FIIs');
+ok(S.normalizeInvestimento({ __familia: 'fund', id: 'i7', product: { name: 'X' } }).valor_atual === null,
+  'sem balance → valor null (o sync pula em vez de gravar 0)');
+console.log('  ok');
+
+// ── 12. Tipos têm de ser os que a aba de Investimentos conhece ─────────────
+console.log('── 12. tipos aceitos pelo painel ──');
+const TIPOS_PAINEL = ['Ações', 'FIIs', 'ETFs', 'Cripto', 'Tesouro Direto', 'CDB',
+  'Previdência', 'Reserva', 'Imóveis', 'Negócio', 'Caixa', 'Renda Fixa', 'Fundos'];
+for (const fam of ['bank_fixed_income', 'credit_fixed_income', 'fund', 'treasure_title', 'variable_income']) {
+  const t = S.tipoInvestimento({ __familia: fam, product: {} });
+  ok(TIPOS_PAINEL.includes(t), `família ${fam} → tipo "${t}" não existe no painel (CORES_TIPO)`);
+}
+console.log('  ok');
+
+console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
+if (falhas.length) {
+  console.log('\n── Falhas ──');
+  falhas.forEach((f) => console.log(`  ${f}`));
+  process.exit(1);
+}

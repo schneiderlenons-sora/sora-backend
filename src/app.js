@@ -53,8 +53,11 @@ app.use('/api/bug',          require('./routes/bug'));
 app.use('/api/pluggy',       require('./routes/pluggy'));
 app.use('/api/webhooks/pluggy', require('./routes/webhookPluggy'));
 // Open Finance (Polp) — agregador-agnóstico. Guardado por env (503 até configurar).
+// Dois trilhos convivem: 'polp' (Pluggy v1) e 'polp-celcoin' (Celcoin v2);
+// of_conexoes.provider decide qual sincroniza cada conexão.
 app.use('/api/open-finance', require('./routes/openFinance'));
 app.use('/api/webhooks/polp', require('./routes/webhookPolp'));
+app.use('/api/webhooks/celcoin', require('./routes/webhookCelcoin'));
 
 // --- 404 ---
 app.use((req, res) => {

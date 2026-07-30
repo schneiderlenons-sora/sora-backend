@@ -13,11 +13,26 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
-const polp     = require('../services/polp');
-const polpSync = require('../services/polpSync');
+const polp     = require('../services/polp');   // trilho Pluggy (usado no /debug)
+// Dispatcher dos dois trilhos (Pluggy v1 × Celcoin v2). Nas rotas que operam
+// sobre uma conexão existente, o provider vem do BANCO — nunca do cliente.
+const providers = require('../services/openFinanceProvider');
 
-function exigirConfigurado(_req, res, next) {
-  if (!polp.configurado()) return res.status(503).json({ erro: 'Open Finance ainda não está configurado no servidor.' });
+/** Trilho pedido na requisição (?provider= ou body.provider). Default: Pluggy. */
+function provDaReq(req) {
+  return providers.para(
+    (req.query && req.query.provider) || (req.body && req.body.provider),
+  );
+}
+
+function exigirConfigurado(req, res, next) {
+  const p = provDaReq(req);
+  if (!p.configurado()) {
+    return res.status(503).json({
+      erro: `Open Finance (${p.rotulo}) ainda não está configurado no servidor.`,
+      provider: p.provider,
+    });
+  }
   next();
 }
 
@@ -35,22 +50,25 @@ async function exigirAcesso(req, res, next) {
 // sua vez é proxy da Pluggy) é o que fazia o seletor demorar a abrir. Se a Polp
 // falhar mas houver cache velho, serve o velho — melhor que tela vazia.
 const INST_TTL = 6 * 60 * 60 * 1000; // 6h
-let instCache = { em: 0, lista: null };
+// Cache POR TRILHO: a lista de bancos da Celcoin (v2) é diferente da da Pluggy (v1).
+const instCache = { };   // provider → { em, lista }
 
-router.get('/instituicoes', auth, exigirAcesso, exigirConfigurado, async (_req, res) => {
+router.get('/instituicoes', auth, exigirAcesso, exigirConfigurado, async (req, res) => {
+  const p = provDaReq(req);
   const agora = Date.now();
-  if (instCache.lista && agora - instCache.em < INST_TTL) {
+  const cache = instCache[p.provider];
+  if (cache && cache.lista && agora - cache.em < INST_TTL) {
     res.set('Cache-Control', 'private, max-age=3600');
-    return res.json({ instituicoes: instCache.lista, cache: 'hit' });
+    return res.json({ instituicoes: cache.lista, provider: p.provider, cache: 'hit' });
   }
   try {
-    const lista = await polp.listarInstituicoes();
-    if (lista && lista.length) instCache = { em: agora, lista };
+    const lista = await p.listarInstituicoes();
+    if (lista && lista.length) instCache[p.provider] = { em: agora, lista };
     res.set('Cache-Control', 'private, max-age=3600');
-    res.json({ instituicoes: lista });
+    res.json({ instituicoes: lista, provider: p.provider });
   } catch (err) {
     console.error('[open-finance/instituicoes]', err.message);
-    if (instCache.lista) return res.json({ instituicoes: instCache.lista, cache: 'stale' });
+    if (cache && cache.lista) return res.json({ instituicoes: cache.lista, provider: p.provider, cache: 'stale' });
     res.status(500).json({ erro: `Falha ao listar bancos: ${err.message}`.slice(0, 300) });
   }
 });
@@ -59,9 +77,12 @@ router.get('/instituicoes', auth, exigirAcesso, exigirConfigurado, async (_req, 
 // autoriza o banco (MFA etc.), e o webhook avisa quando os dados ficam prontos.
 router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { institution_id, cpf, cnpj, instituicao_nome } = req.body || {};
+    const { institution_id, cpf, cnpj, instituicao_nome, credenciais } = req.body || {};
     if (!institution_id) return res.status(400).json({ erro: 'Escolha um banco (institution_id).' });
-    const { id, status, urlToAuthenticate } = await polp.criarIntegracao({ institutionId: institution_id, cpf, cnpj });
+    const p = provDaReq(req);
+    const { id, status, urlToAuthenticate } = await p.criarConexao({
+      institutionId: institution_id, cpf, cnpj, credenciais,
+    });
 
     // NÃO esperar a url_to_authenticate aqui. Ela só aparece um instante DEPOIS
     // do create (quando o status vira WAITING_USER_INPUT) e ficar em loop de
@@ -70,11 +91,11 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
     // modal na hora e busca a URL em GET /conexoes/:id/autorizar.
     if (id) {
       await supabase.from('of_conexoes').upsert({
-        provider: 'polp', external_id: String(id), user_id: req.userId, grupo_id: req.grupoId,
+        provider: p.provider, external_id: String(id), user_id: req.userId, grupo_id: req.grupoId,
         instituicao: instituicao_nome || String(institution_id), status: (status || 'updating').toLowerCase(),
       }, { onConflict: 'provider,external_id' });
     }
-    res.json({ ok: true, externalId: String(id), status, urlToAuthenticate });
+    res.json({ ok: true, externalId: String(id), status, urlToAuthenticate, provider: p.provider });
   } catch (err) {
     console.error('[open-finance/conectar]', err.message);
     // Teste fechado (só o dono chega aqui) → devolve o motivo real pra diagnosticar.
@@ -88,20 +109,24 @@ router.get('/conexoes', auth, async (req, res) => {
     const grupoId = req.authUser?.grupoAtivo;
     if (!grupoId) return res.json({ conexoes: [] });
     const { data } = await supabase.from('of_conexoes')
-      .select('external_id, instituicao, status, ultimo_erro, ultima_sync, created_at')
+      .select('external_id, provider, instituicao, status, ultimo_erro, ultima_sync, created_at')
       .eq('grupo_id', grupoId).order('created_at', { ascending: false });
     res.json({ conexoes: data || [] });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 // Re-sincroniza sob demanda ("Sincronizar agora").
-router.post('/conexoes/:externalId/sincronizar', auth, exigirConfigurado, exigirPermissao('admin', 'escrita'), async (req, res) => {
+// O trilho sai do BANCO (of_conexoes.provider) — uma conexão Pluggy nunca é
+// sincronizada pelo código da Celcoin e vice-versa.
+router.post('/conexoes/:externalId/sincronizar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { data: c } = await supabase.from('of_conexoes').select('external_id')
-      .eq('external_id', req.params.externalId).eq('grupo_id', req.grupoId).maybeSingle();
-    if (!c) return res.status(404).json({ erro: 'Conexão não encontrada.' });
-    const r = await polpSync.sincronizarConexao(req.params.externalId, { dias: 180 });
-    res.json({ ok: !r?.erro, ...r });
+    const p = await providers.paraConexao(req.params.externalId, req.grupoId);
+    if (!p) return res.status(404).json({ erro: 'Conexão não encontrada.' });
+    if (!p.configurado()) {
+      return res.status(503).json({ erro: `Open Finance (${p.rotulo}) não está configurado no servidor.` });
+    }
+    const r = await p.sincronizar(req.params.externalId, { dias: 180 });
+    res.json({ ok: !(r && r.erro), provider: p.provider, ...r });
   } catch (err) {
     console.error('[open-finance/sync]', err.message);
     res.status(500).json({ erro: 'Não consegui sincronizar agora.' });
@@ -109,10 +134,17 @@ router.post('/conexoes/:externalId/sincronizar', auth, exigirConfigurado, exigir
 });
 
 // URL de autorização ATUAL de uma conexão pendente (pro botão "Autorizar").
-router.get('/conexoes/:externalId/autorizar', auth, exigirAcesso, exigirConfigurado, async (req, res) => {
+router.get('/conexoes/:externalId/autorizar', auth, exigirAcesso, async (req, res) => {
   try {
-    const g = await polp.getIntegracao(req.params.externalId);
-    res.json({ urlToAuthenticate: (g && g.url_to_authenticate) || null, status: (g && g.status) || null });
+    const p = await providers.paraConexao(req.params.externalId, req.grupoId);
+    if (!p) return res.status(404).json({ erro: 'Conexão não encontrada.' });
+    const g = await p.getConexao(req.params.externalId);
+    res.json({
+      urlToAuthenticate: (g && (g.url_to_authenticate || g.urlToAuthenticate)) || null,
+      status: (g && g.status) || null,
+      expiraEm: (g && g.url_to_authenticate_expires_at) || null,
+      provider: p.provider,
+    });
   } catch (err) {
     res.status(500).json({ erro: `Não consegui buscar a autorização: ${err.message}`.slice(0, 200) });
   }
@@ -287,15 +319,121 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
   res.json(out);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DIAGNÓSTICO DO TRILHO CELCOIN (allowlist).
+// Mostra o que a Celcoin devolve E como a Sora NORMALIZA cada coisa, lado a
+// lado, SEM gravar nada no banco. É assim que se valida a integração com banco
+// real antes de deixar o sync escrever: se `normalizado` estiver certo aqui, o
+// sync está certo.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/debug-celcoin/:consentId', auth, exigirAcesso, async (req, res) => {
+  const celcoin = require('../services/polpCelcoin');
+  const sync    = require('../services/polpCelcoinSync');
+  const { hojeSP } = require('../services/cicloFatura');
+  if (!celcoin.configurado()) {
+    return res.status(503).json({ erro: 'Celcoin não configurado (POLP_CELCOIN_CLIENT_ID / _SECRET).' });
+  }
+
+  const id = req.params.consentId;
+  const hoje = hojeSP();
+  const cru = req.query.cru === '1';          // ?cru=1 inclui o payload bruto
+  const out = { consentId: id, hoje, contas: [], cartoes: [], dividas: [], investimentos: [] };
+
+  try { out.consentimento = await celcoin.getConsentimento(id); }
+  catch (e) { out.consentimento_erro = e.message; }
+
+  try { out.sync_schedules = await celcoin.syncSchedules(id); }
+  catch (e) { out.sync_schedules_erro = e.message; }
+
+  // CONTAS
+  try {
+    for (const raw of await celcoin.listarContas(id)) {
+      const item = { normalizado: sync.normalizeConta(raw) };
+      if (cru) item.cru = raw;
+      try {
+        const txs = await celcoin.listarTransacoesConta(raw.id, { max: 1 });
+        item.total_tx_1a_pagina = txs.length;
+        item.amostra_tx = txs.slice(0, 3).map((t) => ({ cru: cru ? t : undefined, normalizado: sync.normalizeTxConta(t) }));
+        item.ignoradas_lancamento_futuro = txs.filter((t) => t.completed_authorised_payment_type === 'LANCAMENTO_FUTURO').length;
+      } catch (e) { item.tx_erro = e.message; }
+      out.contas.push(item);
+    }
+  } catch (e) { out.contas_erro = e.message; }
+
+  // CARTÕES — o ponto mais crítico (fatura, fechamento, vencimento, limite)
+  try {
+    for (const raw of await celcoin.listarCartoes(id)) {
+      const bills = await celcoin.listarFaturas(raw.id).catch(() => []);
+      const n = sync.normalizeCartao(raw, bills, hoje);
+      const item = {
+        normalizado: n,
+        // ↓ o teste que importa: `fatura.restante` tem de bater com o app do banco
+        conferir: {
+          fatura_que_a_sora_vai_mostrar: n.faturaAberta ? n.faturaAberta.restante : null,
+          saldo_gravado_na_wallet: n.saldoFatura,
+          limite: n.extras.limite,
+          fecha_dia: n.extras.dia_fechamento,
+          vence_dia: n.extras.dia_vencimento,
+          minimo: n.extras.pagamento_minimo,
+        },
+        faturas: bills.map((b) => ({
+          id: b.id,
+          fecha: String(b.bill_closing_date || '').slice(0, 10),
+          vence: String(b.due_date || '').slice(0, 10),
+          total: sync.money(b.bill_total_amount),
+          pago: sync.pagoDaFatura(b),
+          restante: (sync.money(b.bill_total_amount) ?? 0) - sync.pagoDaFatura(b),
+          minimo: sync.money(b.bill_minimum_amount),
+          parcelada: !!b.is_instalment,
+          encargos: (b.finance_charges || []).map((f) => ({ tipo: f.type, valor: sync.money(f.amount) })),
+        })),
+        limits_crus: raw.limits,
+      };
+      if (cru) item.cru = raw;
+      try {
+        const txs = await celcoin.listarTransacoesCartao(raw.id, { max: 1 });
+        item.amostra_tx = txs.slice(0, 3).map((t) => ({ cru: cru ? t : undefined, normalizado: sync.normalizeTxCartao(t, hoje) }));
+        item.ignoradas_futuro = txs.filter((t) => String(t.transaction_date_time || '').slice(0, 10) > hoje).length;
+      } catch (e) { item.tx_erro = e.message; }
+      try { item.parcelamentos = await celcoin.listarParcelamentos(raw.id); } catch (e) { item.parcelamentos_erro = e.message; }
+      try { item.recorrencias = await celcoin.listarRecorrencias(raw.id); } catch (e) { item.recorrencias_erro = e.message; }
+      out.cartoes.push(item);
+    }
+  } catch (e) { out.cartoes_erro = e.message; }
+
+  // EMPRÉSTIMOS / FINANCIAMENTOS → viram Dívidas
+  for (const [kind, fn] of [['emprestimo', 'listarEmprestimos'], ['financiamento', 'listarFinanciamentos']]) {
+    try {
+      for (const raw of await celcoin[fn](id)) {
+        const item = { kind, normalizado: sync.normalizeDivida(raw, kind) };
+        if (cru) item.cru = raw;
+        out.dividas.push(item);
+      }
+    } catch (e) { out.dividas.push({ kind, erro: e.message }); }
+  }
+
+  // INVESTIMENTOS (5 famílias) → viram linhas na aba Investimentos
+  try {
+    for (const raw of await celcoin.listarInvestimentos(id)) {
+      const item = { familia: raw.__familia, normalizado: sync.normalizeInvestimento(raw) };
+      if (cru) item.cru = raw;
+      out.investimentos.push(item);
+    }
+  } catch (e) { out.investimentos_erro = e.message; }
+
+  res.json(out);
+});
+
 // Desconecta: remove o vínculo (histórico fica) + apaga no provedor.
 router.delete('/conexoes/:externalId', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { data: c } = await supabase.from('of_conexoes').select('id')
+    const { data: c } = await supabase.from('of_conexoes').select('id, provider')
       .eq('external_id', req.params.externalId).eq('grupo_id', req.grupoId).maybeSingle();
     if (!c) return res.status(404).json({ erro: 'Conexão não encontrada.' });
     await supabase.from('of_conexoes').delete().eq('id', c.id);
-    await polp.removerConexao(req.params.externalId);
-    res.json({ ok: true });
+    // Revoga no provedor CERTO (revogar consentimento na Celcoin, item na Pluggy).
+    await providers.para(c.provider).removerConexao(req.params.externalId);
+    res.json({ ok: true, provider: c.provider });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
