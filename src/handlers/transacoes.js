@@ -475,6 +475,15 @@ module.exports = async function handleTransacoes(data, ctx) {
       if (sugestao) data.categoria = sugestao;
     }
 
+    // Regra do estabelecimento (migration 104) tem a ÚLTIMA palavra: se o
+    // usuário já corrigiu "FernandoPeixoto" pra Autocuidado no painel, dizer
+    // "gastei 40 no fernandopeixoto" no zap cai na categoria certa.
+    try {
+      const { categoriaPorRegra } = require('../services/regrasCategoria');
+      const daRegra = await categoriaPorRegra(grupoId, textoCat);
+      if (daRegra) data.categoria = daRegra;
+    } catch { /* migration 104 pendente */ }
+
     // Descrição limpa: tira o nome da conta + meio de pagamento
     // ("ifood itau credito" → "ifood", "cachorro quente débito" → "cachorro quente").
     if (data.observacao) {

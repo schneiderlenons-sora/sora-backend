@@ -27,7 +27,7 @@
 // =====================================================================
 const supabase = require('../db/supabase');
 const celcoin  = require('./polpCelcoin');
-const { categorizarDescricao, mapearCategoriaPluggy } = require('./categorizar');
+const { categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA } = require('./categorizar');
 const { cicloPorCompetencia, competenciaAtual, hojeSP } = require('./cicloFatura');
 
 const PROVIDER = 'polp-celcoin';
@@ -101,7 +101,7 @@ const MAPA_CATEGORIA_CELCOIN = {
   TRANSFER_OUT_SAVINGS: 'Investimentos', TRANSFER_IN_SAVINGS: 'Investimentos',
   TRANSFER_OUT_WITHDRAWAL: 'Transferências',
   // Cartão / empréstimo
-  LOAN_PAYMENTS_CREDIT_CARD_PAYMENT: 'Fatura cartão',
+  LOAN_PAYMENTS_CREDIT_CARD_PAYMENT: CATEGORIA_FATURA,
   LOAN_PAYMENTS_PERSONAL_LOAN_PAYMENT: 'Empréstimos',
   LOAN_PAYMENTS_CAR_PAYMENT: 'Financiamento',
   LOAN_PAYMENTS_MORTGAGE_PAYMENT: 'Financiamento',
@@ -371,7 +371,7 @@ function normalizeTxConta(tx) {
     valor: Math.abs(valor),
     descricao,
     categoria: ehTransferencia
-      ? (ref === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' ? 'Fatura cartão' : 'Transferências')
+      ? (ref === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' ? CATEGORIA_FATURA : 'Transferências')
       : categoriaDe(descricao, ref),
     data: tx.transaction_date_time || tx.created_at,
     transferencia: ehTransferencia,
@@ -406,7 +406,7 @@ function normalizeTxCartao(tx, hoje) {
     ehGasto: !ehCredito,
     valor: Math.abs(valor),
     descricao,
-    categoria: ehTransferencia ? 'Fatura cartão' : categoriaDe(descricao, tx.category_ref),
+    categoria: ehTransferencia ? CATEGORIA_FATURA : categoriaDe(descricao, tx.category_ref),
     data,
     transferencia: ehTransferencia,
     // Cartão virtual/adicional (a Sora já mostra isso em of_card).
@@ -644,6 +644,14 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
   }));
   if (!novas.length) return 0;
 
+  // Regra do usuário manda sobre o motor de palavras (migration 104): se ele já
+  // corrigiu "FernandoPeixoto" pra Autocuidado, a importação nova não volta pra
+  // "Outros". Best-effort — sem a migration, segue com a categoria automática.
+  try {
+    const { aplicarRegrasEmLote } = require('./regrasCategoria');
+    await aplicarRegrasEmLote(grupoId, novas);
+  } catch { /* migration 104 pendente */ }
+
   let { error } = await supabase.from('transacoes').insert(novas);
   // Coluna nova (migration 101) ainda não rodada: reinsere sem ela em vez de
   // deixar a sincronização inteira cair — o vínculo com a fatura é um extra.
@@ -866,6 +874,7 @@ module.exports = {
   sincronizarConsentimento,
   // expostos pra teste/diagnóstico (puros, sem banco)
   money, pct, cetParaMensal, diaDoMes, categoriaDe,
+  ehPagamentoFatura: require('./categorizar').ehPagamentoFatura,
   normalizeConta, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
   normalizeDivida, normalizeInvestimento,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento,

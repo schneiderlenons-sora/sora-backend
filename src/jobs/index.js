@@ -1,4 +1,5 @@
 const cron      = require('node-cron');
+const { CATEGORIA_FATURA } = require('../services/categorizar');
 const supabase  = require('../db/supabase');
 const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
@@ -82,7 +83,7 @@ async function avisarFatura({ titulo, ciclo, total, dono, cartao, competencia })
   const ofereceu = await oferecerDesconto({
     user: { id: dono.id }, phone: dono.phone, grupoId: cartao.grupo_id,
     valor: total,
-    categoria: 'Fatura cartão',
+    categoria: CATEGORIA_FATURA,
     observacao: `Fatura ${cartao.nome}`,
     extra: { cartao_id: cartao.id, competencia },
     permiteExterno: true,          // a fatura pode ter sido paga por outra pessoa

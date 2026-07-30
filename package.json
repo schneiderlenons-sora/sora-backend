@@ -10,7 +10,8 @@
     "eval": "node evals/interpretador.eval.js",
     "eval:ciclo": "node evals/cicloFatura.eval.js",
     "eval:celcoin": "node evals/celcoinSync.eval.js",
-    "test": "echo \"Sem testes por enquanto\" && exit 0"
+    "test": "echo \"Sem testes por enquanto\" && exit 0",
+    "eval:regras": "node evals/regrasCategoria.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

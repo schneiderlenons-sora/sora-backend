@@ -22,9 +22,12 @@ const CASOS = [
   { msg: 'paguei 30 no uber',                 expect: { acao: 'salvar', tipo: 'Gasto', valor: 30, categoria: 'Transporte' } },
   { msg: 'gastei 200 na farmacia',            expect: { acao: 'salvar', tipo: 'Gasto', categoria: 'Saúde' } },
   // Guardas de regressão (categorização de comida — bugs corrigidos jul/2026)
-  { msg: 'gastei 9,50 com uma coxinha',       expect: { acao: 'salvar', valor: 9.5, categoria: 'Alimentação' } },
-  { msg: 'gastei 12 com um pastel',           expect: { acao: 'salvar', categoria: 'Alimentação' } },
-  { msg: 'gastei 8 num cachorro quente',      expect: { acao: 'salvar', categoria: 'Alimentação' } }, // NÃO pode ser Pet
+  // Salgado/lanche cai em "Lanches", a SUBcategoria de Alimentação da taxonomia
+  // v3 (sql/084). O eval ainda cobrava o pai "Alimentação", de antes da v3, e
+  // virou 3 falhas fixas no placar — eval que sempre falha para de ser sinal.
+  { msg: 'gastei 9,50 com uma coxinha',       expect: { acao: 'salvar', valor: 9.5, categoria: 'Lanches' } },
+  { msg: 'gastei 12 com um pastel',           expect: { acao: 'salvar', categoria: 'Lanches' } },
+  { msg: 'gastei 8 num cachorro quente',      expect: { acao: 'salvar', categoria: 'Lanches' } }, // NÃO pode ser Pet
   { msg: 'gastei 100 na academia',            expect: { acao: 'salvar', categoria: 'Academia' } },
   // Valor NO FIM (introduzido por "por/de") — forma natural (bug jul/2026: caía no Grow "não entendi")
   { msg: 'Comprei um hambúrguer no ifood por 8,29 reais', expect: { acao: 'salvar', tipo: 'Gasto', valor: 8.29, categoria: 'Alimentação' } },

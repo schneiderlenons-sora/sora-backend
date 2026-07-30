@@ -10,6 +10,7 @@
 // confirmar — é só ajustar esses acessos quando a doc/Swagger chegar. ⚠️
 // =====================================================================
 const supabase = require('../db/supabase');
+const { CATEGORIA_FATURA } = require('./categorizar');
 const polp     = require('./polp');
 const { categorizar } = require('./categorizar');
 
@@ -142,13 +143,20 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs, ehCredito) {
     return {
       id_curto: idCurto(), grupo_id: grupoId, criado_por: userId || null,
       tipo: t.ehGasto ? 'Gasto' : 'Recebimento',
-      categoria: ehTransf ? 'Fatura cartão' : categorizar({ descricao: t.descricao, pluggyCategoria: t.categoriaProvedor }),
+      categoria: ehTransf ? CATEGORIA_FATURA : categorizar({ descricao: t.descricao, pluggyCategoria: t.categoriaProvedor }),
       valor: t.valor, observacao: (t.descricao || '').slice(0, 200),
       carteira_nome: walletNome, pago: true, transferencia: ehTransf,
       data: t.data, of_tx_id: t.externalId, of_card: t.card || null,
     };
   });
   if (!novas.length) return 0;
+
+  // Regra do usuário manda sobre o motor de palavras (migration 104).
+  try {
+    const { aplicarRegrasEmLote } = require('./regrasCategoria');
+    await aplicarRegrasEmLote(grupoId, novas);
+  } catch { /* migration 104 pendente */ }
+
   let { error } = await supabase.from('transacoes').insert(novas);
   if (error) { // fallback 1 a 1 (unique of_tx_id ignora corridas)
     let ok = 0;

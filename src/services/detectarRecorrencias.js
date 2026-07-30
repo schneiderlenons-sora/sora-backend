@@ -5,6 +5,7 @@
 // sugere; o usuário aprova com 1 clique (vira uma `recorrencia`).
 // =====================================================================
 const supabase = require('../db/supabase');
+const { ehPagamentoFatura } = require('./categorizar');
 
 // Chave de agrupamento: descrição sem números/pontuação (assinatura tende a
 // ter descrição estável mês a mês — "SPOTIFY", "NETFLIX.COM").
@@ -54,7 +55,7 @@ async function detectarRecorrencias(grupoId) {
 
   const grupos = new Map();
   for (const t of txs || []) {
-    if (t.transferencia || t.categoria === 'Fatura cartão' || t.categoria === 'Transferências') continue;
+    if (t.transferencia || ehPagamentoFatura(t.categoria) || t.categoria === 'Transferências') continue;
     if (t.parcela_grupo) continue; // compra parcelada não é fixo/recorrência
     const desc = (t.observacao || t.categoria || '').trim();
     if (ehParcela(desc)) continue;

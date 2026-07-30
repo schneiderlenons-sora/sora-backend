@@ -145,7 +145,9 @@ const pg = S.normalizeTxConta({ id: 't4', transaction_name: 'PAGAMENTO FATURA',
   credit_debit_type: 'DEBITO', completed_authorised_payment_type: 'TRANSACAO_EFETIVADA',
   transaction_amount: { amount: '1000.00' }, transaction_date_time: '2026-07-10T10:00:00Z',
   category_ref: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' });
-ok(pg.transferencia === true && pg.categoria === 'Fatura cartão', 'pagamento de fatura = transferência');
+// Categoria "Fatura" = subcategoria de Financeiro (migration 103). Era a string
+// solta 'Fatura cartão', que não existia na taxonomia.
+ok(pg.transferencia === true && S.ehPagamentoFatura(pg.categoria), 'pagamento de fatura = transferência');
 console.log('  ok');
 
 // ── 9. TRANSAÇÃO DE CARTÃO ────────────────────────────────────────────────

@@ -6,6 +6,7 @@
 // pelo cron via zapi.enviarLink.
 // =====================================================================
 const supabase = require('../db/supabase');
+const { ehPagamentoFatura } = require('./categorizar');
 const OpenAI = require('openai');
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -25,7 +26,7 @@ async function resumoPeriodo(grupoId, inicio, fim) {
     count++;
     // Transferência (ex: pagamento de fatura = quitação de dívida) não é
     // consumo. Match por categoria é rede de segurança pra linhas sem a flag.
-    if (r.transferencia || r.categoria === 'Fatura cartão') continue;
+    if (r.transferencia || ehPagamentoFatura(r.categoria)) continue;
     if (r.tipo === 'Gasto') {
       gastos += r.valor || 0;
       const nome = limpaCat(r.categoria);

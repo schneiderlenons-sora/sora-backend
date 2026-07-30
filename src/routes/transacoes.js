@@ -1,4 +1,5 @@
 const express  = require('express');
+const { ehPagamentoFatura } = require('../services/categorizar');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
@@ -25,6 +26,45 @@ function usuarioReq(req) {
   return req.authUser?.grupoAtivo
     ? { id: req.authUser.id, grupo_ativo: req.authUser.grupoAtivo }
     : null;
+}
+
+/**
+ * Aplica a categoria a TODAS as transações do mesmo estabelecimento e grava a
+ * regra pras próximas (migration 104).
+ *
+ * O casamento usa o mesmo termo normalizado do serviço de regras, então
+ * "FernandoPeixoto", "FERNANDO PEIXOTO" e "PIX FERNANDOPEIXOTO 0512" contam
+ * como o mesmo lugar. Devolve `{ termo, atualizadas }` pro painel dizer quantas
+ * mudaram — sem isso o usuário não sabe se a ação pegou 1 ou 40 lançamentos.
+ */
+async function aplicarCategoriaNoEstabelecimento({ grupoId, userId, descricao, categoria, ignorarId } = {}) {
+  const { salvarRegra, termoDe, normalizar: normRegra } = require('../services/regrasCategoria');
+  const termo = await salvarRegra({ grupoId, descricao, categoria, userId });
+  if (!termo) return null;
+
+  // Só as que ainda NÃO estão na categoria certa (evita update à toa) e que de
+  // fato casam o termo — o filtro fino é em JS, porque o termo já vem sem ruído
+  // e o `ilike` do Postgres não normaliza acento.
+  const { data: candidatas } = await supabase.from('transacoes')
+    .select('id, observacao, categoria').eq('grupo_id', grupoId).neq('categoria', categoria);
+
+  const alvo = normRegra(termo);
+  const ids = (candidatas || [])
+    .filter((t) => {
+      if (ignorarId && t.id === ignorarId) return false;
+      const d = normRegra(t.observacao);
+      return d && (d === alvo || d.includes(alvo) || alvo.includes(d));
+    })
+    .map((t) => t.id);
+
+  let atualizadas = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const lote = ids.slice(i, i + 200);
+    const { error } = await supabase.from('transacoes')
+      .update({ categoria }).in('id', lote).eq('grupo_id', grupoId);
+    if (!error) atualizadas += lote.length;
+  }
+  return { termo, atualizadas };
 }
 
 // GET /api/transacoes/:phone?mes=2026-05&tipo=Gasto&categoria=Mercado&limit=50&offset=0&criado_por_me=true&criado_por_phone=XX
@@ -283,6 +323,13 @@ router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res)
     const duplicados = transacoes.length - rows.length;
     if (rows.length === 0) return res.json({ inserted: 0, duplicados });
 
+    // Regra do usuário manda sobre o motor de palavras (migration 104): quem já
+    // corrigiu "FernandoPeixoto" não vai ver o extrato novo cair em "Outros".
+    try {
+      const { aplicarRegrasEmLote } = require('../services/regrasCategoria');
+      await aplicarRegrasEmLote(req.grupoId, rows);
+    } catch { /* migration 104 pendente */ }
+
     // Não mexe no saldo: o extrato do banco já reflete essas transações; o
     // saldo da conta é informado/ajustado separadamente pelo usuário.
     const { data, error } = await supabase.from('transacoes').insert(rows).select('id');
@@ -319,7 +366,7 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     // um "previsto" variável), mudar o valor de um pago, ou trocar de conta. Pula
     // transferências e fatura de cartão (têm débito próprio) pra não contar em dobro.
     try {
-      const especial = (t) => !t || t.transferencia === true || t.categoria === 'Fatura cartão' || t.categoria === 'Transferências';
+      const especial = (t) => !t || t.transferencia === true || ehPagamentoFatura(t.categoria) || t.categoria === 'Transferências';
       if (!especial(antes) && !especial(tx)) {
         const efeito = (t) => (t.pago ? (t.tipo === 'Gasto' ? -1 : 1) * (Number(t.valor) || 0) : 0);
         const ajustar = async (nome, delta) => {
@@ -337,7 +384,21 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
       }
     } catch (e) { console.warn('[transacoes PUT] reconcilia saldo falhou:', e.message); }
 
-    res.json(tx);
+    // "Vale pra todas": a correção do usuário vira REGRA do estabelecimento
+    // (migration 104) e é aplicada nas transações que já existem. Assim ele
+    // corrige "FernandoPeixoto" uma vez, não todo mês. Best-effort: falhar aqui
+    // não pode desfazer a edição que já foi salva.
+    let regra = null;
+    if (req.body?.aplicar_todas && categoria !== undefined && tx) {
+      try {
+        regra = await aplicarCategoriaNoEstabelecimento({
+          grupoId: req.grupoId, userId: req.userId,
+          descricao: tx.observacao, categoria, ignorarId: tx.id,
+        });
+      } catch (e) { console.warn('[transacoes PUT] regra de categoria falhou:', e.message); }
+    }
+
+    res.json({ ...tx, regra });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

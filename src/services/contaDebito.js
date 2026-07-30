@@ -9,6 +9,7 @@
 // mesmo mecanismo do gasto comum (que já move o saldo por match de nome).
 // =============================================================================
 const supabase = require('../db/supabase');
+const { CATEGORIA_FATURA, ehPagamentoFatura } = require('./categorizar');
 
 async function debitarConta({ grupoId, walletId, valor, categoria, observacao, userId, data }) {
   const v = parseFloat(valor);
@@ -33,12 +34,12 @@ async function debitarConta({ grupoId, walletId, valor, categoria, observacao, u
   };
   // Pagamento de fatura = transferência (quitação de dívida), não consumo.
   // Marca a flag pra sair dos relatórios de gasto (migration 046).
-  const ehTransferencia = categoria === 'Fatura cartão';
+  const ehTransferencia = ehPagamentoFatura(categoria);
   let { data: tx, error } = await supabase.from('transacoes')
     .insert(ehTransferencia ? { ...base, transferencia: true } : base)
     .select().single();
   // Tolerante: se a coluna `transferencia` ainda não existe (046 não rodou),
-  // insere sem ela — o filtro por categoria 'Fatura cartão' já cobre o caso.
+  // insere sem ela — o filtro por categoria de fatura já cobre o caso.
   if (error && ehTransferencia && /transferencia/i.test(error.message || '')) {
     ({ data: tx, error } = await supabase.from('transacoes').insert(base).select().single());
   }
@@ -101,7 +102,7 @@ async function registrarFaturaExterna({ grupoId, valor, observacao, userId }) {
     grupo_id:      grupoId,
     criado_por:    userId || null,
     tipo:          'Gasto',
-    categoria:     'Fatura cartão',
+    categoria:     CATEGORIA_FATURA,
     valor:         v,
     observacao:    observacao || 'Fatura (externo)',
     carteira_nome: null,   // não sai de nenhuma conta do usuário

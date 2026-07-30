@@ -55,8 +55,15 @@ const REGRAS = [
   { cat: 'Empreendimento', kws: ['tiktok ads', 'kwai for business', 'linkedin ads', 'mailchimp', 'fornecedor', 'frete', 'transportadora', 'embalagem', 'correios sedex'] },
 
   // ── Transferências / Pix / estornos (não-consumo) ──
-  { cat: 'Transferências', kws: ['mercado pago', 'mercadopago', 'pix enviado', 'pix recebido', 'pix ', 'ted ', 'doc ', 'transferencia', 'transferencias', 'transf ',
-      'venda cancelada', 'liberacao de dinheiro', 'estorno', 'devolucao', 'reembolso', 'chargeback', 'dinheiro recebido', 'boleto'] },
+  // A taxonomia v3 tem subcategorias próprias (PIX, Boleto, Transferência
+  // recebida) — antes tudo caía no genérico "Transferências" e o usuário perdia
+  // a quebra. Específicas primeiro; "Transferências" fica só pro que sobra.
+  { cat: 'PIX',            kws: ['pix enviado', 'pix recebido', 'pix qr', 'qr pix', 'pagamento pix', 'recebimento pix', 'pix ', '=pix'] },
+  { cat: 'Transferência recebida', kws: ['deposito de dinheiro', 'deposito em conta', 'deposito recebido', 'deposito bancario',
+      'dinheiro recebido', 'transferencia recebida', 'ted recebida', 'doc recebido', '=deposito'] },
+  { cat: 'Boleto',         kws: ['boleto'] },
+  { cat: 'Transferências', kws: ['mercado pago', 'mercadopago', 'ted ', 'doc ', 'transferencia', 'transferencias', 'transf ',
+      'venda cancelada', 'liberacao de dinheiro', 'estorno', 'devolucao', 'reembolso', 'chargeback'] },
 
   // ── Delivery (marcas) — ANTES de comida genérica. "Zé Delivery" ≠ "delivery". ──
   { cat: 'iFood',          kws: ['ifood', 'i food'] },
@@ -134,8 +141,16 @@ const REGRAS = [
   { cat: 'HBO Max',        kws: ['hbomax', 'hbo max', 'hbo', 'max stream'] },
   { cat: 'Globo Play',     kws: ['globoplay', 'globo play'] },
   { cat: 'Assinaturas',    kws: ['youtube premium', 'youtube music', 'deezer', 'tidal', 'apple music', 'apple com bill', 'apple.com bill',
-      'canva', 'notion', 'chatgpt', 'openai', 'midjourney', 'adobe', 'office 365', 'microsoft 365', 'google one', 'icloud',
-      'paramount', 'crunchyroll', 'star plus', 'starplus', 'mubi', 'telecine', 'dropbox', 'linkedin premium', 'assinatura'] },
+      '=canva', 'notion', 'chatgpt', 'openai', 'midjourney', 'adobe', 'office 365', 'microsoft 365', 'google one', 'icloud',
+      'paramount', 'crunchyroll', 'star plus', 'starplus', 'mubi', 'telecine', 'dropbox', 'linkedin premium', 'assinatura',
+      // Ferramentas de IA/dev cobradas por mês. Vinham como "Outros" porque não
+      // existiam aqui. Keywords curtas ou que são pedaço de palavra comum vão
+      // com '=' (palavra inteira): '=claude' senão casa "Claudete"/"Claudia",
+      // '=canva' senão casa "canvas", '=cursor'/'=grok' porque são genéricas.
+      'anthropic', '=claude', 'claude ai', 'claude sub', 'lovable', 'cursor ai', '=cursor',
+      'github copilot', 'copilot', 'perplexity', 'elevenlabs', 'runway ml', 'heygen',
+      'replit', 'vercel', 'netlify', 'figma', 'framer', 'capcut', 'gemini advanced', 'google ai',
+      'v0 dev', 'windsurf', 'supabase', 'railway app'] },
 
   // ── Saúde (Farmácia, Plano, Dentista, Psicólogo, Exames, Consultas) ──
   { cat: 'Plano de Saúde', kws: ['unimed', 'amil', 'hapvida', 'notredame', 'paz eterna', 'sulamerica', 'sul america',
@@ -275,4 +290,21 @@ function categorizar({ descricao, pluggyCategoria } = {}) {
   return categorizarDescricao(descricao) || mapearCategoriaPluggy(pluggyCategoria) || 'Outros';
 }
 
-module.exports = { categorizar, categorizarDescricao, mapearCategoriaPluggy };
+// ── Pagamento de fatura do cartão ───────────────────────────────────────────
+// Subcategoria de Financeiro (migration 103). Antes era a string solta
+// 'Fatura cartão', repetida em ~18 arquivos — mudar de nome exigia achar todas,
+// e esquecer UMA faz o pagamento voltar a contar como gasto no relatório
+// (contaria em DOBRO: as compras da fatura já foram categorizadas uma a uma).
+const CATEGORIA_FATURA = 'Fatura';
+const CATEGORIA_FATURA_LEGADO = 'Fatura cartão';
+
+/** É pagamento de fatura? Aceita o nome novo e o legado (histórico não reescrito). */
+function ehPagamentoFatura(categoria) {
+  const c = (categoria || '').toString().trim().toLowerCase();
+  return c === CATEGORIA_FATURA.toLowerCase() || c === CATEGORIA_FATURA_LEGADO.toLowerCase();
+}
+
+module.exports = {
+  categorizar, categorizarDescricao, mapearCategoriaPluggy,
+  CATEGORIA_FATURA, CATEGORIA_FATURA_LEGADO, ehPagamentoFatura,
+};

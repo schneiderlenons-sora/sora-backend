@@ -7,6 +7,7 @@
 // transferência/quitação de dívida, fica fora do consumo).
 // =============================================================================
 const supabase = require('../db/supabase');
+const { ehPagamentoFatura } = require('./categorizar');
 
 // Primeiro dia do mês seguinte (YYYY-MM-01) — limite exclusivo seguro.
 function proximoMesPrimeiroDia(mes) {
@@ -20,7 +21,7 @@ function proximoMesPrimeiroDia(mes) {
 // rede de segurança (linhas sem a flag): pagamento de fatura e movimentações
 // (Pix/TED do Open Finance caem em "Transferências").
 function ehTransferencia(r) {
-  return r.transferencia === true || r.categoria === 'Fatura cartão' || r.categoria === 'Transferências';
+  return r.transferencia === true || ehPagamentoFatura(r.categoria) || r.categoria === 'Transferências';
 }
 
 // Resumo do mês: { receitas, gastos, saldo, por_categoria[], por_membro[] }.

@@ -14,6 +14,7 @@
 // =============================================================================
 
 const supabase = require('../db/supabase');
+const { ehPagamentoFatura } = require('../services/categorizar');
 const { enviarTexto } = require('../services/mensageiro');
 const { criarPendente, removerPendente } = require('../services/pendentes');
 
@@ -304,7 +305,7 @@ async function resolverPendente(pendente, mensagem, ctx) {
       } catch { /* tolerante à migration 096 */ }
     }
     await removerPendente(pendente.id);
-    const ehFatura = categoria === 'Fatura cartão';
+    const ehFatura = ehPagamentoFatura(categoria);
     await enviarTexto(phone,
       (ehFatura
         ? `✅ *Pagamento da fatura registrado!* Debitei *R$ ${Number(valor || 0).toFixed(2)}* de *${escolhida.nome}*.`

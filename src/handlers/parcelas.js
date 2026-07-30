@@ -1,4 +1,5 @@
 const supabase = require('../db/supabase');
+const { CATEGORIA_FATURA } = require('../services/categorizar');
 const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { oferecerDesconto } = require('../services/descontoConta');
@@ -93,7 +94,7 @@ module.exports = async function handleParcelas(data, ctx) {
       : `💳 *Fatura ${cartao.nome}${fechada ? ' (anterior)' : ''}: R$ ${fatura.toFixed(2)}*`;
     await oferecerDesconto({
       user, phone, grupoId, valor: valorPagar,
-      categoria: 'Fatura cartão', observacao: `Fatura ${cartao.nome}${fechada ? ' (anterior)' : ''}`,
+      categoria: CATEGORIA_FATURA, observacao: `Fatura ${cartao.nome}${fechada ? ' (anterior)' : ''}`,
       extra: { cartao_id: cartao.id, competencia },
       permiteExterno: true, // fatura pode ter sido paga por outra pessoa
       intro: `${introValor}${vencTxt}\nCom qual conta você pagou?`,

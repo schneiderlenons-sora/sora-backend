@@ -1,4 +1,5 @@
 const express  = require('express');
+const { CATEGORIA_FATURA } = require('../services/categorizar');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
@@ -157,7 +158,7 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
         ? await registrarFaturaExterna({ grupoId, valor: it.valor, observacao: obs, userId: req.userId })
         : await debitarConta({
             grupoId, walletId: it.wallet_id, valor: it.valor,
-            categoria: 'Fatura cartão', observacao: obs, userId: req.userId,
+            categoria: CATEGORIA_FATURA, observacao: obs, userId: req.userId,
           });
       debitos.push(d);
     }

@@ -5,6 +5,7 @@
 // Tolerante: erro numa conta/transação não derruba o resto; marca status.
 // =====================================================================
 const supabase = require('../db/supabase');
+const { CATEGORIA_FATURA } = require('./categorizar');
 const pluggy   = require('./pluggy');
 const { categorizar } = require('./categorizar');
 
@@ -114,7 +115,7 @@ function mapTx(tx, grupoId, userId, walletNome, ehCredito) {
   const ehTransferencia = (ehCredito && t === 'CREDIT') || ehPagamentoFatura(descricao, tx.category);
 
   const categoria = ehTransferencia
-    ? 'Fatura cartão'
+    ? CATEGORIA_FATURA
     : categorizar({ descricao, pluggyCategoria: tx.category });
 
   return {
@@ -175,6 +176,13 @@ async function inserirNovas(grupoId, userId, walletNome, txs, ehCredito) {
   }
 
   if (!novas.length) return 0;
+
+  // Regra do usuário manda sobre o motor de palavras (migration 104).
+  try {
+    const { aplicarRegrasEmLote } = require('./regrasCategoria');
+    await aplicarRegrasEmLote(grupoId, novas);
+  } catch { /* migration 104 pendente */ }
+
   let { error } = await supabase.from('transacoes').insert(novas);
   if (error) { // pode ser a coluna pluggy_card ausente (pré-059) → tenta sem ela
     const semCard = novas.map(({ pluggy_card, ...r }) => r);
