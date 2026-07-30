@@ -334,11 +334,21 @@ function normalizeCartao(card, bills, hoje) {
 
 // ── Normalização: TRANSAÇÕES ────────────────────────────────────────────────
 
+/**
+ * Lançamentos que ainda NÃO são movimentação de verdade:
+ *   LANCAMENTO_FUTURO     → agendado, não aconteceu (viraria despesa no futuro);
+ *   TRANSACAO_PROCESSANDO → autorizada, ainda não efetivada. É a pré-autorização
+ *     do maquininha/gateway: o emissor manda ela E depois a captura, com IDs
+ *     diferentes e centavos diferentes (caso real: "PayU *ADI" R$139,99 e
+ *     "PayU *ADIDAS" R$140,00 no mesmo segundo) — importar as duas inflava a
+ *     fatura. Não se perde nada: quando efetiva, entra no sync seguinte.
+ */
+const NAO_EFETIVADA = new Set(['LANCAMENTO_FUTURO', 'TRANSACAO_PROCESSANDO']);
+const efetivada = (tx) => !NAO_EFETIVADA.has(String(tx && tx.completed_authorised_payment_type || ''));
+
 /** Transação de CONTA. Devolve `null` quando não deve ser importada. */
 function normalizeTxConta(tx) {
-  // Lançamento futuro não é movimentação: viraria despesa numa data que não
-  // aconteceu (era o nosso workaround por data no trilho Pluggy).
-  if (tx.completed_authorised_payment_type === 'LANCAMENTO_FUTURO') return null;
+  if (!efetivada(tx)) return null;
 
   const valor = money(tx.transaction_amount);
   if (valor == null) return null;
@@ -368,6 +378,9 @@ function normalizeTxConta(tx) {
 
 /** Transação de CARTÃO. Devolve `null` quando não deve ser importada. */
 function normalizeTxCartao(tx, hoje) {
+  // Pré-autorização/agendamento não entra na fatura (ver NAO_EFETIVADA).
+  if (!efetivada(tx)) return null;
+
   // Parcela a vencer chega com data no futuro — não é gasto de hoje.
   const data = tx.transaction_date_time || tx.bill_post_date;
   if (ymd(data) && ymd(data) > hoje) return null;

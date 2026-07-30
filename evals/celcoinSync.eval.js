@@ -303,6 +303,20 @@ console.log('── 13. fatura em aberto (sem total do banco) ──');
   // Sem fechamento e sem bill_id não dá pra agrupar — não inventar número.
   ok(S.faturaPorTransacoes(norm, crus, S.normalizeCartao(card, [], HOJE), HOJE) === null,
     'sem dia_fechamento → null (não estimar às cegas)');
+
+  // Pré-autorização não entra na fatura. Caso real: o gateway manda a
+  // autorização E a captura, com IDs distintos e centavos diferentes.
+  const preAut = { id: 'p1', transaction_date_time: '2026-07-14T00:14:02Z', credit_debit_type: 'DEBITO',
+    brazilian_amount: { amount: '139.99' }, transaction_name: 'PayU *ADI',
+    completed_authorised_payment_type: 'TRANSACAO_PROCESSANDO' };
+  const captura = { ...preAut, id: 'p2', brazilian_amount: { amount: '140.00' },
+    transaction_name: 'PayU *ADIDAS', completed_authorised_payment_type: 'TRANSACAO_EFETIVADA' };
+  ok(S.normalizeTxCartao(preAut, HOJE) === null, 'TRANSACAO_PROCESSANDO não entra na fatura');
+  ok(S.normalizeTxCartao(captura, HOJE) && S.normalizeTxCartao(captura, HOJE).valor === 140,
+    'a captura efetivada entra normalmente');
+  ok(S.normalizeTxConta({ id: 'c1', transaction_amount: { amount: '10.00' }, credit_debit_type: 'DEBITO',
+    completed_authorised_payment_type: 'TRANSACAO_PROCESSANDO' }) === null,
+    'mesma regra na conta corrente');
 }
 console.log('  ok');
 
