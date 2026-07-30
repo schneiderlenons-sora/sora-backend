@@ -7,7 +7,13 @@ const rateLimit = require('express-rate-limit');
 const app = express();
 app.set('trust proxy', 1); // Render fica atrás de proxy — pra o rate limit ler o IP real
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+// `verify` guarda o corpo CRU em req.rawBody. Assinatura HMAC (webhook da Polp/
+// Celcoin) tem que ser conferida sobre os bytes exatos que chegaram — recompor
+// com JSON.stringify(req.body) muda espaços/ordem e a assinatura nunca bateria.
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, _res, buf) => { if (buf && buf.length) req.rawBody = buf; },
+}));
 
 // Rate limiting nas rotas de API — proteção contra abuso/brute force.
 // 300 req / minuto por IP (folgado pro uso normal, corta scripts abusivos).

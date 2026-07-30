@@ -228,6 +228,32 @@ Cronograma por consent: `GET /consents/{id}/sync-schedules` (`last_sync_at`, `ne
 
 ---
 
+## 9b. Configuração na Sora (dashboard da Polp + Render)
+
+**Env vars (Render → Environment):**
+```
+POLP_CELCOIN_CLIENT_ID       = client_id do dashboard (provider Celcoin)
+POLP_CELCOIN_CLIENT_SECRET   = secret (exibido UMA vez na criação)
+POLP_CELCOIN_WEBHOOK_SECRET  = a chave da "Assinatura HMAC-SHA256" (opcional,
+                               mas recomendada — ver abaixo)
+```
+Sem as duas primeiras, o trilho responde 503 e o Pluggy segue normal.
+
+**Webhook** (Dashboard → Webhooks → Novo Endpoint, provider **Celcoin**):
+- URL: `https://sora-backend-jqm8.onrender.com/api/webhooks/celcoin`
+- Eventos: **marcar todos**. O handler agenda um sync do consentimento inteiro
+  com **debounce de 20s**, então a rajada (accounts + accounts.transactions +
+  credit_cards + bills…) vira UMA sincronização. Marcar só alguns é o que dá
+  risco: os `*.transactions` são os que avisam movimentação nova (8×/dia),
+  enquanto os de recurso trazem saldo/limite/fatura/posição.
+- **Assinatura HMAC**: ligar. O header é `X-Webhook-Signature` sobre o corpo
+  CRU (por isso `express.json({ verify })` guarda `req.rawBody` no app.js).
+  `assinaturaConfere()` aceita hex e base64, com ou sem prefixo `sha256=`, e
+  compara com `timingSafeEqual`. **Enquanto `POLP_CELCOIN_WEBHOOK_SECRET` não
+  estiver definida a validação fica desligada** (aceita tudo) — dá pra ligar a
+  chave no dashboard e a env em ordens diferentes sem derrubar nada. Se o
+  formato do header for outro, o log do 1º payload rejeitado mostra o que veio.
+
 ## 10. Riscos / pontos de atenção
 
 1. **Contradição de webhook** (seção 3) — normalizar nome do evento e não depender de `changes`.
