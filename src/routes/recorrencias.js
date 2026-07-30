@@ -81,6 +81,12 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 
 // PUT /api/recorrencias/:id — edita uma recorrência existente (categoria,
 // valor, dia, descrição, conta). Antes só dava pra excluir e recriar.
+//
+// A recorrência é um TEMPLATE: editá-la mudava só os lançamentos futuros, então
+// quem corrigia a categoria via o lançamento deste mês continuar em "Outros" e
+// achava que não salvou. Agora a mudança de categoria PROPAGA pro lançamento do
+// mês corrente gerado por ela (só se ele ainda estiver na categoria antiga —
+// assim um ajuste manual naquela transação específica é preservado).
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { categoria, valor, dia_vencimento, descricao, carteira } = req.body;
@@ -92,10 +98,38 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (carteira !== undefined)       patch.carteira       = carteira || 'Dinheiro';
     if (!Object.keys(patch).length) return res.json({ ok: true });
 
+    // Estado ANTES da edição — precisamos da categoria/descrição antigas.
+    const { data: antes } = await supabase.from('recorrencias')
+      .select('categoria, descricao').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+
     const { data, error } = await supabase.from('recorrencias').update(patch)
       .eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
     if (error) throw error;
-    res.json(data);
+
+    // Propaga a categoria nova pro lançamento deste mês. O cron nomeia a
+    // transação como '[Recorrente] X' (fixo) ou '[Previsto] X' (variável), e o
+    // "confirmar" tira o prefixo — por isso as 3 formas.
+    let propagadas = 0;
+    const mudouCategoria = patch.categoria && antes && patch.categoria !== antes.categoria;
+    if (mudouCategoria) {
+      try {
+        const desc = antes.descricao || data.descricao;
+        const inicioMes = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 7) + '-01';
+        const { data: alvos } = await supabase.from('transacoes')
+          .select('id, observacao, categoria')
+          .eq('grupo_id', req.grupoId)
+          .eq('categoria', antes.categoria)      // preserva ajuste manual
+          .gte('data', inicioMes)
+          .in('observacao', [desc, `[Recorrente] ${desc}`, `[Previsto] ${desc}`]);
+        const ids = (alvos || []).map(t => t.id);
+        if (ids.length) {
+          await supabase.from('transacoes').update({ categoria: patch.categoria }).in('id', ids);
+          propagadas = ids.length;
+        }
+      } catch { /* tolerante: a edição da recorrência já valeu */ }
+    }
+
+    res.json({ ...data, propagadas });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
