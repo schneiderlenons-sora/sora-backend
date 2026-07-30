@@ -103,10 +103,45 @@
 
 ---
 
+## 6. `atualizacao_sora` — comunicado em massa (`routes/admin.js`)
+
+Aviso de novidade disparado pelo painel admin (**Admin → Comunicados**).
+
+- **Nome:** `atualizacao_sora` · **Categoria: Marketing** · pt_BR
+- **Por que Marketing e não Utilidade:** anunciar recurso novo é promocional pela
+  política da Meta. Marcar Utilidade num conteúdo desses arrisca reprovação — ou
+  reclassificação depois. Custa um pouco mais por mensagem e respeita o "Parar
+  promoções" do usuário; é o preço de estar na regra.
+- **Corpo:**
+  ```
+  Oi, {{1}}! Uma atualização da Sora pra você:
+
+  {{2}}
+
+  Qualquer dúvida, é só responder aqui. 💚
+  ```
+- **Cabeçalho:** **Imagem** (capa do comunicado — `COMUNICADO_CAPA_URL`).
+- **Botão:** URL estática · texto `Abrir painel` → `https://www.forsora.com/dashboard`
+- **Params do código:** `[primeiroNome, texto]` — os MESMOS do `comunicado_sora`,
+  de propósito: trocar de template vira só mudar a env, sem mexer no código.
+- **Amostras que a Meta pede:** `{{1}}` = `Lenon` · `{{2}}` = `O Open Finance
+  chegou! Conecte seu banco e receba saldo, transações e fatura automaticamente.`
+- **Ligar quando aprovar:** `WHATSAPP_TPL_COMUNICADO=atualizacao_sora` no Render.
+  Sem essa env o broadcast cai no `comunicado_sora`, que é de **resposta a
+  relato** ("…sobre o que você nos enviou: …") e soa errado num aviso em massa.
+
+> ⚠️ `{{2}}` chega sempre em **linha única** — a Cloud API não aceita `\n` em
+> parâmetro, e o `oneLine()` do admin.js troca quebra por espaço. Quem escreve o
+> comunicado pensa em parágrafo corrido; as quebras do CORPO (texto fixo) valem
+> normalmente.
+
+---
+
 ## Como criar (passo a passo na Meta)
 
 1. **WhatsApp Manager** → **Modelos de mensagem** → **Criar modelo**.
-2. Categoria **Utilidade**, idioma **Português (BR)**.
+2. Categoria **Utilidade** (exceto o nº 6, que é **Marketing**), idioma
+   **Português (BR)**.
 3. Cole o **Corpo**, adicione as **variáveis** `{{1}}…` e, onde indicado, o
    **botão de URL** (estático ou dinâmico).
 4. Em variáveis, a Meta pede um **exemplo** por variável (ex.: `{{1}}` = "Lenon").

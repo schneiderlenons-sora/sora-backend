@@ -63,8 +63,14 @@ router.post('/responder-relato', async (req, res) => {
 //   · teste=<phone>  → manda 1 mensagem e retorna o resultado na hora (síncrono).
 //   · dryRun         → só CONTA quantos receberiam (não envia).
 //   · senão          → dispara em BACKGROUND (Render aguenta o loop) e responde já.
+// Nome do template do comunicado. Configurável por env pra trocar assim que a
+// Meta aprovar um modelo novo, SEM esperar deploy — o `comunicado_sora` é de
+// resposta a relato ("sobre o que você nos enviou"), que não cabe num aviso em
+// massa. O modelo novo tem de manter os MESMOS params: {{1}} nome, {{2}} texto.
+const TEMPLATE_COMUNICADO = process.env.WHATSAPP_TPL_COMUNICADO || TEMPLATE_RESPOSTA;
+
 const TPL_BROADCAST = (texto, nome) => ({
-  name: TEMPLATE_RESPOSTA,
+  name: TEMPLATE_COMUNICADO,
   params: [primeiroNome(nome), oneLine(texto)],
   opts: { headerImage: CAPA_COMUNICADO() },
 });
