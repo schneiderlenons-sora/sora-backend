@@ -26,6 +26,10 @@ const CAPA = () => process.env.SORA_CAPA_URL
 const TEMPLATE_RESPOSTA = 'comunicado_sora';
 const CAPA_COMUNICADO = () => process.env.COMUNICADO_CAPA_URL || CAPA();
 
+// {{1}} do comunicado_sora. Fallback amigável pra nunca sair "Oi, !" — quem não
+// tem nome cadastrado recebe "Oi, tudo bem!", que continua lendo natural.
+const primeiroNome = (n) => (oneLine(n || '').split(' ')[0] || 'tudo bem').slice(0, 60);
+
 // POST /api/admin/responder-relato  { phone, nome, texto }
 router.post('/responder-relato', async (req, res) => {
   const secret = process.env.ADMIN_SECRET;
@@ -35,8 +39,7 @@ router.post('/responder-relato', async (req, res) => {
   const phone = String(req.body?.phone || '').replace(/\D/g, '');
   const texto = String(req.body?.texto || '').trim();
   if (!phone || !texto) return res.status(400).json({ erro: 'phone e texto são obrigatórios' });
-  // {{1}} = primeiro nome (fallback amigável pra não sair "Oi, !").
-  const nome = (oneLine(req.body?.nome || '').split(' ')[0] || 'tudo bem').slice(0, 60);
+  const nome = primeiroNome(req.body?.nome);
 
   const antes = Date.now();
   // Com WHATSAPP_PROVIDER=meta vai o TEMPLATE (entrega dentro E fora das 24h).
@@ -53,16 +56,17 @@ router.post('/responder-relato', async (req, res) => {
 });
 
 // ── COMUNICADO EM MASSA ──────────────────────────────────────────────────────
-// POST /api/admin/broadcast  { texto, planos[], teste?, dryRun? }
-// Usa o template `lembretes_gerais` (aprovado, corpo 100% livre {{1}} + capa) —
-// serve pra QUALQUER aviso. NÃO usa o comunicado_sora (corpo é de resposta a relato).
+// POST /api/admin/broadcast  { texto, planos[], teste?, dryRun?, apenasRecorrentes? }
+// Usa o template `comunicado_sora` — o mesmo da resposta a relato, com a capa de
+// comunicado. São DOIS parâmetros: {{1}} = primeiro nome de quem recebe (por isso
+// o disparo busca o `name` junto com o telefone) e {{2}} = o texto do aviso.
 //   · teste=<phone>  → manda 1 mensagem e retorna o resultado na hora (síncrono).
 //   · dryRun         → só CONTA quantos receberiam (não envia).
 //   · senão          → dispara em BACKGROUND (Render aguenta o loop) e responde já.
-const TPL_BROADCAST = (texto) => ({
-  name: 'lembretes_gerais',
-  params: [oneLine(texto)],
-  opts: { headerImage: CAPA() },
+const TPL_BROADCAST = (texto, nome) => ({
+  name: TEMPLATE_RESPOSTA,
+  params: [primeiroNome(nome), oneLine(texto)],
+  opts: { headerImage: CAPA_COMUNICADO() },
 });
 
 router.post('/broadcast', async (req, res) => {
@@ -81,8 +85,14 @@ router.post('/broadcast', async (req, res) => {
   if (teste) {
     if (!texto) return res.status(400).json({ erro: 'Escreva a mensagem.' });
     if (teste.length < 10) return res.status(400).json({ erro: 'Número de teste inválido.' });
+    // Busca o nome do número de teste pra o teste sair IGUAL ao disparo real —
+    // o comunicado_sora abre com "Oi, {{1}}!" e um teste com nome genérico
+    // esconderia justamente a saudação que todo mundo vai receber.
+    const { data: quem } = await supabase.from('users')
+      .select('name').eq('phone', teste).maybeSingle();
+
     const antes = Date.now();
-    await enviarProativo(teste, { texto, template: TPL_BROADCAST(texto) });
+    await enviarProativo(teste, { texto, template: TPL_BROADCAST(texto, quem?.name) });
     const err = getLastSendError();
     if (err && new Date(err.em).getTime() >= antes) return res.json({ ok: false, code: err.code, erro: err.message });
     return res.json({ ok: true, teste: true });
@@ -95,11 +105,18 @@ router.post('/broadcast', async (req, res) => {
   // (29 contas), então filtrar só por plano mandaria aviso de recurso de
   // assinatura pra quem não tem assinatura. Ex.: o comunicado do Open Finance.
   const apenasRecorrentes = !!req.body?.apenasRecorrentes;
-  let q = supabase.from('users').select('phone').in('plano', planos).not('phone', 'is', null);
+  // `name` entra aqui porque o comunicado_sora abre com "Oi, {{1}}!".
+  let q = supabase.from('users').select('phone, name').in('plano', planos).not('phone', 'is', null);
   if (apenasRecorrentes) q = q.or('vitalicio.is.null,vitalicio.eq.false');
   const { data: rows, error } = await q;
   if (error) return res.status(500).json({ erro: error.message });
-  const alvos = [...new Set((rows || []).map((u) => String(u.phone || '').replace(/\D/g, '')).filter((p) => p.length >= 10))];
+  // Dedup por número; o 1º registro do número define o nome usado na saudação.
+  const porFone = new Map();
+  for (const u of rows || []) {
+    const p = String(u.phone || '').replace(/\D/g, '');
+    if (p.length >= 10 && !porFone.has(p)) porFone.set(p, u.name || '');
+  }
+  const alvos = [...porFone.keys()];
 
   if (dryRun) return res.json({ ok: true, total: alvos.length });
   if (!texto) return res.status(400).json({ erro: 'Escreva a mensagem.' });
@@ -109,7 +126,7 @@ router.post('/broadcast', async (req, res) => {
   (async () => {
     let ok = 0, fail = 0;
     for (const phone of alvos) {
-      try { await enviarProativo(phone, { texto, template: TPL_BROADCAST(texto) }); ok++; }
+      try { await enviarProativo(phone, { texto, template: TPL_BROADCAST(texto, porFone.get(phone)) }); ok++; }
       catch { fail++; }
       await new Promise((r) => setTimeout(r, 150)); // throttle (~6/s) pra não estourar a Meta
     }
