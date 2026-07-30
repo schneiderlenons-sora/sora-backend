@@ -59,9 +59,12 @@ module.exports = async function handleParcelas(data, ctx) {
     const ehOF = !!cartao.of_conta_id;
 
     let fatura, jaPago = 0;
-    if (ehOF && !fechada && typeof cartao.saldo === 'number') {
+    if (ehOF && !fechada && typeof cartao.saldo === 'number' && cartao.saldo < 0) {
       // Open Finance: saldo = −fatura (já sem parcelas a vencer). Igual ao painel.
-      fatura = Math.max(0, cent(-(cartao.saldo)));
+      // ⚠️ Só vale com saldo NEGATIVO: zero quer dizer "o banco não publicou o
+      // total" (normal enquanto o ciclo não fecha), não "você não deve nada" —
+      // aí caímos no ciclo, que soma as transações importadas.
+      fatura = cent(-(cartao.saldo));
     } else {
       const st = await statusFatura(grupoId, cartao, competencia);
       jaPago = st.pago;

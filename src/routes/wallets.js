@@ -247,9 +247,11 @@ router.get('/faturas/:phone', auth, async (req, res) => {
       const ehOF = !!c.of_conta_id;
 
       let fatura, pago = 0, restante;
-      if (ehOF && offset === 0 && typeof c.saldo === 'number') {
+      if (ehOF && offset === 0 && typeof c.saldo === 'number' && c.saldo < 0) {
         // Open Finance na fatura atual: o banco é a fonte (saldo = −fatura).
-        fatura = Math.max(0, Math.round(-(c.saldo) * 100) / 100);
+        // ⚠️ Saldo ZERO não é fatura zerada — é o banco ainda não ter publicado
+        // o total do ciclo em aberto. Nesse caso soma pelo ciclo, como manual.
+        fatura = Math.round(-(c.saldo) * 100) / 100;
         restante = fatura;
       } else {
         const st = await statusFatura(grupoId, c, competencia);

@@ -263,6 +263,49 @@ for (const fam of ['bank_fixed_income', 'credit_fixed_income', 'fund', 'treasure
 }
 console.log('  ok');
 
+// ── 13. Fatura EM ABERTO: o banco não publica o total ─────────────────────
+// Caso real (Mercado Pago, jul/2026): 26 compras importadas e o painel mostrava
+// "R$ 0,00", porque `bill_total_amount` só é publicado quando o ciclo FECHA.
+console.log('── 13. fatura em aberto (sem total do banco) ──');
+{
+  const HOJE = '2026-07-30';
+  const card = { id: 'c1', identification: { name: 'Mercado Pago' }, limits: [] };
+  const n = S.normalizeCartao(card, [{
+    id: 'b-ago', bill_total_amount: null, bill_minimum_amount: { amount: '3.13' },
+    bill_closing_date: '2026-08-12', due_date: '2026-08-17', payments: [],
+  }], HOJE);
+  ok(n.extras.dia_fechamento === 12, 'fechamento tem de vir do banco (a Pluggy mandava null)');
+  ok(n.extras.dia_vencimento === 17, 'vencimento do banco');
+  ok(n.saldoFatura === null, 'sem total publicado → saldo INDEFINIDO (≠ zero)');
+
+  // Ciclo 13/07–12/08: a de 10/07 é da fatura passada; pagamento não é gasto.
+  const crus = [
+    { id: 't1', transaction_date_time: '2026-07-29T22:13:00Z', brazilian_amount: { amount: '117.34' }, transaction_name: 'FACEBK', credit_debit_type: 'DEBITO' },
+    { id: 't2', transaction_date_time: '2026-07-14T10:00:00Z', brazilian_amount: { amount: '100.00' }, transaction_name: 'LOJA', credit_debit_type: 'DEBITO' },
+    { id: 't3', transaction_date_time: '2026-07-10T10:00:00Z', brazilian_amount: { amount: '999.00' }, transaction_name: 'CICLO ANTERIOR', credit_debit_type: 'DEBITO' },
+    { id: 't4', transaction_date_time: '2026-07-20T10:00:00Z', brazilian_amount: { amount: '50.00' }, transaction_name: 'PAGAMENTO', transaction_type: 'PAGAMENTO_FATURA', credit_debit_type: 'CREDITO' },
+  ];
+  const norm = crus.map((t) => S.normalizeTxCartao(t, HOJE));
+  ok(S.faturaPorTransacoes(norm, crus, n, HOJE) === 217.34, 'soma pelo CICLO real, só gastos');
+
+  // `bill_id` é o agrupamento do próprio emissor — manda sobre a nossa aritmética.
+  const comBill = crus.map((t, i) => ({ ...t, bill_id: i === 3 ? 'b-jul' : 'b-ago' }));
+  ok(S.faturaPorTransacoes(comBill.map((t) => S.normalizeTxCartao(t, HOJE)), comBill, n, HOJE) === 1216.34,
+    'bill_id tem prioridade sobre o ciclo');
+
+  // Fatura já fechada: o total do banco é a verdade (e desconta o que foi pago).
+  const fechada = S.normalizeCartao(card, [{
+    id: 'b', bill_total_amount: { amount: '2845.20' }, bill_closing_date: '2026-08-12',
+    due_date: '2026-08-17', payments: [{ amount: { amount: '845.20' } }],
+  }], HOJE);
+  ok(fechada.saldoFatura === -2000, 'com total publicado: saldo = −(total − pago)');
+
+  // Sem fechamento e sem bill_id não dá pra agrupar — não inventar número.
+  ok(S.faturaPorTransacoes(norm, crus, S.normalizeCartao(card, [], HOJE), HOJE) === null,
+    'sem dia_fechamento → null (não estimar às cegas)');
+}
+console.log('  ok');
+
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {
   console.log('\n── Falhas ──');

@@ -248,6 +248,43 @@ function escolherFaturaAberta(bills, hoje) {
   return ordenadas.find((b) => ymd(b.due_date) >= hoje) || ordenadas[ordenadas.length - 1];
 }
 
+/**
+ * Fatura em aberto somada pelas TRANSAÇÕES — usada quando o banco ainda não
+ * publicou o `bill_total_amount`, que é o normal ENQUANTO O CICLO NÃO FECHA
+ * (o Mercado Pago manda 0/null o ciclo inteiro; era isso que deixava "R$ 0,00"
+ * no painel com 26 compras já importadas).
+ *
+ * Preferimos o `bill_id`: a Celcoin marca em cada transação a fatura a que ela
+ * pertence, então é o agrupamento EXATO do emissor — sem aritmética nossa.
+ * Sem ele, cai no CICLO REAL de fechamento, a mesma conta do resto da Sora.
+ *
+ * Soma só GASTOS, igual ao painel e ao modal do cartão — assim o valor do card,
+ * da lista por categoria e do WhatsApp é o MESMO número. Estorno/cashback não
+ * abatem aqui (viram transferência); quando o ciclo fecha, o `bill_total_amount`
+ * oficial do banco assume e corrige. `null` = não há como agrupar.
+ */
+function faturaPorTransacoes(normalizadas, crus, n, hoje) {
+  const pares = [];
+  normalizadas.forEach((norm, i) => { if (norm) pares.push({ norm, cru: crus[i] || {} }); });
+
+  // 1. Exato: agrupamento do próprio emissor.
+  const billId = n.faturaAberta && n.faturaAberta.billId;
+  if (billId && pares.some((p) => String(p.cru.bill_id || '') === billId)) {
+    return cent(pares
+      .filter((p) => String(p.cru.bill_id || '') === billId && p.norm.ehGasto)
+      .reduce((s, p) => s + p.norm.valor, 0));
+  }
+
+  // 2. Ciclo real de fechamento (precisa da data de fechamento do banco).
+  const cartao = { dia_fechamento: n.extras.dia_fechamento, dia_vencimento: n.extras.dia_vencimento };
+  if (!cartao.dia_fechamento) return null;
+  const ciclo = cicloPorCompetencia(cartao, competenciaAtual(cartao, hoje));
+  n.cicloLabel = ciclo.label;
+  return cent(pares
+    .filter((p) => p.norm.ehGasto && ymd(p.norm.data) >= ciclo.ini && ymd(p.norm.data) < ciclo.fimExcl)
+    .reduce((s, p) => s + p.norm.valor, 0));
+}
+
 function normalizeCartao(card, bills, hoje) {
   const ident = card.identification || {};
   const nome = (ident.name || card.name || card.brand_name || 'Cartão').toString().trim().slice(0, 60);
@@ -706,21 +743,33 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         const walletNome = await upsertWallet(grupoId, userId, n, n.saldoFatura);
 
         const txs = await celcoin.listarTransacoesCartao(n.externalId, { fromDate });
-        const novas = await inserirTransacoes(grupoId, userId, walletNome, txs.map((t) => normalizeTxCartao(t, hoje)));
+        const normalizadas = txs.map((t) => normalizeTxCartao(t, hoje));
+        const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadas);
         novasTx += novas;
 
-        // Sem fatura publicada pelo banco, o saldo fica indefinido — mas as datas
-        // de fechamento/vencimento (quando vieram) deixam o painel calcular a
-        // fatura pelo CICLO REAL a partir das transações importadas.
-        if (!n.faturaAberta && n.extras.dia_fechamento) {
-          const comp = competenciaAtual({ dia_fechamento: n.extras.dia_fechamento, dia_vencimento: n.extras.dia_vencimento }, hoje);
-          const ciclo = cicloPorCompetencia({ dia_fechamento: n.extras.dia_fechamento, dia_vencimento: n.extras.dia_vencimento }, comp);
-          relatorio.avisos.push(`${walletNome}: sem fatura publicada; painel usa o ciclo ${ciclo.label}`);
+        // ⚠️ A fatura AINDA ABERTA quase nunca tem `bill_total_amount` — o banco
+        // só publica o total quando ela FECHA (o MP manda 0/null o ciclo inteiro,
+        // e era isso que deixava "R$ 0,00" no painel com 26 compras importadas).
+        // Nesse caso a fatura vem das transações que acabamos de importar,
+        // agrupadas pelo CICLO REAL (ou pelo bill_id, que é exato quando vem).
+        const estimada = n.faturaAberta && n.faturaAberta.total > 0
+          ? null
+          : faturaPorTransacoes(normalizadas, txs, n, hoje);
+        if (estimada != null) {
+          const pago = n.faturaAberta ? n.faturaAberta.pago : 0;
+          const restante = Math.max(0, cent(estimada - pago));
+          await upsertWallet(grupoId, userId, n, -restante);
+          relatorio.avisos.push(
+            `${walletNome}: banco não publicou o total da fatura em aberto — somada das transações (R$ ${restante.toFixed(2)}, ${estimada === 0 ? 'sem compras no ciclo' : n.cicloLabel || 'ciclo'})`,
+          );
+          if (n.faturaAberta) n.faturaAberta.total = estimada;
+          else n.faturaAberta = { estimada: true, restante };
         }
 
         relatorio.cartoes.push({
           cartao: walletNome, limite: n.extras.limite,
-          fatura: n.faturaAberta, txs: txs.length, novas,
+          fatura: n.faturaAberta, estimada: estimada != null || undefined,
+          txs: txs.length, novas,
         });
       } catch (e) { relatorio.cartoes.push({ erro: e.message }); }
     }
@@ -772,7 +821,7 @@ module.exports = {
   sincronizarConsentimento,
   // expostos pra teste/diagnóstico (puros, sem banco)
   money, pct, cetParaMensal, diaDoMes, categoriaDe,
-  normalizeConta, normalizeCartao, normalizeTxConta, normalizeTxCartao,
+  normalizeConta, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
   normalizeDivida, normalizeInvestimento,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento,
 };
