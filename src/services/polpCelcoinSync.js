@@ -317,6 +317,9 @@ function normalizeCartao(card, bills, hoje) {
       bandeira: BANDEIRA[(card.credit_card_network || ident.credit_card_network || '').toString().toUpperCase()] || null,
       ultimos4,
       pagamento_minimo: aberta ? money(aberta.bill_minimum_amount) : null,
+      // Qual fatura está em aberto (migration 101) — é o que deixa a tela somar
+      // pelo agrupamento do EMISSOR em vez de pela data, acertando parcelamento.
+      of_bill_atual: aberta ? String(aberta.id) : null,
     },
     faturaAberta: aberta
       ? {
@@ -408,6 +411,10 @@ function normalizeTxCartao(tx, hoje) {
     transferencia: ehTransferencia,
     // Cartão virtual/adicional (a Sora já mostra isso em of_card).
     card: tx.identification_number ? String(tx.identification_number).slice(-4) : null,
+    // Fatura a que o EMISSOR vinculou esta linha (migration 101). É o único
+    // dado confiável pra parcela: a Celcoin manda as N parcelas com a data da
+    // COMPRA, então agrupar por data joga todas na mesma fatura.
+    billId: tx.bill_id ? String(tx.bill_id) : null,
   };
 }
 
@@ -559,19 +566,32 @@ async function upsertWallet(grupoId, userId, n, saldo) {
   const extras = Object.fromEntries(Object.entries(n.extras || {}).filter(([, v]) => v != null));
   const patchSaldo = saldo == null ? {} : { saldo };
 
+  // ⚠️ Se UMA coluna dos extras não existir (migration nova ainda não rodada), o
+  // update inteiro falha — e levaria o SALDO junto, zerando a fatura na tela.
+  // Por isso: tenta com tudo e, no erro, repete só com o essencial.
+  const atualizar = async (id) => {
+    const { error } = await supabase.from('wallets')
+      .update({ tipo: n.tipo, ...patchSaldo, ...extras }).eq('id', id);
+    if (error) await supabase.from('wallets').update({ tipo: n.tipo, ...patchSaldo }).eq('id', id);
+  };
+
   const { data: ja } = await supabase.from('wallets')
     .select('id, nome').eq('grupo_id', grupoId).eq('of_conta_id', n.externalId).maybeSingle();
   if (ja) {
-    await supabase.from('wallets').update({ tipo: n.tipo, ...patchSaldo, ...extras }).eq('id', ja.id);
+    await atualizar(ja.id);
     return ja.nome;
   }
   // Adota carteira manual de mesmo nome (evita duplicar o que o usuário já criou).
   const { data: mesmoNome } = await supabase.from('wallets')
     .select('id, nome').eq('grupo_id', grupoId).ilike('nome', nome).is('of_conta_id', null).maybeSingle();
   if (mesmoNome) {
-    await supabase.from('wallets')
-      .update({ tipo: n.tipo, of_conta_id: n.externalId, of_provider: PROVIDER, ...patchSaldo, ...extras })
-      .eq('id', mesmoNome.id);
+    const vinculo = { of_conta_id: n.externalId, of_provider: PROVIDER };
+    const { error } = await supabase.from('wallets')
+      .update({ tipo: n.tipo, ...vinculo, ...patchSaldo, ...extras }).eq('id', mesmoNome.id);
+    if (error) {
+      await supabase.from('wallets')
+        .update({ tipo: n.tipo, ...vinculo, ...patchSaldo }).eq('id', mesmoNome.id);
+    }
     return mesmoNome.nome;
   }
   const row = {
@@ -620,15 +640,27 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     data: t.data,
     of_tx_id: t.externalId,
     of_card: t.card || null,
+    of_bill_id: t.billId || null,
   }));
   if (!novas.length) return 0;
 
   let { error } = await supabase.from('transacoes').insert(novas);
+  // Coluna nova (migration 101) ainda não rodada: reinsere sem ela em vez de
+  // deixar a sincronização inteira cair — o vínculo com a fatura é um extra.
+  if (error && /of_bill_id/i.test(error.message || '')) {
+    const semBill = novas.map(({ of_bill_id, ...r }) => r);
+    ({ error } = await supabase.from('transacoes').insert(semBill));
+    if (!error) return semBill.length;
+  }
   if (error) {
     // Fallback 1 a 1 — a unique de of_tx_id ignora corrida entre syncs.
     let ok = 0;
     for (const row of novas) {
-      const { error: e } = await supabase.from('transacoes').insert(row);
+      let { error: e } = await supabase.from('transacoes').insert(row);
+      if (e && /of_bill_id/i.test(e.message || '')) {
+        const { of_bill_id, ...semBill } = row;
+        ({ error: e } = await supabase.from('transacoes').insert(semBill));
+      }
       if (!e) ok++;
     }
     return ok;
