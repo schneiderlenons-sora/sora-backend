@@ -125,9 +125,17 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
     const { institution_id, cpf, cnpj, instituicao_nome, credenciais } = req.body || {};
     if (!institution_id) return res.status(400).json({ erro: 'Escolha um banco (institution_id).' });
     const p = provDaReq(req);
-    const { id, status, urlToAuthenticate } = await p.criarConexao({
+    const { id, status, urlToAuthenticate, produtos, produtosPedidos } = await p.criarConexao({
       institutionId: institution_id, cpf, cnpj, credenciais,
+      // `products` só se o cliente pedir explicitamente: no Celcoin, mandar uma
+      // lista fixa dá 422 COMBINACAO_PERMISSOES_INCORRETA em banco que não
+      // oferece algum item (as regras variam por instituição).
+      products: (req.body && req.body.products) || undefined,
     });
+    if (produtosPedidos) {
+      console.log(`🔗 [${p.provider}] consent ${id} — produtos: ${
+        Array.isArray(produtosPedidos) ? produtosPedidos.join(',') : produtosPedidos}`);
+    }
 
     // NÃO esperar a url_to_authenticate aqui. Ela só aparece um instante DEPOIS
     // do create (quando o status vira WAITING_USER_INPUT) e ficar em loop de
@@ -140,7 +148,10 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
         instituicao: instituicao_nome || String(institution_id), status: (status || 'updating').toLowerCase(),
       }, { onConflict: 'provider,external_id' });
     }
-    res.json({ ok: true, externalId: String(id), status, urlToAuthenticate, provider: p.provider });
+    res.json({
+      ok: true, externalId: String(id), status, urlToAuthenticate,
+      provider: p.provider, produtos: produtos || null, produtosPedidos: produtosPedidos || null,
+    });
   } catch (err) {
     console.error('[open-finance/conectar]', err.message);
     // Teste fechado (só o dono chega aqui) → devolve o motivo real pra diagnosticar.

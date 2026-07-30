@@ -117,37 +117,61 @@ async function listarInstituicoes() {
 }
 
 // ── Consentimento (o "conectar banco") ──────────────────────────────────────
-// Pedimos TODOS os produtos que a Sora usa. Omitir `products` pediria tudo,
-// mas ser explícito evita surpresa se a Polp mudar o default.
-const PRODUTOS = [
-  'ACCOUNT',
-  'CREDIT_CARD_ACCOUNT',
-  'LOAN',
-  'FINANCING',
-  'UNARRANGED_ACCOUNT_OVERDRAFT',
-  'BANK_FIXED_INCOME',
-  'CREDIT_FIXED_INCOME',
-  'VARIABLE_INCOME',
-  'TREASURE_TITLE',
-  'FUND',
-];
+//
+// ⚠️ NÃO mandar uma lista fixa de `products`. O Open Finance tem regras de
+// combinação de permissões (BACEN) que variam POR INSTITUIÇÃO, e a doc da Polp
+// não publica quais são — mandar um conjunto fixo devolve
+// `422 COMBINACAO_PERMISSOES_INCORRETA` no banco que não oferece algum deles.
+// A doc diz: "Se omitido, solicita todos os produtos disponíveis" — ou seja, a
+// Polp resolve a combinação válida daquela instituição. É o caminho certo.
+//
+// Se o chamador passar `products`, respeitamos (uso avançado). Sem isso,
+// tentamos: omitir → essenciais → só conta, parando no primeiro que passar.
+const PRODUTOS_ESSENCIAIS = ['ACCOUNT', 'CREDIT_CARD_ACCOUNT'];
+
+/** É o 422 de combinação inválida de permissões? */
+function ehCombinacaoInvalida(e) {
+  if (!e || e.status !== 422) return false;
+  const txt = JSON.stringify(e.body || e.message || '').toUpperCase();
+  return txt.includes('COMBINACAO_PERMISSOES') || txt.includes('PERMISSOES');
+}
 
 async function criarConsentimento({ institutionId, cpf, cnpj, products, credenciais } = {}) {
-  const body = { institution_id: String(institutionId), products: products || PRODUTOS };
-  if (cpf)  body.cpf  = String(cpf).replace(/\D/g, '');
-  if (cnpj) body.cnpj = String(cnpj).replace(/\D/g, '');
+  const base = { institution_id: String(institutionId) };
+  if (cpf)  base.cpf  = String(cpf).replace(/\D/g, '');
+  if (cnpj) base.cnpj = String(cnpj).replace(/\D/g, '');
   // Campos dinâmicos exigidos por `institution.credentials` (ex.: username/password).
-  if (credenciais && typeof credenciais === 'object') Object.assign(body, credenciais);
+  if (credenciais && typeof credenciais === 'object') Object.assign(base, credenciais);
 
-  const d = dados(await api('/consents', { method: 'POST', body }));
-  return {
-    id: d.id,
-    status: d.status,                                    // AWAITING_AUTHORIZATION | AUTHORISED | ...
-    urlToAuthenticate: d.url_to_authenticate || null,
-    urlExpiraEm: d.url_to_authenticate_expires_at || null,
-    produtos: d.products || [],
-    erro: d.error || null,
-  };
+  // `undefined` = não enviar o campo (deixa a Polp escolher os disponíveis).
+  const tentativas = (products && products.length)
+    ? [products]
+    : [undefined, PRODUTOS_ESSENCIAIS, ['ACCOUNT']];
+
+  let ultimoErro = null;
+  for (const prods of tentativas) {
+    const body = prods ? { ...base, products: prods } : { ...base };
+    try {
+      const d = dados(await api('/consents', { method: 'POST', body }));
+      return {
+        id: d.id,
+        status: d.status,                          // AWAITING_AUTHORIZATION | AUTHORISED | …
+        urlToAuthenticate: d.url_to_authenticate || null,
+        urlExpiraEm: d.url_to_authenticate_expires_at || null,
+        produtos: d.products || [],
+        produtosPedidos: prods || 'todos os disponíveis',
+        erro: d.error || null,
+      };
+    } catch (e) {
+      ultimoErro = e;
+      // Só vale insistir quando o problema é a COMBINAÇÃO de permissões.
+      // Credencial/plano/instituição fora do ar não melhoram com menos produtos.
+      if (!ehCombinacaoInvalida(e)) throw e;
+      console.warn('[celcoin] combinação de permissões recusada com',
+        prods ? prods.join(',') : '(todos disponíveis)', '— tentando conjunto menor');
+    }
+  }
+  throw ultimoErro;
 }
 
 async function getConsentimento(id) {
@@ -271,7 +295,7 @@ async function alertas() {
 }
 
 module.exports = {
-  PROVIDER, PRODUTOS, FAMILIAS_INVESTIMENTO, CelcoinError,
+  PROVIDER, PRODUTOS_ESSENCIAIS, FAMILIAS_INVESTIMENTO, CelcoinError, ehCombinacaoInvalida,
   configurado, api, paginado,
   listarInstituicoes,
   criarConsentimento, getConsentimento, revogarConsentimento, listarConsentimentos, syncSchedules,
