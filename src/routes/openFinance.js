@@ -49,6 +49,51 @@ async function exigirAcesso(req, res, next) {
 // Cache em memória: a lista é praticamente estática e a ida até a Polp (que por
 // sua vez é proxy da Pluggy) é o que fazia o seletor demorar a abrir. Se a Polp
 // falhar mas houver cache velho, serve o velho — melhor que tela vazia.
+// GET /api/open-finance/status — qual trilho está ativo e o que falta configurar.
+// Não expõe segredo: só diz se cada credencial ESTÁ presente.
+router.get('/status', auth, exigirAcesso, async (_req, res) => {
+  const celcoin = require('../services/polpCelcoin');
+  const pluggy  = require('../services/polp');
+  res.json({
+    provider_padrao: providers.providerPadrao(),
+    env_OPEN_FINANCE_PROVIDER: process.env.OPEN_FINANCE_PROVIDER || null,
+    celcoin: {
+      configurado: celcoin.configurado(),
+      client_id: !!(process.env.POLP_CELCOIN_CLIENT_ID || process.env.POLP_CLIENT_ID),
+      client_secret: !!(process.env.POLP_CELCOIN_CLIENT_SECRET || process.env.POLP_CLIENT_SECRET),
+      usando_credencial_do_v1: !process.env.POLP_CELCOIN_CLIENT_ID && !!process.env.POLP_CLIENT_ID,
+      webhook_assinado: !!process.env.POLP_CELCOIN_WEBHOOK_SECRET,
+      base: process.env.POLP_CELCOIN_API_URL || 'https://api.polp.com.br/api/v2',
+    },
+    pluggy: {
+      configurado: pluggy.configurado(),
+      base: process.env.POLP_API_URL || 'https://api.polp.com.br/api/v1',
+    },
+  });
+});
+
+// GET /api/open-finance/ping — bate na Polp de verdade com a credencial atual.
+// Serve pra separar "credencial errada" de "plano inativo" de "tudo certo".
+router.get('/ping', auth, exigirAcesso, async (req, res) => {
+  const p = provDaReq(req);
+  if (!p.configurado()) {
+    return res.status(503).json({ provider: p.provider, ok: false, erro: 'credenciais ausentes no servidor' });
+  }
+  try {
+    const lista = await p.listarInstituicoes();
+    res.json({ provider: p.provider, ok: true, instituicoes: Array.isArray(lista) ? lista.length : 0 });
+  } catch (err) {
+    res.status(200).json({
+      provider: p.provider, ok: false,
+      status: err.status || null,
+      erro: String(err.message).slice(0, 300),
+      dica: err.status === 402 ? 'Plano inativo ou fatura em atraso NESTE trilho.'
+        : err.status === 401 ? 'Credencial inválida (client_id/secret).'
+        : err.status === 403 ? 'Conta pendente de aprovação na Polp.' : null,
+    });
+  }
+});
+
 const INST_TTL = 6 * 60 * 60 * 1000; // 6h
 // Cache POR TRILHO: a lista de bancos da Celcoin (v2) é diferente da da Pluggy (v1).
 const instCache = { };   // provider → { em, lista }

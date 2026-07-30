@@ -15,13 +15,33 @@
 const PLUGGY  = 'polp';
 const CELCOIN = 'polp-celcoin';
 
+/**
+ * Trilho padrão quando ninguém disse qual usar. Mesma ideia do
+ * WHATSAPP_PROVIDER (Meta × Z-API):
+ *   1. `OPEN_FINANCE_PROVIDER` manda (celcoin | pluggy);
+ *   2. sem a env, quem estiver CONFIGURADO ganha — e o Celcoin tem prioridade,
+ *      porque quem configurou as credenciais v2 quer usá-las (era o bug: as
+ *      envs do Celcoin estavam no Render, mas o /conectar caía no Pluggy e
+ *      voltava 402 "plano ativo", já que o plano é do outro trilho);
+ *   3. nada configurado → Pluggy (comportamento histórico).
+ */
+function providerPadrao() {
+  const env = String(process.env.OPEN_FINANCE_PROVIDER || '').trim().toLowerCase();
+  if (env === 'celcoin' || env === CELCOIN || env === 'v2') return CELCOIN;
+  if (env === 'pluggy' || env === PLUGGY || env === 'v1') return PLUGGY;
+  try {
+    if (require('./polpCelcoin').configurado()) return CELCOIN;
+  } catch { /* módulo indisponível → cai pro Pluggy */ }
+  return PLUGGY;
+}
+
 /** Normaliza o que vem do cliente/banco pro nome canônico do provider. */
 function normalizarProvider(p) {
   const s = String(p || '').trim().toLowerCase();
-  if (!s) return PLUGGY;                       // default = trilho antigo (não quebra nada)
+  if (!s) return providerPadrao();
   if (s === CELCOIN || s === 'celcoin' || s === 'v2') return CELCOIN;
   if (s === PLUGGY || s === 'pluggy' || s === 'v1') return PLUGGY;
-  return PLUGGY;
+  return providerPadrao();
 }
 
 /**
@@ -76,4 +96,4 @@ async function paraConexao(externalId, grupoId) {
   return { ...para(data.provider), conexao: data };
 }
 
-module.exports = { PLUGGY, CELCOIN, normalizarProvider, para, paraConexao };
+module.exports = { PLUGGY, CELCOIN, providerPadrao, normalizarProvider, para, paraConexao };
