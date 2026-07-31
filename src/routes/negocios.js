@@ -1013,6 +1013,151 @@ router.delete('/custos/:id', auth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// GET /api/negocios/indicadores/:phone?empresa_id=&mes=YYYY-MM
+//
+// TODOS os números do painel da loja física num round-trip só. Em chamadas
+// separadas seriam quatro idas ao Render (free tier em Oregon, Supabase em
+// Ohio) só pra desenhar uma tela. Aqui é UMA leitura de 6 meses + os pendentes,
+// agregado em memória.
+//
+// ⚠️ CENTAVOS de ponta a ponta (é como `lancamentos_negocio` grava). Converter
+// no meio do caminho é de onde saem os erros de 100×.
+// ─────────────────────────────────────────────────────────────────
+router.get('/indicadores/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+
+    const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : hoje.slice(0, 7);
+    const desloca = (ym, n) => {
+      const [a, m] = ym.split('-').map(Number);
+      const d = new Date(Date.UTC(a, m - 1 + n, 1));
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    };
+
+    // Janela de 6 meses = o gráfico de evolução.
+    const inicioJanela = `${desloca(mes, -5)}-01`;
+    const fimExcl      = `${desloca(mes, 1)}-01`;
+
+    const [{ data: doPeriodo }, { data: pendentes }] = await Promise.all([
+      supabase.from('lancamentos_negocio')
+        .select('tipo, categoria, valor, data, status, forma_pagamento, contraparte, descricao')
+        .eq('empresa_id', empresa.id).gte('data', inicioJanela).lt('data', fimExcl),
+      // Pendente vence FORA do período consultado → busca própria.
+      supabase.from('lancamentos_negocio')
+        .select('tipo, valor, vencimento, descricao, contraparte')
+        .eq('empresa_id', empresa.id).eq('status', 'pendente'),
+    ]);
+
+    const linhas = doPeriodo || [];
+    const ym   = (d) => String(d || '').slice(0, 7);
+    const soma = (arr) => arr.reduce((s, r) => s + (Number(r.valor) || 0), 0);
+    // Só o que foi PAGO é realizado — pendente é promessa, não caixa.
+    const doMes = (alvo) => linhas.filter((r) => ym(r.data) === alvo && r.status === 'pago');
+
+    const resumoDe = (alvo) => {
+      const ls = doMes(alvo);
+      const receita = soma(ls.filter((r) => r.tipo === 'entrada'));
+      const despesa = soma(ls.filter((r) => r.tipo === 'saida'));
+      const lucro   = receita - despesa;
+      return { receita, despesa, lucro, margem: receita > 0 ? Math.round((lucro / receita) * 1000) / 10 : 0 };
+    };
+
+    const atual    = resumoDe(mes);
+    const anterior = resumoDe(desloca(mes, -1));
+    const variacao = (a, b) => (b === 0 ? (a > 0 ? 100 : 0) : Math.round(((a - b) / Math.abs(b)) * 1000) / 10);
+
+    // Ticket médio só de VENDA: incluir aporte de sócio ou empréstimo recebido
+    // distorceria justamente o número que o lojista usa pra formar preço.
+    const vendas = doMes(mes).filter((r) => r.tipo === 'entrada' && (!r.categoria || r.categoria === 'vendas'));
+
+    const evolucao = [];
+    for (let i = 5; i >= 0; i--) {
+      const alvo = desloca(mes, -i);
+      const r = resumoDe(alvo);
+      evolucao.push({ mes: alvo, receita: r.receita, despesa: r.despesa, lucro: r.lucro });
+    }
+
+    const porDiaMap = new Map();
+    for (const r of doMes(mes)) {
+      const dia = String(r.data).slice(0, 10);
+      const acc = porDiaMap.get(dia) || { dia, entrada: 0, saida: 0 };
+      acc[r.tipo === 'entrada' ? 'entrada' : 'saida'] += Number(r.valor) || 0;
+      porDiaMap.set(dia, acc);
+    }
+
+    const agrupar = (ls, chave, rotulo) => {
+      const m = new Map();
+      for (const r of ls) m.set(r[chave] || 'outros', (m.get(r[chave] || 'outros') || 0) + (Number(r.valor) || 0));
+      return [...m.entries()].map(([k, valor]) => ({ [rotulo]: k, valor })).sort((a, b) => b.valor - a.valor);
+    };
+
+    const abertos = pendentes || [];
+    const bucket = (tipo) => {
+      const ls = abertos.filter((r) => r.tipo === tipo);
+      const venc = (r) => String(r.vencimento || '').slice(0, 10);
+      const vencidos = ls.filter((r) => r.vencimento && venc(r) < hoje);
+      return {
+        total: soma(ls), qtd: ls.length,
+        vencido: soma(vencidos), vencido_qtd: vencidos.length,
+        proximos: ls.filter((r) => r.vencimento)
+          .sort((a, b) => venc(a).localeCompare(venc(b))).slice(0, 5)
+          .map((r) => ({
+            descricao: r.descricao || r.contraparte || 'Sem descrição',
+            valor: Number(r.valor) || 0, vencimento: venc(r), vencido: venc(r) < hoje,
+          })),
+      };
+    };
+
+    // Saldo por conta = saldo inicial + entradas pagas − saídas pagas.
+    let contas = [];
+    try {
+      const [{ data: cs }, { data: todos }] = await Promise.all([
+        supabase.from('contas_negocio').select('id, nome, tipo, saldo_inicial')
+          .eq('empresa_id', empresa.id).eq('ativa', true),
+        supabase.from('lancamentos_negocio').select('conta_id, tipo, valor')
+          .eq('empresa_id', empresa.id).eq('status', 'pago'),
+      ]);
+      contas = (cs || []).map((c) => {
+        const mov = (todos || []).filter((r) => r.conta_id === c.id);
+        return {
+          id: c.id, nome: c.nome, tipo: c.tipo,
+          saldo: (Number(c.saldo_inicial) || 0)
+            + soma(mov.filter((r) => r.tipo === 'entrada'))
+            - soma(mov.filter((r) => r.tipo === 'saida')),
+        };
+      });
+    } catch { contas = []; } // migration 095 pendente → painel sem o card de contas
+
+    res.json({
+      mes,
+      receita: atual.receita, despesa: atual.despesa, lucro: atual.lucro, margem: atual.margem,
+      ticket_medio: vendas.length ? Math.round(soma(vendas) / vendas.length) : 0,
+      vendas_qtd: vendas.length,
+      lancamentos_qtd: doMes(mes).length,
+      comparativo: {
+        receita: variacao(atual.receita, anterior.receita),
+        despesa: variacao(atual.despesa, anterior.despesa),
+        lucro:   variacao(atual.lucro,   anterior.lucro),
+        anterior,
+      },
+      a_receber: bucket('entrada'),
+      a_pagar:   bucket('saida'),
+      saldo_contas: contas.reduce((s, c) => s + c.saldo, 0),
+      contas,
+      evolucao,
+      por_dia: [...porDiaMap.values()].sort((a, b) => a.dia.localeCompare(b.dia)),
+      por_categoria: agrupar(doMes(mes).filter((r) => r.tipo === 'saida'), 'categoria', 'categoria').slice(0, 5),
+      por_forma:     agrupar(doMes(mes).filter((r) => r.tipo === 'entrada'), 'forma_pagamento', 'forma'),
+    });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // CONTAS DO NEGÓCIO (caixas nomeadas por empresa) — migration 095
 // Cada lançamento pode apontar pra uma conta; saldo por conta é calculado
 // no frontend (saldo_inicial + entradas pagas − saídas pagas).
