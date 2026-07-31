@@ -397,7 +397,21 @@ router.post('/vendas', auth, async (req, res) => {
       await supabase.from('vendas_negocio').update({ lancamento_id: lanc.id }).eq('id', venda.id);
     }
 
-    res.json({ ok: true, venda: { ...venda, lancamento_id: lanc?.id || null, itens } });
+    // 4. ESTOQUE: baixa o que saiu da prateleira (migration 107). Best-effort
+    //    por item — produto sem controle de estoque, serviço ou item avulso são
+    //    ignorados, e uma falha aqui NÃO derruba a venda: o dinheiro já entrou,
+    //    e saldo se acerta depois.
+    let estoque = [];
+    try {
+      const { baixarVenda } = require('../services/estoque');
+      estoque = await baixarVenda({
+        empresaId: ctx.empresa.id, vendaId: venda.id,
+        itens: itens.map((i, n) => ({ ...i, produto_id: itensBrutos[n]?.produto_id || i.produto_id })),
+        data,
+      });
+    } catch { /* migration 107 pendente → segue sem estoque */ }
+
+    res.json({ ok: true, venda: { ...venda, lancamento_id: lanc?.id || null, itens }, estoque });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
@@ -416,9 +430,279 @@ router.delete('/vendas/:id', auth, async (req, res) => {
     if (!ctx) return;
 
     if (v.lancamento_id) await supabase.from('lancamentos_negocio').delete().eq('id', v.lancamento_id);
+
+    // Devolve à prateleira o que tinha saído. Sem isto, cancelar venda faria o
+    // estoque encolher pra sempre — e o saldo mentir sem ninguém perceber.
+    try {
+      const { estornarVenda } = require('../services/estoque');
+      await estornarVenda({ empresaId: ctx.empresa.id, vendaId: v.id });
+    } catch { /* migration 107 pendente */ }
+
     await supabase.from('vendas_negocio')
       .update({ status: 'cancelada', lancamento_id: null }).eq('id', v.id);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// =============================================================================
+// ESTOQUE (migration 107)
+// =============================================================================
+
+/**
+ * GET /estoque/:phone — a visão que responde "onde está meu dinheiro parado".
+ * Traz saldo, alerta de reposição, valor imobilizado, parados e mais vendidos.
+ */
+router.get('/estoque/:phone', auth, async (req, res) => {
+  try {
+    const ctx = await contexto(req, res, req.query.empresa_id);
+    if (!ctx) return;
+
+    const { data: produtos, error } = await supabase.from('produtos_negocio')
+      .select('id, nome, sku, unidade, preco, custo, estoque_atual, estoque_min, controla_estoque, eh_servico, foto_url')
+      .eq('empresa_id', ctx.empresa.id).eq('ativo', true)
+      .order('nome', { ascending: true });
+    if (error) return semMigration(error, 'estoque_atual') ? res.json({ produtos: [], resumo: null }) : res.status(500).json({ erro: error.message });
+
+    const controlados = (produtos || []).filter((p) => p.controla_estoque && !p.eh_servico);
+
+    // Movimentos recentes: dão "última entrada/saída" e o que está PARADO.
+    const { data: movs } = await supabase.from('estoque_movimentos')
+      .select('produto_id, tipo, quantidade, data')
+      .eq('empresa_id', ctx.empresa.id)
+      .order('data', { ascending: false }).limit(2000);
+
+    const ultimo = new Map();   // produto → { entrada, saida }
+    const vendido90 = new Map();
+    const limite90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+
+    for (const m of movs || []) {
+      const acc = ultimo.get(m.produto_id) || { entrada: null, saida: null };
+      if (m.tipo === 'entrada' && !acc.entrada) acc.entrada = m.data;
+      if (m.tipo === 'saida'   && !acc.saida)   acc.saida = m.data;
+      ultimo.set(m.produto_id, acc);
+      if (m.tipo === 'saida' && m.data >= limite90) {
+        vendido90.set(m.produto_id, (vendido90.get(m.produto_id) || 0) + Number(m.quantidade));
+      }
+    }
+
+    const lista = controlados.map((p) => {
+      const saldo = Number(p.estoque_atual) || 0;
+      const min   = p.estoque_min == null ? null : Number(p.estoque_min);
+      const u = ultimo.get(p.id) || {};
+      return {
+        ...p,
+        estoque_atual: saldo,
+        valor_estoque: Math.round(saldo * (Number(p.custo) || 0)),
+        // Status em três níveis: o dono precisa distinguir "acabou" de "vai
+        // acabar" — a ação é diferente (repor hoje × entrar no próximo pedido).
+        status: saldo <= 0 ? 'zerado' : (min != null && saldo <= min ? 'baixo' : 'ok'),
+        ultima_entrada: u.entrada || null,
+        ultima_saida: u.saida || null,
+        vendido_90d: vendido90.get(p.id) || 0,
+        parado: saldo > 0 && !vendido90.get(p.id),
+      };
+    });
+
+    res.json({
+      produtos: lista,
+      resumo: {
+        itens: lista.length,
+        valor_total: lista.reduce((s, p) => s + p.valor_estoque, 0),
+        zerados: lista.filter((p) => p.status === 'zerado').length,
+        baixos:  lista.filter((p) => p.status === 'baixo').length,
+        parados: lista.filter((p) => p.parado).length,
+        // Dinheiro preso em item que não gira há 90 dias — o número que mais
+        // dói e que nenhuma planilha mostra sozinha.
+        valor_parado: lista.filter((p) => p.parado).reduce((s, p) => s + p.valor_estoque, 0),
+        sem_controle: (produtos || []).filter((p) => !p.controla_estoque && !p.eh_servico).length,
+      },
+    });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+/** POST /estoque/ajuste — acerto manual (contagem, perda, quebra). */
+router.post('/estoque/ajuste', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ctx = await contexto(req, res, b.empresa_id);
+    if (!ctx) return;
+    if (!b.produto_id || !b.quantidade) return res.status(400).json({ erro: 'Informe o produto e a quantidade.' });
+
+    const { movimentar } = require('../services/estoque');
+    const r = await movimentar({
+      empresaId: ctx.empresa.id, produtoId: b.produto_id,
+      tipo: b.tipo === 'saida' ? 'saida' : 'entrada',
+      motivo: ['perda', 'devolucao', 'ajuste'].includes(b.motivo) ? b.motivo : 'ajuste',
+      quantidade: b.quantidade, custoUnit: b.custo_unit || 0,
+      observacao: b.observacao || null,
+    });
+    if (!r) return res.status(400).json({ erro: 'Este produto não controla estoque.' });
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// =============================================================================
+// FORNECEDORES
+// =============================================================================
+router.get('/fornecedores/:phone', auth, async (req, res) => {
+  try {
+    const ctx = await contexto(req, res, req.query.empresa_id);
+    if (!ctx) return;
+    const { data, error } = await supabase.from('fornecedores_negocio')
+      .select('*').eq('empresa_id', ctx.empresa.id).eq('ativo', true)
+      .order('nome', { ascending: true });
+    if (error) return semMigration(error, 'fornecedores_negocio') ? res.json([]) : res.status(500).json({ erro: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/fornecedores', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ctx = await contexto(req, res, b.empresa_id);
+    if (!ctx) return;
+    if (!String(b.nome || '').trim()) return res.status(400).json({ erro: 'Informe o nome do fornecedor.' });
+    const { data, error } = await supabase.from('fornecedores_negocio').insert({
+      empresa_id: ctx.empresa.id,
+      nome: String(b.nome).trim(),
+      telefone: soDigitos(b.telefone) || null,
+      email: String(b.email || '').trim() || null,
+      documento: String(b.documento || '').trim() || null,
+      observacao: String(b.observacao || '').trim() || null,
+    }).select().single();
+    if (error) {
+      if (semMigration(error, 'fornecedores_negocio')) return res.status(503).json({ erro: 'Recurso ainda não liberado no banco (migration 107).' });
+      throw error;
+    }
+    res.json({ ok: true, fornecedor: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.delete('/fornecedores/:id', auth, async (req, res) => {
+  try {
+    const { data: f } = await supabase.from('fornecedores_negocio')
+      .select('id, empresa_id').eq('id', req.params.id).maybeSingle();
+    if (!f) return res.status(404).json({ erro: 'Fornecedor não encontrado.' });
+    const ctx = await contexto(req, res, f.empresa_id);
+    if (!ctx) return;
+    await supabase.from('fornecedores_negocio').update({ ativo: false }).eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// =============================================================================
+// COMPRAS — pedido ao fornecedor. Dá ENTRADA no estoque e gera CONTA A PAGAR.
+// =============================================================================
+router.get('/compras/:phone', auth, async (req, res) => {
+  try {
+    const ctx = await contexto(req, res, req.query.empresa_id);
+    if (!ctx) return;
+    const { data, error } = await supabase.from('compras_negocio')
+      .select('*, itens:compra_itens(*), fornecedor:fornecedores_negocio(id, nome)')
+      .eq('empresa_id', ctx.empresa.id)
+      .order('data', { ascending: false }).limit(200);
+    if (error) return semMigration(error, 'compras_negocio') ? res.json([]) : res.status(500).json({ erro: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/compras', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ctx = await contexto(req, res, b.empresa_id);
+    if (!ctx) return;
+    const itensBrutos = Array.isArray(b.itens) ? b.itens : [];
+    if (!itensBrutos.length) return res.status(400).json({ erro: 'Adicione pelo menos um item à compra.' });
+
+    const itens = itensBrutos.map((i) => {
+      const q = Number(i.quantidade) > 0 ? Number(i.quantidade) : 1;
+      const custo = cent(i.custo_unit);
+      return {
+        produto_id: i.produto_id || null,
+        nome: String(i.nome || 'Item').trim(),
+        quantidade: q, custo_unit: custo,
+        subtotal: Math.round(custo * q),
+      };
+    });
+    const total = itens.reduce((s, i) => s + i.subtotal, 0);
+    const data  = /^\d{4}-\d{2}-\d{2}$/.test(b.data || '') ? b.data : hojeSP();
+    // "Pedida" = ainda não chegou: não entra no estoque nem vira dívida agora.
+    const recebida = b.status !== 'pedida';
+    const aPrazo   = !!b.a_prazo;
+
+    const { data: compra, error } = await supabase.from('compras_negocio').insert({
+      empresa_id: ctx.empresa.id,
+      fornecedor_id: b.fornecedor_id || null,
+      fornecedor_nome: String(b.fornecedor_nome || '').trim() || null,
+      data, total,
+      status: recebida ? 'recebida' : 'pedida',
+      recebida_em: recebida ? data : null,
+      vencimento: aPrazo ? (b.vencimento || data) : null,
+      observacao: String(b.observacao || '').trim() || null,
+    }).select().single();
+    if (error) {
+      if (semMigration(error, 'compras_negocio')) return res.status(503).json({ erro: 'Recurso ainda não liberado no banco (migration 107).' });
+      throw error;
+    }
+
+    const { error: errItens } = await supabase.from('compra_itens')
+      .insert(itens.map((i) => ({ ...i, compra_id: compra.id })));
+    if (errItens) {
+      await supabase.from('compras_negocio').delete().eq('id', compra.id);
+      throw errItens;
+    }
+
+    // Conta a pagar (mesma ponte da venda→recebível).
+    const { data: lanc } = await supabase.from('lancamentos_negocio').insert({
+      empresa_id: ctx.empresa.id, user_id: ctx.user.id,
+      tipo: 'saida', categoria: 'fornecedor',
+      descricao: b.descricao || `Compra${b.fornecedor_nome ? ` — ${b.fornecedor_nome}` : ''}`,
+      valor: total, data,
+      status: aPrazo ? 'pendente' : 'pago',
+      vencimento: aPrazo ? (b.vencimento || data) : null,
+      pago_em: aPrazo ? null : data,
+      contraparte: String(b.fornecedor_nome || '').trim() || null,
+      conta_id: b.conta_id || null,
+      compra_id: compra.id,
+    }).select('id').single();
+
+    if (lanc?.id) await supabase.from('compras_negocio').update({ lancamento_id: lanc.id }).eq('id', compra.id);
+
+    // Só mercadoria RECEBIDA entra no estoque — o que foi só pedido ainda não
+    // está na prateleira e não pode aparecer como disponível pra vender.
+    let estoque = [];
+    if (recebida) {
+      try {
+        const { entrarCompra } = require('../services/estoque');
+        estoque = await entrarCompra({ empresaId: ctx.empresa.id, compraId: compra.id, itens, data });
+      } catch { /* segue sem estoque */ }
+    }
+
+    res.json({ ok: true, compra: { ...compra, lancamento_id: lanc?.id || null, itens }, estoque });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+/** Marca como recebida: é AQUI que a mercadoria pedida entra no estoque. */
+router.post('/compras/:id/receber', auth, async (req, res) => {
+  try {
+    const { data: c } = await supabase.from('compras_negocio')
+      .select('*, itens:compra_itens(*)').eq('id', req.params.id).maybeSingle();
+    if (!c) return res.status(404).json({ erro: 'Compra não encontrada.' });
+    const ctx = await contexto(req, res, c.empresa_id);
+    if (!ctx) return;
+    if (c.status === 'recebida') return res.json({ ok: true, jaRecebida: true });
+
+    const data = hojeSP();
+    await supabase.from('compras_negocio')
+      .update({ status: 'recebida', recebida_em: data }).eq('id', c.id);
+
+    let estoque = [];
+    try {
+      const { entrarCompra } = require('../services/estoque');
+      estoque = await entrarCompra({ empresaId: ctx.empresa.id, compraId: c.id, itens: c.itens || [], data });
+    } catch { /* segue */ }
+
+    res.json({ ok: true, estoque });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
