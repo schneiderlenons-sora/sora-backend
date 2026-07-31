@@ -35,6 +35,9 @@ app.get('/health', (req, res) => {
 app.use('/webhook',          require('./routes/webhook'));
 app.use('/webhook/meta',     require('./routes/webhook-meta'));
 app.use('/webhook/negocios', require('./routes/webhook-negocios'));
+// Operação (clientes/produtos/vendas) monta no MESMO prefixo, em arquivo
+// próprio — `negocios.js` já passa de 1.600 linhas.
+app.use('/api/negocios',     require('./routes/negociosOperacao'));
 app.use('/api/negocios',     require('./routes/negocios'));
 app.use('/api/transacoes',   require('./routes/transacoes'));
 app.use('/api/dashboard',    require('./routes/dashboard'));

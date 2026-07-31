@@ -1,0 +1,425 @@
+// =============================================================================
+// Sora Negócios — OPERAÇÃO: clientes, produtos e vendas (fase 2, migration 106).
+//
+// Arquivo próprio porque `routes/negocios.js` já passa de 1.600 linhas. Monta
+// no MESMO prefixo (/api/negocios), então pro cliente é tudo uma coisa só.
+//
+// A regra que amarra tudo: VENDA GERA LANÇAMENTO NO CAIXA. Não existe "caixa de
+// vendas" paralelo — à vista nasce lançamento pago, a prazo nasce pendente (que
+// é a conta a receber). É a mesma escolha da folha e das contas a pagar, e é o
+// que faz o DRE e os indicadores enxergarem a venda sem nenhuma ponte.
+// =============================================================================
+const express  = require('express');
+const router   = express.Router();
+const supabase = require('../db/supabase');
+const auth     = require('../middlewares/auth');
+
+async function getUser(req) {
+  const { data } = await supabase.from('users')
+    .select('id, grupo_ativo, plano').eq('id', req.authUser?.id || '__none__').maybeSingle();
+  return data;
+}
+const temAcesso = (u) => u?.plano === 'premium' || u?.plano === 'black';
+
+/** Empresa do usuário (anti-IDOR: sempre valida a posse). */
+async function empresaDoUsuario(userId, empresaId) {
+  if (!empresaId) return null;
+  const { data } = await supabase.from('empresas')
+    .select('id').eq('id', empresaId).eq('user_id', userId).maybeSingle();
+  return data || null;
+}
+
+/** Guarda comum: autenticado + plano + empresa dele. */
+async function contexto(req, res, empresaIdBruto) {
+  const user = await getUser(req);
+  if (!user?.grupo_ativo) { res.status(404).json({ erro: 'Usuário não encontrado.' }); return null; }
+  if (!temAcesso(user))   { res.status(403).json({ erro: 'Recurso do plano Premium.' }); return null; }
+  const empresa = await empresaDoUsuario(user.id, empresaIdBruto);
+  if (!empresa)           { res.status(404).json({ erro: 'Empresa não encontrada.' }); return null; }
+  return { user, empresa };
+}
+
+/** Erro de tabela ausente (migration 106 pendente) → resposta clara, não 500. */
+const semMigration = (error, tabela) =>
+  new RegExp(tabela, 'i').test(error?.message || '') && /does not exist|schema cache/i.test(error?.message || '');
+
+const hojeSP = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+const cent   = (v) => Math.round(Number(v) || 0);
+const soDigitos = (s) => String(s || '').replace(/\D/g, '');
+
+// =============================================================================
+// CLIENTES
+// =============================================================================
+router.get('/clientes/:phone', auth, async (req, res) => {
+  try {
+    const ctx = await contexto(req, res, req.query.empresa_id);
+    if (!ctx) return;
+
+    let q = supabase.from('clientes_negocio')
+      .select('*').eq('empresa_id', ctx.empresa.id).eq('ativo', true);
+
+    // Busca do balcão: o vendedor digita 2 letras e espera a lista na hora.
+    const busca = String(req.query.q || '').trim();
+    if (busca) q = q.or(`nome.ilike.%${busca}%,telefone.ilike.%${busca}%`);
+
+    const { data, error } = await q.order('nome', { ascending: true }).limit(300);
+    if (error) return semMigration(error, 'clientes_negocio') ? res.json([]) : res.status(500).json({ erro: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Ficha do cliente: cadastro + o que ele já comprou. É o que responde
+// "quanto esse cliente vale" — sem isso a lista de clientes é só uma agenda.
+router.get('/clientes/:phone/:id', auth, async (req, res) => {
+  try {
+    const { data: cli } = await supabase.from('clientes_negocio')
+      .select('*').eq('id', req.params.id).maybeSingle();
+    if (!cli) return res.status(404).json({ erro: 'Cliente não encontrado.' });
+    const ctx = await contexto(req, res, cli.empresa_id);
+    if (!ctx) return;
+
+    const { data: vendas } = await supabase.from('vendas_negocio')
+      .select('id, data, total, custo_total, status, forma_pagamento')
+      .eq('cliente_id', cli.id).neq('status', 'cancelada')
+      .order('data', { ascending: false }).limit(50);
+
+    const lista = vendas || [];
+    const totalGasto  = lista.reduce((s, v) => s + (v.total || 0), 0);
+    const lucroGerado = lista.reduce((s, v) => s + ((v.total || 0) - (v.custo_total || 0)), 0);
+
+    res.json({
+      ...cli,
+      resumo: {
+        compras: lista.length,
+        total_gasto: totalGasto,
+        lucro_gerado: lucroGerado,
+        ticket_medio: lista.length ? Math.round(totalGasto / lista.length) : 0,
+        ultima_compra: lista[0]?.data || null,
+        em_aberto: lista.filter((v) => v.status === 'pendente').reduce((s, v) => s + (v.total || 0), 0),
+      },
+      vendas: lista,
+    });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/clientes', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ctx = await contexto(req, res, b.empresa_id);
+    if (!ctx) return;
+    const nome = String(b.nome || '').trim();
+    if (!nome) return res.status(400).json({ erro: 'Informe o nome do cliente.' });
+
+    const { data, error } = await supabase.from('clientes_negocio').insert({
+      empresa_id: ctx.empresa.id,
+      nome,
+      telefone:  soDigitos(b.telefone) || null,
+      email:     String(b.email || '').trim() || null,
+      documento: String(b.documento || '').trim() || null,
+      endereco:  String(b.endereco || '').trim() || null,
+      observacao: String(b.observacao || '').trim() || null,
+    }).select().single();
+    if (error) {
+      if (semMigration(error, 'clientes_negocio')) return res.status(503).json({ erro: 'Recurso ainda não liberado no banco (migration 106).' });
+      throw error;
+    }
+    res.json({ ok: true, cliente: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.put('/clientes/:id', auth, async (req, res) => {
+  try {
+    const { data: cli } = await supabase.from('clientes_negocio')
+      .select('id, empresa_id').eq('id', req.params.id).maybeSingle();
+    if (!cli) return res.status(404).json({ erro: 'Cliente não encontrado.' });
+    const ctx = await contexto(req, res, cli.empresa_id);
+    if (!ctx) return;
+
+    const b = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (b.nome       !== undefined) patch.nome       = String(b.nome).trim();
+    if (b.telefone   !== undefined) patch.telefone   = soDigitos(b.telefone) || null;
+    if (b.email      !== undefined) patch.email      = String(b.email).trim() || null;
+    if (b.documento  !== undefined) patch.documento  = String(b.documento).trim() || null;
+    if (b.endereco   !== undefined) patch.endereco   = String(b.endereco).trim() || null;
+    if (b.observacao !== undefined) patch.observacao = String(b.observacao).trim() || null;
+
+    const { data, error } = await supabase.from('clientes_negocio')
+      .update(patch).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ ok: true, cliente: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Arquiva: as vendas dele continuam com o vínculo e o histórico não muda.
+router.delete('/clientes/:id', auth, async (req, res) => {
+  try {
+    const { data: cli } = await supabase.from('clientes_negocio')
+      .select('id, empresa_id').eq('id', req.params.id).maybeSingle();
+    if (!cli) return res.status(404).json({ erro: 'Cliente não encontrado.' });
+    const ctx = await contexto(req, res, cli.empresa_id);
+    if (!ctx) return;
+    await supabase.from('clientes_negocio').update({ ativo: false }).eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// =============================================================================
+// PRODUTOS E SERVIÇOS
+// =============================================================================
+router.get('/produtos/:phone', auth, async (req, res) => {
+  try {
+    const ctx = await contexto(req, res, req.query.empresa_id);
+    if (!ctx) return;
+
+    let q = supabase.from('produtos_negocio')
+      .select('*').eq('empresa_id', ctx.empresa.id).eq('ativo', true);
+
+    const busca = String(req.query.q || '').trim();
+    // Scanner de código de barras: busca exata primeiro (1 hit, sem ambiguidade).
+    if (req.query.codigo) q = q.eq('codigo_barras', String(req.query.codigo).trim());
+    else if (busca) q = q.or(`nome.ilike.%${busca}%,sku.ilike.%${busca}%`);
+
+    const { data, error } = await q.order('nome', { ascending: true }).limit(500);
+    if (error) return semMigration(error, 'produtos_negocio') ? res.json([]) : res.status(500).json({ erro: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+function validarProduto(b) {
+  if (!String(b.nome || '').trim()) return 'Informe o nome do produto.';
+  if (b.preco !== undefined && Number(b.preco) < 0) return 'O preço não pode ser negativo.';
+  if (b.custo !== undefined && Number(b.custo) < 0) return 'O custo não pode ser negativo.';
+  if (b.foto_url && String(b.foto_url).length > 700000) return 'A foto é muito grande (máx. ~500 KB).';
+  return null;
+}
+
+router.post('/produtos', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ctx = await contexto(req, res, b.empresa_id);
+    if (!ctx) return;
+    const erroValid = validarProduto(b);
+    if (erroValid) return res.status(400).json({ erro: erroValid });
+
+    const { data, error } = await supabase.from('produtos_negocio').insert({
+      empresa_id: ctx.empresa.id,
+      nome: String(b.nome).trim(),
+      sku: String(b.sku || '').trim() || null,
+      codigo_barras: String(b.codigo_barras || '').trim() || null,
+      categoria: String(b.categoria || '').trim() || null,
+      preco: cent(b.preco), custo: cent(b.custo),
+      unidade: String(b.unidade || 'un').trim(),
+      eh_servico: !!b.eh_servico,
+      estoque_min: b.estoque_min == null ? null : cent(b.estoque_min),
+      foto_url: b.foto_url || null,
+    }).select().single();
+    if (error) {
+      if (/uq_produtos_sku/.test(error.message || '')) {
+        return res.status(409).json({ erro: 'Já existe um produto com esse SKU.' });
+      }
+      if (semMigration(error, 'produtos_negocio')) return res.status(503).json({ erro: 'Recurso ainda não liberado no banco (migration 106).' });
+      throw error;
+    }
+    res.json({ ok: true, produto: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.put('/produtos/:id', auth, async (req, res) => {
+  try {
+    const { data: p } = await supabase.from('produtos_negocio')
+      .select('id, empresa_id').eq('id', req.params.id).maybeSingle();
+    if (!p) return res.status(404).json({ erro: 'Produto não encontrado.' });
+    const ctx = await contexto(req, res, p.empresa_id);
+    if (!ctx) return;
+    const b = req.body || {};
+    const erroValid = validarProduto({ nome: b.nome ?? 'x', ...b });
+    if (erroValid) return res.status(400).json({ erro: erroValid });
+
+    const patch = { updated_at: new Date().toISOString() };
+    for (const campo of ['nome', 'sku', 'codigo_barras', 'categoria', 'unidade']) {
+      if (b[campo] !== undefined) patch[campo] = String(b[campo]).trim() || null;
+    }
+    if (b.preco       !== undefined) patch.preco = cent(b.preco);
+    if (b.custo       !== undefined) patch.custo = cent(b.custo);
+    if (b.eh_servico  !== undefined) patch.eh_servico = !!b.eh_servico;
+    if (b.estoque_min !== undefined) patch.estoque_min = b.estoque_min == null ? null : cent(b.estoque_min);
+    if (b.foto_url    !== undefined) patch.foto_url = b.foto_url || null;
+
+    const { data, error } = await supabase.from('produtos_negocio')
+      .update(patch).eq('id', req.params.id).select().single();
+    if (error) {
+      if (/uq_produtos_sku/.test(error.message || '')) return res.status(409).json({ erro: 'Já existe um produto com esse SKU.' });
+      throw error;
+    }
+    res.json({ ok: true, produto: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Arquiva: item já vendido não pode sumir (a venda antiga ficaria órfã).
+router.delete('/produtos/:id', auth, async (req, res) => {
+  try {
+    const { data: p } = await supabase.from('produtos_negocio')
+      .select('id, empresa_id').eq('id', req.params.id).maybeSingle();
+    if (!p) return res.status(404).json({ erro: 'Produto não encontrado.' });
+    const ctx = await contexto(req, res, p.empresa_id);
+    if (!ctx) return;
+    await supabase.from('produtos_negocio').update({ ativo: false }).eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// =============================================================================
+// VENDAS
+// =============================================================================
+router.get('/vendas/:phone', auth, async (req, res) => {
+  try {
+    const ctx = await contexto(req, res, req.query.empresa_id);
+    if (!ctx) return;
+
+    let q = supabase.from('vendas_negocio')
+      .select('*, itens:venda_itens(*), cliente:clientes_negocio(id, nome, telefone)')
+      .eq('empresa_id', ctx.empresa.id);
+
+    if (req.query.mes && /^\d{4}-\d{2}$/.test(req.query.mes)) {
+      const [a, m] = req.query.mes.split('-').map(Number);
+      const prox = new Date(Date.UTC(a, m, 1));
+      q = q.gte('data', `${req.query.mes}-01`)
+           .lt('data', `${prox.getUTCFullYear()}-${String(prox.getUTCMonth() + 1).padStart(2, '0')}-01`);
+    }
+    if (req.query.cliente_id) q = q.eq('cliente_id', req.query.cliente_id);
+    if (req.query.status)     q = q.eq('status', req.query.status);
+
+    const { data, error } = await q.order('data', { ascending: false }).limit(300);
+    if (error) return semMigration(error, 'vendas_negocio') ? res.json([]) : res.status(500).json({ erro: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+/**
+ * POST /api/negocios/vendas — registra a venda E o dinheiro dela.
+ *
+ * O item chega com `produto_id` OU só com nome+preço (venda avulsa do balcão,
+ * sem cadastro). Preço e custo são CONGELADOS no item: se o produto mudar de
+ * preço amanhã, a margem desta venda continua a mesma — senão o histórico de
+ * lucro se reescreveria sozinho a cada alteração de tabela de preço.
+ */
+router.post('/vendas', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ctx = await contexto(req, res, b.empresa_id);
+    if (!ctx) return;
+
+    const itensBrutos = Array.isArray(b.itens) ? b.itens : [];
+    if (!itensBrutos.length) return res.status(400).json({ erro: 'Adicione pelo menos um item à venda.' });
+
+    // Busca os produtos citados de uma vez (preço/custo/nome atuais).
+    const ids = [...new Set(itensBrutos.map((i) => i.produto_id).filter(Boolean))];
+    let produtos = [];
+    if (ids.length) {
+      const { data } = await supabase.from('produtos_negocio')
+        .select('id, nome, preco, custo').in('id', ids).eq('empresa_id', ctx.empresa.id);
+      produtos = data || [];
+    }
+
+    const itens = itensBrutos.map((i) => {
+      const p = produtos.find((x) => x.id === i.produto_id);
+      const qtd   = Number(i.quantidade) > 0 ? Number(i.quantidade) : 1;
+      // Preço informado manda (permite desconto na hora); senão, o do cadastro.
+      const preco = i.preco_unit != null ? cent(i.preco_unit) : cent(p?.preco);
+      const custo = i.custo_unit != null ? cent(i.custo_unit) : cent(p?.custo);
+      const nome  = String(i.nome || p?.nome || 'Item').trim();
+      return {
+        produto_id: p?.id || null,
+        nome, quantidade: qtd,
+        preco_unit: preco, custo_unit: custo,
+        subtotal: Math.round(preco * qtd),
+      };
+    });
+
+    const bruto    = itens.reduce((s, i) => s + i.subtotal, 0);
+    const desconto = cent(b.desconto);
+    const total    = Math.max(0, bruto - desconto);
+    const custoTot = itens.reduce((s, i) => s + Math.round(i.custo_unit * i.quantidade), 0);
+
+    const aPrazo = b.status === 'pendente';
+    const data   = /^\d{4}-\d{2}-\d{2}$/.test(b.data || '') ? b.data : hojeSP();
+
+    // 1. A venda
+    const { data: venda, error: errVenda } = await supabase.from('vendas_negocio').insert({
+      empresa_id: ctx.empresa.id,
+      cliente_id: b.cliente_id || null,
+      cliente_nome: String(b.cliente_nome || '').trim() || null,
+      data, total, desconto, custo_total: custoTot,
+      forma_pagamento: b.forma_pagamento || null,
+      status: aPrazo ? 'pendente' : 'pago',
+      vencimento: aPrazo ? (b.vencimento || data) : null,
+      observacao: String(b.observacao || '').trim() || null,
+      vendedor_id: b.vendedor_id || null,
+      conta_id: b.conta_id || null,
+    }).select().single();
+    if (errVenda) {
+      if (semMigration(errVenda, 'vendas_negocio')) return res.status(503).json({ erro: 'Recurso ainda não liberado no banco (migration 106).' });
+      throw errVenda;
+    }
+
+    // 2. Os itens
+    const { error: errItens } = await supabase.from('venda_itens')
+      .insert(itens.map((i) => ({ ...i, venda_id: venda.id })));
+    if (errItens) {
+      // Venda sem item é lixo — desfaz pra não deixar registro pela metade.
+      await supabase.from('vendas_negocio').delete().eq('id', venda.id);
+      throw errItens;
+    }
+
+    // 3. O DINHEIRO: a venda vira lançamento no caixa. À vista = pago;
+    //    a prazo = pendente, que é exatamente a conta a receber.
+    const descricao = b.descricao
+      || (itens.length === 1 ? itens[0].nome : `Venda (${itens.length} itens)`);
+    const { data: lanc } = await supabase.from('lancamentos_negocio').insert({
+      empresa_id: ctx.empresa.id,
+      user_id: ctx.user.id,
+      tipo: 'entrada',
+      categoria: 'vendas',
+      descricao,
+      valor: total,
+      data,
+      status: aPrazo ? 'pendente' : 'pago',
+      vencimento: aPrazo ? (b.vencimento || data) : null,
+      pago_em: aPrazo ? null : data,
+      forma_pagamento: b.forma_pagamento || null,
+      contraparte: String(b.cliente_nome || '').trim() || null,
+      conta_id: b.conta_id || null,
+      venda_id: venda.id,
+    }).select('id').single();
+
+    if (lanc?.id) {
+      await supabase.from('vendas_negocio').update({ lancamento_id: lanc.id }).eq('id', venda.id);
+    }
+
+    res.json({ ok: true, venda: { ...venda, lancamento_id: lanc?.id || null, itens } });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+/**
+ * Cancela a venda. Não apaga: `status='cancelada'` preserva o histórico (o
+ * dono precisa saber que houve e foi desfeita). O lançamento no caixa, esse
+ * sim, é removido — senão o faturamento do mês continuaria contando dinheiro
+ * que não entrou.
+ */
+router.delete('/vendas/:id', auth, async (req, res) => {
+  try {
+    const { data: v } = await supabase.from('vendas_negocio')
+      .select('id, empresa_id, lancamento_id').eq('id', req.params.id).maybeSingle();
+    if (!v) return res.status(404).json({ erro: 'Venda não encontrada.' });
+    const ctx = await contexto(req, res, v.empresa_id);
+    if (!ctx) return;
+
+    if (v.lancamento_id) await supabase.from('lancamentos_negocio').delete().eq('id', v.lancamento_id);
+    await supabase.from('vendas_negocio')
+      .update({ status: 'cancelada', lancamento_id: null }).eq('id', v.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+module.exports = router;
