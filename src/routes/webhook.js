@@ -433,6 +433,18 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     if (!data) data = interpretarRapido(mensagem); // tenta regex primeiro (grátis)
     TR(`rapido:${data?.acao || 'NULL'}`);
 
+    // Venda do negócio (local-first, sem IA): "vendi 3 bolos por 90 pra dona
+    // Maria" → venda + caixa + baixa no estoque. Roda ANTES do Grow porque
+    // "vendi" nunca é tarefa nem nota.
+    // ⚠️ Só dispara pra quem tem empresa FÍSICA/HÍBRIDA cadastrada: em conta
+    // pessoal "vendi meu celular por 500" é RECEITA, e interceptar isso
+    // quebraria o fluxo de finanças pessoais.
+    if (!data) {
+      try {
+        if (await require('../handlers/vendaNegocio').capturaVenda(mensagem, { phone, user })) return;
+      } catch (e) { console.error('venda negócio:', e.message); }
+    }
+
     // Quick-capture do Grow (local-first, sem IA): TAREFA e NOTA por linguagem
     // natural ("lembra de comprar as passagens", "anota que ...", "o que anotei
     // sobre ..."). Roda ANTES da Agenda; tarefa/nota só disparam SEM data (com
