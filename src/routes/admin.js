@@ -57,17 +57,23 @@ router.post('/responder-relato', async (req, res) => {
 
 // ── COMUNICADO EM MASSA ──────────────────────────────────────────────────────
 // POST /api/admin/broadcast  { texto, planos[], teste?, dryRun?, apenasRecorrentes? }
-// Usa o template `comunicado_sora` — o mesmo da resposta a relato, com a capa de
-// comunicado. São DOIS parâmetros: {{1}} = primeiro nome de quem recebe (por isso
-// o disparo busca o `name` junto com o telefone) e {{2}} = o texto do aviso.
+// Usa o template `atualizacao_sora` (ver TEMPLATE_COMUNICADO abaixo), com a capa
+// de comunicado. São DOIS parâmetros: {{1}} = primeiro nome de quem recebe (por
+// isso o disparo busca o `name` junto com o telefone) e {{2}} = o texto do aviso.
 //   · teste=<phone>  → manda 1 mensagem e retorna o resultado na hora (síncrono).
 //   · dryRun         → só CONTA quantos receberiam (não envia).
 //   · senão          → dispara em BACKGROUND (Render aguenta o loop) e responde já.
-// Nome do template do comunicado. Configurável por env pra trocar assim que a
-// Meta aprovar um modelo novo, SEM esperar deploy — o `comunicado_sora` é de
-// resposta a relato ("sobre o que você nos enviou"), que não cabe num aviso em
-// massa. O modelo novo tem de manter os MESMOS params: {{1}} nome, {{2}} texto.
-const TEMPLATE_COMUNICADO = process.env.WHATSAPP_TPL_COMUNICADO || TEMPLATE_RESPOSTA;
+// Template do comunicado em massa: `atualizacao_sora` (APROVADO na Meta em
+// jul/2026) — "Oi, {{1}}! Uma atualização da Sora pra você: {{2}}".
+//
+// Antes caía no `comunicado_sora`, que é de RESPOSTA A RELATO ("…sobre o que
+// você nos enviou: …") e soava errado num aviso em massa — quem não tinha
+// relatado nada recebia uma resposta a algo que nunca escreveu.
+//
+// Os params são os MESMOS dos dois modelos de propósito ({{1}} nome, {{2}}
+// texto): trocar de template é trocar o nome, nunca mexer no disparo.
+// A env continua valendo pra voltar atrás sem deploy, se a Meta pausar o modelo.
+const TEMPLATE_COMUNICADO = process.env.WHATSAPP_TPL_COMUNICADO || 'atualizacao_sora';
 
 const TPL_BROADCAST = (texto, nome) => ({
   name: TEMPLATE_COMUNICADO,
@@ -92,7 +98,7 @@ router.post('/broadcast', async (req, res) => {
     if (!texto) return res.status(400).json({ erro: 'Escreva a mensagem.' });
     if (teste.length < 10) return res.status(400).json({ erro: 'Número de teste inválido.' });
     // Busca o nome do número de teste pra o teste sair IGUAL ao disparo real —
-    // o comunicado_sora abre com "Oi, {{1}}!" e um teste com nome genérico
+    // o template abre com "Oi, {{1}}!" e um teste com nome genérico
     // esconderia justamente a saudação que todo mundo vai receber.
     const { data: quem } = await supabase.from('users')
       .select('name').eq('phone', teste).maybeSingle();
@@ -111,7 +117,7 @@ router.post('/broadcast', async (req, res) => {
   // (29 contas), então filtrar só por plano mandaria aviso de recurso de
   // assinatura pra quem não tem assinatura. Ex.: o comunicado do Open Finance.
   const apenasRecorrentes = !!req.body?.apenasRecorrentes;
-  // `name` entra aqui porque o comunicado_sora abre com "Oi, {{1}}!".
+  // `name` entra aqui porque o template abre com "Oi, {{1}}!".
   let q = supabase.from('users').select('phone, name').in('plano', planos).not('phone', 'is', null);
   if (apenasRecorrentes) q = q.or('vitalicio.is.null,vitalicio.eq.false');
   const { data: rows, error } = await q;

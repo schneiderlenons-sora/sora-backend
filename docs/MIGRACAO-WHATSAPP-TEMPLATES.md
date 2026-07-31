@@ -126,9 +126,9 @@ Aviso de novidade disparado pelo painel admin (**Admin → Comunicados**).
   de propósito: trocar de template vira só mudar a env, sem mexer no código.
 - **Amostras que a Meta pede:** `{{1}}` = `Lenon` · `{{2}}` = `O Open Finance
   chegou! Conecte seu banco e receba saldo, transações e fatura automaticamente.`
-- **Ligar quando aprovar:** `WHATSAPP_TPL_COMUNICADO=atualizacao_sora` no Render.
-  Sem essa env o broadcast cai no `comunicado_sora`, que é de **resposta a
-  relato** ("…sobre o que você nos enviou: …") e soa errado num aviso em massa.
+- **APROVADO e EM USO (jul/2026)** — é o padrão do código (`routes/admin.js`),
+  não depende de env nenhuma. A `WHATSAPP_TPL_COMUNICADO` fica só como volta
+  atrás sem deploy (`=comunicado_sora`) caso a Meta pause o modelo.
 
 > ⚠️ `{{2}}` chega sempre em **linha única** — a Cloud API não aceita `\n` em
 > parâmetro, e o `oneLine()` do admin.js troca quebra por espaço. Quem escreve o
