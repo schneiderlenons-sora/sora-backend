@@ -13,6 +13,7 @@ const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
+const { comissaoDe, resumoMensal } = require('../services/folha');
 
 async function getUser(req) {
   const { data } = await supabase.from('users')
@@ -345,6 +346,16 @@ router.post('/vendas', auth, async (req, res) => {
     const aPrazo = b.status === 'pendente';
     const data   = /^\d{4}-\d{2}-\d{2}$/.test(b.data || '') ? b.data : hojeSP();
 
+    // Comissão do vendedor — CONGELADA aqui, pelo mesmo motivo que preço e
+    // custo congelam: mudar o percentual dele amanhã não pode reescrever
+    // quanto ele ganhou hoje.
+    let comissao = 0;
+    if (b.vendedor_id) {
+      const { data: vend } = await supabase.from('funcionarios_negocio')
+        .select('comissao_pct').eq('id', b.vendedor_id).maybeSingle();
+      comissao = comissaoDe(total, vend?.comissao_pct);
+    }
+
     // 1. A venda
     const { data: venda, error: errVenda } = await supabase.from('vendas_negocio').insert({
       empresa_id: ctx.empresa.id,
@@ -357,6 +368,7 @@ router.post('/vendas', auth, async (req, res) => {
       observacao: String(b.observacao || '').trim() || null,
       vendedor_id: b.vendedor_id || null,
       conta_id: b.conta_id || null,
+      ...(comissao > 0 ? { comissao_valor: comissao } : {}),
     }).select().single();
     if (errVenda) {
       if (semMigration(errVenda, 'vendas_negocio')) return res.status(503).json({ erro: 'Recurso ainda não liberado no banco (migration 106).' });
@@ -703,6 +715,122 @@ router.post('/compras/:id/receber', auth, async (req, res) => {
     } catch { /* segue */ }
 
     res.json({ ok: true, estoque });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// EQUIPE — o custo real de quem trabalha com você (fase 5, migration 109)
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/negocios/equipe/:phone?empresa_id=&mes=YYYY-MM
+//
+// Devolve, por pessoa: salário, comissão APURADA e ainda devida, encargos
+// estimados e se o salário do mês já saiu. Uma chamada só — a tela de equipe
+// fazia N requisições pra montar isso.
+router.get('/equipe/:phone', auth, async (req, res) => {
+  try {
+    const ctx = await contexto(req, res, req.query.empresa_id);
+    if (!ctx) return;
+
+    const mes = /^\d{4}-\d{2}$/.test(req.query.mes || '') ? req.query.mes : hojeSP().slice(0, 7);
+    const ini = `${mes}-01`;
+    const fimD = new Date(ini); fimD.setMonth(fimD.getMonth() + 1);
+    const fim = fimD.toISOString().slice(0, 10);
+
+    const { data: funcs } = await supabase.from('funcionarios_negocio')
+      .select('*').eq('empresa_id', ctx.empresa.id).eq('ativo', true)
+      .order('nome');
+    const lista = funcs || [];
+
+    // Comissões: as ABERTAS (nunca pagas, de qualquer mês — dívida é dívida) e
+    // as apuradas no mês, pra mostrar o desempenho do período.
+    let vendas = [];
+    try {
+      const { data } = await supabase.from('vendas_negocio')
+        .select('vendedor_id, comissao_valor, comissao_paga_em, data, total, status')
+        .eq('empresa_id', ctx.empresa.id)
+        .neq('status', 'cancelada')
+        .gt('comissao_valor', 0);
+      vendas = data || [];
+    } catch { /* sem a 109 ainda → sem comissão */ }
+
+    // Salário já pago no mês (lançamento de folha vinculado à pessoa).
+    const { data: pagos } = await supabase.from('lancamentos_negocio')
+      .select('funcionario_id, valor, descricao')
+      .eq('empresa_id', ctx.empresa.id).eq('categoria', 'folha')
+      .gte('data', ini).lt('data', fim);
+
+    const inss = !!(req.query.inss_patronal === '1');
+
+    const equipe = lista.map(f => {
+      const minhas = vendas.filter(v => v.vendedor_id === f.id);
+      const comissao_aberta = minhas.filter(v => !v.comissao_paga_em)
+        .reduce((s, v) => s + (v.comissao_valor || 0), 0);
+      const comissao_mes = minhas.filter(v => v.data >= ini && v.data < fim)
+        .reduce((s, v) => s + (v.comissao_valor || 0), 0);
+      const vendas_mes = minhas.filter(v => v.data >= ini && v.data < fim).length;
+      const pagoMes = (pagos || []).filter(p => p.funcionario_id === f.id)
+        .reduce((s, p) => s + (p.valor || 0), 0);
+
+      return {
+        ...f,
+        ...resumoMensal(f, comissao_aberta, inss),
+        comissao_aberta, comissao_mes, vendas_mes,
+        pago_no_mes: pagoMes,
+        // "Já pagou o salário deste mês?" — a pergunta que a lista responde.
+        salario_pago: pagoMes >= (f.salario || 0) && (f.salario || 0) > 0,
+      };
+    });
+
+    res.json({
+      mes,
+      equipe,
+      folha_salarios: equipe.reduce((s, f) => s + (f.salario || 0), 0),
+      comissoes_abertas: equipe.reduce((s, f) => s + f.comissao_aberta, 0),
+      encargos_estimados: equipe.reduce((s, f) => s + (f.encargos || 0), 0),
+      custo_total: equipe.reduce((s, f) => s + f.custo_total, 0),
+    });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// POST /api/negocios/funcionarios/:id/pagar-comissao
+// Paga TUDO que está aberto pra essa pessoa e marca as vendas. Marcar é o que
+// impede pagar a mesma comissão duas vezes — sem isso, a lista continuaria
+// mostrando a dívida e o dono pagaria de novo no mês seguinte.
+router.post('/funcionarios/:id/pagar-comissao', auth, async (req, res) => {
+  try {
+    const { data: f } = await supabase.from('funcionarios_negocio')
+      .select('*').eq('id', req.params.id).maybeSingle();
+    if (!f) return res.status(404).json({ erro: 'Funcionário não encontrado.' });
+    const ctx = await contexto(req, res, f.empresa_id);
+    if (!ctx) return;
+
+    const { data: abertas } = await supabase.from('vendas_negocio')
+      .select('id, comissao_valor')
+      .eq('empresa_id', f.empresa_id).eq('vendedor_id', f.id)
+      .neq('status', 'cancelada')
+      .gt('comissao_valor', 0).is('comissao_paga_em', null);
+
+    const total = (abertas || []).reduce((s, v) => s + (v.comissao_valor || 0), 0);
+    if (total <= 0) return res.json({ ok: true, nada: true });
+
+    const data = hojeSP();
+    const { data: lanc, error } = await supabase.from('lancamentos_negocio').insert({
+      empresa_id: f.empresa_id,
+      user_id: ctx.user.id,
+      tipo: 'saida', categoria: 'folha',
+      descricao: `Comissão — ${f.nome}`,
+      valor: total, data, status: 'pago', pago_em: data,
+      forma_pagamento: req.body?.forma_pagamento || 'pix',
+      contraparte: f.nome, funcionario_id: f.id,
+    }).select().single();
+    if (error) throw error;
+
+    await supabase.from('vendas_negocio')
+      .update({ comissao_paga_em: data })
+      .in('id', (abertas || []).map(v => v.id));
+
+    res.json({ ok: true, total, lancamento: lanc });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 

@@ -402,6 +402,10 @@ router.post('/funcionarios', auth, async (req, res) => {
       dia_pagamento: b.dia_pagamento ? Number(b.dia_pagamento) : null,
       pix:           b.pix || null,
       observacao:    b.observacao || null,
+      // Migration 109 — em base antiga o insert falharia por coluna inexistente;
+      // só manda quando o usuário de fato configurou.
+      ...(Number(b.comissao_pct) > 0 ? { comissao_pct: Number(b.comissao_pct) } : {}),
+      ...(b.encargos ? { encargos: true } : {}),
     }).select().single();
     if (error) throw error;
     res.json({ ok: true, funcionario: data });
@@ -428,9 +432,20 @@ router.put('/funcionarios/:id', auth, async (req, res) => {
     if (b.salario !== undefined) patch.salario = Math.round(Number(b.salario) || 0);
     if (b.dia_pagamento !== undefined) patch.dia_pagamento = b.dia_pagamento ? Number(b.dia_pagamento) : null;
 
-    const { data, error } = await supabase.from('funcionarios_negocio')
-      .update(patch).eq('id', req.params.id).eq('user_id', user.id) // anti-IDOR
+    // Migration 109: se ela ainda não rodou, o update inteiro falharia e o
+    // usuário não conseguiria nem corrigir um nome. Vai em tentativa separada.
+    const patch109 = {};
+    if (b.comissao_pct !== undefined) patch109.comissao_pct = Math.max(0, Number(b.comissao_pct) || 0);
+    if (b.encargos !== undefined) patch109.encargos = !!b.encargos;
+
+    let { data, error } = await supabase.from('funcionarios_negocio')
+      .update({ ...patch, ...patch109 }).eq('id', req.params.id).eq('user_id', user.id) // anti-IDOR
       .select().maybeSingle();
+    if (error && Object.keys(patch109).length) {
+      ({ data, error } = await supabase.from('funcionarios_negocio')
+        .update(patch).eq('id', req.params.id).eq('user_id', user.id)
+        .select().maybeSingle());
+    }
     if (error) throw error;
     if (!data) return res.status(404).json({ erro: 'Funcionário não encontrado.' });
     res.json({ ok: true, funcionario: data });
