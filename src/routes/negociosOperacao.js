@@ -772,9 +772,15 @@ router.get('/equipe/:phone', auth, async (req, res) => {
       const pagoMes = (pagos || []).filter(p => p.funcionario_id === f.id)
         .reduce((s, p) => s + (p.valor || 0), 0);
 
+      const r = resumoMensal(f, comissao_aberta, inss);
       return {
         ...f,
-        ...resumoMensal(f, comissao_aberta, inss),
+        ...r,
+        // ⚠️ `f.encargos` é o BOOLEANO (o toggle) e `r.encargos` é o VALOR.
+        // O spread acima faz o número vencer — a tela precisa dos dois, e sem
+        // este par o formulário de edição perderia o estado do toggle.
+        encargos:       !!f.encargos,
+        encargos_valor: r.encargos,
         comissao_aberta, comissao_mes, vendas_mes,
         pago_no_mes: pagoMes,
         // "Já pagou o salário deste mês?" — a pergunta que a lista responde.
@@ -787,7 +793,7 @@ router.get('/equipe/:phone', auth, async (req, res) => {
       equipe,
       folha_salarios: equipe.reduce((s, f) => s + (f.salario || 0), 0),
       comissoes_abertas: equipe.reduce((s, f) => s + f.comissao_aberta, 0),
-      encargos_estimados: equipe.reduce((s, f) => s + (f.encargos || 0), 0),
+      encargos_estimados: equipe.reduce((s, f) => s + (f.encargos_valor || 0), 0),
       custo_total: equipe.reduce((s, f) => s + f.custo_total, 0),
     });
   } catch (e) { res.status(500).json({ erro: e.message }); }
