@@ -114,7 +114,7 @@ Aviso de novidade disparado pelo painel admin (**Admin → Comunicados**).
   promoções" do usuário; é o preço de estar na regra.
 - **Corpo:**
   ```
-  Oi, {{1}}! Uma atualização da Sora pra você:
+  Oi, {{1}}! Nova atualização no ar!
 
   {{2}}
 
@@ -130,10 +130,41 @@ Aviso de novidade disparado pelo painel admin (**Admin → Comunicados**).
   não depende de env nenhuma. A `WHATSAPP_TPL_COMUNICADO` fica só como volta
   atrás sem deploy (`=comunicado_sora`) caso a Meta pause o modelo.
 
-> ⚠️ `{{2}}` chega sempre em **linha única** — a Cloud API não aceita `\n` em
-> parâmetro, e o `oneLine()` do admin.js troca quebra por espaço. Quem escreve o
-> comunicado pensa em parágrafo corrido; as quebras do CORPO (texto fixo) valem
-> normalmente.
+### 6.1 Parágrafos: `atualizacao_sora_2` e `atualizacao_sora_3`
+
+**O problema:** a Cloud API **não aceita `\n` dentro de um parâmetro**. Um aviso
+comprido chega todo grudado numa linha só — o `{{2}}` vira um bloco ilegível.
+
+**A saída:** uma variável POR PARÁGRAFO, com as quebras no corpo FIXO (que aceita
+`\n` à vontade). Como a Meta **também recusa parâmetro vazio**, não dá pra ter um
+template de 3 parágrafos e mandar 1 — daí um modelo por quantidade.
+
+O `routes/admin.js` escolhe sozinho pela quantidade de **linhas em branco** que o
+admin escreveu, e **cai pro de 1 parágrafo se o modelo não estiver aprovado**
+(o comunicado nunca deixa de sair; o painel avisa que achatou).
+
+- **`atualizacao_sora_2`** — mesmo cabeçalho, botão e categoria do `atualizacao_sora`:
+  ```
+  Oi, {{1}}! Nova atualização no ar!
+
+  {{2}}
+
+  {{3}}
+
+  Qualquer dúvida, é só responder aqui. 💚
+  ```
+- **`atualizacao_sora_3`** — idem, com `{{2}}`, `{{3}}` e `{{4}}` separados por
+  linha em branco.
+- **Amostras:** `{{1}}`=`Lenon` · `{{2}}`=`O Open Finance chegou na Sora! Agora dá
+  pra conectar seu banco e receber tudo automático.` · `{{3}}`=`No Básico, 1
+  banco. No Premium, até 3 bancos.` · `{{4}}`=`Pra começar, entre em forsora.com
+  e abra a aba Open Finance.`
+- Texto com **4+ parágrafos**: os excedentes entram juntos no ÚLTIMO — melhor um
+  bloco maior no fim do que perder texto ou mandar parâmetro vazio.
+
+> ⚠️ Dentro de um parágrafo a quebra simples continua virando espaço (`oneLine`)
+> — é a regra da Cloud API, não escolha nossa. O que separa parágrafo é a **linha
+> em branco**.
 
 ---
 

@@ -30,6 +30,26 @@ const CAPA_COMUNICADO = () => process.env.COMUNICADO_CAPA_URL || CAPA();
 // tem nome cadastrado recebe "Oi, tudo bem!", que continua lendo natural.
 const primeiroNome = (n) => (oneLine(n || '').split(' ')[0] || 'tudo bem').slice(0, 60);
 
+// Acha o usuário pelo telefone COM e SEM o 9º dígito.
+//
+// ⚠️ Bug real: o teste do comunicado buscava por igualdade exata. Toda a base
+// está com 13 dígitos (55+DDD+9+8), então digitar o número sem o 9 não achava
+// ninguém e a mensagem saía "Oi, tudo bem!" em vez do nome — parecendo cadastro
+// sem nome, quando na verdade não há UM usuário sem nome na base.
+function variantesPhone(p) {
+  const fone = String(p || '').replace(/\D/g, '');
+  const v = [fone];
+  if (fone.length === 13 && fone.startsWith('55')) v.push(fone.slice(0, 4) + fone.slice(5));
+  if (fone.length === 12 && fone.startsWith('55')) v.push(fone.slice(0, 4) + '9' + fone.slice(4));
+  return v;
+}
+
+async function acharPorTelefone(phone) {
+  const { data } = await supabase.from('users')
+    .select('name, phone').in('phone', variantesPhone(phone)).limit(1);
+  return data?.[0] || null;
+}
+
 // POST /api/admin/responder-relato  { phone, nome, texto }
 router.post('/responder-relato', async (req, res) => {
   const secret = process.env.ADMIN_SECRET;
@@ -75,11 +95,55 @@ router.post('/responder-relato', async (req, res) => {
 // A env continua valendo pra voltar atrás sem deploy, se a Meta pausar o modelo.
 const TEMPLATE_COMUNICADO = process.env.WHATSAPP_TPL_COMUNICADO || 'atualizacao_sora';
 
-const TPL_BROADCAST = (texto, nome) => ({
-  name: TEMPLATE_COMUNICADO,
-  params: [primeiroNome(nome), oneLine(texto)],
-  opts: { headerImage: CAPA_COMUNICADO() },
-});
+// ── PARÁGRAFOS ───────────────────────────────────────────────────────────────
+// A Cloud API NÃO aceita \n dentro de um parâmetro de template — o texto todo
+// chega grudado numa linha só, o que fica ilegível num aviso comprido.
+//
+// A saída é ter uma variável POR PARÁGRAFO, com as quebras no corpo FIXO do
+// template (que aceita \n normalmente). Como a Meta também rejeita parâmetro
+// VAZIO, não dá pra ter um template de 3 parágrafos e mandar 1 — por isso
+// existe um modelo por quantidade:
+//
+//   1 parágrafo  → atualizacao_sora     ({{2}})
+//   2 parágrafos → atualizacao_sora_2   ({{2}} {{3}})
+//   3 ou mais    → atualizacao_sora_3   ({{2}} {{3}} {{4}}, o resto junto no 4)
+//
+// Se o modelo da quantidade ainda não estiver aprovado, o envio falha e o
+// disparo CAI SOZINHO pro de 1 parágrafo (texto em linha única) — nunca fica
+// sem enviar. Ver docs/MIGRACAO-WHATSAPP-TEMPLATES.md.
+const MAX_PARAGRAFOS = 3;
+
+function paragrafosDe(texto) {
+  return String(texto || '')
+    .split(/\n\s*\n+/)                    // linha em branco separa parágrafo
+    .map((p) => oneLine(p))               // dentro do parágrafo, quebra vira espaço
+    .filter(Boolean);
+}
+
+/** Monta o template pra N parágrafos (1 = o modelo de sempre). */
+function TPL_BROADCAST(texto, nome, nParagrafos = 1) {
+  const partes = paragrafosDe(texto);
+  const n = Math.min(Math.max(1, nParagrafos), MAX_PARAGRAFOS);
+
+  if (n <= 1 || partes.length <= 1) {
+    return {
+      name: TEMPLATE_COMUNICADO,
+      params: [primeiroNome(nome), oneLine(texto)],
+      opts: { headerImage: CAPA_COMUNICADO() },
+    };
+  }
+
+  // Sobra vai toda pro último parágrafo — melhor um bloco maior no fim do que
+  // perder texto ou mandar parâmetro vazio (que a Meta recusa).
+  const blocos = partes.slice(0, n - 1);
+  blocos.push(oneLine(partes.slice(n - 1).join(' ')));
+
+  return {
+    name: `${TEMPLATE_COMUNICADO}_${n}`,
+    params: [primeiroNome(nome), ...blocos],
+    opts: { headerImage: CAPA_COMUNICADO() },
+  };
+}
 
 router.post('/broadcast', async (req, res) => {
   const secret = process.env.ADMIN_SECRET;
@@ -100,14 +164,34 @@ router.post('/broadcast', async (req, res) => {
     // Busca o nome do número de teste pra o teste sair IGUAL ao disparo real —
     // o template abre com "Oi, {{1}}!" e um teste com nome genérico
     // esconderia justamente a saudação que todo mundo vai receber.
-    const { data: quem } = await supabase.from('users')
-      .select('name').eq('phone', teste).maybeSingle();
+    const quem = await acharPorTelefone(teste);
 
     const antes = Date.now();
-    await enviarProativo(teste, { texto, template: TPL_BROADCAST(texto, quem?.name) });
-    const err = getLastSendError();
-    if (err && new Date(err.em).getTime() >= antes) return res.json({ ok: false, code: err.code, erro: err.message });
-    return res.json({ ok: true, teste: true });
+    const nPar = paragrafosDe(texto).length;
+    let usados = Math.min(nPar, MAX_PARAGRAFOS);
+    await enviarProativo(teste, { texto, template: TPL_BROADCAST(texto, quem?.name, usados) });
+    let err = getLastSendError();
+    let falhou = err && new Date(err.em).getTime() >= antes;
+
+    // Modelo com N parágrafos ainda não aprovado → manda em linha única em vez
+    // de deixar o comunicado sem sair.
+    if (falhou && usados > 1) {
+      const antes2 = Date.now();
+      usados = 1;
+      await enviarProativo(teste, { texto, template: TPL_BROADCAST(texto, quem?.name, 1) });
+      err = getLastSendError();
+      falhou = err && new Date(err.em).getTime() >= antes2;
+    }
+
+    if (falhou) return res.json({ ok: false, code: err.code, erro: err.message });
+    return res.json({
+      ok: true, teste: true, paragrafos: usados, nome: quem?.name || null,
+      // O painel avisa quando o texto foi achatado — sem isso o admin dispara
+      // pra base inteira achando que os parágrafos saíram.
+      aviso: (nPar > 1 && usados === 1)
+        ? `O modelo de ${Math.min(nPar, MAX_PARAGRAFOS)} parágrafos ainda não está aprovado na Meta — a mensagem saiu em linha única.`
+        : null,
+    });
   }
 
   if (!planos.length) return res.status(400).json({ erro: 'Selecione ao menos um plano.' });
@@ -137,8 +221,22 @@ router.post('/broadcast', async (req, res) => {
   res.json({ ok: true, iniciado: true, total: alvos.length });
   (async () => {
     let ok = 0, fail = 0;
+    // Quantos parágrafos usar. Se o modelo não estiver aprovado, o PRIMEIRO
+    // envio descobre e todo o resto já vai em linha única — não adianta insistir
+    // 73 vezes num template que a Meta não conhece.
+    let nPar = Math.min(paragrafosDe(texto).length, MAX_PARAGRAFOS);
     for (const phone of alvos) {
-      try { await enviarProativo(phone, { texto, template: TPL_BROADCAST(texto, porFone.get(phone)) }); ok++; }
+      try {
+        const antes = Date.now();
+        await enviarProativo(phone, { texto, template: TPL_BROADCAST(texto, porFone.get(phone), nPar) });
+        const err = getLastSendError();
+        if (err && new Date(err.em).getTime() >= antes && nPar > 1) {
+          nPar = 1;
+          await enviarProativo(phone, { texto, template: TPL_BROADCAST(texto, porFone.get(phone), 1) });
+          console.warn('[admin/broadcast] modelo com parágrafos indisponível — seguindo em linha única');
+        }
+        ok++;
+      }
       catch { fail++; }
       await new Promise((r) => setTimeout(r, 150)); // throttle (~6/s) pra não estourar a Meta
     }
