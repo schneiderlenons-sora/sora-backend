@@ -3,6 +3,7 @@
  * Estrutura escalável: adicionar nova plataforma = novo case no normalizar*.
  */
 const supabase = require('../db/supabase');
+const { montarDre } = require('../services/dre');
 
 // Centavos util
 const r$ = (reais) => Math.round((parseFloat(reais) || 0) * 100);
@@ -350,11 +351,24 @@ async function gerarDre(userId, grupoId, periodo, empresaId) {
     .lt('data', fim);
   if (errC) throw errC;
 
-  // 2b. LIVRO CAIXA (negócio FÍSICO): entrada vira receita, saída vira custo.
+  // 2b. LIVRO CAIXA (negócio FÍSICO): entrada vira receita, saída vira despesa
+  //     — MENOS a saída que veio de uma compra de estoque (`compra_id`), que é
+  //     troca de dinheiro por mercadoria e só vira resultado quando vende.
   //     Só o que está PAGO entra — conta a pagar em aberto não é resultado
   //     realizado. Tolerante: se a 091 não rodou, o DRE segue sem o caixa.
   let lancamentos = [];
   try {
+    const { data } = await supabase
+      .from('lancamentos_negocio')
+      .select('tipo, categoria, valor, compra_id, natureza')
+      .eq('empresa_id', empId)
+      .eq('status', 'pago')
+      .gte('data', inicio).lt('data', fim);
+    lancamentos = data || [];
+  } catch { /* sem livro caixa ainda */ }
+  // Colunas das migrations 107/108: se ainda não rodaram, o select acima falha
+  // inteiro e o DRE perderia o caixa. Refaz sem elas.
+  if (!lancamentos.length) {
     const { data } = await supabase
       .from('lancamentos_negocio')
       .select('tipo, categoria, valor')
@@ -362,7 +376,28 @@ async function gerarDre(userId, grupoId, periodo, empresaId) {
       .eq('status', 'pago')
       .gte('data', inicio).lt('data', fim);
     lancamentos = data || [];
-  } catch { /* sem livro caixa ainda */ }
+  }
+
+  // 2c. CMV — custo das mercadorias VENDIDAS no período, pelo custo congelado
+  //     no item da venda. É o que transforma a compra de estoque em resultado.
+  let cmv = 0;
+  try {
+    const { data: vendasMes } = await supabase
+      .from('vendas_negocio')
+      .select('id')
+      .eq('empresa_id', empId)
+      .neq('status', 'cancelada')
+      .gte('data', inicio).lt('data', fim);
+    const ids = (vendasMes || []).map(v => v.id);
+    if (ids.length) {
+      const { data: itens } = await supabase
+        .from('venda_itens')
+        .select('quantidade, custo_unit, venda_id')
+        .in('venda_id', ids);
+      cmv = (itens || []).reduce(
+        (s, i) => s + Math.round((Number(i.quantidade) || 0) * (Number(i.custo_unit) || 0)), 0);
+    }
+  } catch { /* sem vendas estruturadas ainda → CMV zero */ }
 
   // 3. Config tributária — por EMPRESA (a PK mudou na migration 090)
   const { data: cfg } = await supabase
@@ -370,120 +405,82 @@ async function gerarDre(userId, grupoId, periodo, empresaId) {
   const aliquota = cfg?.aliquota_simples ?? 6.0;
   const reservarImposto = cfg?.reservar_imposto ?? true;
 
-  // 4. Agrega
-  let receita_bruta = 0, taxas_plataforma = 0, taxas_gateway = 0,
-      reembolsos = 0, chargebacks = 0, comissoes_afiliado = 0, imposto_ja_retido = 0;
-  let total_vendas = 0;
+  // 4. Agrega — a matemática mora em services/dre.js (pura, com eval próprio).
+  //    Aqui só se busca dado; lá se decide o que é despesa, o que é estoque e
+  //    quanto precisa faturar pra empatar.
+  const d = montarDre({
+    eventos: eventos || [],
+    custosDigital: custos || [],
+    lancamentos,
+    cmv,
+    aliquota,
+    reservarImposto,
+  });
 
-  const porPlat = {}; // { plataforma: { valor, vendas } }
-  const porProd = {};
-
-  for (const e of eventos || []) {
-    if (e.tipo === 'venda' || e.tipo === 'assinatura_renovacao') {
-      receita_bruta     += e.valor_bruto;
-      taxas_plataforma  += e.taxa_plataforma;
-      taxas_gateway     += e.taxa_gateway;
-      imposto_ja_retido += e.imposto;
-      comissoes_afiliado+= e.comissao_afiliado || 0;
-      total_vendas += 1;
-      porPlat[e.plataforma] = porPlat[e.plataforma] || { valor: 0, vendas: 0 };
-      porPlat[e.plataforma].valor  += e.valor_liquido;
-      porPlat[e.plataforma].vendas += 1;
-      const k = e.produto_nome || 'Sem nome';
-      porProd[k] = porProd[k] || { valor: 0, vendas: 0 };
-      porProd[k].valor  += e.valor_liquido;
-      porProd[k].vendas += 1;
-    } else if (e.tipo === 'reembolso') {
-      reembolsos += e.valor_bruto;
-    } else if (e.tipo === 'chargeback') {
-      chargebacks += e.valor_bruto;
-    }
-  }
-
-  // CAIXA (loja física): entradas somam na receita bruta ANTES do cálculo de
-  // taxas/imposto (venda de balcão não tem taxa de plataforma, então as taxas
-  // continuam zero pra essa parte); saídas viram custo por categoria.
-  let custos_caixa = 0;
-  const custos_caixa_cat = {};
-  for (const l of lancamentos) {
-    if (l.tipo === 'entrada') {
-      receita_bruta += l.valor;
-      total_vendas  += 1;
-    } else {
-      custos_caixa += l.valor;
-      const k = l.categoria || 'outros';
-      custos_caixa_cat[k] = (custos_caixa_cat[k] || 0) + l.valor;
-    }
-  }
-
-  // Imposto: o que já foi retido + reserva manual sobre receita líquida
-  const receita_apos_taxas = receita_bruta - taxas_plataforma - taxas_gateway - reembolsos - chargebacks - comissoes_afiliado;
-  const imposto_reserva    = reservarImposto ? Math.round(receita_apos_taxas * (aliquota / 100)) : 0;
-  const impostos_total     = imposto_ja_retido + imposto_reserva;
-  const receita_liquida    = receita_apos_taxas - imposto_reserva;
-
-  // Custos = custos do digital + saídas do caixa (físico)
-  const custos_total = (custos || []).reduce((s, c) => s + c.valor, 0) + custos_caixa;
-  const custos_por_categoria = {};
-  for (const c of custos || []) {
-    custos_por_categoria[c.categoria] = (custos_por_categoria[c.categoria] || 0) + c.valor;
-  }
-  for (const [k, v] of Object.entries(custos_caixa_cat)) {
-    custos_por_categoria[k] = (custos_por_categoria[k] || 0) + v;
-  }
-
-  const lucro_liquido = receita_liquida - custos_total;
-  const margem_pct = receita_bruta > 0 ? (lucro_liquido / receita_bruta) * 100 : 0;
-  const ticket_medio = total_vendas > 0 ? Math.round(receita_bruta / total_vendas) : 0;
-
-  // MRR — soma de vendas recorrentes mensais
-  const mrr = (eventos || [])
-    .filter(e => (e.tipo === 'venda' || e.tipo === 'assinatura_renovacao') && e.recorrencia === 'mensal')
-    .reduce((s, e) => s + e.valor_liquido, 0);
+  // Compat: `custos_total`/`custos_por_categoria` são lidos por telas antigas
+  // (forecast, wrapped, painel). Continuam sendo o total de DESPESAS — o CMV
+  // tem coluna própria pra não se misturar com custo operacional.
+  const custos_por_categoria = Object.fromEntries(
+    d.despesas_por_categoria.map(c => [c.categoria, c.valor]));
 
   const snapshot = {
     user_id: userId,
     grupo_id: grupoId,
     empresa_id: empId,
     periodo: inicio,
-    receita_bruta,
-    taxas_plataforma,
-    taxas_gateway,
-    impostos: impostos_total,
-    reembolsos,
-    chargebacks,
-    comissoes_afiliado,
-    receita_liquida,
-    custos_total,
+    receita_bruta:      d.receita_bruta,
+    taxas_plataforma:   d.deducoes.taxas_plataforma,
+    taxas_gateway:      d.deducoes.taxas_gateway,
+    impostos:           d.impostos_total,
+    reembolsos:         d.deducoes.reembolsos,
+    chargebacks:        d.deducoes.chargebacks,
+    comissoes_afiliado: d.deducoes.comissoes_afiliado,
+    receita_liquida:    d.receita_liquida,
+    custos_total:       d.despesas_total,
     custos_por_categoria,
-    lucro_liquido,
-    margem_pct: Number(margem_pct.toFixed(2)),
-    total_vendas,
-    ticket_medio,
-    mrr,
-    arr: mrr * 12,
+    lucro_liquido:      d.lucro_liquido,
+    margem_pct:         d.margem_pct,
+    total_vendas:       d.total_vendas,
+    ticket_medio:       d.ticket_medio,
+    mrr: d.mrr,
+    arr: d.arr,
     churn_pct: 0, // Fase futura
-    por_plataforma: Object.entries(porPlat)
-      .map(([plataforma, v]) => ({ plataforma, ...v }))
-      .sort((a, b) => b.valor - a.valor),
-    por_produto: Object.entries(porProd)
-      .map(([nome, v]) => ({ nome, ...v }))
-      .sort((a, b) => b.valor - a.valor)
-      .slice(0, 10),
+    por_plataforma: d.por_plataforma,
+    por_produto:    d.por_produto,
     gerado_em: new Date().toISOString(),
   };
 
-  const { data, error } = await supabase
-    .from('dre_snapshots')
-    // ⚠️ A unicidade virou (empresa_id, periodo) na migration 090 — com
-    // multi-empresa, duas empresas do mesmo dono colidiam no mesmo mês.
-    // Manter 'user_id,periodo' aqui quebra o upsert (constraint inexistente).
-    .upsert(snapshot, { onConflict: 'empresa_id,periodo' })
-    .select()
-    .maybeSingle();
+  // Linhas da migration 108. Ficam separadas porque, se a migration ainda não
+  // rodou, o upsert inteiro falharia e o DRE sumiria da tela — a fase 4 pode
+  // esperar, o demonstrativo não.
+  const extras = {
+    cmv:                   d.cmv,
+    lucro_bruto:           d.lucro_bruto,
+    margem_bruta_pct:      d.margem_bruta_pct,
+    despesas_fixas:        d.despesas_fixas,
+    despesas_variaveis:    d.despesas_variaveis,
+    resultado_operacional: d.resultado_operacional,
+    margem_contribuicao:   d.margem_contribuicao,
+    ponto_equilibrio:      d.ponto_equilibrio,
+    compras_estoque:       d.compras_estoque,
+  };
+
+  // ⚠️ A unicidade virou (empresa_id, periodo) na migration 090 — com
+  // multi-empresa, duas empresas do mesmo dono colidiam no mesmo mês.
+  // Manter 'user_id,periodo' aqui quebra o upsert (constraint inexistente).
+  const gravar = (linha) => supabase.from('dre_snapshots')
+    .upsert(linha, { onConflict: 'empresa_id,periodo' })
+    .select().maybeSingle();
+
+  let { data, error } = await gravar({ ...snapshot, ...extras });
+  if (error) ({ data, error } = await gravar(snapshot));
   if (error) throw error;
 
-  return data;
+  // O que a tela precisa e a tabela não guarda (detalhe por categoria com a
+  // natureza de cada uma) volta junto, sem exigir outra chamada.
+  return { ...data, ...extras, despesas_por_categoria: d.despesas_por_categoria,
+           falta_para_empatar: d.falta_para_empatar,
+           margem_contribuicao_pct: d.margem_contribuicao_pct };
 }
 
 // ─────────────────────────────────────────────────────────────────

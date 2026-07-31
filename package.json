@@ -13,7 +13,8 @@
     "test": "echo \"Sem testes por enquanto\" && exit 0",
     "eval:regras": "node evals/regrasCategoria.eval.js",
     "eval:reconciliar": "node evals/reconciliarPrevisto.eval.js",
-    "eval:estoque": "node evals/estoque.eval.js"
+    "eval:estoque": "node evals/estoque.eval.js",
+    "eval:dre": "node evals/dre.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

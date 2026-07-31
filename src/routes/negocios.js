@@ -676,6 +676,74 @@ router.get('/dre/:phone', auth, async (req, res) => {
   }
 });
 
+// GET /api/negocios/dre-gerencial/:phone?periodo=YYYY-MM&empresa_id=
+//
+// O DRE que serve pra decidir preço: cascata completa (receita → deduções →
+// CMV → lucro bruto → despesas fixas/variáveis → resultado), ponto de
+// equilíbrio, comparação com o mês anterior e histórico pro gráfico.
+//
+// ⚠️ O MÊS CORRENTE É SEMPRE RECALCULADO. Snapshot de mês em curso envelhece a
+// cada venda — mostrar um número congelado de 3 horas atrás como se fosse "o
+// resultado de hoje" é pior do que demorar 300ms a mais. Meses fechados usam o
+// snapshot (e é por isso que ele existe).
+router.get('/dre-gerencial/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
+
+    const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empId) return res.json(null);
+
+    const mesAtual = new Date().toISOString().slice(0, 7);
+    const mesParam = req.query.periodo || mesAtual;
+    const periodo  = `${mesParam}-01`;
+    const emCurso  = mesParam >= mesAtual;
+
+    const mesAnterior = (iso) => {
+      const d = new Date(iso); d.setMonth(d.getMonth() - 1);
+      return d.toISOString().slice(0, 10);
+    };
+
+    const buscarSnap = async (p) => {
+      const { data } = await supabase.from('dre_snapshots')
+        .select('*').eq('empresa_id', empId).eq('periodo', p).maybeSingle();
+      return data;
+    };
+
+    let atual = emCurso ? null : await buscarSnap(periodo);
+    if (!atual) atual = await gerarDre(user.id, user.grupo_ativo, periodo, empId);
+    if (!atual) return res.json(null);
+
+    // Mês anterior: só o snapshot. Regerar 1 mês fechado a cada abertura da
+    // tela custaria 4 queries pra um número que não muda mais.
+    const anterior = await buscarSnap(mesAnterior(periodo));
+
+    // Histórico de 6 meses pro gráfico (o que já existe; mês sem snapshot fica
+    // zerado em vez de sumir — buraco no gráfico esconde queda de faturamento).
+    const meses = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(periodo); d.setMonth(d.getMonth() - i);
+      meses.push(d.toISOString().slice(0, 10));
+    }
+    const { data: snaps } = await supabase.from('dre_snapshots')
+      .select('periodo, receita_bruta, lucro_liquido, custos_total')
+      .eq('empresa_id', empId).in('periodo', meses);
+    const mapa = Object.fromEntries((snaps || []).map(s => [s.periodo, s]));
+    mapa[periodo] = atual; // o mês em curso vem do cálculo fresco
+    const historico = meses.map(m => ({
+      periodo: m,
+      receita_bruta: mapa[m]?.receita_bruta || 0,
+      lucro_liquido: mapa[m]?.lucro_liquido || 0,
+      custos_total:  mapa[m]?.custos_total  || 0,
+    }));
+
+    res.json({ ...atual, periodo, em_curso: emCurso, anterior: anterior || null, historico });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
 // GET /api/negocios/dre-detalhado/:phone?periodo=YYYY-MM
 // Quebra cada linha do DRE por plataforma + lista custos por categoria
 router.get('/dre-detalhado/:phone', auth, async (req, res) => {
