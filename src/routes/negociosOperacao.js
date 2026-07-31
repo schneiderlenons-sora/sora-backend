@@ -14,6 +14,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { comissaoDe, resumoMensal } = require('../services/folha');
+const { analisar: analisarLoja } = require('../services/insightsLoja');
 
 async function getUser(req) {
   const { data } = await supabase.from('users')
@@ -837,6 +838,81 @@ router.post('/funcionarios/:id/pagar-comissao', auth, async (req, res) => {
       .in('id', (abertas || []).map(v => v.id));
 
     res.json({ ok: true, total, lancamento: lanc });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// INSIGHTS DE LOJA (fase 6) — o que a Sora percebe olhando o negócio
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/negocios/insights-loja/:phone?empresa_id=
+//
+// Calculado AO VIVO, não em cron. Insight guardado de ontem sobre estoque que
+// já foi reposto é pior que nenhum insight — o dono perde a confiança na tela.
+// São 5 queries pequenas por empresa; não vale materializar.
+router.get('/insights-loja/:phone', auth, async (req, res) => {
+  try {
+    const ctx = await contexto(req, res, req.query.empresa_id);
+    if (!ctx) return;
+    const empId = ctx.empresa.id;
+    const hoje  = hojeSP();
+    const ini   = `${hoje.slice(0, 7)}-01`;
+
+    // Produtos + a última venda de cada um (pra saber o que encalhou).
+    let produtos = [];
+    try {
+      const { data } = await supabase.from('produtos_negocio')
+        .select('id, nome, preco, custo, estoque_atual, estoque_min, eh_servico')
+        .eq('empresa_id', empId).eq('ativo', true);
+      produtos = data || [];
+    } catch { /* sem a 106 */ }
+
+    if (produtos.length) {
+      // Uma query pra todos: a última saída por produto. Buscar item a item
+      // seria N requisições pra montar uma tela.
+      const { data: movs } = await supabase.from('estoque_movimentos')
+        .select('produto_id, data, tipo')
+        .eq('empresa_id', empId).eq('tipo', 'saida')
+        .order('data', { ascending: false }).limit(1000);
+      const ultima = {};
+      for (const m of movs || []) if (!ultima[m.produto_id]) ultima[m.produto_id] = m.data;
+      produtos = produtos.map(p => ({ ...p, ultima_venda: ultima[p.id] || null }));
+    }
+
+    // Clientes: quantas compras e a última.
+    let clientes = [];
+    try {
+      const { data: vendas } = await supabase.from('vendas_negocio')
+        .select('cliente_id, data').eq('empresa_id', empId)
+        .neq('status', 'cancelada').not('cliente_id', 'is', null);
+      const porCliente = {};
+      for (const v of vendas || []) {
+        const c = porCliente[v.cliente_id] || { compras: 0, ultima_compra: null };
+        c.compras += 1;
+        if (!c.ultima_compra || v.data > c.ultima_compra) c.ultima_compra = v.data;
+        porCliente[v.cliente_id] = c;
+      }
+      const ids = Object.keys(porCliente);
+      if (ids.length) {
+        const { data: nomes } = await supabase.from('clientes_negocio')
+          .select('id, nome').in('id', ids);
+        clientes = (nomes || []).map(n => ({ ...n, ...porCliente[n.id] }));
+      }
+    } catch { /* sem a 106 */ }
+
+    // Pendências dos dois lados do caixa.
+    const { data: pendentes } = await supabase.from('lancamentos_negocio')
+      .select('tipo, valor, vencimento, descricao')
+      .eq('empresa_id', empId).eq('status', 'pendente');
+    const receber = (pendentes || []).filter(l => l.tipo === 'entrada');
+    const pagar   = (pendentes || []).filter(l => l.tipo === 'saida');
+
+    // DRE do mês: reaproveita o snapshot se existir (evita 4 queries a mais).
+    const { data: dre } = await supabase.from('dre_snapshots')
+      .select('*').eq('empresa_id', empId).eq('periodo', ini).maybeSingle();
+
+    const insights = analisarLoja({ dre, produtos, clientes, receber, pagar, hoje });
+    res.json({ insights, gerado_em: new Date().toISOString() });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
