@@ -153,7 +153,7 @@ async function inserirNovas(grupoId, userId, walletNome, txs, ehCredito) {
     (data || []).forEach(d => existentes.set(d.pluggy_tx_id, d));
   }
 
-  const novas = [];
+  let novas = [];
   for (const t of txs) {
     if (!t.id) continue;
     const m = mapTx(t, grupoId, userId, walletNome, ehCredito);
@@ -182,6 +182,16 @@ async function inserirNovas(grupoId, userId, walletNome, txs, ehCredito) {
     const { aplicarRegrasEmLote } = require('./regrasCategoria');
     await aplicarRegrasEmLote(grupoId, novas);
   } catch { /* migration 104 pendente */ }
+
+  // A cobrança real ASSUME a previsão da recorrência (mesma conta, valor e
+  // data próximos) em vez de virar uma linha nova — senão o gasto conta duas
+  // vezes: uma projetada pelo cron, outra importada do banco.
+  try {
+    const { reconciliar } = require('./reconciliarPrevisto');
+    const r = await reconciliar(grupoId, novas);
+    if (r.reconciliadas) novas = r.restantes;
+    if (!novas.length) return r.reconciliadas;
+  } catch { /* sem reconciliação: insere tudo, como antes */ }
 
   let { error } = await supabase.from('transacoes').insert(novas);
   if (error) { // pode ser a coluna pluggy_card ausente (pré-059) → tenta sem ela

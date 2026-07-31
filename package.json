@@ -11,7 +11,8 @@
     "eval:ciclo": "node evals/cicloFatura.eval.js",
     "eval:celcoin": "node evals/celcoinSync.eval.js",
     "test": "echo \"Sem testes por enquanto\" && exit 0",
-    "eval:regras": "node evals/regrasCategoria.eval.js"
+    "eval:regras": "node evals/regrasCategoria.eval.js",
+    "eval:reconciliar": "node evals/reconciliarPrevisto.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

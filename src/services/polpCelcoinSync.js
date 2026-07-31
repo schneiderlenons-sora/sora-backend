@@ -628,7 +628,7 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     (data || []).forEach((d) => existentes.add(d.of_tx_id));
   }
 
-  const novas = validas.filter((t) => !existentes.has(t.externalId)).map((t) => ({
+  let novas = validas.filter((t) => !existentes.has(t.externalId)).map((t) => ({
     id_curto: idCurto(), grupo_id: grupoId, criado_por: userId || null,
     tipo: t.ehGasto ? 'Gasto' : 'Recebimento',
     categoria: t.categoria || 'Outros',
@@ -651,6 +651,16 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     const { aplicarRegrasEmLote } = require('./regrasCategoria');
     await aplicarRegrasEmLote(grupoId, novas);
   } catch { /* migration 104 pendente */ }
+
+  // A cobrança real ASSUME a previsão da recorrência (mesma conta, valor e
+  // data próximos) em vez de virar uma linha nova — senão o gasto conta duas
+  // vezes: uma projetada pelo cron, outra importada do banco.
+  try {
+    const { reconciliar } = require('./reconciliarPrevisto');
+    const r = await reconciliar(grupoId, novas);
+    if (r.reconciliadas) novas = r.restantes;
+    if (!novas.length) return r.reconciliadas;
+  } catch { /* sem reconciliação: insere tudo, como antes */ }
 
   let { error } = await supabase.from('transacoes').insert(novas);
   // Coluna nova (migration 101) ainda não rodada: reinsere sem ela em vez de

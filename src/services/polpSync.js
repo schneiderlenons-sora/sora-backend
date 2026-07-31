@@ -138,7 +138,8 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs, ehCredito) {
       .select('of_tx_id').in('of_tx_id', ids.slice(i, i + 300));
     (data || []).forEach(d => existentes.add(d.of_tx_id));
   }
-  const novas = txs.filter(t => t.externalId && !existentes.has(t.externalId)).map(t => {
+  let novas = txs
+    .filter(t => t.externalId && !existentes.has(t.externalId)).map(t => {
     const ehTransf = ehCredito && !t.ehGasto; // pagamento de fatura/estorno no cartão = transferência
     return {
       id_curto: idCurto(), grupo_id: grupoId, criado_por: userId || null,
@@ -156,6 +157,16 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs, ehCredito) {
     const { aplicarRegrasEmLote } = require('./regrasCategoria');
     await aplicarRegrasEmLote(grupoId, novas);
   } catch { /* migration 104 pendente */ }
+
+  // A cobrança real ASSUME a previsão da recorrência (mesma conta, valor e
+  // data próximos) em vez de virar uma linha nova — senão o gasto conta duas
+  // vezes: uma projetada pelo cron, outra importada do banco.
+  try {
+    const { reconciliar } = require('./reconciliarPrevisto');
+    const r = await reconciliar(grupoId, novas);
+    if (r.reconciliadas) novas = r.restantes;
+    if (!novas.length) return r.reconciliadas;
+  } catch { /* sem reconciliação: insere tudo, como antes */ }
 
   let { error } = await supabase.from('transacoes').insert(novas);
   if (error) { // fallback 1 a 1 (unique of_tx_id ignora corridas)

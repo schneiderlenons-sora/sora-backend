@@ -193,8 +193,14 @@ cron.schedule('0 * * * *', async () => {
       .from('recorrencias').select('*').in('dia_vencimento', diasAlvo).eq('ativa', true);
 
     // Acumula por telefone → UMA mensagem (fixos lançados + variáveis a confirmar).
-    const porPhone = new Map(); // phone -> { lancados:[], confirmar:[] }
-    const bucket = (p) => { if (!porPhone.has(p)) porPhone.set(p, { lancados: [], confirmar: [] }); return porPhone.get(p); };
+    // `aguardando` = recorrência em conta do Open Finance: virou previsão e o
+    // valor real vem do banco. O lembrete SAI do mesmo jeito — o usuário quer
+    // saber que venceu hoje, mudando só o que a Sora promete sobre o valor.
+    const porPhone = new Map(); // phone -> { lancados:[], confirmar:[], aguardando:[] }
+    const bucket = (p) => {
+      if (!porPhone.has(p)) porPhone.set(p, { lancados: [], confirmar: [], aguardando: [] });
+      return porPhone.get(p);
+    };
 
     for (const rec of recorrencias || []) {
       // ── VARIÁVEL: valor muda (luz, água, vendas). Cria PREVISTO/pendente e pede
@@ -230,33 +236,59 @@ cron.schedule('0 * * * *', async () => {
         .gte('data', inicioHoje.toISOString()).lte('data', fimHoje.toISOString()).maybeSingle();
       if (jaLancado) continue;
 
+      // ⚠️ Conta/cartão ligado ao Open Finance: o banco VAI mandar essa mesma
+      // cobrança. Lançar como paga aqui faria o gasto contar DUAS vezes (caso
+      // real: "Claude R$113,50 dia 13" do cron × "ANTHROPIC* CLAUDE SUB
+      // R$113,85 em 14/07" do banco). Então vira PREVISÃO: entra pendente, não
+      // debita saldo, e quando a cobrança real chegar ela assume esta linha
+      // (services/reconciliarPrevisto). O lembrete no WhatsApp continua igual.
+      const { data: wallet } = await supabase.from('wallets')
+        .select('id, saldo, of_conta_id').eq('grupo_id', rec.grupo_id)
+        .ilike('nome', rec.carteira || 'Dinheiro').maybeSingle();
+      const contaConectada = !!wallet?.of_conta_id;
+
       const idCurto = gerarId();
       await supabase.from('transacoes').insert({
         id_curto: idCurto, grupo_id: rec.grupo_id, tipo: rec.tipo,
         categoria: rec.categoria || 'Outros', valor: rec.valor,
-        observacao: `[Recorrente] ${rec.descricao}`, carteira_nome: rec.carteira || 'Dinheiro',
-        pago: true, data: new Date().toISOString(),
+        observacao: contaConectada ? `[Previsto] ${rec.descricao}` : `[Recorrente] ${rec.descricao}`,
+        carteira_nome: rec.carteira || 'Dinheiro',
+        // `recorrente` marca a linha como PREVISÃO reconciliável — sem ela, a
+        // cobrança do banco não encontra o que substituir e duplica de novo.
+        recorrente: contaConectada || undefined,
+        pago: !contaConectada,
+        data: new Date().toISOString(),
       });
-      const { data: wallet } = await supabase.from('wallets')
-        .select('id, saldo').eq('grupo_id', rec.grupo_id).ilike('nome', rec.carteira || 'Dinheiro').maybeSingle();
-      if (wallet) {
+
+      // Saldo só se movimenta no que a Sora de fato lançou. Em conta conectada
+      // o saldo é do banco — debitar aqui deixaria ele errado até o próximo sync.
+      if (wallet && !contaConectada) {
         const mult = rec.tipo === 'Gasto' ? -1 : 1;
         await supabase.from('wallets').update({ saldo: wallet.saldo + (rec.valor * mult) }).eq('id', wallet.id);
       }
       const phone = await phoneDoUser(rec.criado_por, rec.grupo_id);
       if (phone && await avisosLigados(rec.criado_por)) {
-        bucket(phone).lancados.push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo, idCurto });
+        bucket(phone)[contaConectada ? 'aguardando' : 'lancados']
+          .push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo, idCurto });
       }
     }
 
     // UMA mensagem por telefone: o que a Sora lançou + o que falta confirmar.
     const money = (v) => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    for (const [phone, { lancados, confirmar }] of porPhone) {
-      if (!lancados.length && !confirmar.length) continue;
+    for (const [phone, { lancados, confirmar, aguardando }] of porPhone) {
+      if (!lancados.length && !confirmar.length && !aguardando.length) continue;
       const partes = [];
       if (lancados.length) {
         partes.push('✅ *Lancei automaticamente:*');
         for (const it of lancados) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${money(it.valor)}`);
+      }
+      // Conta conectada: a Sora NÃO promete o valor — quem dá o número final é
+      // o banco. Prometer "lancei R$ 113,50" e depois o extrato trazer 113,85
+      // faria a Sora parecer errada.
+      if (aguardando.length) {
+        if (partes.length) partes.push('');
+        partes.push('🔗 *Vence hoje* (o valor final vem do seu banco):');
+        for (const it of aguardando) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — cerca de R$ ${money(it.valor)}`);
       }
       if (confirmar.length) {
         if (partes.length) partes.push('');
@@ -276,6 +308,7 @@ cron.schedule('0 * * * *', async () => {
       // (a instrução de confirmar já está no CORPO FIXO do template).
       const listaSegs = [];
       if (lancados.length) listaSegs.push(`✅ Lancei: ${lancados.map(it => `${it.descricao} R$ ${money(it.valor)}`).join(', ')}`);
+      if (aguardando.length) listaSegs.push(`🔗 Vence hoje (valor final vem do banco): ${aguardando.map(it => `${it.descricao} (cerca de R$ ${money(it.valor)})`).join(', ')}`);
       if (confirmar.length) listaSegs.push(`💡 A confirmar o valor: ${confirmar.map(it => `${it.descricao} (estimei R$ ${money(it.valor)})`).join(', ')}`);
       const listaParam = listaSegs.join('. ');
 
