@@ -5,6 +5,11 @@ const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
 const { criarPendente, buscarPendente, removerPendente } = require('../services/pendentes');
 const { categorizarDescricao } = require('../services/categorizar');
+// Emoji e hierarquia das categorias vêm do BANCO (o mapa daqui é só fallback).
+const { arvoreDoGrupo, emojiPara, familiaDe, limpar: limparCat } = require('../services/categoriasArvore');
+// Regra canônica do que NÃO é consumo — a mesma do painel. Duplicar a regra aqui
+// foi o que fez o zap somar fatura e transferência e divergir da tela.
+const { ehTransferencia } = require('../services/resumoTransacoes');
 
 // Intervalo de datas de um período de consulta (resumo/busca), no fuso de São
 // Paulo (UTC-3, sem horário de verão). fim=null → até agora. Retorna null quando
@@ -97,9 +102,15 @@ const EMOJIS_MAP = {
   'pix':'💸', 'ted':'💸', 'boleto':'💸',
 };
 
-// Retorna o emoji mais adequado para um nome de categoria/subcategoria.
-// Normaliza o nome (remove emoji, acento, lowercase) e tenta match exato,
-// depois substring — garante que "🚗 Transporte" e "Transporte" retornam 🚗.
+// ⚠️ ESTE MAPA NÃO É MAIS A FONTE DA VERDADE.
+//
+// Ele foi escrito ANTES da taxonomia v3/v4 (migrations 084→087) e ficou pra
+// trás: Dentista, Fatura, Lanches, Financeiro e Barbeiro caíam no 📌 mesmo
+// tendo 🦷 💳 🌮 💰 💈 gravados na tabela `categorias`.
+//
+// Hoje o emoji vem de `services/categoriasArvore` (o banco). Isto aqui é só
+// rede de segurança pra categoria livre que o usuário digitou e não existe
+// cadastrada. Categoria nova: cadastre com ícone, NÃO acrescente linha aqui.
 function emojiDaCat(nome) {
   const limpo = (nome || '').replace(/\p{Emoji}/gu, '').toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
@@ -571,7 +582,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       await verificarLimite(grupoId, phone, user);
     }
 
-    const emoji = emojiDaCat(data.categoria);
+    const emoji = emojiPara(data.categoria, await arvoreDoGrupo(grupoId), emojiDaCat);
     const tipo  = data.tipo === 'Gasto' ? '🟥 Despesa' : '🟩 Receita';
 
     // ── CASO 4: sem contas — orienta criar ────────────────────────
@@ -781,21 +792,49 @@ module.exports = async function handleTransacoes(data, ctx) {
   if (data.acao === 'buscar') {
     const intervalo = intervaloPeriodo(data.periodo); // null = sem filtro de data
     const sufPeriodo = intervalo ? ` ${intervalo.label.toLowerCase()}` : '';
+    const arvore = await arvoreDoGrupo(grupoId);
 
     let query = supabase.from('transacoes')
       .select('*').eq('grupo_id', grupoId)
       .eq('tipo', 'Gasto').order('data', { ascending: false })
       .limit(intervalo ? 200 : 30);
 
+    // Perguntar pelo PAI tem de somar os filhos: "quanto gastei com
+    // alimentação" precisa trazer iFood e Lanches, cujos nomes não contêm a
+    // palavra. Perguntar pela filha ("ifood") traz só ela.
+    let familia = null;
     if (data.termo && data.termo !== 'TUDO') {
-      query = query.or(`categoria.ilike.%${data.termo}%,observacao.ilike.%${data.termo}%`);
+      familia = familiaDe(data.termo, arvore);
+      if (familia?.length > 1) {
+        // ilike por nome cobre a categoria salva com o emoji colado.
+        const ors = familia.map(n => `categoria.ilike.%${n}%`).join(',');
+        query = query.or(`${ors},observacao.ilike.%${data.termo}%`);
+      } else {
+        query = query.or(`categoria.ilike.%${data.termo}%,observacao.ilike.%${data.termo}%`);
+      }
     }
     if (intervalo) {
       query = query.gte('data', intervalo.inicio.toISOString());
       if (intervalo.fim) query = query.lt('data', intervalo.fim.toISOString());
     }
 
-    const { data: rows } = await query;
+    let { data: rows } = await query;
+
+    // "Quanto gastei com X" é consumo: pagar fatura e mover dinheiro entre
+    // contas não entram (mesma regra do resumo e do painel). Sem isto, buscar
+    // "mercado" trazia a linha "Fatura Mercado Pago" como se fosse compra.
+    rows = (rows || []).filter(r => !ehTransferencia(r));
+
+    // ⚠️ O `ilike` do Postgres casa por PEDAÇO: buscando a família de
+    // Alimentação, "%Mercado%" trazia "Mercado Livre" (encomendas) e o total de
+    // comida dava R$ 232 em vez de R$ 55. Quando o termo É uma categoria, o que
+    // vale é o nome EXATO (sem emoji/acento) — a busca por observação continua
+    // valendo só pra texto livre, que é quando ela ajuda de verdade.
+    if (familia?.length && rows.length) {
+      const alvo = new Set(familia.map(limparCat));
+      rows = rows.filter(r => alvo.has(limparCat(r.categoria)));
+    }
+
     if (!rows?.length) {
       await enviarTexto(phone, `🔍 Nenhum gasto encontrado para *"${data.termo}"*${sufPeriodo}.`);
       return;
@@ -806,17 +845,29 @@ module.exports = async function handleTransacoes(data, ctx) {
     const nomes = ehGrupo ? await nomesPorId(rows.map(r => r.criado_por)) : new Map();
 
     let total = 0;
+    const porSub = {};
     const lista = rows.map(r => {
       total += r.valor;
+      porSub[r.categoria] = (porSub[r.categoria] || 0) + r.valor;
       const dt = new Date(r.data).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
-      const emoji = emojiDaCat(r.categoria);
+      const emoji = emojiPara(r.categoria, arvore, emojiDaCat);
       const autor = ehGrupo && r.criado_por && nomes.get(r.criado_por)
         ? ` · ${nomes.get(r.criado_por)}` : '';
       return `${emoji} ${dt} - R$ ${r.valor.toFixed(2)} (${r.categoria})${autor}`;
     }).join('\n');
 
+    // Buscando por uma categoria PAI, o total sozinho esconde de onde veio.
+    // A quebra por subcategoria é o que responde "gastei com o quê?".
+    let quebra = '';
+    if (familia?.length > 1 && Object.keys(porSub).length > 1) {
+      const linhas = Object.entries(porSub).sort((a, b) => b[1] - a[1])
+        .map(([c, v]) => `${emojiPara(c, arvore, emojiDaCat)} ${c.replace(/\p{Extended_Pictographic}/gu, '').trim()}: R$ ${v.toFixed(2)}`)
+        .join('\n');
+      quebra = `\n\n*Por subcategoria:*\n${linhas}`;
+    }
+
     await enviarTexto(phone,
-      `🔍 *Busca: ${data.termo}${sufPeriodo}*\n\n${lista}\n\n💰 *Total: R$ ${total.toFixed(2)}*`
+      `🔍 *Busca: ${data.termo}${sufPeriodo}*\n\n${lista}${quebra}\n\n💰 *Total: R$ ${total.toFixed(2)}*`
     );
     return;
   }
@@ -827,17 +878,27 @@ module.exports = async function handleTransacoes(data, ctx) {
     const { inicio, fim, label } = intervaloPeriodo(data.periodo) || intervaloPeriodo('mes');
 
     let queryResumo = supabase
-      .from('transacoes').select('tipo, categoria, valor, criado_por, carteira_nome')
+      .from('transacoes').select('tipo, categoria, valor, criado_por, carteira_nome, transferencia')
       .eq('grupo_id', grupoId)
       .gte('data', inicio.toISOString());
     if (fim) queryResumo = queryResumo.lt('data', fim.toISOString());
     const { data: rows } = await queryResumo;
 
-    let gastos = 0, receitas = 0;
+    const arvore = await arvoreDoGrupo(grupoId);
+
+    let gastos = 0, receitas = 0, movimentado = 0;
     const cats = {};
     const porMembro = {};
     const porCarteira = {};
     (rows || []).forEach(r => {
+      // ⚠️ MESMA REGRA DO PAINEL (services/resumoTransacoes.ehTransferencia).
+      // Pagar a fatura e mover dinheiro entre contas NÃO é consumo: a compra no
+      // cartão já entrou como gasto no dia em que foi feita. Contar os dois
+      // inflava o total do zap — e ele passava a divergir do painel, que sempre
+      // excluiu. Some no rodapé como "movimentado", pra não sumir sem explicação.
+      // Só o lado que SAI entra no "movimentado" — somar os dois sentidos
+      // (mandei 100 e recebi 100) mostraria 200 de movimento onde houve 100.
+      if (ehTransferencia(r)) { if (r.tipo === 'Gasto') movimentado += r.valor; return; }
       if (r.tipo === 'Gasto') {
         gastos += r.valor;
         cats[r.categoria] = (cats[r.categoria] || 0) + r.valor;
@@ -851,8 +912,8 @@ module.exports = async function handleTransacoes(data, ctx) {
     const catOrdenadas = Object.entries(cats)
       .sort((a,b) => b[1]-a[1])
       .map(([cat, val]) => {
-        const nome = cat.replace(/\p{Emoji}/gu, '').trim();
-        return `${emojiDaCat(cat)} *${nome}:* R$ ${val.toFixed(2)}`;
+        const nome = cat.replace(/\p{Extended_Pictographic}/gu, '').trim();
+        return `${emojiPara(cat, arvore, emojiDaCat)} *${nome}:* R$ ${val.toFixed(2)}`;
       })
       .join('\n') || 'Sem gastos ainda.';
 
@@ -937,12 +998,19 @@ module.exports = async function handleTransacoes(data, ctx) {
     // Painel vai num BOTÃO (cta_url) em vez de link cru — evita o preview de
     // imagem bugado do link em cima da mensagem. "resumo" é in-window (o usuário
     // acabou de mandar), então a mensagem interativa é permitida.
+    // Transferido/fatura fica fora do gasto, mas dizer isso em uma linha evita
+    // a pergunta "cadê os R$ 246 da fatura?" — sumir sem explicação é pior que
+    // aparecer no lugar errado.
+    const blocoMovimentado = movimentado > 0
+      ? `\n🔄 _Movimentado (fatura/transferência): R$ ${movimentado.toFixed(2)} — não conta como gasto_`
+      : '';
+
     await enviarBotaoLink(phone, {
       message:
         `📊 *RESUMO ${label}*\n\n${catOrdenadas}${blocoCarteiras}${blocoMembros}\n\n` +
         `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
         `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
-        `💰 *${labelSaldo}: R$ ${saldo.toFixed(2)}*${statusMeta}` +
+        `💰 *${labelSaldo}: R$ ${saldo.toFixed(2)}*${statusMeta}${blocoMovimentado}` +
         `${blocoPatrimonio}${blocoPendentes}`,
       label: 'Ver no painel',
       url: `${APP_URL_TX}/dashboard`,
