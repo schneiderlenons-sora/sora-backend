@@ -184,8 +184,36 @@ router.get('/lancamentos/:phone', auth, async (req, res) => {
     let q = supabase.from('lancamentos_negocio').select('*').eq('empresa_id', empresa.id);
 
     if (req.query.status) {
-      // Contas em aberto: ignora o mês e ordena por vencimento.
-      q = q.eq('status', req.query.status).order('vencimento', { ascending: true, nullsFirst: false });
+      // Contas em aberto: ignora o período e ordena por vencimento.
+      // ⚠️ É AQUI que mora "contas a receber": entrada + pendente. O espelho de
+      // "conta a pagar = saída pendente" (091). Uma tabela paralela só pros
+      // recebíveis seria uma segunda máquina pro mesmo fato.
+      q = q.eq('status', req.query.status);
+      if (req.query.tipo) q = q.eq('tipo', req.query.tipo);
+      q = q.order('vencimento', { ascending: true, nullsFirst: false });
+    } else if (req.query.periodo && req.query.periodo !== 'mes') {
+      // Períodos do fluxo de caixa. O recorte é sempre em DATA (regime de
+      // caixa) e no fuso de SP — em UTC, às 21h no Brasil "hoje" já virou
+      // amanhã e o caixa do dia apareceria vazio.
+      const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      const [Y, M, D] = hoje.split('-').map(Number);
+      const iso = (d) => d.toISOString().slice(0, 10);
+      const base = new Date(Date.UTC(Y, M - 1, D));
+      let inicio = hoje;
+
+      if (req.query.periodo === 'semana') {
+        // Semana corrente começando no DOMINGO (padrão comercial no Brasil).
+        const d = new Date(base); d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+        inicio = iso(d);
+      } else if (req.query.periodo === 'trimestre') {
+        const inicioTri = Math.floor((M - 1) / 3) * 3;
+        inicio = iso(new Date(Date.UTC(Y, inicioTri, 1)));
+      } else if (req.query.periodo === 'ano') {
+        inicio = iso(new Date(Date.UTC(Y, 0, 1)));
+      }
+      // Fim = amanhã (exclusivo) pra incluir tudo de hoje.
+      const amanha = new Date(base); amanha.setUTCDate(amanha.getUTCDate() + 1);
+      q = q.gte('data', inicio).lt('data', iso(amanha)).order('data', { ascending: false });
     } else {
       const mes = req.query.mes || new Date().toISOString().slice(0, 7);
       const inicio = `${mes}-01`;
@@ -1010,6 +1038,95 @@ router.delete('/custos/:id', auth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ erro: e.message });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// CENTROS DE CUSTO (migration 105) — "qual parte do negócio consumiu isto".
+// Sem eles o dono vê "gastei 4.000 em fornecedor" e não sabe quanto foi da
+// loja e quanto foi do online.
+// ─────────────────────────────────────────────────────────────────
+router.get('/centros-custo/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+
+    const { data, error } = await supabase.from('centros_custo')
+      .select('*').eq('empresa_id', empresa.id).eq('ativo', true)
+      .order('nome', { ascending: true });
+    // Tolerante: migration 105 pendente → lista vazia, painel segue funcionando.
+    if (error) return res.json([]);
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/centros-custo', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    const b = req.body || {};
+    const empresa = await empresaDoUsuario(user.id, b.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    const nome = String(b.nome || '').trim();
+    if (!nome) return res.status(400).json({ erro: 'Dê um nome ao centro de custo.' });
+
+    const { data, error } = await supabase.from('centros_custo')
+      .insert({ empresa_id: empresa.id, nome, cor: b.cor || null })
+      .select().single();
+    if (error) {
+      if (/uq_centros_custo/.test(error.message || '')) {
+        return res.status(409).json({ erro: `Você já tem um centro de custo chamado "${nome}".` });
+      }
+      if (/centros_custo/.test(error.message || '')) {
+        return res.status(503).json({ erro: 'Recurso ainda não liberado no banco (migration 105).' });
+      }
+      throw error;
+    }
+    res.json({ ok: true, centro: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.put('/centros-custo/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+
+    // Anti-IDOR: o centro tem de ser de uma empresa DESTE usuário.
+    const { data: alvo } = await supabase.from('centros_custo')
+      .select('id, empresa_id').eq('id', req.params.id).maybeSingle();
+    if (!alvo || !(await empresaDoUsuario(user.id, alvo.empresa_id))) {
+      return res.status(404).json({ erro: 'Centro de custo não encontrado.' });
+    }
+    const patch = {};
+    if (req.body?.nome !== undefined) patch.nome = String(req.body.nome).trim();
+    if (req.body?.cor  !== undefined) patch.cor  = req.body.cor || null;
+
+    const { data, error } = await supabase.from('centros_custo')
+      .update(patch).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ ok: true, centro: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Arquiva (não apaga): lançamento antigo continua apontando pro centro, e o
+// histórico do relatório não muda de valor retroativamente.
+router.delete('/centros-custo/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    const { data: alvo } = await supabase.from('centros_custo')
+      .select('id, empresa_id').eq('id', req.params.id).maybeSingle();
+    if (!alvo || !(await empresaDoUsuario(user.id, alvo.empresa_id))) {
+      return res.status(404).json({ erro: 'Centro de custo não encontrado.' });
+    }
+    await supabase.from('centros_custo').update({ ativo: false }).eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 // ─────────────────────────────────────────────────────────────────
