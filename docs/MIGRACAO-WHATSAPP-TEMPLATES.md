@@ -168,6 +168,47 @@ admin escreveu, e **cai pro de 1 parágrafo se o modelo não estiver aprovado**
 
 ---
 
+## 7. `limite_atingido` — teto de gasto batido (`handlers/transacoes.js`)
+
+Dispara quando o gasto do mês chega no percentual de alerta — do **limite geral**
+(`users.meta_mensal`) ou de um **limite por categoria** (`category_limits`).
+
+- **Nome:** `limite_atingido` · **Categoria: UTILIDADE** · pt_BR
+- **Por que Utilidade e não Marketing:** é aviso sobre a conta do PRÓPRIO usuário,
+  disparado por um gasto que ele acabou de registrar, com números específicos
+  dele. Não vende nada. (Se um dia entrar "assine o Premium pra ter mais
+  limites", vira Marketing — não misture.)
+- **Corpo:**
+  ```
+  Oi, {{1}}! Aviso sobre o seu limite de {{2}}.
+
+  Você já usou {{3}} do teto: {{4}} de {{5}}.
+
+  Pra ver onde foi o dinheiro ou mudar o limite, é só abrir o painel. 💚
+  ```
+- **Cabeçalho:** **nenhum**. É aviso rápido — header de mídia atrasa o envio e
+  obrigaria a mandar a capa em toda chamada, sem ganho nenhum aqui.
+- **Botão:** URL estática · texto `Abrir painel` → `https://www.forsora.com/categorias`
+- **Params do código:** `[primeiroNome, alvo, pct, gasto, teto]`
+  - `{{2}}` = `gastos gerais` (limite geral) **ou** o nome da categoria **sem
+    emoji** (o código tira — emoji em parâmetro não quebra, mas polui a leitura).
+  - `{{3}}` = `82%` · `{{4}}` e `{{5}}` = `R$ 652,00` / `R$ 800,00`.
+- **Amostras que a Meta pede:** `{{1}}`=`Lenon` · `{{2}}`=`Alimentação` ·
+  `{{3}}`=`82%` · `{{4}}`=`R$ 652,00` · `{{5}}`=`R$ 800,00`
+- **Env de emergência:** `WHATSAPP_TPL_LIMITE` troca o nome sem deploy.
+
+> ⚠️ **Por que este template era necessário:** o alerta ia por texto livre. Quem
+> lançou o gasto está dentro da janela de 24h e recebia normal — mas em **gestão
+> compartilhada** os outros membros estão FORA da janela, e pra eles a mensagem
+> falhava calada. Alerta de limite que chega só pra metade do grupo é pior que
+> não ter alerta.
+
+> ⚠️ O `R$` dos parâmetros é montado à mão (`brlTpl`): `Intl` com
+> `style: 'currency'` insere um espaço **não separável** (U+00A0), e caractere
+> invisível em parâmetro de template é problema que só aparece em produção.
+
+---
+
 ## Como criar (passo a passo na Meta)
 
 1. **WhatsApp Manager** → **Modelos de mensagem** → **Criar modelo**.
