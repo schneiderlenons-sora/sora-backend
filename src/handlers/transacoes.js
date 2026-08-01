@@ -1,8 +1,9 @@
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarMenu, enviarImagem, enviarBotaoLink } = require('../services/mensageiro');
-// Alerta de limite vai por TEMPLATE: em grupo, quem não lançou está fora da
-// janela de 24h e o texto livre falharia calado pra essa pessoa.
-const { enviarProativo } = require('../services/proativo');
+// Alerta de limite: uma implementação só, compartilhada com o painel e com o
+// sync do Open Finance. Vai por TEMPLATE porque, em grupo, quem não lançou está
+// fora da janela de 24h e o texto livre falharia calado pra essa pessoa.
+const { verificarLimite } = require('../services/limites');
 const { analisarGastos } = require('../services/ia');
 const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
@@ -138,181 +139,9 @@ function limpaCat(s) {
     .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 }
 
-// ── Template do alerta de limite (`limite_atingido`) ─────────────────────────
-//
-// Corpo aprovado na Meta:
-//   "Oi, {{1}}! Aviso sobre o seu limite de {{2}}.
-//
-//    Você já usou {{3}} do teto: {{4}} de {{5}}.
-//
-//    Pra ver onde foi o dinheiro ou mudar o limite, é só abrir o painel. 💚"
-//
-// Categoria UTILIDADE: é aviso sobre a conta do próprio usuário, disparado por
-// um gasto que ELE registrou — não é promoção. (Cupom/oferta seria Marketing.)
-//
-// ⚠️ Nenhum parâmetro pode ter \n, tab ou 4+ espaços seguidos — a Cloud API
-// recusa. Por isso tudo aqui sai em uma linha só; as quebras estão no corpo
-// FIXO do modelo.
-const TPL_LIMITE_NOME = process.env.WHATSAPP_TPL_LIMITE || 'limite_atingido';
-
-// Com separador de milhar: "R$ 1.234,50". Sem ele, um teto de R$ 1234,50 lia
-// como valor menor de relance — e o alerta existe pra dar o susto certo.
-//
-// ⚠️ O "R$ " é concatenado À MÃO de propósito. Com `style: 'currency'` o Intl
-// insere um espaço NÃO SEPARÁVEL (U+00A0) entre símbolo e número, e caractere
-// invisível dentro de parâmetro de template é risco à toa. Limpar depois com
-// regex seria pior: o caractere ficaria literal no código-fonte, onde qualquer
-// editor o normaliza sem avisar e a limpeza vira no-op em silêncio.
-const brlTpl = (v) => 'R$ ' + new Intl.NumberFormat('pt-BR',
-  { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v) || 0);
-
-function TPL_LIMITE(nome, alvo, pct, gasto, teto) {
-  const primeiro = String(nome || '').trim().split(/\s+/)[0] || 'tudo bem';
-  return {
-    name: TPL_LIMITE_NOME,
-    params: [
-      primeiro.slice(0, 60),
-      String(alvo || 'gastos gerais').slice(0, 60),
-      `${Math.round(pct)}%`,
-      brlTpl(gasto),
-      brlTpl(teto),
-    ],
-    // Sem cabeçalho de imagem: é aviso rápido, não peça de marketing — e header
-    // de mídia atrasa o envio e exige a capa em toda chamada.
-    opts: {},
-  };
-}
-
-// Verifica e dispara alerta de limite (geral e por categoria).
-// IMPORTANTE: gasto em subcategoria conta pro limite da categoria-pai
-// (ex: gasto em "Shein" conta pro limite de "Vestuário").
-// A transação JÁ está salva quando isso roda, então a soma já a inclui.
-// Avisa TODOS os membros do grupo (em grupo compartilhado, o alerta de limite
-// não pode ir só pra quem lançou). Cai no fallbackPhone se não achar membros.
-async function avisarGrupo(grupoId, fallbackPhone, msg, template) {
-  let membros = [];
-  try {
-    // Só membros com avisos ligados (kill-switch users.avisos_ativos).
-    const { data } = await supabase.from('grupo_membros')
-      .select('users(phone, name, avisos_ativos)').eq('grupo_id', grupoId);
-    membros = (data || [])
-      .filter(m => m.users?.phone && m.users.avisos_ativos !== false)
-      .map(m => ({ phone: m.users.phone, nome: m.users.name }));
-  } catch {
-    // Pré-migration 055 (sem a coluna) → cai pro comportamento antigo.
-    try {
-      const { data } = await supabase.from('grupo_membros').select('users(phone, name)').eq('grupo_id', grupoId);
-      membros = (data || []).filter(m => m.users?.phone).map(m => ({ phone: m.users.phone, nome: m.users.name }));
-    } catch { /* tolerante */ }
-  }
-  const vistos = new Set();
-  const destinos = membros.filter(m => !vistos.has(m.phone) && vistos.add(m.phone));
-  if (!destinos.length) destinos.push({ phone: fallbackPhone, nome: null });
-
-  for (const d of destinos) {
-    try {
-      // ⚠️ Quem lançou está DENTRO da janela de 24h e receberia texto livre; os
-      // OUTROS membros do grupo, não — e pra eles o texto livre falha calado.
-      // Por isso o alerta vai por TEMPLATE quando existe um: alerta de limite
-      // que só chega pra metade do grupo é pior que não ter alerta.
-      await enviarProativo(d.phone, {
-        texto: msg,
-        template: typeof template === 'function' ? template(d.nome) : template,
-      });
-    } catch {}
-  }
-}
-
-async function verificarLimite(grupoId, phone, user) {
-  const mesRef = new Date().toISOString().slice(0, 7);
-  // Primeiro dia do mês seguinte (limite exclusivo) — evita `${mes}-31`
-  // inválido em meses de 30/28 dias.
-  const [_a, _m] = mesRef.split('-').map(Number);
-  const fimMes = `${new Date(_a, _m, 1).getFullYear()}-${String(new Date(_a, _m, 1).getMonth() + 1).padStart(2, '0')}-01`;
-
-  // Gastos do mês do grupo — usado pelos dois tipos de limite
-  const { data: gastos } = await supabase
-    .from('transacoes').select('valor, categoria')
-    .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
-    .gte('data', `${mesRef}-01`).lt('data', fimMes);
-
-  // ── Limites POR CATEGORIA (subcategoria conta pro pai) ──────────
-  const { data: limites } = await supabase
-    .from('category_limits').select('*')
-    .eq('grupo_id', grupoId).eq('mes_referencia', mesRef);
-
-  if (limites?.length) {
-    const { data: cats } = await supabase
-      .from('categorias').select('id, nome, parent_id').eq('grupo_id', grupoId);
-
-    for (const limite of limites) {
-      if (limite.ativo === false || !limite.limite_mensal || limite.alerta_enviado) continue;
-
-      const alvo = limpaCat(limite.categoria);
-      const nomes = new Set([alvo]);
-      const cat = (cats || []).find(c => limpaCat(c.nome) === alvo);
-      if (cat) {
-        (cats || []).filter(c => c.parent_id === cat.id).forEach(c => nomes.add(limpaCat(c.nome)));
-      }
-
-      const total = (gastos || [])
-        .filter(g => nomes.has(limpaCat(g.categoria)))
-        .reduce((s, g) => s + (g.valor || 0), 0);
-
-      const pct = (total / limite.limite_mensal) * 100;
-      if (pct >= (limite.percentual_alerta || 80)) {
-        const alvo = String(limite.categoria || '').replace(/\p{Extended_Pictographic}/gu, '').trim();
-        await avisarGrupo(grupoId, phone,
-          `⚠️ *Limite de ${limite.categoria}*: os gastos chegaram a *${pct.toFixed(0)}%* do teto do mês.\n` +
-          `Teto: R$ ${limite.limite_mensal.toFixed(2)} | Gasto atual: R$ ${total.toFixed(2)}`,
-          (nome) => TPL_LIMITE(nome, alvo, pct, total, limite.limite_mensal),
-        );
-        await supabase.from('category_limits')
-          .update({ alerta_enviado: true }).eq('id', limite.id);
-      }
-    }
-  }
-
-  // ── Limite GERAL (meta_mensal no users) ─────────────────────────
-  await verificarLimiteGeral(grupoId, phone, user, mesRef, gastos || []);
-}
-
-// Alerta quando o gasto TOTAL do mês atinge o % da meta mensal.
-// Usa meta_mensal_alerta_enviado (= mesRef) pra não repetir no mês.
-async function verificarLimiteGeral(grupoId, phone, user, mesRef, gastos) {
-  // user pode vir desatualizado — busca os campos frescos pelo grupo
-  let u = user;
-  if (!u || u.meta_mensal === undefined) {
-    const { data } = await supabase.from('users')
-      .select('meta_mensal, meta_mensal_ativo, meta_mensal_alerta_ativo, meta_mensal_alerta_pct, meta_mensal_alerta_enviado, phone')
-      .eq('grupo_ativo', grupoId).limit(1).maybeSingle();
-    u = data;
-  }
-  if (!u) return;
-
-  const meta = u.meta_mensal || 0;
-  const ativo = u.meta_mensal_ativo ?? true;
-  const alertaAtivo = u.meta_mensal_alerta_ativo ?? true;
-  const pctAlerta = u.meta_mensal_alerta_pct ?? 80;
-  if (!meta || !ativo || !alertaAtivo) return;
-  if (u.meta_mensal_alerta_enviado === mesRef) return; // já avisou este mês
-
-  const total = (gastos || []).reduce((s, g) => s + (g.valor || 0), 0);
-  const pct = (total / meta) * 100;
-  if (pct < pctAlerta) return;
-
-  await avisarGrupo(grupoId, phone,
-    `🚨 *Limite geral do mês*: os gastos chegaram a *${pct.toFixed(0)}%* da meta.\n` +
-    `Meta: R$ ${meta.toFixed(2)} | Gasto total: R$ ${total.toFixed(2)}`,
-    (nome) => TPL_LIMITE(nome, 'gastos gerais', pct, total, meta),
-  );
-  // Marca como avisado neste mês (defensivo: coluna pode não existir ainda)
-  try {
-    await supabase.from('users')
-      .update({ meta_mensal_alerta_enviado: mesRef })
-      .eq('phone', u.phone || phone.replace(/\D/g, ''));
-  } catch (e) { console.warn('[limite geral] flag alerta:', e.message); }
-}
+// Alerta de limite (geral e por categoria) mora em services/limites.js — o
+// painel e o sync do Open Finance chamam a MESMA função. Antes esta lógica
+// vivia aqui, e por isso o alerta só existia pra gasto lançado pelo zap.
 
 // Busca a wallet padrão do user (se definida)
 async function buscarWalletPadrao(userId) {

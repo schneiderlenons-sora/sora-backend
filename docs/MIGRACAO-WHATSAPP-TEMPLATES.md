@@ -168,10 +168,18 @@ admin escreveu, e **cai pro de 1 parágrafo se o modelo não estiver aprovado**
 
 ---
 
-## 7. `limite_atingido` — teto de gasto batido (`handlers/transacoes.js`)
+## 7. `limite_atingido` — teto de gasto batido (`services/limites.js`)
 
 Dispara quando o gasto do mês chega no percentual de alerta — do **limite geral**
 (`users.meta_mensal`) ou de um **limite por categoria** (`category_limits`).
+
+**Roda nos TRÊS caminhos de entrada de gasto:** WhatsApp (`handlers/transacoes`),
+painel (`routes/transacoes` — criação avulsa e import de extrato) e **Open
+Finance** (`polpCelcoinSync`, uma vez ao fim do sync). Antes vivia dentro do
+handler do zap, e por isso quem lança pelo painel — hoje a maioria — nunca era
+avisado. A dedup (`alerta_enviado` / `meta_mensal_alerta_enviado`) garante **um
+aviso por limite por mês**, o que é o que segura o sync que importa dezenas de
+transações de uma vez.
 
 - **Nome:** `limite_atingido` · **Categoria: UTILIDADE** · pt_BR
 - **Por que Utilidade e não Marketing:** é aviso sobre a conta do PRÓPRIO usuário,
@@ -190,7 +198,7 @@ Dispara quando o gasto do mês chega no percentual de alerta — do **limite ger
   obrigaria a mandar a capa em toda chamada, sem ganho nenhum aqui.
 - **Botão:** URL estática · texto `Abrir painel` → `https://www.forsora.com/categorias`
 - **Params do código:** `[primeiroNome, alvo, pct, gasto, teto]`
-  - `{{2}}` = `gastos gerais` (limite geral) **ou** o nome da categoria **sem
+  - `{{2}}` = `gasto geral` (limite geral) **ou** o nome da categoria **sem
     emoji** (o código tira — emoji em parâmetro não quebra, mas polui a leitura).
   - `{{3}}` = `82%` · `{{4}}` e `{{5}}` = `R$ 652,00` / `R$ 800,00`.
 - **Amostras que a Meta pede:** `{{1}}`=`Lenon` · `{{2}}`=`Alimentação` ·

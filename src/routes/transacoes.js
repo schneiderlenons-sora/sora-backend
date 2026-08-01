@@ -193,6 +193,14 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
         .update({ saldo: (walletReal.saldo || 0) + (parseFloat(valor) * mult) }).eq('id', walletReal.id);
     }
 
+    // Limite de gasto: o alerta só existia pra lançamento vindo do zap — quem
+    // usa o painel nunca era avisado, e hoje é por lá (e pelo Open Finance) que
+    // entra o volume. Em background: aviso é efeito colateral, não pode atrasar
+    // a resposta nem derrubar o lançamento se o WhatsApp falhar.
+    if (tx.pago && tipo === 'Gasto') {
+      require('../services/limites').verificarLimiteEmBackground(grupoId, phone);
+    }
+
     // Toggle "Recorrente" com data de hoje/passado: o gasto já aconteceu (lançado
     // acima) e ainda vira conta fixa pros próximos meses. O cron deduplica o mês
     // atual (mesma categoria+valor+dia), então não duplica o lançamento de hoje.
@@ -334,6 +342,12 @@ router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res)
     // saldo da conta é informado/ajustado separadamente pelo usuário.
     const { data, error } = await supabase.from('transacoes').insert(rows).select('id');
     if (error) throw error;
+
+    // Importar extrato costuma ser o que ESTOURA o limite do mês. Uma chamada
+    // só depois do lote (a dedup do serviço garante um aviso por limite por mês).
+    if (rows.some((r) => r.tipo === 'Gasto' && r.pago)) {
+      require('../services/limites').verificarLimiteEmBackground(req.grupoId, null);
+    }
 
     res.json({ inserted: data?.length || 0, duplicados });
   } catch (err) { res.status(500).json({ erro: err.message }); }

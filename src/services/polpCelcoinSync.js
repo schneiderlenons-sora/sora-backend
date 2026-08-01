@@ -870,6 +870,15 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
       status: 'updated', ultima_sync: new Date().toISOString(), ultimo_erro: null,
     }).eq('id', conexao.id);
 
+    // Limite de gasto: com o Open Finance a maior parte das despesas passa a
+    // entrar por AQUI, e o alerta de teto não existia neste caminho.
+    // Chamado UMA vez no fim do sync, não por transação: a dedup do serviço já
+    // garante um aviso por limite por mês, mas chamar a cada linha importada
+    // seria dezenas de leituras à toa.
+    if (novasTx > 0) {
+      require('./limites').verificarLimiteEmBackground(grupoId, null);
+    }
+
     return { novas: novasTx, ...relatorio };
   } catch (e) {
     await supabase.from('of_conexoes').update({

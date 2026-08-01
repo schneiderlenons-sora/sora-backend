@@ -18,7 +18,8 @@
     "eval:folha": "node evals/folha.eval.js",
     "eval:insights-loja": "node evals/insightsLoja.eval.js",
     "eval:venda-texto": "node evals/vendaTexto.eval.js",
-    "eval:categorias-arvore": "node evals/categoriasArvore.eval.js"
+    "eval:categorias-arvore": "node evals/categoriasArvore.eval.js",
+    "eval:limites": "node evals/limites.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
