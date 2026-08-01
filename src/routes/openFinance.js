@@ -410,7 +410,17 @@ router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (r
 // real antes de deixar o sync escrever: se `normalizado` estiver certo aqui, o
 // sync está certo.
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/debug-celcoin/:consentId', auth, exigirAcesso, async (req, res) => {
+// Entrada server-to-server: o painel admin (que já validou quem é você) chama
+// com o ADMIN_SECRET. É o que faz a URL abrir pelo NAVEGADOR — a rota exige
+// token Bearer da sessão, que o navegador não manda, e abrir direto respondia
+// "Não autenticado". Sem o header, segue exigindo login normalmente.
+function authOuAdmin(req, res, next) {
+  const secret = process.env.ADMIN_SECRET;
+  if (secret && req.headers['x-admin-secret'] === secret) return next();
+  return auth(req, res, () => exigirAcesso(req, res, next));
+}
+
+router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
   const celcoin = require('../services/polpCelcoin');
   const sync    = require('../services/polpCelcoinSync');
   const { hojeSP } = require('../services/cicloFatura');
