@@ -474,6 +474,44 @@ router.get('/debug-celcoin/:consentId', auth, exigirAcesso, async (req, res) => 
         limits_crus: raw.limits,
       };
       if (cru) item.cru = raw;
+
+      // ── O QUE CADA REGRA CANDIDATA DARIA ────────────────────────────────
+      // Existe pra encerrar discussão de número por COMPARAÇÃO, em vez de
+      // garimpar somas até bater com o app do banco — que é chute com dinheiro.
+      // Compare `limite_usado` e cada candidata com o valor que o banco mostra.
+      try {
+        const lim = sync.limiteTotalDoCartao(raw.limits);
+        const todas = await celcoin.listarTransacoesCartao(raw.id, { max: 3 });
+        const val = (t) => Math.abs(sync.money(t.brazilian_amount) ?? sync.money(t.amount) ?? 0);
+        const ehGasto = (t) => (t.credit_debit_type || '').toString().toUpperCase() !== 'CREDITO';
+        const dataDe = (t) => String(t.transaction_date_time || t.bill_post_date || '').slice(0, 10);
+        const billAberta = n.faturaAberta && n.faturaAberta.billId;
+        const futuras = todas.filter((t) => dataDe(t) > hoje && ehGasto(t)).reduce((s, t) => s + val(t), 0);
+
+        item.conferencia = {
+          limite_total: lim.limite,
+          limite_usado: lim.usado,
+          limite_disponivel: lim.disponivel,
+          // Publicado > 0? Então é ELE que manda — não usamos regra nenhuma.
+          bill_total_da_aberta: n.faturaAberta ? n.faturaAberta.total : null,
+          bill_id_da_aberta: billAberta || null,
+          candidatas: {
+            // (a) o que a Sora exibe hoje
+            limite_usado_menos_futuras: sync.faturaPorLimite(lim.usado, futuras),
+            // (b) só o que o emissor vinculou à fatura aberta
+            soma_do_bill_da_aberta: billAberta
+              ? Math.round(todas.filter((t) => String(t.bill_id || '') === billAberta && ehGasto(t))
+                  .reduce((s, t) => s + val(t), 0) * 100) / 100
+              : null,
+          },
+          // É assim que a parcela a vencer aparece — QUANDO aparece.
+          tx_com_data_futura: todas.filter((t) => dataDe(t) > hoje).length,
+          futuras_somam: Math.round(futuras * 100) / 100,
+          tx_sem_bill_id: todas.filter((t) => !t.bill_id).length,
+          tx_total: todas.length,
+        };
+      } catch (e) { item.conferencia_erro = e.message; }
+
       try {
         const txs = await celcoin.listarTransacoesCartao(raw.id, { max: 1 });
         item.amostra_tx = txs.slice(0, 3).map((t) => ({ cru: cru ? t : undefined, normalizado: sync.normalizeTxCartao(t, hoje) }));

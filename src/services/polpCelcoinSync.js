@@ -306,10 +306,12 @@ function faturaPorTransacoes(normalizadas, crus, n, hoje) {
   // 1. Exato: agrupamento do próprio emissor.
   const billId = n.faturaAberta && n.faturaAberta.billId;
   if (billId && pares.some((p) => String(p.cru.bill_id || '') === billId)) {
+    n.fonteFatura = 'bill_id';
     return cent(pares
       .filter((p) => String(p.cru.bill_id || '') === billId && p.norm.ehGasto)
       .reduce((s, p) => s + p.norm.valor, 0));
   }
+  n.fonteFatura = 'ciclo';
 
   // 2. Ciclo real de fechamento (precisa da data de fechamento do banco).
   const cartao = { dia_fechamento: n.extras.dia_fechamento, dia_vencimento: n.extras.dia_vencimento };
@@ -879,18 +881,34 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
             return (v == null || credito) ? s : s + Math.abs(v);
           }, 0));
 
+          // ORDEM POR CONFIABILIDADE — a de cima é sempre a mais próxima da
+          // verdade do emissor:
+          //   1. as transações que o EMISSOR vinculou a esta fatura (agrupamento
+          //      dele, já resolve parcelamento);
+          //   2. limite usado − parcelas a vencer (regra de ouro): correto, mas
+          //      o limite usado inclui parcelas de faturas FUTURAS, e elas só
+          //      são descontadas se o emissor as mandar datadas no futuro;
+          //   3. o ciclo de datas (cartão manual / emissor mudo) — sai a MENOS,
+          //      porque as parcelas desta fatura vêm com a data da COMPRA.
+          const porTx = faturaPorTransacoes(normalizadas, txs, n, hoje);
+          const usouBill = n.fonteFatura === 'bill_id';
           const porLimite = faturaPorLimite(n.limiteUsado, futuras);
-          const estimada = porLimite != null ? porLimite : faturaPorTransacoes(normalizadas, txs, n, hoje);
+
+          const estimada = usouBill ? porTx : (porLimite != null ? porLimite : porTx);
+          const fonte = usouBill ? 'bill_id' : (porLimite != null ? 'limite_usado' : 'ciclo');
 
           if (estimada != null) {
             const pago = n.faturaAberta ? n.faturaAberta.pago : 0;
             const restante = Math.max(0, cent(estimada - pago));
             await upsertWallet(grupoId, userId, n, -restante);
-            relatorio.avisos.push(porLimite != null
-              ? `${walletNome}: fatura em aberto pelo limite usado (R$ ${restante.toFixed(2)}${futuras ? `, descontadas R$ ${futuras.toFixed(2)} de parcelas a vencer` : ''})`
-              : `${walletNome}: emissor não informou limite usado — fatura somada das transações (R$ ${restante.toFixed(2)}), pode sair a menos`);
+            relatorio.avisos.push(
+              `${walletNome}: fatura em aberto por ${fonte} = R$ ${restante.toFixed(2)}` +
+              (fonte === 'limite_usado' && futuras ? ` (descontadas R$ ${futuras.toFixed(2)} de parcelas a vencer)` : '') +
+              ` · limite usado informado: ${n.limiteUsado == null ? 'não informado' : `R$ ${Number(n.limiteUsado).toFixed(2)}`}` +
+              ` · por transações: R$ ${porTx == null ? '—' : Number(porTx).toFixed(2)}`);
             if (n.faturaAberta) n.faturaAberta.total = estimada;
-            else n.faturaAberta = { estimada: true, restante, fonte: porLimite != null ? 'limite_usado' : 'transacoes' };
+            else n.faturaAberta = { estimada: true, restante };
+            if (n.faturaAberta) n.faturaAberta.fonte = fonte;
           }
         }
 
