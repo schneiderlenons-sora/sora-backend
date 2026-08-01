@@ -65,8 +65,15 @@ const BILLS3 = [{ id: 'b1', due_date: '2026-06-10' }, { id: 'b2', due_date: '202
 ok(S.escolherFaturaAberta(BILLS3, '2026-07-05').id === 'b3', 'antes do venc → b3');
 ok(S.escolherFaturaAberta(BILLS3, '2026-07-10').id === 'b3', 'vence HOJE ainda é a aberta');
 ok(S.escolherFaturaAberta(BILLS3, '2026-07-11').id === 'b2', 'venceu → próxima');
-ok(S.escolherFaturaAberta(BILLS3, '2027-01-01').id === 'b2', 'todas passadas → mais recente');
+// ⚠️ ESTE CASO MUDOU DE EXPECTATIVA — o antigo ("todas passadas → mais
+// recente") ERA o bug. O emissor só publica a fatura DEPOIS que ela fecha,
+// então no meio do ciclo a lista termina na fatura passada; devolvê-la como
+// "aberta" fazia o painel somar as compras dela + as do ciclo novo (numa conta
+// real: R$ 5.013,99 no lugar de R$ 3.423,57). Sem fatura publicada à frente o
+// certo é null, e o valor vem do limite usado (regra de ouro).
+ok(S.escolherFaturaAberta(BILLS3, '2027-01-01') === null, 'todas passadas → null (nunca a fechada)');
 ok(S.escolherFaturaAberta([], '2026-07-05') === null, 'sem bills → null');
+ok(S.ultimaFaturaPublicada(BILLS3).id === 'b2', 'as DATAS ainda saem da última publicada');
 ok(S.pagoDaFatura({ payments: [{ amount: '100.00' }, { amount: '46.89' }] }) === 146.89, 'soma payments[]');
 console.log('  ok');
 

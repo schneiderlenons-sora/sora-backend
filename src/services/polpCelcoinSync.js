@@ -237,15 +237,51 @@ function pagoDaFatura(bill) {
 }
 
 /**
- * Fatura em ABERTO = a de vencimento mais próximo que ainda não passou.
- * Se todas já venceram, devolve a mais recente (pode ter saldo em atraso).
- * Mesma noção de "fatura atual" do nosso cicloFatura (próximo vencimento ≥ hoje).
+ * Fatura em ABERTO = a de vencimento mais próximo que ainda NÃO passou.
+ *
+ * ⚠️ NÃO tem fallback pra "a mais recente". Isso era um bug caro: o `List Bills`
+ * do emissor só publica a fatura DEPOIS que ela fecha (bug conhecido da Polp —
+ * ver CLAUDE.md), então no meio do ciclo a lista termina na fatura PASSADA.
+ * Com fallback, essa fatura já vencida virava `of_bill_atual`, e a tela somava
+ * as compras dela + as compras do ciclo novo como se fossem uma fatura só.
+ * Medido numa conta real: R$ 3.143,75 (fatura de julho, já paga) + R$ 1.870,24
+ * (ciclo de agosto) = R$ 5.013,99 exibidos onde o banco mostrava R$ 3.423,57.
+ *
+ * Sem fatura publicada, o certo é devolver `null` e deixar o valor vir do
+ * LIMITE USADO (regra de ouro) — não fingir que uma fatura fechada é a atual.
  */
 function escolherFaturaAberta(bills, hoje) {
   const arr = (Array.isArray(bills) ? bills : []).filter((b) => b && b.due_date);
   if (!arr.length) return null;
   const ordenadas = arr.slice().sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
-  return ordenadas.find((b) => ymd(b.due_date) >= hoje) || ordenadas[ordenadas.length - 1];
+  return ordenadas.find((b) => ymd(b.due_date) >= hoje) || null;
+}
+
+/** Fatura mais recente publicada — serve pras DATAS (dia de fechamento e de
+ *  vencimento mudam pouco), nunca pro VALOR da fatura atual. */
+function ultimaFaturaPublicada(bills) {
+  const arr = (Array.isArray(bills) ? bills : []).filter((b) => b && b.due_date);
+  if (!arr.length) return null;
+  return arr.slice().sort((a, b) => String(a.due_date).localeCompare(String(b.due_date))).pop();
+}
+
+/**
+ * REGRA DE OURO da fatura de cartão (CLAUDE.md):
+ *
+ *     fatura = limite usado − parcelas a vencer
+ *
+ * O limite usado é o único número que o emissor mantém correto ANTES de a
+ * fatura fechar. Ele inclui as parcelas futuras (que ocupam limite mas não estão
+ * nesta fatura), então elas são descontadas — medidas nas transações com data no
+ * FUTURO que a API manda, nunca projetadas (projetar já deu 6.379 onde o real
+ * era 2.504).
+ *
+ * Somar as transações importadas NÃO resolve: as parcelas que compõem a fatura
+ * aberta só chegam quando ela é publicada. Por isso a soma sai sempre a MENOS.
+ */
+function faturaPorLimite(usado, futuras) {
+  if (usado == null) return null;
+  return Math.max(0, cent(usado - (futuras || 0)));
 }
 
 /**
@@ -288,8 +324,12 @@ function faturaPorTransacoes(normalizadas, crus, n, hoje) {
 function normalizeCartao(card, bills, hoje) {
   const ident = card.identification || {};
   const nome = (ident.name || card.name || card.brand_name || 'Cartão').toString().trim().slice(0, 60);
-  const { limite } = limiteTotalDoCartao(card.limits);
+  const { limite, usado, disponivel } = limiteTotalDoCartao(card.limits);
   const aberta = escolherFaturaAberta(bills, hoje);
+  // As DATAS podem vir da última fatura publicada mesmo quando ela já fechou —
+  // dia de fechamento e de vencimento não mudam de um mês pro outro. O VALOR,
+  // não: esse só sai de uma fatura de fato aberta.
+  const paraDatas = aberta || ultimaFaturaPublicada(bills);
 
   // Últimos 4 dígitos: pega o 1º método de pagamento (titular).
   const pm = Array.isArray(ident.payment_methods) ? ident.payment_methods[0] : null;
@@ -308,18 +348,26 @@ function normalizeCartao(card, bills, hoje) {
     // Convenção da Sora pro cartão: saldo negativo = fatura a pagar.
     // (O painel lê `Math.max(-saldo, 0)` como fatura do cartão OF.)
     saldoFatura: faturaRestante == null ? null : -faturaRestante,
+    // Limite USADO informado pelo emissor — é a base da regra de ouro e o único
+    // número correto enquanto a fatura não fecha. Guardado pra tela poder usar.
+    limiteUsado: usado,
+    limiteDisponivel: disponivel,
     extras: {
       limite,
       // ⭐ A Celcoin ENTREGA as datas — a Pluggy mandava balanceCloseDate null e
-      // nos obrigava a pedir o fechamento na mão.
-      dia_fechamento: aberta ? diaDoMes(aberta.bill_closing_date) : null,
-      dia_vencimento: aberta ? diaDoMes(aberta.due_date) : null,
+      // nos obrigava a pedir o fechamento na mão. Vêm da última fatura conhecida
+      // (o dia de fechamento não muda de mês pra mês); zerar isso quando a
+      // fatura aberta ainda não foi publicada quebraria o ciclo da tela inteira.
+      dia_fechamento: paraDatas ? diaDoMes(paraDatas.bill_closing_date) : null,
+      dia_vencimento: paraDatas ? diaDoMes(paraDatas.due_date) : null,
       bandeira: BANDEIRA[(card.credit_card_network || ident.credit_card_network || '').toString().toUpperCase()] || null,
       ultimos4,
       pagamento_minimo: aberta ? money(aberta.bill_minimum_amount) : null,
-      // Qual fatura está em aberto (migration 101) — é o que deixa a tela somar
-      // pelo agrupamento do EMISSOR em vez de pela data, acertando parcelamento.
+      // Qual fatura está em aberto (migration 101). Só quando ela EXISTE de
+      // verdade: apontar pra uma fatura fechada fazia a tela somar as compras
+      // dela junto com as do ciclo novo (R$ 5.013,99 no lugar de R$ 3.423,57).
       of_bill_atual: aberta ? String(aberta.id) : null,
+      of_limite_usado: usado,
     },
     faturaAberta: aberta
       ? {
@@ -811,22 +859,39 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         novasTx += novas;
 
         // ⚠️ A fatura AINDA ABERTA quase nunca tem `bill_total_amount` — o banco
-        // só publica o total quando ela FECHA (o MP manda 0/null o ciclo inteiro,
-        // e era isso que deixava "R$ 0,00" no painel com 26 compras importadas).
-        // Nesse caso a fatura vem das transações que acabamos de importar,
-        // agrupadas pelo CICLO REAL (ou pelo bill_id, que é exato quando vem).
-        const estimada = n.faturaAberta && n.faturaAberta.total > 0
-          ? null
-          : faturaPorTransacoes(normalizadas, txs, n, hoje);
-        if (estimada != null) {
-          const pago = n.faturaAberta ? n.faturaAberta.pago : 0;
-          const restante = Math.max(0, cent(estimada - pago));
-          await upsertWallet(grupoId, userId, n, -restante);
-          relatorio.avisos.push(
-            `${walletNome}: banco não publicou o total da fatura em aberto — somada das transações (R$ ${restante.toFixed(2)}, ${estimada === 0 ? 'sem compras no ciclo' : n.cicloLabel || 'ciclo'})`,
-          );
-          if (n.faturaAberta) n.faturaAberta.total = estimada;
-          else n.faturaAberta = { estimada: true, restante };
+        // só publica o total quando ela FECHA. Aí vale a REGRA DE OURO:
+        //
+        //     fatura = limite usado − parcelas a vencer
+        //
+        // NÃO some as transações importadas aqui. As parcelas que compõem a
+        // fatura aberta só chegam quando ela é publicada, então a soma sai
+        // sempre a MENOS (medido: R$ 1.870,24 numa fatura real de R$ 3.423,57).
+        // A soma por transação fica como último recurso, pra emissor que não
+        // informa limite usado.
+        if (!(n.faturaAberta && n.faturaAberta.total > 0)) {
+          // Parcela a vencer = transação com data no FUTURO. Medida, nunca
+          // projetada (projetar já deu 6.379 onde o real era 2.504).
+          const futuras = cent((txs || []).reduce((s, t) => {
+            const d = ymd(t.transaction_date_time || t.bill_post_date);
+            if (!d || d <= hoje) return s;
+            const v = money(t.brazilian_amount) ?? money(t.amount);
+            const credito = (t.credit_debit_type || '').toString().toUpperCase() === 'CREDITO';
+            return (v == null || credito) ? s : s + Math.abs(v);
+          }, 0));
+
+          const porLimite = faturaPorLimite(n.limiteUsado, futuras);
+          const estimada = porLimite != null ? porLimite : faturaPorTransacoes(normalizadas, txs, n, hoje);
+
+          if (estimada != null) {
+            const pago = n.faturaAberta ? n.faturaAberta.pago : 0;
+            const restante = Math.max(0, cent(estimada - pago));
+            await upsertWallet(grupoId, userId, n, -restante);
+            relatorio.avisos.push(porLimite != null
+              ? `${walletNome}: fatura em aberto pelo limite usado (R$ ${restante.toFixed(2)}${futuras ? `, descontadas R$ ${futuras.toFixed(2)} de parcelas a vencer` : ''})`
+              : `${walletNome}: emissor não informou limite usado — fatura somada das transações (R$ ${restante.toFixed(2)}), pode sair a menos`);
+            if (n.faturaAberta) n.faturaAberta.total = estimada;
+            else n.faturaAberta = { estimada: true, restante, fonte: porLimite != null ? 'limite_usado' : 'transacoes' };
+          }
         }
 
         relatorio.cartoes.push({
@@ -895,6 +960,6 @@ module.exports = {
   money, pct, cetParaMensal, diaDoMes, categoriaDe,
   ehPagamentoFatura: require('./categorizar').ehPagamentoFatura,
   normalizeConta, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
-  normalizeDivida, normalizeInvestimento,
+  normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento,
 };
