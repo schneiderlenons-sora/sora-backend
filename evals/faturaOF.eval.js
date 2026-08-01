@@ -53,6 +53,34 @@ console.log('── 1. escolha da fatura ──');
 }
 console.log('  ok');
 
+// ── 1b. LIMITE USADO NÃO É FATURA ──────────────────────────────────────────
+// Medido no payload real do Nubank (01/08/2026, conta de teste):
+//   limits[].used_amount ....... 4.061,99
+//   fatura no app do banco ..... 3.423,57
+//   diferença .................. 638,42  ← parcelas de faturas FUTURAS
+//
+// Não há como converter um no outro com o que o emissor entrega:
+//   · transações com data futura → ZERO (a Celcoin manda parcela com a data da
+//     COMPRA, não com a da cobrança);
+//   · `parcelamentos` → vem DUPLICADO (três linhas pro mesmo Mercado Livre, com
+//     paidInstallments 5, 3 e 1). Somando dá 2.887,67 ou 1.159,49 conforme a
+//     leitura — nenhuma perto de 638,42.
+//
+// Este bloco existe pra impedir que alguém (eu, de novo) volte a exibir o
+// limite usado como se fosse a fatura.
+console.log('── 1b. limite usado ≠ fatura ──');
+{
+  const USADO = 4061.99, FATURA_REAL = 3423.57;
+  ok(Math.abs(USADO - FATURA_REAL - 638.42) < 0.01, 'a diferença medida é 638,42');
+  ok(USADO > FATURA_REAL, 'o limite usado é sempre MAIOR (inclui parcela futura)');
+  // As duas leituras possíveis do endpoint de parcelamentos, nenhuma explica.
+  for (const candidata of [2887.67, 1159.49, 0]) {
+    ok(Math.abs(candidata - 638.42) > 0.01,
+       `parcelamentos não explicam a diferença (candidata ${candidata})`);
+  }
+}
+console.log('  ok');
+
 // ── 2. A regra de ouro ─────────────────────────────────────────────────────
 console.log('── 2. fatura = limite usado − parcelas a vencer ──');
 {
@@ -82,12 +110,19 @@ console.log('── 3. regressão do caso real ──');
   const ofBillAtual = aberta ? aberta.id : null;
   eq(ofBillAtual, null, 'of_bill_atual nulo enquanto a fatura não é publicada');
 
-  // E o valor vem do limite usado — o número que bate com o app do banco.
-  eq(faturaPorLimite(3423.57, 0), 3423.57, 'fatura exibida = a do banco');
-  // O que NÃO pode voltar a acontecer:
+  // O que NÃO pode voltar a acontecer: somar a fatura fechada com o ciclo novo.
   const somaErrada = 3143.75 + 1870.24;
   ok(Math.abs(somaErrada - 5013.99) < 0.01, 'a soma errada era exatamente 5.013,99');
-  ok(faturaPorLimite(3423.57, 0) !== somaErrada, 'a fatura nunca mais é a soma das duas');
+
+  // A fatura em aberto passou a sair das TRANSAÇÕES do ciclo — auditável, bate
+  // com a lista que o usuário vê logo abaixo do valor. Sai a MENOS quando há
+  // parcelamento, e a tela diz isso em vez de mostrar um número redondo e errado.
+  const doCiclo = 1870.24;
+  ok(doCiclo < 3423.57, 'a soma do ciclo sai a menos que a fatura real');
+  ok(doCiclo !== somaErrada, 'e nunca é a soma das duas faturas');
+  // `faturaPorLimite` continua existindo (emissor que informe parcela a vencer
+  // datada no futuro se beneficia), mas NÃO é mais a fonte da fatura no Celcoin.
+  eq(faturaPorLimite(5000, 1576.43), 3423.57, 'a regra segue correta quando há o dado');
 }
 console.log('  ok');
 

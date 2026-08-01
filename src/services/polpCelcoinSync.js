@@ -881,34 +881,38 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
             return (v == null || credito) ? s : s + Math.abs(v);
           }, 0));
 
-          // ORDEM POR CONFIABILIDADE — a de cima é sempre a mais próxima da
-          // verdade do emissor:
-          //   1. as transações que o EMISSOR vinculou a esta fatura (agrupamento
-          //      dele, já resolve parcelamento);
-          //   2. limite usado − parcelas a vencer (regra de ouro): correto, mas
-          //      o limite usado inclui parcelas de faturas FUTURAS, e elas só
-          //      são descontadas se o emissor as mandar datadas no futuro;
-          //   3. o ciclo de datas (cartão manual / emissor mudo) — sai a MENOS,
-          //      porque as parcelas desta fatura vêm com a data da COMPRA.
-          const porTx = faturaPorTransacoes(normalizadas, txs, n, hoje);
-          const usouBill = n.fonteFatura === 'bill_id';
-          const porLimite = faturaPorLimite(n.limiteUsado, futuras);
-
-          const estimada = usouBill ? porTx : (porLimite != null ? porLimite : porTx);
-          const fonte = usouBill ? 'bill_id' : (porLimite != null ? 'limite_usado' : 'ciclo');
+          // ⚠️ O LIMITE USADO **NÃO** É A FATURA — e não dá pra converter um no
+          // outro com o que o emissor entrega. Medido num Nubank real:
+          //   limite usado 4.061,99 · fatura no app 3.423,57 → sobram 638,42
+          // de parcelas de faturas FUTURAS ocupando limite hoje. Pra descontar,
+          // precisaríamos saber quais são, e nenhuma fonte serve:
+          //   · transações com data futura: a Celcoin manda parcela com a data
+          //     da COMPRA, então vieram ZERO;
+          //   · `parcelamentos`: devolve o mesmo parcelamento DUPLICADO (três
+          //     linhas pro mesmo Mercado Livre, com paidInstallments 5, 3 e 1) —
+          //     somando dá 2.887,67 ou 1.159,49 conforme a leitura, nenhuma
+          //     perto de 638,42.
+          // Ficar procurando a combinação que fecha é ajustar número até bater,
+          // e isso com dinheiro na tela do cliente não se faz.
+          //
+          // Então a fatura em aberto sai do que dá pra AUDITAR: as transações
+          // que o próprio usuário vê na lista logo abaixo do valor. Sai a menos
+          // quando há parcelamento (a parcela desta fatura vem com a data da
+          // compra) — e a tela diz isso, em vez de exibir um número redondo e
+          // errado. O limite usado vai pra barra de limite, que é o lugar dele.
+          const estimada = faturaPorTransacoes(normalizadas, txs, n, hoje);
+          const fonte = n.fonteFatura || 'ciclo';
 
           if (estimada != null) {
             const pago = n.faturaAberta ? n.faturaAberta.pago : 0;
             const restante = Math.max(0, cent(estimada - pago));
             await upsertWallet(grupoId, userId, n, -restante);
             relatorio.avisos.push(
-              `${walletNome}: fatura em aberto por ${fonte} = R$ ${restante.toFixed(2)}` +
-              (fonte === 'limite_usado' && futuras ? ` (descontadas R$ ${futuras.toFixed(2)} de parcelas a vencer)` : '') +
-              ` · limite usado informado: ${n.limiteUsado == null ? 'não informado' : `R$ ${Number(n.limiteUsado).toFixed(2)}`}` +
-              ` · por transações: R$ ${porTx == null ? '—' : Number(porTx).toFixed(2)}`);
-            if (n.faturaAberta) n.faturaAberta.total = estimada;
-            else n.faturaAberta = { estimada: true, restante };
-            if (n.faturaAberta) n.faturaAberta.fonte = fonte;
+              `${walletNome}: banco não publicou o total da fatura em aberto — somada por ${fonte} = R$ ${restante.toFixed(2)}` +
+              ` · limite usado informado pelo emissor: ${n.limiteUsado == null ? 'não informado' : `R$ ${Number(n.limiteUsado).toFixed(2)}`}` +
+              (futuras ? ` · parcelas datadas no futuro: R$ ${futuras.toFixed(2)}` : ''));
+            if (n.faturaAberta) { n.faturaAberta.total = estimada; n.faturaAberta.fonte = fonte; }
+            else n.faturaAberta = { estimada: true, restante, fonte };
           }
         }
 
