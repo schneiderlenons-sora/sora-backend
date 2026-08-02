@@ -46,15 +46,37 @@ async function acessoOpenFinance(userId) {
     .select('email, phone, plano, vitalicio').eq('id', userId).maybeSingle();
   if (!data) return { liberado: false, limite: 0, plano: null, motivo: 'sem_usuario' };
 
+  // ⚠️ `of_conexoes_pagas` (migration 111) em query SEPARADA e tolerante: se a
+  // coluna ainda não existir, um select único falharia e o Open Finance sairia
+  // do ar pra TODO MUNDO. É a regra do projeto sobre coluna nova em caminho
+  // crítico — já derrubou o Grow uma vez.
+  let pagas = 0;
+  try {
+    const { data: extra } = await supabase.from('users')
+      .select('of_conexoes_pagas').eq('id', userId).maybeSingle();
+    pagas = Number(extra?.of_conexoes_pagas) || 0;
+  } catch { pagas = 0; }
+
   const plano = data.plano || 'inativo';
 
   // Atalho de teste: entra com o limite do Premium, seja qual for o plano.
-  if (naAllowlist(data)) return { liberado: true, limite: LIMITE_CONEXOES.premium, plano, motivo: null };
+  if (naAllowlist(data)) {
+    return { liberado: true, limite: LIMITE_CONEXOES.premium, franquia: LIMITE_CONEXOES.premium, pagas, plano, motivo: null };
+  }
 
-  if (data.vitalicio) return { liberado: false, limite: 0, plano, motivo: 'vitalicio' };
+  // VITALÍCIO não tem franquia: pagou uma vez e cada banco conectado custa
+  // mensalidade nossa no agregador. Mas pode contratar conexão avulsa — e aí o
+  // limite dele é exatamente o que ele paga.
+  if (data.vitalicio) {
+    return pagas > 0
+      ? { liberado: true, limite: pagas, franquia: 0, pagas, plano, motivo: null }
+      : { liberado: false, limite: 0, franquia: 0, pagas: 0, plano, motivo: 'vitalicio' };
+  }
 
-  const limite = LIMITE_CONEXOES[plano] || 0;
-  return { liberado: limite > 0, limite, plano, motivo: limite > 0 ? null : 'plano' };
+  // Assinante: franquia do plano + o que contratar além dela.
+  const franquia = LIMITE_CONEXOES[plano] || 0;
+  const limite = franquia + pagas;
+  return { liberado: limite > 0, limite, franquia, pagas, plano, motivo: limite > 0 ? null : 'plano' };
 }
 
 /** Compat: só o booleano (onde o limite não importa). */
