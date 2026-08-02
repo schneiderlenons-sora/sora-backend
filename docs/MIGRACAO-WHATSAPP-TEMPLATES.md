@@ -107,14 +107,14 @@
 
 Aviso de novidade disparado pelo painel admin (**Admin → Comunicados**).
 
-- **Nome:** `atualizacao_sora` · **Categoria: Marketing** · pt_BR
+- **Nome:** `atualizacao_sora` · **Categoria: Marketing** · pt_BR · **APROVADO 31/07/2026**
 - **Por que Marketing e não Utilidade:** anunciar recurso novo é promocional pela
   política da Meta. Marcar Utilidade num conteúdo desses arrisca reprovação — ou
   reclassificação depois. Custa um pouco mais por mensagem e respeita o "Parar
   promoções" do usuário; é o preço de estar na regra.
 - **Corpo:**
   ```
-  Oi, {{1}}! Nova atualização no ar!
+  Eaí, {{1}}! Nova atualização no ar!
 
   {{2}}
 
@@ -145,7 +145,7 @@ admin escreveu, e **cai pro de 1 parágrafo se o modelo não estiver aprovado**
 
 - **`atualizacao_sora_2`** — mesmo cabeçalho, botão e categoria do `atualizacao_sora`:
   ```
-  Oi, {{1}}! Nova atualização no ar!
+  Eaí, {{1}}! Nova atualização no ar!
 
   {{2}}
 
@@ -181,14 +181,14 @@ avisado. A dedup (`alerta_enviado` / `meta_mensal_alerta_enviado`) garante **um
 aviso por limite por mês**, o que é o que segura o sync que importa dezenas de
 transações de uma vez.
 
-- **Nome:** `limite_atingido` · **Categoria: UTILIDADE** · pt_BR
+- **Nome:** `limite_atingido` · **Categoria: UTILIDADE** · pt_BR · **APROVADO 31/07/2026**
 - **Por que Utilidade e não Marketing:** é aviso sobre a conta do PRÓPRIO usuário,
   disparado por um gasto que ele acabou de registrar, com números específicos
   dele. Não vende nada. (Se um dia entrar "assine o Premium pra ter mais
   limites", vira Marketing — não misture.)
 - **Corpo:**
   ```
-  Oi, {{1}}! Aviso sobre o seu limite de {{2}}.
+  Eaí, {{1}}! Aviso sobre o seu limite de {{2}}.
 
   Você já usou {{3}} do teto: {{4}} de {{5}}.
 

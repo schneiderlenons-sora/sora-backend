@@ -26,16 +26,17 @@ function limpaCat(s) {
 
 // ── Template `limite_atingido` ───────────────────────────────────────────────
 //
-// Corpo na Meta:
-//   "Oi, {{1}}! Aviso sobre o seu limite de {{2}}.
+// APROVADO na Meta em 31/07/2026 · categoria UTILIDADE · pt_BR.
+// A saudação aprovada é "Eaí, {{1}}!" (não "Oi") — o corpo é do template, o
+// código só manda os 5 parâmetros:
+//   {{1}} primeiro nome · {{2}} alvo do limite · {{3}} percentual
+//   {{4}} gasto · {{5}} teto
 //
-//    Você já usou {{3}} do teto: {{4}} de {{5}}.
+// Categoria UTILIDADE porque é aviso sobre a conta do próprio usuário, com os
+// números dele, disparado por um gasto que ele registrou — não vende nada.
 //
-//    Pra ver onde foi o dinheiro ou mudar o limite, é só abrir o painel. 💚"
-//
-// Categoria UTILIDADE: é aviso sobre a conta do próprio usuário, com os números
-// dele, disparado por um gasto que ele registrou — não vende nada.
-//
+// ⚠️ Mexeu no modelo lá? Confira a QUANTIDADE de variáveis. Mandar 5 num corpo
+// com 4 dá erro 132000 e o alerta some sem log de negócio.
 // ⚠️ Nenhum parâmetro pode ter \n, tab ou 4+ espaços seguidos: a Cloud API
 // recusa. As quebras estão no corpo FIXO do modelo.
 const TPL_LIMITE_NOME = process.env.WHATSAPP_TPL_LIMITE || 'limite_atingido';
