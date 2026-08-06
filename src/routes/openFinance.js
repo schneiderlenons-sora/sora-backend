@@ -431,16 +431,24 @@ router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
   const id = req.params.consentId;
   const hoje = hojeSP();
   const cru = req.query.cru === '1';          // ?cru=1 inclui o payload bruto
-  const out = { consentId: id, hoje, contas: [], cartoes: [], dividas: [], investimentos: [] };
+  // ?foco=cartoes — só o que decide a FATURA. O modo completo faz ~40 chamadas
+  // à Polp (contas, 5 famílias de investimento, empréstimos, recorrências) e,
+  // somado ao cold start do Render free, estourava o limite de tempo da Vercel:
+  // a URL do painel simplesmente não carregava. Aqui cai pra ~8 chamadas.
+  const soCartoes = req.query.foco === 'cartoes' || req.query.foco === 'parcelamentos';
+  const out = { consentId: id, hoje, foco: soCartoes ? 'cartoes' : 'completo',
+                contas: [], cartoes: [], dividas: [], investimentos: [] };
 
   try { out.consentimento = await celcoin.getConsentimento(id); }
   catch (e) { out.consentimento_erro = e.message; }
 
-  try { out.sync_schedules = await celcoin.syncSchedules(id); }
-  catch (e) { out.sync_schedules_erro = e.message; }
+  if (!soCartoes) {
+    try { out.sync_schedules = await celcoin.syncSchedules(id); }
+    catch (e) { out.sync_schedules_erro = e.message; }
+  }
 
   // CONTAS
-  try {
+  if (!soCartoes) try {
     for (const raw of await celcoin.listarContas(id)) {
       const item = { normalizado: sync.normalizeConta(raw) };
       if (cru) item.cru = raw;
@@ -522,7 +530,7 @@ router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
         };
       } catch (e) { item.conferencia_erro = e.message; }
 
-      try {
+      if (!soCartoes) try {
         const txs = await celcoin.listarTransacoesCartao(raw.id, { max: 1 });
         item.amostra_tx = txs.slice(0, 3).map((t) => ({ cru: cru ? t : undefined, normalizado: sync.normalizeTxCartao(t, hoje) }));
         item.ignoradas_futuro = txs.filter((t) => String(t.transaction_date_time || '').slice(0, 10) > hoje).length;
@@ -546,13 +554,15 @@ router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
           },
         };
       } catch (e) { item.parcelamentos_erro = e.message; }
-      try { item.recorrencias = await celcoin.listarRecorrencias(raw.id); } catch (e) { item.recorrencias_erro = e.message; }
+      if (!soCartoes) {
+        try { item.recorrencias = await celcoin.listarRecorrencias(raw.id); } catch (e) { item.recorrencias_erro = e.message; }
+      }
       out.cartoes.push(item);
     }
   } catch (e) { out.cartoes_erro = e.message; }
 
   // EMPRÉSTIMOS / FINANCIAMENTOS → viram Dívidas
-  for (const [kind, fn] of [['emprestimo', 'listarEmprestimos'], ['financiamento', 'listarFinanciamentos']]) {
+  if (!soCartoes) for (const [kind, fn] of [['emprestimo', 'listarEmprestimos'], ['financiamento', 'listarFinanciamentos']]) {
     try {
       for (const raw of await celcoin[fn](id)) {
         const item = { kind, normalizado: sync.normalizeDivida(raw, kind) };
@@ -563,7 +573,8 @@ router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
   }
 
   // INVESTIMENTOS (5 famílias) → viram linhas na aba Investimentos
-  try {
+  // (a mais cara do diagnóstico: 5 endpoints, cada um paginado)
+  if (!soCartoes) try {
     for (const raw of await celcoin.listarInvestimentos(id)) {
       const item = { familia: raw.__familia, normalizado: sync.normalizeInvestimento(raw) };
       if (cru) item.cru = raw;
