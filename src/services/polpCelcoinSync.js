@@ -28,7 +28,9 @@
 const crypto   = require('crypto');
 const supabase = require('../db/supabase');
 const celcoin  = require('./polpCelcoin');
-const { categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA } = require('./categorizar');
+const {
+  categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA, ehPagamentoFaturaDescricao,
+} = require('./categorizar');
 const { cicloPorCompetencia, competenciaAtual, hojeSP } = require('./cicloFatura');
 
 const PROVIDER = 'polp-celcoin';
@@ -525,9 +527,19 @@ function normalizeTxConta(tx) {
 
   // Transferência entre contas próprias / aporte não é consumo.
   const ref = tx.category_ref || '';
-  const ehTransferencia =
-    ref === 'TRANSFER_OUT_ACCOUNT_TRANSFER' || ref === 'TRANSFER_IN_ACCOUNT_TRANSFER' ||
-    ref === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT';
+
+  // ⚠️ O `category_ref` NÃO pode ser a única prova de pagamento de fatura: o
+  // Mercado Pago manda "Pagamento Cartão de crédito" SEM
+  // LOAN_PAYMENTS_CREDIT_CARD_PAYMENT, e a linha caía como Gasto/Outros —
+  // inflando o relatório e o gráfico por categoria em R$ 2.243,60 (caso real).
+  // A fatura é paga uma vez e aparece nos DOIS lados; contar o pagamento como
+  // gasto conta em dobro, porque cada compra dela já foi categorizada.
+  // A detecção por descrição existia no trilho Pluggy e não tinha sido portada.
+  const pagouFatura = ref === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT'
+    || ehPagamentoFaturaDescricao(descricao, ref);
+
+  const ehTransferencia = pagouFatura
+    || ref === 'TRANSFER_OUT_ACCOUNT_TRANSFER' || ref === 'TRANSFER_IN_ACCOUNT_TRANSFER';
 
   return {
     externalId: String(tx.id),
@@ -535,7 +547,7 @@ function normalizeTxConta(tx) {
     valor: Math.abs(valor),
     descricao,
     categoria: ehTransferencia
-      ? (ref === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' ? CATEGORIA_FATURA : 'Transferências')
+      ? (pagouFatura ? CATEGORIA_FATURA : 'Transferências')
       : categoriaDe(descricao, ref),
     data: tx.transaction_date_time || tx.created_at,
     transferencia: ehTransferencia,

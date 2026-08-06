@@ -93,12 +93,12 @@ async function upsertWallet(grupoId, userId, account, connectorNome) {
   return nova?.nome || nome;
 }
 
-// Pagamento de fatura do cartão? (lado conta — detecta pela descrição/categoria)
-function ehPagamentoFatura(descricao, pluggyCat) {
-  const s = `${descricao || ''} ${pluggyCat || ''}`
-    .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  return /(pagamento\s+de\s+fatura|pagamento\s+fatura|fatura\s+cart|credit\s*card\s*payment|pagamento\s+de\s+cart|pagamento\s+cart)/.test(s);
-}
+// Pagamento de fatura do cartão pelo lado da CONTA. A regra mora em
+// services/categorizar.ehPagamentoFaturaDescricao — ela NASCEU aqui e ficou só
+// aqui, o trilho Celcoin não a herdou e o bug voltou ("Pagamento Cartão de
+// crédito" contando como gasto). Agora é fonte única pros dois trilhos.
+const { ehPagamentoFaturaDescricao } = require('./categorizar');
+const ehPagamentoFatura = (descricao, pluggyCat) => ehPagamentoFaturaDescricao(descricao, pluggyCat);
 
 // Mapeia uma transação Pluggy pro formato da Sora.
 function mapTx(tx, grupoId, userId, walletNome, ehCredito) {

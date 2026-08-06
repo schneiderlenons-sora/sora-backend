@@ -307,7 +307,40 @@ function ehPagamentoFatura(categoria) {
   return c === CATEGORIA_FATURA.toLowerCase() || c === CATEGORIA_FATURA_LEGADO.toLowerCase();
 }
 
+/**
+ * Pagamento de fatura visto pelo lado da CONTA, detectado pela descrição.
+ *
+ * ⚠️ FONTE ÚNICA — não copiar esta regra pra dentro de um sync. Ela já existia
+ * só no trilho Pluggy (services/pluggySync.js) e NÃO foi portada pro trilho
+ * Celcoin; resultado: "Pagamento Cartão de crédito" (R$ 2.243,60, conta do
+ * Mercado Pago) entrou como Gasto/Outros e voltou a inflar o relatório e o
+ * gráfico por categoria — o bug que já tinha sido corrigido uma vez.
+ *
+ * Por que importa: a fatura é paga UMA vez mas aparece nos DOIS lados — sai da
+ * conta e abate no cartão. Contar o pagamento como gasto conta em dobro, já
+ * que cada compra da fatura já foi categorizada uma a uma.
+ *
+ * Exige palavra de PAGAMENTO **e** de cartão/fatura juntas: "pagamento pix" ou
+ * "cartao de credito" sozinhos não podem virar transferência.
+ */
+// `(?:d[aeo]s?\s+)?` cobre "de", "da", "do", "das", "dos" e a ausência deles:
+// os bancos escrevem "Pagamento DE fatura", "Pagamento DA fatura" e
+// "Pagamento fatura". Faltar o "da" já deixou "Pagamento da fatura" passar.
+const PAGA = '(?:pagamento|pagto|pgto|pag)\\s+(?:d[aeo]s?\\s+)?';
+const RE_PAGAMENTO_FATURA = new RegExp([
+  `${PAGA}fatura`,
+  `${PAGA}cart`,
+  'fatura\\s+(?:d[aeo]s?\\s+)?cart',
+  'credit\\s*card\\s*payment',
+].join('|'));
+
+function ehPagamentoFaturaDescricao(descricao, categoriaExterna) {
+  const s = `${descricao || ''} ${categoriaExterna || ''}`
+    .toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  return RE_PAGAMENTO_FATURA.test(s);
+}
+
 module.exports = {
   categorizar, categorizarDescricao, mapearCategoriaPluggy,
-  CATEGORIA_FATURA, CATEGORIA_FATURA_LEGADO, ehPagamentoFatura,
+  CATEGORIA_FATURA, CATEGORIA_FATURA_LEGADO, ehPagamentoFatura, ehPagamentoFaturaDescricao,
 };

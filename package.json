@@ -23,7 +23,8 @@
     "eval:fatura-of": "node evals/faturaOF.eval.js",
     "eval:parcelamentos": "node evals/parcelamentos.eval.js",
     "eval:parcela-cartao": "node evals/parcelaCartaoOF.eval.js",
-    "eval:sugerir-categoria": "node evals/sugerirCategoriaFixa.eval.js"
+    "eval:sugerir-categoria": "node evals/sugerirCategoriaFixa.eval.js",
+    "eval:pagamento-fatura": "node evals/pagamentoFatura.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
