@@ -117,7 +117,10 @@ const REGRAS = [
       'botox', 'harmoniza', 'preenchimento facial', 'corte de cabelo',
       'creme', 'perfume', 'pomada', 'hidratante', 'shampoo', 'xampu', 'condicionador', 'sabonete', 'desodorante',
       'protetor solar', 'maquiagem', 'batom', 'cosmetic', 'skincare', 'esmalte', 'barbeador', 'gilete',
-      'escova de dente', 'creme dental', 'fio dental', 'enxaguante', 'boticario', 'natura', 'sephora', 'perfumaria', 'quem disse berenice', 'avon',
+      // ⚠️ '=natura' (palavra inteira), NUNCA 'natura' solto: como substring
+      // ela casa dentro de "asSINATURA" e toda transação com "Assinatura X"
+      // virava Autocuidado. Medido: "Assinatura Sora Premium" → Autocuidado.
+      'escova de dente', 'creme dental', 'fio dental', 'enxaguante', 'boticario', '=natura', 'sephora', 'perfumaria', 'quem disse berenice', 'avon',
       'massagem', 'spa ', 'tatuagem', 'piercing'] },
 
   // ── Dieta / suplementos ──

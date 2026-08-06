@@ -28,6 +28,21 @@ router.get('/sugestoes', auth, async (req, res) => {
   }
 });
 
+// GET /api/recorrencias/categorias-sugeridas — contas fixas em "Outros" que a
+// Sora acha que sabe categorizar. SUGERE, não aplica: categoria mexe em
+// relatório, limite e Wrapped. ANTES de /:phone (curinga).
+router.get('/categorias-sugeridas', auth, async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo;
+    if (!grupoId) return res.json({ sugestoes: [] });
+    const { sugerirCategorias } = require('../services/sugerirCategoriaFixa');
+    res.json({ sugestoes: await sugerirCategorias(grupoId) });
+  } catch (err) {
+    console.error('[recorrencias/categorias-sugeridas]', err.message);
+    res.json({ sugestoes: [] }); // tolerante — nunca quebra a aba
+  }
+});
+
 // POST /api/recorrencias/dispensar { descricao } — marca uma sugestão como
 // dispensada (não volta a aparecer). ANTES de /:phone.
 router.post('/dispensar', auth, async (req, res) => {
