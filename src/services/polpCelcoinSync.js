@@ -25,6 +25,7 @@
 //      → normalizamos em pct().
 //   8. `dividas.taxa_juros` é % ao MÊS e o CET da Celcoin é ANUAL → convertemos.
 // =====================================================================
+const crypto   = require('crypto');
 const supabase = require('../db/supabase');
 const celcoin  = require('./polpCelcoin');
 const { categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA } = require('./categorizar');
@@ -542,14 +543,110 @@ function normalizeTxConta(tx) {
   };
 }
 
+// ── Parcelas do cartão: redistribuir pelos meses ────────────────────────────
+//
+// PROBLEMA (medido na conta de um cliente, ago/2026): a Celcoin manda as N
+// parcelas de uma compra como N transações separadas, TODAS carimbadas com a
+// data da COMPRA — não com a data em que cada parcela é cobrada. Uma compra de
+// 03/08 em 12x virou 12 gastos de R$29,90 no dia 03/08. Medido nessa conta:
+// 16 compras parceladas, 47 linhas, R$ 2.055,67 inflados no histórico e
+// R$ 380,40 só no ciclo aberto.
+//
+// A defesa que existia era o `bill_id` (a fatura que o emissor vinculou à
+// linha), mas ele quase nunca vem: 80 de 577 transações (14%) — e ZERO nas
+// parcelas da fatura ainda não publicada, que é exatamente onde importa.
+//
+// Solução: ler o marcador "N/M" que o emissor põe na descrição e datar cada
+// parcela em compra + (N−1) meses. A parcela do mês cai na fatura certa e as
+// futuras ficam agendadas, aparecendo como previstas até a cobrança chegar.
+
+/** Tira o marcador "3/12" do fim da descrição. */
+function baseSemMarcador(descricao) {
+  return String(descricao || '').trim().replace(/\s+\d{1,2}\/\d{1,2}$/, '').trim();
+}
+
+/** "Amazon Br Digital 3/12" → { base: 'Amazon Br Digital', n: 3, total: 12 } */
+function parcelaDaDescricao(descricao) {
+  const m = String(descricao || '').trim().match(/^(.*?)\s+(\d{1,2})\/(\d{1,2})$/);
+  if (!m) return null;
+  const n = Number(m[2]);
+  const total = Number(m[3]);
+  // total ≥ 2: "1/1" não é parcelamento. n ≤ total: descarta lixo tipo "13/12".
+  if (!(n >= 1 && total >= 2 && n <= total)) return null;
+  const base = m[1].trim();
+  if (!base) return null;
+  return { base, n, total };
+}
+
+/**
+ * Número e total da parcela de uma transação de cartão.
+ *
+ * PREFERE os campos ESTRUTURADOS que a Celcoin manda (`charge_identificator` =
+ * parcela atual, `charge_number` = total — docs/CELCOIN-API.md §5.2) e só cai
+ * na descrição quando eles não vêm. Parse de texto é o último recurso: o
+ * marcador depende de o emissor escrever "3/12" no nome, o que nem todo banco
+ * faz e nenhum garante.
+ */
+function parcelaDaTx(tx, descricao) {
+  const n = Number(tx && tx.charge_identificator);
+  const total = Number(tx && tx.charge_number);
+  if (Number.isInteger(n) && Number.isInteger(total) && total >= 2 && n >= 1 && n <= total) {
+    const base = baseSemMarcador(descricao);
+    if (base) return { base, n, total, fonte: 'campo' };
+  }
+  const p = parcelaDaDescricao(descricao);
+  return p ? { ...p, fonte: 'descricao' } : null;
+}
+
+/**
+ * Data em que a parcela N é cobrada = compra + (N−1) meses.
+ * Clampa o dia em 28 e ancora ao meio-dia UTC — MESMA regra do parcelamento
+ * manual (handlers/parcelas.js), pra compra parcelada digitada e importada
+ * caírem no mesmo dia. Sem o clamp, compra dia 31 pularia de mês em fevereiro;
+ * sem o meio-dia, o fuso viraria o dia (o painel usa America/Sao_Paulo).
+ */
+function dataDaParcela(dataCompra, n) {
+  const d = new Date(dataCompra);
+  if (Number.isNaN(d.getTime())) return null;
+  // ⚠️ Dia no fuso de SÃO PAULO, nunca em UTC (regra do CLAUDE.md). Medido na
+  // conta real: a compra foi 03/08 às 21h39 no Brasil, que em UTC já é 04/08 —
+  // com getUTCDate() as 12 parcelas cairiam todas um dia pra frente.
+  const [Y, M, D] = d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+  return new Date(Date.UTC(Y, (M - 1) + (n - 1), Math.min(D, 28), 12)).toISOString();
+}
+
+/**
+ * Identificador do parcelamento. Tem de ser DETERMINÍSTICO: as parcelas podem
+ * ser importadas em syncs diferentes e precisam cair no mesmo grupo (é ele que
+ * faz o "excluir todas", a badge "3/12" e a exclusão da detecção de recorrência
+ * funcionarem). Por isso é hash, não aleatório como no parcelamento manual.
+ *
+ * ⚠️ O valor entra ARREDONDADO AO REAL de propósito: o emissor manda a mesma
+ * compra com centavos diferentes entre as parcelas (medido: 52,19 · 52,20 ·
+ * 52,23), e usar centavo exato quebraria uma compra em vários grupos. O preço
+ * disso é que duas compras distintas na mesma loja, no mesmo dia, com o mesmo
+ * número de parcelas e valor próximo caem no mesmo grupo — é o mesmo limite
+ * que a Polp relatou no algoritmo deles, e não há identificador de compra no
+ * Open Finance pra resolver isso direito.
+ *
+ * Não entra identificador de cartão na chave: a transação de cartão da Celcoin
+ * não publica um (docs §5.2) e o grupo já é sempre consultado dentro de um
+ * `grupo_id`. Assim o hash também fica reproduzível fora do sync (backfill).
+ */
+function grupoDaParcela(base, total, valor, dataCompra) {
+  const chave = [
+    String(base || '').toUpperCase(),
+    total,
+    Math.round(Number(valor) || 0),
+    String(dataCompra || '').slice(0, 10),
+  ].join('|');
+  return 'OF' + crypto.createHash('sha1').update(chave).digest('hex').slice(0, 10).toUpperCase();
+}
+
 /** Transação de CARTÃO. Devolve `null` quando não deve ser importada. */
 function normalizeTxCartao(tx, hoje) {
   // Pré-autorização/agendamento não entra na fatura (ver NAO_EFETIVADA).
   if (!efetivada(tx)) return null;
-
-  // Parcela a vencer chega com data no futuro — não é gasto de hoje.
-  const data = tx.transaction_date_time || tx.bill_post_date;
-  if (ymd(data) && ymd(data) > hoje) return null;
 
   // ⚠️ brazilian_amount (BRL). `amount` é a moeda ORIGINAL (compra internacional).
   const valor = money(tx.brazilian_amount) ?? money(tx.amount);
@@ -559,6 +656,33 @@ function normalizeTxCartao(tx, hoje) {
   const ehCredito = (tx.credit_debit_type || '').toString().toUpperCase() === 'CREDITO';
   const cp = tx.counterparty || {};
   const descricao = (tx.transaction_name || cp.alias || cp.name || '').toString();
+
+  const dataCompra = tx.transaction_date_time || tx.bill_post_date;
+  const jaEraFutura = !!(ymd(dataCompra) && ymd(dataCompra) > hoje);
+  const p = parcelaDaTx(tx, descricao);
+
+  // Redistribui a parcela pelo mês em que ela é cobrada. Só quando a data crua
+  // NÃO é futura: se o emissor já datou a parcela lá na frente (é o que o
+  // trilho Pluggy faz), deslocar de novo dobraria o salto.
+  let data = dataCompra;
+  let redistribuida = false;
+  if (p && p.n > 1 && !jaEraFutura) {
+    const d = dataDaParcela(dataCompra, p.n);
+    if (d) { data = d; redistribuida = true; }
+  }
+
+  // Futura e NÃO redistribuída por nós → continua fora, como sempre foi.
+  //
+  // A diferença entre os dois casos é a JANELA DO SYNC (90 dias, filtrada por
+  // transaction_date_time):
+  //   · linha que o emissor JÁ datou no futuro (ex.: "HOTEIS.COM 12/12" em
+  //     2027) segue sendo devolvida em todo sync — quando a data chegar, ela
+  //     entra sozinha. Não precisa (nem deve) ser importada antes.
+  //   · linha que redistribuímos carrega a data da COMPRA. Uma compra em 12x
+  //     sai da janela de 90 dias em ~3 meses, então as parcelas 5 a 12 NUNCA
+  //     seriam importadas se esperássemos a data delas chegar. Ou entra agora,
+  //     ou se perde.
+  if (!redistribuida && ymd(data) && ymd(data) > hoje) return null;
 
   // Pagamento da fatura, estorno e cashback entram como transferência (não
   // consomem orçamento; a compra original já contou).
@@ -572,11 +696,20 @@ function normalizeTxCartao(tx, hoje) {
     categoria: ehTransferencia ? CATEGORIA_FATURA : categoriaDe(descricao, tx.category_ref),
     data,
     transferencia: ehTransferencia,
+    // Parcela que ainda não foi cobrada nasce NÃO paga (o resto do cartão nasce
+    // pago — ver CLAUDE.md). É o que faz ela contar como prevista, igual à
+    // compra parcelada digitada à mão.
+    pago: !(ymd(data) && ymd(data) > hoje),
+    parcelaNum: p ? p.n : null,
+    parcelaTotal: p ? p.total : null,
+    parcelaGrupo: p && !ehTransferencia
+      ? grupoDaParcela(p.base, p.total, Math.abs(valor), dataCompra)
+      : null,
     // Cartão virtual/adicional (a Sora já mostra isso em of_card).
     card: tx.identification_number ? String(tx.identification_number).slice(-4) : null,
-    // Fatura a que o EMISSOR vinculou esta linha (migration 101). É o único
-    // dado confiável pra parcela: a Celcoin manda as N parcelas com a data da
-    // COMPRA, então agrupar por data joga todas na mesma fatura.
+    // Fatura a que o EMISSOR vinculou esta linha (migration 101). Continua
+    // sendo o dado mais confiável quando vem — mas vem em só ~14% das linhas,
+    // por isso a redistribuição acima não pode depender dele.
     billId: tx.bill_id ? String(tx.bill_id) : null,
   };
 }
@@ -798,12 +931,17 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     valor: t.valor,
     observacao: (t.descricao || '').slice(0, 200),
     carteira_nome: walletNome,
-    pago: true,
+    // Gasto em cartão nasce pago (ver CLAUDE.md). A exceção é a parcela ainda
+    // não cobrada, que o normalize marca como não paga pra contar como prevista.
+    pago: t.pago !== undefined ? t.pago : true,
     transferencia: !!t.transferencia,
     data: t.data,
     of_tx_id: t.externalId,
     of_card: t.card || null,
     of_bill_id: t.billId || null,
+    parcela_num: t.parcelaNum ?? null,
+    parcela_total: t.parcelaTotal ?? null,
+    parcela_grupo: t.parcelaGrupo ?? null,
   }));
   if (!novas.length) return 0;
 
@@ -825,22 +963,28 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     if (!novas.length) return r.reconciliadas;
   } catch { /* sem reconciliação: insere tudo, como antes */ }
 
+  // Colunas que podem não existir no ambiente (of_bill_id = migration 101,
+  // parcela_* = migration 071). Se faltarem, reinsere sem elas em vez de
+  // derrubar a sincronização inteira — são extras, não o dado principal.
+  const COLUNAS_OPCIONAIS = /of_bill_id|parcela_num|parcela_total|parcela_grupo/i;
+  const semOpcionais = (r) => {
+    const { of_bill_id, parcela_num, parcela_total, parcela_grupo, ...resto } = r;
+    return resto;
+  };
+
   let { error } = await supabase.from('transacoes').insert(novas);
-  // Coluna nova (migration 101) ainda não rodada: reinsere sem ela em vez de
-  // deixar a sincronização inteira cair — o vínculo com a fatura é um extra.
-  if (error && /of_bill_id/i.test(error.message || '')) {
-    const semBill = novas.map(({ of_bill_id, ...r }) => r);
-    ({ error } = await supabase.from('transacoes').insert(semBill));
-    if (!error) return semBill.length;
+  if (error && COLUNAS_OPCIONAIS.test(error.message || '')) {
+    const limpas = novas.map(semOpcionais);
+    ({ error } = await supabase.from('transacoes').insert(limpas));
+    if (!error) return limpas.length;
   }
   if (error) {
     // Fallback 1 a 1 — a unique de of_tx_id ignora corrida entre syncs.
     let ok = 0;
     for (const row of novas) {
       let { error: e } = await supabase.from('transacoes').insert(row);
-      if (e && /of_bill_id/i.test(e.message || '')) {
-        const { of_bill_id, ...semBill } = row;
-        ({ error: e } = await supabase.from('transacoes').insert(semBill));
+      if (e && COLUNAS_OPCIONAIS.test(e.message || '')) {
+        ({ error: e } = await supabase.from('transacoes').insert(semOpcionais(row)));
       }
       if (!e) ok++;
     }
@@ -1098,4 +1242,5 @@ module.exports = {
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
+  parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };
