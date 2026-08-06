@@ -269,6 +269,45 @@ function ultimaFaturaPublicada(bills) {
 }
 
 /**
+ * Dia do mês MAIS FREQUENTE entre as faturas conhecidas (fechamento ou
+ * vencimento, conforme `campo`).
+ *
+ * PROBLEMA REAL que isto corrige: `dia_fechamento`/`dia_vencimento` vinham de
+ * UMA fatura só — a mais recente (aberta, ou a última publicada quando não há
+ * aberta). O Mercado Pago NUNCA publica fatura em aberto (documentado no
+ * CLAUDE.md — "List Bills para no mês passado, já pago"), então cartão MP
+ * sempre caía no caminho frágil: se aquela ÚNICA fatura fechou num dia
+ * deslocado (fim de semana, feriado, atraso do banco), o app inteiro herdava
+ * a anomalia como se fosse a regra — e o dia podia MUDAR de sync pra sync,
+ * conforme qual fatura calhasse de ser "a mais recente" na hora.
+ *
+ * Medido numa conta real: o app do Mercado Pago mostra fechamento dia 8; o
+ * painel mostrou 12 (puxado de uma única fatura) e, num sync anterior com
+ * outro dia isolado, o ciclo ficou curto demais e sumiu uma transação real
+ * (05/08) da tela de detalhes do cartão.
+ *
+ * A moda (dia que mais se repete) filtra o desvio pontual. Empate desempata
+ * pela ocorrência mais recente — `bills` vem em ordem DESC de vencimento
+ * (doc da Polp), então a primeira ocorrência de um dia já é a mais nova.
+ */
+function diaMaisFrequente(bills, campo) {
+  const arr = Array.isArray(bills) ? bills : [];
+  const cont = new Map(); // dia → { n, pos: índice da 1ª ocorrência }
+  arr.forEach((b, i) => {
+    const d = diaDoMes(b && b[campo]);
+    if (d == null) return;
+    if (!cont.has(d)) cont.set(d, { n: 0, pos: i });
+    cont.get(d).n += 1;
+  });
+  if (!cont.size) return null;
+  let melhor = null;
+  for (const [d, { n, pos }] of cont) {
+    if (!melhor || n > melhor.n || (n === melhor.n && pos < melhor.pos)) melhor = { d, n, pos };
+  }
+  return melhor.d;
+}
+
+/**
  * REGRA DE OURO da fatura de cartão (CLAUDE.md):
  *
  *     fatura = limite usado − parcelas a vencer
@@ -444,10 +483,13 @@ function normalizeCartao(card, bills, hoje) {
   const nome = (ident.name || card.name || card.brand_name || 'Cartão').toString().trim().slice(0, 60);
   const { limite, usado, disponivel } = limiteTotalDoCartao(card.limits);
   const aberta = escolherFaturaAberta(bills, hoje);
-  // As DATAS podem vir da última fatura publicada mesmo quando ela já fechou —
-  // dia de fechamento e de vencimento não mudam de um mês pro outro. O VALOR,
-  // não: esse só sai de uma fatura de fato aberta.
+  // O VALOR só sai de uma fatura de fato aberta. A DATA (dia_fechamento/
+  // dia_vencimento) usa a MODA entre as faturas conhecidas (diaMaisFrequente),
+  // não uma fatura só — ver o porquê no comentário da função. `paraDatas`
+  // segue existindo como fallback quando não há bills suficientes pra moda.
   const paraDatas = aberta || ultimaFaturaPublicada(bills);
+  const diaFechamentoRecorrente = diaMaisFrequente(bills, 'bill_closing_date');
+  const diaVencimentoRecorrente = diaMaisFrequente(bills, 'due_date');
 
   // Últimos 4 dígitos: pega o 1º método de pagamento (titular).
   const pm = Array.isArray(ident.payment_methods) ? ident.payment_methods[0] : null;
@@ -473,11 +515,13 @@ function normalizeCartao(card, bills, hoje) {
     extras: {
       limite,
       // ⭐ A Celcoin ENTREGA as datas — a Pluggy mandava balanceCloseDate null e
-      // nos obrigava a pedir o fechamento na mão. Vêm da última fatura conhecida
-      // (o dia de fechamento não muda de mês pra mês); zerar isso quando a
-      // fatura aberta ainda não foi publicada quebraria o ciclo da tela inteira.
-      dia_fechamento: paraDatas ? diaDoMes(paraDatas.bill_closing_date) : null,
-      dia_vencimento: paraDatas ? diaDoMes(paraDatas.due_date) : null,
+      // nos obrigava a pedir o fechamento na mão. A MODA entre as faturas
+      // conhecidas é o dia recorrente de verdade; cai pra `paraDatas` (fatura
+      // única) só quando não há bills suficientes pra calcular moda nenhuma —
+      // zerar isso quando a fatura aberta ainda não foi publicada quebraria o
+      // ciclo da tela inteira.
+      dia_fechamento: diaFechamentoRecorrente ?? (paraDatas ? diaDoMes(paraDatas.bill_closing_date) : null),
+      dia_vencimento: diaVencimentoRecorrente ?? (paraDatas ? diaDoMes(paraDatas.due_date) : null),
       bandeira: BANDEIRA[(card.credit_card_network || ident.credit_card_network || '').toString().toUpperCase()] || null,
       ultimos4,
       pagamento_minimo: aberta ? money(aberta.bill_minimum_amount) : null,
@@ -1264,7 +1308,7 @@ module.exports = {
   ehPagamentoFatura: require('./categorizar').ehPagamentoFatura,
   normalizeConta, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
-  limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento,
+  limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };
