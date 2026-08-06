@@ -57,23 +57,35 @@ router.get('/:phone', auth, async (req, res) => {
       .eq('ativa', true)
       .order('tipo', { ascending: true })
       .order('dia_vencimento', { ascending: true });
-    // Tolerante à migration 066 (valor_variavel): tenta com a coluna, senão sem.
-    let { data, error } = await listar(cols + ', valor_variavel');
+    // Tolerante às migrations 066 (valor_variavel) e 112 (modo/lembrete):
+    // tenta com tudo e vai tirando o que o banco ainda não tem.
+    let { data, error } = await listar(`${cols}, valor_variavel, modo_lancamento, lembrete`);
+    if (error) ({ data, error } = await listar(`${cols}, valor_variavel`));
     if (error) ({ data, error } = await listar(cols));
     if (error) throw error;
-    res.json(data || []);
+    // Sem a 112 o painel ainda precisa dos campos pra desenhar os controles —
+    // devolve o padrão de sempre em vez de `undefined` (que viraria toggle vazio).
+    res.json((data || []).map((r) => ({
+      ...r,
+      modo_lancamento: r.modo_lancamento || 'lancar',
+      lembrete: r.lembrete === undefined || r.lembrete === null ? true : r.lembrete,
+    })));
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 // POST /api/recorrencias — cria gasto/receita fixa (body inclui phone)
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { tipo, categoria, valor, dia_vencimento, descricao, carteira, valor_variavel } = req.body;
+    const {
+      tipo, categoria, valor, dia_vencimento, descricao, carteira, valor_variavel,
+      modo_lancamento, lembrete,
+    } = req.body;
     const { criarRecorrencia } = require('../services/recorrencias');
     const row = await criarRecorrencia({
       grupoId:   req.grupoId,
       criadoPor: req.authUser?.id || req.userId || null,
       tipo, categoria, valor, dia_vencimento, descricao, carteira, valor_variavel,
+      modo_lancamento, lembrete,
     });
     res.json(row);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -89,21 +101,38 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 // assim um ajuste manual naquela transação específica é preservado).
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { categoria, valor, dia_vencimento, descricao, carteira } = req.body;
+    const { categoria, valor, dia_vencimento, descricao, carteira, modo_lancamento, lembrete } = req.body;
+    const MODOS = ['lancar', 'prever', 'nao_lancar'];
     const patch = {};
-    if (categoria !== undefined)      patch.categoria      = categoria || 'Outros';
     if (valor !== undefined)          patch.valor          = parseFloat(valor) || 0;
     if (dia_vencimento !== undefined) patch.dia_vencimento = Math.max(1, Math.min(31, parseInt(dia_vencimento, 10) || 5));
     if (descricao !== undefined)      patch.descricao      = String(descricao).trim().slice(0, 120);
     if (carteira !== undefined)       patch.carteira       = carteira || 'Dinheiro';
-    if (!Object.keys(patch).length) return res.json({ ok: true });
+    // Migration 112 — separados do resto pra poder cair fora se a coluna não existir.
+    const patch112 = {};
+    if (modo_lancamento !== undefined && MODOS.includes(modo_lancamento)) patch112.modo_lancamento = modo_lancamento;
+    if (lembrete !== undefined) patch112.lembrete = !!lembrete;
 
     // Estado ANTES da edição — precisamos da categoria/descrição antigas.
     const { data: antes } = await supabase.from('recorrencias')
       .select('categoria, descricao').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
 
-    const { data, error } = await supabase.from('recorrencias').update(patch)
+    // ⚠️ Categoria passa pela validação contra o CATÁLOGO do grupo. Sem isso,
+    // salvar um nome que não existe (herdado do rebuild 084→087) fazia o
+    // lançamento cair em "Outros" e parecia que a edição não tinha salvado.
+    if (categoria !== undefined) {
+      const { categoriaValida } = require('../services/recorrencias');
+      patch.categoria = await categoriaValida(req.grupoId, categoria || 'Outros');
+    }
+    if (!Object.keys(patch).length && !Object.keys(patch112).length) return res.json({ ok: true });
+
+    const salvar = (p) => supabase.from('recorrencias').update(p)
       .eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
+    let { data, error } = await salvar({ ...patch, ...patch112 });
+    // Migration 112 pendente: grava o resto em vez de derrubar a edição inteira.
+    if (error && /modo_lancamento|lembrete/i.test(error.message || '') && Object.keys(patch).length) {
+      ({ data, error } = await salvar(patch));
+    }
     if (error) throw error;
 
     // Propaga a categoria nova pro lançamento deste mês. O cron nomeia a
