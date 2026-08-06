@@ -423,7 +423,7 @@ function authOuAdmin(req, res, next) {
 router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
   const celcoin = require('../services/polpCelcoin');
   const sync    = require('../services/polpCelcoinSync');
-  const { hojeSP } = require('../services/cicloFatura');
+  const { hojeSP, cicloPorCompetencia, competenciaAtual } = require('../services/cicloFatura');
   if (!celcoin.configurado()) {
     return res.status(503).json({ erro: 'Celcoin não configurado (POLP_CELCOIN_CLIENT_ID / _SECRET).' });
   }
@@ -514,13 +514,27 @@ router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
           bill_total_da_aberta: n.faturaAberta ? n.faturaAberta.total : null,
           bill_id_da_aberta: billAberta || null,
           candidatas: {
-            // (a) o que a Sora exibe hoje
+            // (a) a regra de ouro (limite usado − parcelas a vencer)
             limite_usado_menos_futuras: sync.faturaPorLimite(lim.usado, futuras),
             // (b) só o que o emissor vinculou à fatura aberta
             soma_do_bill_da_aberta: billAberta
               ? Math.round(todas.filter((t) => String(t.bill_id || '') === billAberta && ehGasto(t))
                   .reduce((s, t) => s + val(t), 0) * 100) / 100
               : null,
+            // (c) ⭐ O QUE O PAINEL REALMENTE MOSTRA quando o emissor não
+            // publicou a fatura (o normal no meio do ciclo, e SEMPRE no MP):
+            // soma dos gastos do ciclo real de fechamento. Sem isto o
+            // diagnóstico devolvia `null` justamente no caso mais comum e não
+            // dava pra comparar nada com o app do banco.
+            soma_do_ciclo: (() => {
+              const cartao = { dia_fechamento: n.extras.dia_fechamento, dia_vencimento: n.extras.dia_vencimento };
+              if (!cartao.dia_fechamento) return null;
+              const ciclo = cicloPorCompetencia(cartao, competenciaAtual(cartao, hoje));
+              const soma = todas
+                .filter((t) => ehGasto(t) && dataDe(t) >= ciclo.ini && dataDe(t) < ciclo.fimExcl)
+                .reduce((s, t) => s + val(t), 0);
+              return { valor: Math.round(soma * 100) / 100, periodo: `${ciclo.ini} a ${ciclo.fim}`, vence: ciclo.venc };
+            })(),
           },
           // É assim que a parcela a vencer aparece — QUANDO aparece.
           tx_com_data_futura: todas.filter((t) => dataDe(t) > hoje).length,

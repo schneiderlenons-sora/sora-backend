@@ -418,6 +418,17 @@ function analisarParcelamentos(lista) {
     compras_distintas: grupos.size,
     duplicatas: duplicados.length,          // 0 = correção da Polp chegou
     detalhe_duplicatas: duplicados,
+    // Uma linha por compra. Serve pra CONFERIR a plausibilidade do agrupamento:
+    // se todas as compras aparecem com exatamente 1 parcela restante, é sinal de
+    // que `paidInstallments` está contando a parcela da fatura em aberto — e aí
+    // "parcelas a vencer" não pode ser lido como (total − encontradas).
+    detalhe: deduplicado.map((it) => ({
+      descricao: it.descricao,
+      valor_parcela: it.valorParcela,
+      total: it.totalParcelas,
+      encontradas: it.parcelasEncontradas,
+      restantes: Math.max(0, it.totalParcelas - it.parcelasEncontradas),
+    })),
     futuras: {
       cru:         { todas_restantes: somar(itens, false),       fora_da_aberta: somar(itens, true) },
       deduplicado: { todas_restantes: somar(deduplicado, false), fora_da_aberta: somar(deduplicado, true) },
