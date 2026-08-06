@@ -527,7 +527,25 @@ router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
         item.amostra_tx = txs.slice(0, 3).map((t) => ({ cru: cru ? t : undefined, normalizado: sync.normalizeTxCartao(t, hoje) }));
         item.ignoradas_futuro = txs.filter((t) => String(t.transaction_date_time || '').slice(0, 10) > hoje).length;
       } catch (e) { item.tx_erro = e.message; }
-      try { item.parcelamentos = await celcoin.listarParcelamentos(raw.id); } catch (e) { item.parcelamentos_erro = e.message; }
+      try {
+        item.parcelamentos = await celcoin.listarParcelamentos(raw.id);
+        // Mede se a correção da Polp (ago/2026) pro parcelamento DUPLICADO
+        // chegou, e o que a regra de ouro daria com o dado já deduplicado.
+        // `duplicatas: 0` = corrigido. Comparar `com_regra_de_ouro` com o que
+        // o app do banco mostra HOJE — é o único juiz.
+        const an = sync.analisarParcelamentos(item.parcelamentos);
+        const usado = item.conferencia ? item.conferencia.limite_usado : null;
+        item.parcelamentos_analise = {
+          ...an,
+          com_regra_de_ouro: {
+            limite_usado: usado,
+            cru_todas:         sync.faturaPorLimite(usado, an.futuras.cru.todas_restantes),
+            cru_fora_aberta:   sync.faturaPorLimite(usado, an.futuras.cru.fora_da_aberta),
+            dedup_todas:       sync.faturaPorLimite(usado, an.futuras.deduplicado.todas_restantes),
+            dedup_fora_aberta: sync.faturaPorLimite(usado, an.futuras.deduplicado.fora_da_aberta),
+          },
+        };
+      } catch (e) { item.parcelamentos_erro = e.message; }
       try { item.recorrencias = await celcoin.listarRecorrencias(raw.id); } catch (e) { item.recorrencias_erro = e.message; }
       out.cartoes.push(item);
     }

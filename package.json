@@ -20,7 +20,8 @@
     "eval:venda-texto": "node evals/vendaTexto.eval.js",
     "eval:categorias-arvore": "node evals/categoriasArvore.eval.js",
     "eval:limites": "node evals/limites.eval.js",
-    "eval:fatura-of": "node evals/faturaOF.eval.js"
+    "eval:fatura-of": "node evals/faturaOF.eval.js",
+    "eval:parcelamentos": "node evals/parcelamentos.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

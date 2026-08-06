@@ -323,6 +323,108 @@ function faturaPorTransacoes(normalizadas, crus, n, hoje) {
     .reduce((s, p) => s + p.norm.valor, 0));
 }
 
+// ── Parcelamentos: detecção de duplicata + parcelas a vencer ────────────────
+//
+// CONTEXTO (suporte da Polp, ago/2026): o Open Finance NÃO tem identificador
+// único da compra parcelada, então a Polp agrupa as parcelas por heurística
+// (descrição + valor + data + nº de parcelas). No Nubank, parcelas da MESMA
+// compra chegam com datas diferentes → a mesma compra virava DOIS
+// parcelamentos. Eles aplicaram uma correção que resolve ~90% dos casos.
+//
+// Esta função existe pra MEDIR se a correção chegou, em vez de conferir JSON
+// a olho: ela reagrupa por conta própria e diz quantas duplicatas sobraram.
+
+/** Campos do parcelamento, tolerante a camelCase (doc) e snake_case. */
+function normalizeParcelamento(p) {
+  const g = (...ks) => { for (const k of ks) if (p && p[k] != null) return p[k]; return null; };
+  const total = Number(g('totalInstallments', 'total_installments')) || 0;
+  const achadas = Number(g('paidInstallments', 'paid_installments')) || 0;
+  const ocorrencias = g('occurrences') || [];
+  const nOcor = Array.isArray(ocorrencias) ? ocorrencias.length : 0;
+  return {
+    descricao: String(g('description') || '').trim(),
+    valorParcela: Math.abs(money0(g('amount'))),
+    totalParcelas: total,
+    // ⚠️ NÃO é "pagas" — é quantas parcelas a Polp ENCONTROU (len(occurrences)).
+    parcelasEncontradas: achadas || nOcor,
+    ocorrencias: nOcor,
+  };
+}
+
+/**
+ * Assinatura da COMPRA (não da linha). Tira o marcador de parcela da descrição
+ * ("HOTEIS.COM 12/12" → "HOTEIS.COM"), que é justamente o que faz duas linhas
+ * da mesma compra parecerem compras diferentes.
+ */
+function assinaturaCompra(it) {
+  const desc = it.descricao
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')         // tira acento
+    .toUpperCase()
+    .replace(/\b\d{1,2}\s*\/\s*\d{1,2}\b/g, '')          // marcador "3/12"
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `${desc}|${it.valorParcela.toFixed(2)}|${it.totalParcelas}`;
+}
+
+/**
+ * Analisa a lista de parcelamentos de um cartão.
+ *
+ * Devolve as DUAS leituras de "parcelas a vencer" porque elas divergem e só a
+ * comparação com o app do banco decide qual vale:
+ *   · `todas_restantes` = (total − encontradas) × valor — tudo que falta;
+ *   · `fora_da_aberta`  = (total − encontradas − 1) × valor — desconta a
+ *      parcela que já está caindo na fatura em aberto.
+ *
+ * Cada uma é calculada com a lista CRUA e com a DEDUPLICADA (mantendo, em cada
+ * grupo, a linha com mais parcelas encontradas — a mais completa). Se a
+ * correção da Polp chegou, `duplicatas` é 0 e as duas colunas se igualam.
+ */
+function analisarParcelamentos(lista) {
+  const itens = (Array.isArray(lista) ? lista : []).map(normalizeParcelamento)
+    .filter((it) => it.totalParcelas > 0 && it.valorParcela > 0);
+
+  const grupos = new Map();
+  for (const it of itens) {
+    const k = assinaturaCompra(it);
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k).push(it);
+  }
+
+  const duplicados = [];
+  const deduplicado = [];
+  for (const [chave, g] of grupos) {
+    // Mais parcelas encontradas = leitura mais completa daquela compra.
+    const melhor = g.slice().sort((a, b) => b.parcelasEncontradas - a.parcelasEncontradas)[0];
+    deduplicado.push(melhor);
+    if (g.length > 1) {
+      duplicados.push({
+        chave,
+        linhas: g.length,
+        descricoes: g.map((x) => x.descricao),
+        parcelas_encontradas: g.map((x) => x.parcelasEncontradas),
+        valor_parcela: melhor.valorParcela,
+        total_parcelas: melhor.totalParcelas,
+      });
+    }
+  }
+
+  const somar = (arr, descontarAberta) => cent(arr.reduce((s, it) => {
+    const restantes = Math.max(0, it.totalParcelas - it.parcelasEncontradas - (descontarAberta ? 1 : 0));
+    return s + restantes * it.valorParcela;
+  }, 0));
+
+  return {
+    parcelamentos: itens.length,
+    compras_distintas: grupos.size,
+    duplicatas: duplicados.length,          // 0 = correção da Polp chegou
+    detalhe_duplicatas: duplicados,
+    futuras: {
+      cru:         { todas_restantes: somar(itens, false),       fora_da_aberta: somar(itens, true) },
+      deduplicado: { todas_restantes: somar(deduplicado, false), fora_da_aberta: somar(deduplicado, true) },
+    },
+  };
+}
+
 function normalizeCartao(card, bills, hoje) {
   const ident = card.identification || {};
   const nome = (ident.name || card.name || card.brand_name || 'Cartão').toString().trim().slice(0, 60);
@@ -984,4 +1086,5 @@ module.exports = {
   normalizeConta, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento,
+  analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
 };
