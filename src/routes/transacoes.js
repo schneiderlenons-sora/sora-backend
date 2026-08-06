@@ -482,6 +482,21 @@ router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res
       }
     }
 
+    // ⚠️ Transação vinda do Open Finance: registrar que foi APAGADA (migration
+    // 113). O sync deduplica por `of_tx_id` olhando a tabela `transacoes` — sem
+    // este registro a linha apagada não é encontrada e o sync seguinte a
+    // reimporta como se fosse nova. Ou seja, excluir não adiantava nada: no dia
+    // seguinte a transação estava de volta.
+    // Tolerante: sem a migration, a exclusão acontece como antes.
+    const doOF = alvos.filter((t) => t.of_tx_id).map((t) => ({
+      grupo_id: req.grupoId, of_tx_id: t.of_tx_id, motivo: 'excluida pelo usuario',
+    }));
+    if (doOF.length) {
+      try {
+        await supabase.from('of_tx_ignoradas').upsert(doOF, { onConflict: 'grupo_id,of_tx_id' });
+      } catch { /* migration 113 pendente */ }
+    }
+
     if (excluirTodas) {
       await supabase.from('transacoes').delete().eq('grupo_id', req.grupoId).eq('parcela_grupo', tx.parcela_grupo);
     } else {

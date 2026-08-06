@@ -138,6 +138,18 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs, ehCredito) {
       .select('of_tx_id').in('of_tx_id', ids.slice(i, i + 300));
     (data || []).forEach(d => existentes.add(d.of_tx_id));
   }
+
+  // O que o usuário APAGOU não volta (migration 113) — mesma proteção do
+  // trilho Celcoin. Sem isto o dedup só olha `transacoes`, e a linha apagada
+  // é reimportada como nova no sync seguinte.
+  try {
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data } = await supabase.from('of_tx_ignoradas')
+        .select('of_tx_id').eq('grupo_id', grupoId).in('of_tx_id', ids.slice(i, i + 300));
+      (data || []).forEach(d => existentes.add(d.of_tx_id));
+    }
+  } catch { /* migration 113 pendente */ }
+
   let novas = txs
     .filter(t => t.externalId && !existentes.has(t.externalId)).map(t => {
     const ehTransf = ehCredito && !t.ehGasto; // pagamento de fatura/estorno no cartão = transferência

@@ -936,6 +936,18 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     (data || []).forEach((d) => existentes.add(d.of_tx_id));
   }
 
+  // ⚠️ O que o usuário APAGOU não pode voltar (migration 113). O dedup acima
+  // olha a tabela `transacoes`: linha apagada não é encontrada e o sync
+  // reimportaria como nova — excluir transação do Open Finance não adiantava
+  // nada. Tolerante: sem a migration, segue o comportamento antigo.
+  try {
+    for (let i = 0; i < ids.length; i += 300) {
+      const { data } = await supabase.from('of_tx_ignoradas')
+        .select('of_tx_id').eq('grupo_id', grupoId).in('of_tx_id', ids.slice(i, i + 300));
+      (data || []).forEach((d) => existentes.add(d.of_tx_id));
+    }
+  } catch { /* migration 113 pendente */ }
+
   let novas = validas.filter((t) => !existentes.has(t.externalId)).map((t) => ({
     id_curto: idCurto(), grupo_id: grupoId, criado_por: userId || null,
     tipo: t.ehGasto ? 'Gasto' : 'Recebimento',
