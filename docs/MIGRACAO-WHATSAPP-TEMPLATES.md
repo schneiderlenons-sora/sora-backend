@@ -36,27 +36,75 @@
 
 ---
 
-## 2. `resumo_semanal`  — a ligar (`resumoFinanceiro.js`)
+## 2. `resumo_semanal`  — JÁ LIGADO (`jobs/index.js`, JOB 1M)
 
 - **Nome:** `resumo_semanal` · Utilidade · pt_BR
-- **Corpo (sugestão):**
+- **Corpo (aprovado):**
   ```
   Oi {{1}}! 📊 Seu resumo da semana: você gastou {{2}} e recebeu {{3}}.
   Toque pra ver o detalhamento completo no painel.
   ```
-- **Botão:** URL `Ver resumo` → `https://forsora.com/dashboard`
+- **Botão:** URL `Ver resumo` → hoje aponta pra `https://forsora.com/dashboard`.
+  ⚠️ **Ação pendente:** o CTA no texto livre (Z-API/dentro da janela) já foi
+  trocado pra `/relatorios` (aba de relatórios do painel, sem nova página).
+  Editar o botão desse template no WhatsApp Manager pra apontar pra
+  `https://forsora.com/relatorios` também — edição só do botão geralmente
+  passa sem re-análise, mas confirme no Meta Manager.
 - **Params:** `[nome, totalGasto, totalRecebido]`.
 
-## 3. `resumo_mensal`  — a ligar (`resumoFinanceiro.js`)
+## 3. `resumo_mensal`  — JÁ LIGADO (`jobs/index.js`, JOB 1N)
 
 - **Nome:** `resumo_mensal` · Utilidade · pt_BR
-- **Corpo (sugestão):**
+- **Corpo (aprovado):**
   ```
   {{1}}, fechamento de {{2}} ✅ Gastos: {{3}} · Receitas: {{4}} · Saldo: {{5}}.
   Veja seu Wrapped do mês no painel.
   ```
-- **Botão:** URL `Ver fechamento` → `https://forsora.com/wrapped`
+- **Botão:** URL `Ver fechamento` → `https://forsora.com/wrapped` (mantém —
+  o Wrapped é uma página própria, não mexemos nisso).
 - **Params:** `[nome, mesNome, gastos, receitas, saldo]`.
+
+## 2b/3b. `resumo_semanal_v2` / `resumo_mensal_v2` — DRAFT, pendente de aprovação
+
+> Objetivo: levar a **manchete personalizada** (ex. "Semana mais calma",
+> "Semana de gastos reduzidos") gerada pela Sora (`gerarInsight` em
+> `resumoFinanceiro.js`, com fallback local determinístico) pro corpo do
+> template — hoje ela só aparece no texto livre (Z-API/dentro da janela de
+> 24h), porque fora da janela a Cloud API só entrega o template aprovado e
+> `services/proativo.js` sempre prioriza o template sobre o texto livre quando
+> os dois são passados. **Não ligar antes da aprovação:** o código já está
+> pronto atrás da flag `RESUMO_TEMPLATE_V2` (`jobs/index.js`, hoje `false` —
+> continua mandando o `resumo_semanal`/`resumo_mensal` de sempre). Depois de
+> aprovado, é só trocar pra `true`.
+
+- **`resumo_semanal_v2`** · Utilidade · pt_BR
+  - **Corpo (sugestão):**
+    ```
+    {{1}}, sua semana em números 📊 *{{2}}*
+    Você gastou {{3}} e recebeu {{4}}. Toque pra ver o detalhamento completo.
+    ```
+  - **Botão:** URL `Ver resumo` → `https://forsora.com/relatorios`
+  - **Params:** `[nome, manchete, totalGasto, totalRecebido]`
+    (ex.: `["Marina", "Semana mais calma", "R$ 412,90", "R$ 1.200,00"]`)
+  - ⚠️ Variável não pode ficar no início/fim do corpo (regra da Meta) — por
+    isso "sua semana em números" abre e "Toque pra ver..." fecha o corpo.
+
+- **`resumo_mensal_v2`** · Utilidade · pt_BR
+  - **Corpo (sugestão):**
+    ```
+    {{1}}, fechamento de {{2}} ✅ *{{3}}*
+    Gastos: {{4}} · Receitas: {{5}} · Saldo: {{6}}. Veja o detalhamento no painel.
+    ```
+  - **Botão:** URL `Ver fechamento` → `https://forsora.com/relatorios`
+  - **Params:** `[nome, mesNome, manchete, gastos, receitas, saldo]`
+    (ex.: `["Marina", "Julho", "Mês de equilíbrio e saúde", "R$ 2.100,00", "R$ 3.400,00", "R$ 1.300,00"]`)
+
+> A manchete que a IA gera tem até ~60 caracteres (cabe no corpo do template
+> sem estourar); o fallback local (sem IA) também respeita esse tamanho.
+> Testado ao vivo: `"Semana de gastos reduzidos"`, `"Semana de equilíbrio e
+> saúde"`, `"Semana mais calma"`, e comemora quando o resultado foi
+> excepcional (100% dos hábitos, treino todo dia) sem precisar de dado novo —
+> tudo já calculado em `coletoresGrow.js` + `fallbackInsight`/`gerarInsight`.
 
 ## 4. `briefing_matinal`  — a ligar (`jobs/index.js`, JOB 1K)
 

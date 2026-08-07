@@ -1193,10 +1193,25 @@ const {
   resumoPeriodo, gerarInsight, montarCorpoSemanal, montarCorpoMensal,
   TITULO_SEMANAL, TITULO_MENSAL, CTA,
 } = require('../services/resumoFinanceiro');
+const { coletarGrow } = require('../services/coletoresGrow');
 const APP_URL_RESUMO = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 // Capa única (URL pública) usada nos resumos e na boas-vindas. Override via
 // SORA_CAPA_URL no Render; default aponta pro /public do site.
 const CAPA = process.env.SORA_CAPA_URL || `${APP_URL_RESUMO}/sora-capa.png`;
+
+// ⚠️ A manchete personalizada (insight.titulo — "Semana mais digital" etc.)
+// só chega no WhatsApp quando o provider é 'meta' se tiver ONDE encaixar:
+// o template aprovado hoje (`resumo_semanal`/`resumo_mensal`) tem texto FIXO
+// com só nome+valores — fora da janela de 24h, SÓ o template aprovado sai
+// (services/proativo.js manda ele sempre que existe, nunca cai pro texto
+// livre). Preparei o `resumo_semanal_v2`/`resumo_mensal_v2` (mais a manchete
+// como variável nova) — texto sugerido em docs/MIGRACAO-WHATSAPP-TEMPLATES.md.
+// Enquanto a Meta não aprovar, ISTO FICA false e a Sora manda o template
+// antigo (sem a manchete) — trocar pra true quebraria o envio de TODO MUNDO
+// se o template novo não existir/não estiver aprovado ainda. O texto rico
+// (frase + linhas do Grow) já vale hoje pra Z-API e pra quem está dentro da
+// janela de 24h no Meta.
+const RESUMO_TEMPLATE_V2 = false;
 
 function addDiasISO(str, n) {
   const [Y, M, D] = str.split('-').map(Number);
@@ -1231,14 +1246,24 @@ cron.schedule('*/15 * * * *', async () => {
         const atual = await resumoPeriodo(u.grupo_ativo, ini, fim);
         if (atual.count === 0) continue;                                  // semana sem movimento
         const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
-        const insight = await gerarInsight({ periodo: 'semana', atual, anterior });
-        const txt = `${montarCorpoSemanal({ atual, anterior, insight })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/dashboard`;
+        // Grow (hábitos/tarefas/treino/estudos) — SEMPRE por user_id, nunca
+        // grupo_id (privacidade do Grow). `{}` quando o usuário não usa nada
+        // disso; os coletores mesmos filtram "usa de verdade" (ver o arquivo).
+        const grow = await coletarGrow(u.id, ini, fim).catch(() => ({}));
+        const insight = await gerarInsight({ periodo: 'semana', atual, anterior, grow });
+        const txt = `${montarCorpoSemanal({ atual, anterior, insight, grow })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`;
+        const primeiroNome = (u.name || 'tudo bem').split(' ')[0];
         await enviarProativo(u.phone, {
           texto: txt,
-          template: {
+          template: RESUMO_TEMPLATE_V2 ? {
+            name: 'resumo_semanal_v2',
+            // corpo: {{1}} nome · {{2}} manchete · {{3}} gasto · {{4}} recebido
+            params: [primeiroNome, insight.titulo, brl(atual.gastos), brl(atual.receitas)],
+            opts: { headerImage: CAPA },
+          } : {
             name: 'resumo_semanal',
             // corpo: {{1}} nome · {{2}} gasto · {{3}} recebido | cabeçalho IMAGE = capa
-            params: [(u.name || 'tudo bem').split(' ')[0], brl(atual.gastos), brl(atual.receitas)],
+            params: [primeiroNome, brl(atual.gastos), brl(atual.receitas)],
             opts: { headerImage: CAPA },
           },
         });
@@ -1278,13 +1303,21 @@ cron.schedule('*/15 * * * *', async () => {
         const atual = await resumoPeriodo(u.grupo_ativo, ini, fim);
         if (atual.count === 0) continue;
         const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
-        const insight = await gerarInsight({ periodo: 'mes', atual, anterior });
-        const txt = `${montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/dashboard`;
+        // Grow (hábitos/tarefas/treino/estudos) — SEMPRE por user_id, igual ao semanal.
+        const grow = await coletarGrow(u.id, ini, fim).catch(() => ({}));
+        const insight = await gerarInsight({ periodo: 'mes', atual, anterior, grow });
+        const txt = `${montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight, grow })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`;
+        const primeiroNome = (u.name || 'tudo bem').split(' ')[0];
         await enviarProativo(u.phone, {
           texto: txt,
-          template: {
+          template: RESUMO_TEMPLATE_V2 ? {
+            name: 'resumo_mensal_v2',
+            // corpo: {{1}} nome · {{2}} mês · {{3}} manchete · {{4}} gasto · {{5}} recebido · {{6}} saldo
+            params: [primeiroNome, mesNome, insight.titulo, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
+            opts: { headerImage: CAPA },
+          } : {
             name: 'resumo_mensal',
-            params: [(u.name || 'tudo bem').split(' ')[0], mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
+            params: [primeiroNome, mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
             opts: { headerImage: CAPA }, // cabeçalho IMAGE = capa
           },
         });

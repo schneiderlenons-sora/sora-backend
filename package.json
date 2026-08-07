@@ -26,7 +26,8 @@
     "eval:sugerir-categoria": "node evals/sugerirCategoriaFixa.eval.js",
     "eval:pagamento-fatura": "node evals/pagamentoFatura.eval.js",
     "eval:dia-recorrente": "node evals/diaRecorrenteCartao.eval.js",
-    "eval:captura-rapida": "node evals/capturaRapidaGrow.eval.js"
+    "eval:captura-rapida": "node evals/capturaRapidaGrow.eval.js",
+    "eval:resumo-grow": "node evals/resumoGrow.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
