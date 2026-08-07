@@ -1062,6 +1062,50 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
 }
 
 /** Cria/atualiza a dívida (empréstimo/financiamento) vinda do OF. */
+/** Texto comparável: sem acento, minúsculo, só letras/números. */
+function normTexto(s) {
+  return String(s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/**
+ * A dívida MANUAL `m` é o mesmo contrato que a dívida `d` vinda do Open Finance?
+ *
+ * Os três critérios juntos (mesmo nº de parcelas + mesma parcela + mesmo banco)
+ * são propositalmente estreitos: é muito mais barato deixar uma duplicata
+ * passar do que FUNDIR duas dívidas diferentes do usuário. Note que o VALOR
+ * TOTAL fica de fora de propósito — é justamente onde os dois divergem (o
+ * usuário costuma anotar o saldo devedor; o banco manda o valor contratado).
+ */
+function mesmaDividaManual(m, d) {
+  if (!m || !d || m.of_id) return false;
+  if (m.status === 'quitada') return false;             // quitada não é a dívida em curso
+
+  const parcelasM = Number(m.parcelas_total);
+  const parcelasD = Number(d.parcelas_total);
+  if (!parcelasM || !parcelasD || parcelasM !== parcelasD) return false;
+
+  const vpM = Number(m.valor_parcela);
+  const vpD = Number(d.valor_parcela);
+  if (!vpM || !vpD || Math.abs(vpM - vpD) > 1) return false;  // centavos de diferença passam
+
+  // O banco tem de aparecer no credor OU no título que o usuário digitou.
+  const banco = normTexto(d.credor);
+  if (!banco) return false;
+  return `${normTexto(m.credor)} ${normTexto(m.titulo)}`.includes(banco);
+}
+
+/** Procura no banco a dívida manual gêmea de `d`. Tolerante à migration 100. */
+async function gemeaManual(grupoId, d) {
+  try {
+    const { data, error } = await supabase.from('dividas')
+      .select('id, titulo, credor, valor_parcela, parcelas_total, status, of_id')
+      .eq('grupo_id', grupoId).is('of_id', null);
+    if (error) return null;                              // 100 ainda não rodou
+    return (data || []).find((m) => mesmaDividaManual(m, d)) || null;
+  } catch { return null; }
+}
+
 async function upsertDivida(grupoId, userId, d) {
   const base = {
     grupo_id: grupoId, titulo: d.titulo, credor: d.credor, tipo: d.tipo,
@@ -1078,6 +1122,25 @@ async function upsertDivida(grupoId, userId, d) {
     await supabase.from('dividas').update(base).eq('id', ja.id);
     return 'atualizada';
   }
+
+  // O usuário já tinha cadastrado essa dívida À MÃO? Então ADOTA a linha dele
+  // em vez de criar uma segunda. Sem isto, quem lançou os empréstimos
+  // manualmente e depois conectou o banco fica com a dívida DUPLICADA — e a
+  // cópia manual normalmente traz o SALDO DEVEDOR no lugar do valor
+  // contratado, o que infla o total devido do painel (caso real: um empréstimo
+  // Nubank de 36×629,51 lançado como "R$ 18.255,88" convivendo com o
+  // "Credito Pessoal · R$ 8.000" que o Open Finance trouxe do mesmo contrato).
+  //
+  // Adotar preserva o id — ou seja, o histórico de `divida_pagamentos`, a foto
+  // e o lembrete que o usuário já tinha continuam valendo.
+  const gemea = await gemeaManual(grupoId, d);
+  if (gemea) {
+    await supabase.from('dividas')
+      .update({ ...base, of_id: d.externalId, of_provider: PROVIDER, origem: 'of' })
+      .eq('id', gemea.id);
+    return 'adotada';
+  }
+
   const row = { ...base, of_id: d.externalId, of_provider: PROVIDER, origem: 'of' };
   if (userId) row.criado_por = userId;
   let { error } = await supabase.from('dividas').insert(row);
@@ -1260,6 +1323,11 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           if (!d) { relatorio.dividas.push({ pulado: 'sem valor contratado', id: raw.id }); continue; }
           const r = await upsertDivida(grupoId, userId, d);
           if (r === 'sem_migration') relatorio.avisos.push('rode sql/100_dividas_open_finance.sql (dívidas sem dedup até então)');
+          if (r === 'adotada') {
+            relatorio.avisos.push(
+              `${d.titulo}: já existia cadastrada à mão — a linha do usuário foi vinculada ao contrato do banco `
+              + `(sem duplicar; valor e parcelas passam a vir do ${d.credor || 'banco'})`);
+          }
           relatorio.dividas.push({ titulo: d.titulo, tipo: d.tipo, valor: d.valor_total, resultado: r });
         } catch (e) { relatorio.dividas.push({ erro: e.message }); }
       }
@@ -1308,6 +1376,7 @@ module.exports = {
   ehPagamentoFatura: require('./categorizar').ehPagamentoFatura,
   normalizeConta, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
+  mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,

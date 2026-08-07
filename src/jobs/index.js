@@ -808,9 +808,13 @@ cron.schedule('0 9 * * *', async () => {
 // ─────────────────────────────────────────────────────────────────
 cron.schedule('0 9 * * *', async () => {
   console.log('🔔 Processando lembretes de dívidas...');
-  const hoje = new Date();
-  const hojeStr = hoje.toISOString().slice(0, 10);
-  const diaHoje = hoje.getDate();
+  const {
+    proximoVencimento, ultimoPagamentoPorDivida, hojeSP,
+    ocorrencia: ocorrenciaVenc, diffDias: diffDiasVenc,
+  } = require('../services/vencimentoDivida');
+  // Data no fuso SP: o Render roda em UTC e `toISOString()` às 21h no BR já
+  // devolve o dia seguinte — o lembrete saía no dia errado.
+  const hojeStr = hojeSP();
 
   // Busca todas as dívidas ativas com lembrete ligado e dia_vencimento definido
   const { data: dividas } = await supabase
@@ -820,19 +824,20 @@ cron.schedule('0 9 * * *', async () => {
     .eq('lembretes_ativos', true)
     .not('dia_vencimento', 'is', null);
 
+  // Último pagamento de cada dívida — sem isto o cron avisa "vence em 3 dias"
+  // de uma parcela que o usuário JÁ pagou (era o caso de 16 dívidas de um
+  // cliente que quitou tudo no dia 07 e recebeu lembrete de todas).
+  const ultimoPg = await ultimoPagamentoPorDivida((dividas || []).map((d) => d.id));
+
   for (const d of dividas || []) {
     // Não envia duas vezes no mesmo dia
     if (d.ultimo_lembrete_em === hojeStr) continue;
 
-    // Calcula próximo vencimento
-    const venc = new Date(hoje.getFullYear(), hoje.getMonth(), d.dia_vencimento);
-    if (d.dia_vencimento < diaHoje) venc.setMonth(venc.getMonth() + 1);
-    // 1ª parcela nunca vence no mês da compra: se o venc cair em/antes do
-    // data_inicio, pula pro mês seguinte (não lembra parcelado no dia da compra).
-    if (d.data_inicio && venc.getTime() <= new Date(d.data_inicio + 'T00:00:00').getTime()) {
-      venc.setMonth(venc.getMonth() + 1);
-    }
-    const diffDias = Math.round((venc - new Date(hoje.getFullYear(), hoje.getMonth(), diaHoje)) / 86400000);
+    // Próximo vencimento pela regra única (services/vencimentoDivida.js): já
+    // pula a parcela paga neste ciclo.
+    const prox = proximoVencimento({ ...d, ultimo_pagamento: ultimoPg[d.id] || null }, hojeStr);
+    if (!prox) continue;
+    const diffDias = prox.dias;
 
     // Janelas: 3 dias antes, no dia, ou atrasada (>=1 dia depois do venc do mês passado)
     let mensagem = null;
@@ -843,17 +848,15 @@ cron.schedule('0 9 * * *', async () => {
       venceHoje = true; // o "vence hoje" é do briefing; aqui só se briefing off (ver abaixo)
       mensagem = `🚨 *VENCE HOJE*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : 'sem valor de parcela'}\n\nNão esqueça! Para pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*`;
     } else {
-      // Atrasada: vencimento foi no mês anterior (diffDias > 25 significa que rolou pro proximo mes)
-      // Detecta atraso: se o vencimento ESTE mes já passou e nao houve pagamento desde entao
-      const vencEsteMes = new Date(hoje.getFullYear(), hoje.getMonth(), d.dia_vencimento);
-      const diasAtraso = Math.round((new Date(hoje.getFullYear(), hoje.getMonth(), diaHoje) - vencEsteMes) / 86400000);
+      // Atrasada: o vencimento DESTE mês já passou e não houve pagamento desde
+      // então. Mesma aritmética do resto (clampa mês curto) e o pagamento sai
+      // do mapa já carregado — antes era uma query por dívida.
+      const { Y, M } = { Y: +hojeStr.slice(0, 4), M: +hojeStr.slice(5, 7) - 1 };
+      const vencEsteMes = ocorrenciaVenc(Y, M, d.dia_vencimento);
+      const diasAtraso = diffDiasVenc(vencEsteMes, hojeStr);
       if (diasAtraso > 0 && diasAtraso <= 30) {
-        // Confere se houve pagamento DESDE o vencimento
-        const { data: pagto } = await supabase.from('divida_pagamentos')
-          .select('id').eq('divida_id', d.id)
-          .gte('data_pagamento', vencEsteMes.toISOString().slice(0, 10))
-          .limit(1);
-        if (!pagto?.length) {
+        const pago = ultimoPg[d.id];
+        if (!pago || pago < vencEsteMes) {
           // Avisa só uma vez por semana
           if (diasAtraso === 1 || diasAtraso === 7 || diasAtraso === 15 || diasAtraso === 30) {
             mensagem = `⚠️ *DÍVIDA EM ATRASO*\n\n📌 *${d.titulo}*\n📅 Vencimento era dia ${d.dia_vencimento} (${diasAtraso} dia${diasAtraso > 1 ? 's' : ''} atrás)\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : ''}\n\nO atraso costuma vir com juros — quanto antes melhor.`;

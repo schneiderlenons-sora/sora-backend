@@ -4,6 +4,7 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta } = require('../services/contaDebito');
+const { proximoVencimento, ultimoPagamentoPorDivida, hojeSP } = require('../services/vencimentoDivida');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -27,6 +28,12 @@ router.get('/:phone', auth, async (req, res) => {
       .order('created_at', { ascending: false });
     if (error) throw error;
 
+    // Data do último pagamento por dívida — é o que impede o painel de avisar
+    // de uma parcela que o usuário ACABOU de pagar (ver vencimentoDivida.js).
+    // Vai junto na resposta pro card do painel usar a mesma regra.
+    const ultimoPg = await ultimoPagamentoPorDivida((dividas || []).map(d => d.id));
+    for (const d of dividas || []) d.ultimo_pagamento = ultimoPg[d.id] || null;
+
     // Resumo agregado
     const ativas = (dividas || []).filter(d => d.status === 'ativa' || d.status === 'em_atraso');
     const total_devido = ativas.reduce((s, d) => {
@@ -37,17 +44,15 @@ router.get('/:phone', auth, async (req, res) => {
 
     const total_quitado = (dividas || []).filter(d => d.status === 'quitada').length;
 
-    // Próximo vencimento — menor dia_vencimento >= hoje, ou mês que vem
-    const hoje = new Date();
-    const diaHoje = hoje.getDate();
+    // Próximo vencimento — a dívida que vence primeiro, JÁ descontando as
+    // parcelas pagas neste ciclo (regra única em services/vencimentoDivida.js).
+    const hojeStr = hojeSP();
     let proxima = null;
     ativas.forEach(d => {
-      if (!d.dia_vencimento) return;
-      const venc = new Date(hoje.getFullYear(), hoje.getMonth(), d.dia_vencimento);
-      if (d.dia_vencimento < diaHoje) venc.setMonth(venc.getMonth() + 1);
-      const dias = Math.ceil((venc.getTime() - hoje.getTime()) / 86400000);
-      if (!proxima || dias < proxima.dias) {
-        proxima = { divida_id: d.id, titulo: d.titulo, valor: d.valor_parcela, data: venc.toISOString().slice(0, 10), dias };
+      const v = proximoVencimento(d, hojeStr);
+      if (!v) return;
+      if (!proxima || v.dias < proxima.dias) {
+        proxima = { divida_id: d.id, titulo: d.titulo, valor: d.valor_parcela, data: v.data, dias: v.dias };
       }
     });
 
