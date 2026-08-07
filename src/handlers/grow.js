@@ -188,12 +188,45 @@ function temDataHora(mensagem) {
 // ── TAREFA ──────────────────────────────────────────────────────────────────
 const RE_TAREFA_NL = /\b(?:me\s+)?lembr(?:a|ar|e)\s+de\b|\btenho\s+que\b|\bpreciso\s+(?:de\s+)?(?=[a-zà-ú]+(?:ar|er|ir)\b)|\bn[ãa]o\s+(?:posso\s+)?esquecer(?:\s+de)?\b|\bn[ãa]o\s+esque[çc]a\s+de\b|^(?:tarefa|todo|to-?do)\b|\b(?:anota[r]?|cria[r]?|adiciona[r]?|nova)\s+tarefa\b/i;
 
+// Marcador EXPLÍCITO de tarefa ("tarefa: X", "tarefa X", "todo: X") logo no
+// COMEÇO da mensagem — instrução inequívoca, ninguém começa um lançamento
+// financeiro com a palavra "tarefa". Usado pelo webhook pra vencer o
+// interpretador de finanças ANTES dele rodar: sem isso, "Tarefa melhorar
+// sistema de gastos fixos... do painel" era sequestrado pelo detector de
+// "gastos" (achava "do painel" como preposição+termo e respondia "Nenhum
+// gasto encontrado para 'painel'"), porque o interpretador de finanças roda
+// PRIMEIRO no webhook e, se achar qualquer ação, o Grow nem é chamado.
+const RE_TAREFA_MARCADOR = /^\s*(?:tarefa|todo|to-?do)\s*[:\-]?\s*\S/i;
+function temMarcadorTarefaExplicito(mensagem) {
+  return RE_TAREFA_MARCADOR.test(_low(mensagem));
+}
+
+// "anota que" / "anota aí que" — quando embrulha um CUE de tarefa por dentro
+// ("anota que tenho que X", "anota que preciso X"), é tarefa disfarçada de
+// nota. Mesma regra que RE_NOTA_FRACA (mais abaixo) usa pra detectar nota;
+// aqui também serve pra DESEMBRULHAR o texto ao extrair o título da tarefa.
+const RE_ANOTA_QUE = /^\s*anota[r]?\s+(?:a[íi]\s+)?que\s+/i;
+
+// "até <dia>" é PRAZO de tarefa, não horário de compromisso — ex.: "preciso
+// terminar o relatório até sexta". Só conta como prazo quando NÃO tem hora
+// junto ("até sexta às 15h" vira compromisso, não prazo de tarefa) e quando
+// o "até" de fato introduz uma data reconhecida ("até o mercado", "até mais
+// tarde" não têm data → parseDataPt devolve null e isso não vira prazo).
+function prazoTarefa(mensagem) {
+  const s = _low(mensagem);
+  if (parseHoraPt(s)) return null;
+  const m = s.match(/\bat[ée]\s+(.+)$/);
+  if (!m) return null;
+  return parseDataPt(m[1]);
+}
+
 // Frases que NÃO são tarefa (ajuda/venda/dúvida) — evita falso positivo.
 const RE_NAO_TAREFA = /\b(ajuda|suporte|cancelar|como\s+funciona|quanto\s+custa|pre[çc]o|planos?|assinar|d[úu]vida)\b/i;
 
 function pareceTarefa(mensagem) {
   const s = _low(mensagem);
-  if (temDataHora(mensagem)) return false;   // com data → Agenda
+  // Data comum → Agenda; "até <dia>" sem hora junto é PRAZO e continua tarefa.
+  if (temDataHora(mensagem) && !prazoTarefa(mensagem)) return false;
   if (RE_NAO_TAREFA.test(s)) return false;
   return RE_TAREFA_NL.test(s);
 }
@@ -213,16 +246,38 @@ function categoriaTarefa(titulo) {
   return null;
 }
 
+// Prefixos de intenção que podem vir EMPILHADOS — "Tarefa: Tarefa melhorar X"
+// (usuário repetiu o marcador), "nova tarefa: X" (o "tarefa" aqui tem ":"
+// grudado, mesmo bug do \s+ que afetava o marcador bruto). extrairTituloTarefa
+// tira essa lista em LOOP até não sobrar nenhum — uma passada só deixava
+// "Tarefa:" (dobrado) ou "tarefa:" (depois de "nova") grudado no título.
+const PREFIXOS_TAREFA = [
+  RE_ANOTA_QUE,
+  /^\s*(?:me\s+)?lembr(?:a|ar|e)\s+de\s+/i,
+  /^\s*tenho\s+que\s+/i,
+  /^\s*preciso\s+(?:de\s+)?/i,
+  /^\s*n[ãa]o\s+(?:posso\s+)?esquecer\s+(?:de\s+)?/i,
+  /^\s*n[ãa]o\s+esque[çc]a\s+(?:de\s+)?/i,
+  /^\s*(?:anota[r]?|cria[r]?|adiciona[r]?|nova)\s+tarefa\s*[:\-]?\s*(?:de\s+|que\s+|pra\s+|para\s+)?/i,
+  // ⚠️ Precisa aceitar ":"/"-" depois de "tarefa": "Tarefa: X" com \s+ puro não
+  // casava (o ":" quebra o \s+) e "Tarefa:" ficava GRUDADO no título — era o
+  // bug real: painel mostrando "Tarefa: corrigir recorrências...".
+  /^\s*(?:tarefa|todo|to-?do)\s*[:\-]?\s*/i,
+];
+
 function extrairTituloTarefa(mensagem) {
-  let t = mensagem.replace(/^\s*sora[,!.:\s]+/i, '').trim()
-    .replace(/^\s*(?:me\s+)?lembr(?:a|ar|e)\s+de\s+/i, '')
-    .replace(/^\s*tenho\s+que\s+/i, '')
-    .replace(/^\s*preciso\s+(?:de\s+)?/i, '')
-    .replace(/^\s*n[ãa]o\s+(?:posso\s+)?esquecer\s+(?:de\s+)?/i, '')
-    .replace(/^\s*n[ãa]o\s+esque[çc]a\s+(?:de\s+)?/i, '')
-    .replace(/^\s*(?:anota[r]?|cria[r]?|adiciona[r]?|nova)\s+tarefa\s+(?:de\s+|que\s+|pra\s+|para\s+)?/i, '')
-    .replace(/^\s*(?:tarefa|todo|to-?do)\s+/i, '')
+  let t = mensagem.replace(/^\s*sora[,!.:\s]+/i, '').trim();
+  for (let i = 0; i < 4; i++) {   // teto de segurança; na prática nunca repete mais que 2x
+    const antes = t;
+    for (const re of PREFIXOS_TAREFA) t = t.replace(re, '');
+    if (t === antes) break;
+  }
+  t = t
     .replace(/\b(?:me\s+)?lembr(?:a|ar|e)\b/gi, ' ')
+    // Prazo ("até sexta") sai do título — vira data_vencimento (prazoTarefa).
+    // Só no FIM da frase e só quando parseDataPt confirma que é mesmo uma
+    // data ("até o mercado", "até mais tarde" não têm data → fica no título).
+    .replace(/\s+at[ée]\s+([^?!.]+)$/i, (frag, resto) => (parseDataPt(_low(resto)) ? '' : frag))
     .replace(/[?!.]+\s*$/, '')
     .replace(/\s+/g, ' ').trim();
   t = t.replace(/^(?:de|do|da|pra|para|o|a|que)\s+/i, '').trim();
@@ -232,12 +287,23 @@ function extrairTituloTarefa(mensagem) {
 
 // ── NOTA / INSIGHT ───────────────────────────────────────────────────────────
 const RE_NOTA_FORTE = /\b(?:tive|tenho)\s+uma\s+ideia\b|\b(?:guarda[r]?|salva[r]?|anota[r]?)\s+(?:esse|essa|este|esta|isso|aqui|a|o)?\s*(?:insight|ideia|nota|anota[çc][ãa]o|pensamento)\b|^\s*(?:nota|ideia|insight|anota[çc][ãa]o)\s*[:\-]/i;
-const RE_NOTA_FRACA = /^\s*anota[r]?\s+(?:a[íi]\s+)?que\b/i;
+// Mesma regra que RE_ANOTA_QUE (declarada lá em cima, na seção TAREFA) —
+// reusa o mesmo objeto pra não ter duas fontes da mesma regex divergindo.
+const RE_NOTA_FRACA = RE_ANOTA_QUE;
 
 function pareceNota(mensagem) {
   const s = _low(mensagem);
   if (RE_NOTA_FORTE.test(s)) return true;
-  if (RE_NOTA_FRACA.test(s) && !temDataHora(mensagem)) return true; // "anota que X" sem data
+  if (RE_NOTA_FRACA.test(s) && !temDataHora(mensagem)) {
+    // "anota que tenho que X" / "anota que preciso X" / "anota que não
+    // esqueça de X" é uma TAREFA disfarçada de nota — o "anota" aqui é sobre
+    // REGISTRAR o pedido, não sobre guardar uma ideia solta. Se o que sobra
+    // depois de "anota que" já tem um cue de tarefa, vira tarefa (pareceTarefa
+    // cuida disso a seguir), não nota.
+    const resto = s.replace(RE_NOTA_FRACA, '');
+    if (RE_TAREFA_NL.test(resto)) return false;
+    return true; // "anota que X" sem data
+  }
   return false;
 }
 
@@ -322,15 +388,22 @@ async function capturaRapida(mensagem, ctx) {
     if (/urgente|urgent[ií]ssim/i.test(s)) prioridade = 'urgente';
     else if (/importante|prioridade\s+alta/i.test(s)) prioridade = 'alta';
     const categoria = categoriaTarefa(titulo);
+    // Prazo ("preciso terminar o relatório até sexta") — coluna já existe
+    // (data_vencimento), o painel já lê/edita ela; só faltava o WhatsApp gravar.
+    const prazo = prazoTarefa(mensagem);
+    const novaTarefa = { grupo_id: grupoId, user_id: user.id, criado_por: user.id, titulo, prioridade };
+    if (prazo) novaTarefa.data_vencimento = prazo.iso;
     const { data: tarefa, error } = await supabase.from('tarefas')
-      .insert({ grupo_id: grupoId, user_id: user.id, criado_por: user.id, titulo, prioridade })
-      .select('id').single();
+      .insert(novaTarefa).select('id').single();
     if (error) { await enviarTexto(phone, '😕 Não consegui criar a tarefa agora. Tenta de novo em instantes.'); return true; }
     // Categoria em update TOLERANTE (coluna nova — migration 062). Se ainda não
     // rodou, a tarefa fica sem categoria no banco; a resposta já mostra a inferida.
     if (categoria) { await supabase.from('tarefas').update({ categoria }).eq('id', tarefa.id); }
     const priTag = prioridade === 'urgente' ? ' 🔴 URGENTE' : prioridade === 'alta' ? ' 🟠 Alta prioridade' : '';
-    await enviarTexto(phone, `📋 *Tarefa criada*${priTag}\n\n${titulo}${categoria ? `\n🏷️ ${categoria}` : ''}\n\nVer todas: *tarefas*`);
+    const prazoTxt = prazo
+      ? `\n📅 Prazo: ${new Date(prazo.iso + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}`
+      : '';
+    await enviarTexto(phone, `📋 *Tarefa criada*${priTag}\n\n${titulo}${categoria ? `\n🏷️ ${categoria}` : ''}${prazoTxt}\n\nVer todas: *tarefas*`);
     return true;
   }
 
@@ -931,6 +1004,9 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
 // Detectores expostos pro webhook usar como fast-path (sem IA).
 module.exports.pareceCompromisso = pareceCompromisso;
 module.exports.pareceAgenda = pareceAgenda; // criar OU ajustar lembrete
+// Marcador explícito de tarefa ("tarefa: X") — vence o interpretador de
+// finanças ANTES dele rodar. Ver o comentário na declaração (seção TAREFA).
+module.exports.temMarcadorTarefaExplicito = temMarcadorTarefaExplicito;
 
 // Quick-capture (tarefa/nota por linguagem natural). capturaRapida é o dispatcher
 // usado no webhook; o resto é exposto pra testes.
@@ -942,4 +1018,5 @@ module.exports.extrairTituloTarefa = extrairTituloTarefa;
 module.exports.extrairTextoNota    = extrairTextoNota;
 module.exports.categoriaTarefa     = categoriaTarefa;
 module.exports.temDataHora         = temDataHora;
+module.exports.prazoTarefa         = prazoTarefa;
 module.exports.termoConsultaNota   = termoConsultaNota;

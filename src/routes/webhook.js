@@ -430,6 +430,18 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     }
 
     // ── 3. Interpreta a mensagem ──────────────────────────────────
+    // Marcador EXPLÍCITO de tarefa ("tarefa: X", "tarefa X", "todo: X") vence
+    // o interpretador de finanças ANTES dele rodar. Bug real: "Tarefa
+    // melhorar sistema de gastos fixos... do painel" era sequestrado pelo
+    // detector de "gastos" do interpretarRapido (achava "do painel" como
+    // preposição+termo e respondia "Nenhum gasto encontrado para 'painel'")
+    // porque o interpretador de finanças roda PRIMEIRO e, se achar qualquer
+    // ação, o Grow nem chega a ser chamado. Ninguém começa um lançamento
+    // financeiro com a palavra "tarefa" — risco de colisão é zero.
+    if (!data && temAcessoGrow(user) && require('../handlers/grow').temMarcadorTarefaExplicito(mensagem)) {
+      const ctxG = { phone, grupoId: user.grupo_ativo, user, mensagem };
+      if (await require('../handlers/grow').capturaRapida(mensagem, ctxG)) return;
+    }
     if (!data) data = interpretarRapido(mensagem); // tenta regex primeiro (grátis)
     TR(`rapido:${data?.acao || 'NULL'}`);
 
