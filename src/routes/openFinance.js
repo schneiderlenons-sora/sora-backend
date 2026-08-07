@@ -236,11 +236,29 @@ router.get('/conexoes/:externalId/autorizar', auth, exigirAcesso, async (req, re
 
 // DIAGNÓSTICO (temporário, allowlist): devolve a RESPOSTA CRUA da Polp pra eu ver
 // o formato real de contas/transações/investimentos e ajustar o normalize.
+//
+// ⚠️ ESTE BLOCO SÓ SERVE PRO TRILHO PLUGGY (v1, `/integrations/:id/...`).
+// Conexão do trilho CELCOIN (v2) tem id de CONSENTIMENTO, que não existe como
+// integração na v1 — pedir por aqui devolve **HTTP 500 com página HTML de erro**
+// SEMPRE, mesmo com o sync funcionando perfeitamente. Um cliente mandou esse
+// 500 achando que o Open Finance dele estava quebrado quando na verdade as 648
+// transações tinham entrado normalmente: o alarme falso era do nosso botão.
+// Por isso o roteamento abaixo é pelo PROVIDER da conexão, igual ao sync.
 router.get('/debug/:externalId', auth, exigirAcesso, exigirConfigurado, async (req, res) => {
   const id = req.params.externalId;
+
+  const { data: conexao } = await supabase.from('of_conexoes')
+    .select('provider').eq('external_id', id).maybeSingle();
+  if ((conexao?.provider || '').includes('celcoin')) {
+    // Chamada DIRETA (não redirect): o `fetch` do painel poderia não repassar
+    // o Authorization no 307 e o usuário veria "Não autenticado" no lugar do
+    // diagnóstico. A query (?cru=1, ?foco=cartoes) segue valendo.
+    return diagnosticoCelcoin(req, res);
+  }
+
   // `resumo` primeiro: é o bloco que responde "de onde sai a fatura deste
   // cartão" sem precisar ler o JSON inteiro.
-  const out = { externalId: id, resumo: [] };
+  const out = { externalId: id, provider: conexao?.provider || 'polp (v1)', resumo: [] };
   let contas = [];
   try { contas = await polp.listarContas(id); out.contas = contas; } catch (e) { out.contas_erro = e.message; }
   // Amostra de transações de CADA conta (inclui o cartão) → pra ver categoria + campos.
@@ -420,7 +438,9 @@ function authOuAdmin(req, res, next) {
   return auth(req, res, () => exigirAcesso(req, res, next));
 }
 
-router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
+// Handler nomeado: o `/debug/:externalId` (botão do painel) chama ISTO quando a
+// conexão é do trilho Celcoin, em vez de perguntar à v1 e receber um 500.
+async function diagnosticoCelcoin(req, res) {
   const celcoin = require('../services/polpCelcoin');
   const sync    = require('../services/polpCelcoinSync');
   const { hojeSP, cicloPorCompetencia, competenciaAtual } = require('../services/cicloFatura');
@@ -428,7 +448,7 @@ router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
     return res.status(503).json({ erro: 'Celcoin não configurado (POLP_CELCOIN_CLIENT_ID / _SECRET).' });
   }
 
-  const id = req.params.consentId;
+  const id = req.params.consentId || req.params.externalId;
   const hoje = hojeSP();
   const cru = req.query.cru === '1';          // ?cru=1 inclui o payload bruto
   // ?foco=cartoes — só o que decide a FATURA. O modo completo faz ~40 chamadas
@@ -597,7 +617,9 @@ router.get('/debug-celcoin/:consentId', authOuAdmin, async (req, res) => {
   } catch (e) { out.investimentos_erro = e.message; }
 
   res.json(out);
-});
+}
+
+router.get('/debug-celcoin/:consentId', authOuAdmin, diagnosticoCelcoin);
 
 // Desconecta: remove o vínculo (histórico fica) + apaga no provedor.
 router.delete('/conexoes/:externalId', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
