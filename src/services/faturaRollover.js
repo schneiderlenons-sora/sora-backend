@@ -2,7 +2,9 @@
 // faturaRollover — pagamento parcial da fatura + rollover do saldo (SEM juros).
 //
 // Modelo (cartão MANUAL; Open Finance fica de fora — traz a fatura do banco):
-//   • fatura(comp)   = soma dos Gasto do cartão no CICLO daquela competência
+//   • fatura(comp)   = soma ASSINADA do cartão no CICLO daquela competência
+//                      (compra soma, estorno/crédito ABATE, pagamento é
+//                       neutro — ver services/valorFatura.js)
 //   • pago(comp)     = soma de pagamentos_fatura do cartão naquela competência
 //   • restante(comp) = max(0, fatura − pago)
 //
@@ -20,6 +22,7 @@
 // =============================================================================
 const supabase = require('../db/supabase');
 const { cicloPorCompetencia, competenciaVizinha } = require('./cicloFatura');
+const { somarFatura } = require('./valorFatura');
 
 const TZ = 'America/Sao_Paulo';
 
@@ -32,14 +35,20 @@ function mesSeguinte(ym) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-// Soma os Gasto do cartão dentro de um intervalo [ini, fimExcl) — o ciclo.
-// NÃO filtra `transferencia`: de propósito, pra o "Fatura anterior" (rollover)
-// entrar na soma da fatura seguinte.
+// Soma a fatura do cartão dentro de um intervalo [ini, fimExcl) — o ciclo.
+//
+// A soma é ASSINADA (services/valorFatura.js): compra soma, estorno/cashback
+// ABATE, pagamento de fatura é neutro (já entra por `pagamentos_fatura`).
+// Antes filtrava `tipo='Gasto'` no SQL e todo crédito era descartado.
+//
+// NÃO filtra `transferencia` no lado do Gasto: de propósito, pra o "Fatura
+// anterior" (rollover) entrar na soma da fatura seguinte.
 async function somaFaturaCiclo(grupoId, cartaoNome, ciclo) {
-  const { data } = await supabase.from('transacoes').select('valor')
-    .eq('grupo_id', grupoId).eq('tipo', 'Gasto').ilike('carteira_nome', cartaoNome)
+  const { data } = await supabase.from('transacoes')
+    .select('valor, tipo, categoria, transferencia')
+    .eq('grupo_id', grupoId).ilike('carteira_nome', cartaoNome)
     .gte('data', ciclo.ini).lt('data', ciclo.fimExcl);
-  return (data || []).reduce((s, t) => s + (Number(t.valor) || 0), 0);
+  return somarFatura(data || []);
 }
 
 async function pagoDaFatura(cartaoId, ym) {

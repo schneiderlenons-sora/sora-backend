@@ -301,6 +301,13 @@ function categorizar({ descricao, pluggyCategoria } = {}) {
 const CATEGORIA_FATURA = 'Fatura';
 const CATEGORIA_FATURA_LEGADO = 'Fatura cartão';
 
+// Crédito na fatura que NÃO é pagamento: estorno, cashback, "Crédito de
+// parcelamento de compra", ajuste do emissor. Existe pra separar do
+// CATEGORIA_FATURA — antes tudo que era crédito no cartão saía como 'Fatura' e
+// o estorno não abatia a fatura (ver services/valorFatura.js). Já existe na
+// taxonomia v4 como subcategoria ↩️ (sql/087), então não precisa de migration.
+const CATEGORIA_ESTORNO = 'Reembolso';
+
 /** É pagamento de fatura? Aceita o nome novo e o legado (histórico não reescrito). */
 function ehPagamentoFatura(categoria) {
   const c = (categoria || '').toString().trim().toLowerCase();
@@ -342,5 +349,6 @@ function ehPagamentoFaturaDescricao(descricao, categoriaExterna) {
 
 module.exports = {
   categorizar, categorizarDescricao, mapearCategoriaPluggy,
-  CATEGORIA_FATURA, CATEGORIA_FATURA_LEGADO, ehPagamentoFatura, ehPagamentoFaturaDescricao,
+  CATEGORIA_FATURA, CATEGORIA_FATURA_LEGADO, CATEGORIA_ESTORNO,
+  ehPagamentoFatura, ehPagamentoFaturaDescricao,
 };

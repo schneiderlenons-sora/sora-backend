@@ -137,7 +137,8 @@ router.get('/:phone', auth, async (req, res) => {
 // POST /api/transacoes — cria transação pelo painel
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { phone, tipo, categoria, valor, observacao, carteira_nome, data, pago, recorrente } = req.body;
+    const { phone, tipo, categoria, valor, observacao, carteira_nome, data, pago, recorrente,
+      transferencia } = req.body;
     const grupoId = req.grupoId;
     const userId  = req.userId;
 
@@ -181,6 +182,11 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       observacao:    observacao || '',
       carteira_nome: contaFinal,
       pago:          ehFuturo ? false : (pago !== false),
+      // Estorno/crédito na fatura do cartão: fica FORA de receita e de gasto
+      // nos relatórios e ABATE a fatura (services/valorFatura.js). É o que
+      // permite lançar um reembolso à mão — antes só o sync do Open Finance
+      // conseguia produzir uma linha assim.
+      transferencia: transferencia === true,
       data:          data || new Date().toISOString(),
     }).select().single();
 

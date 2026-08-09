@@ -29,9 +29,11 @@ const crypto   = require('crypto');
 const supabase = require('../db/supabase');
 const celcoin  = require('./polpCelcoin');
 const {
-  categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA, ehPagamentoFaturaDescricao,
+  categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA, CATEGORIA_ESTORNO,
+  ehPagamentoFaturaDescricao,
 } = require('./categorizar');
 const { cicloPorCompetencia, competenciaAtual, hojeSP } = require('./cicloFatura');
+const { valorNaFatura } = require('./valorFatura');
 
 const PROVIDER = 'polp-celcoin';
 const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -346,12 +348,22 @@ function faturaPorTransacoes(normalizadas, crus, n, hoje) {
   normalizadas.forEach((norm, i) => { if (norm) pares.push({ norm, cru: crus[i] || {} }); });
 
   // 1. Exato: agrupamento do próprio emissor.
+  // A soma é ASSINADA (services/valorFatura.js): compra soma, estorno/cashback
+  // ABATE, pagamento de fatura é neutro. Antes só entrava `ehGasto` e todo
+  // crédito era descartado — a fatura da Sora ficava maior que a do banco.
+  const naFatura = (p) => valorNaFatura({
+    tipo: p.norm.ehGasto ? 'Gasto' : 'Recebimento',
+    valor: p.norm.valor,
+    categoria: p.norm.categoria,
+    transferencia: p.norm.transferencia,
+  });
+
   const billId = n.faturaAberta && n.faturaAberta.billId;
   if (billId && pares.some((p) => String(p.cru.bill_id || '') === billId)) {
     n.fonteFatura = 'bill_id';
-    return cent(pares
-      .filter((p) => String(p.cru.bill_id || '') === billId && p.norm.ehGasto)
-      .reduce((s, p) => s + p.norm.valor, 0));
+    return Math.max(0, cent(pares
+      .filter((p) => String(p.cru.bill_id || '') === billId)
+      .reduce((s, p) => s + naFatura(p), 0)));
   }
   n.fonteFatura = 'ciclo';
 
@@ -360,9 +372,9 @@ function faturaPorTransacoes(normalizadas, crus, n, hoje) {
   if (!cartao.dia_fechamento) return null;
   const ciclo = cicloPorCompetencia(cartao, competenciaAtual(cartao, hoje));
   n.cicloLabel = ciclo.label;
-  return cent(pares
-    .filter((p) => p.norm.ehGasto && ymd(p.norm.data) >= ciclo.ini && ymd(p.norm.data) < ciclo.fimExcl)
-    .reduce((s, p) => s + p.norm.valor, 0));
+  return Math.max(0, cent(pares
+    .filter((p) => ymd(p.norm.data) >= ciclo.ini && ymd(p.norm.data) < ciclo.fimExcl)
+    .reduce((s, p) => s + naFatura(p), 0)));
 }
 
 // ── Parcelamentos: detecção de duplicata + parcelas a vencer ────────────────
@@ -740,16 +752,34 @@ function normalizeTxCartao(tx, hoje) {
   //     ou se perde.
   if (!redistribuida && ymd(data) && ymd(data) > hoje) return null;
 
-  // Pagamento da fatura, estorno e cashback entram como transferência (não
-  // consomem orçamento; a compra original já contou).
-  const ehTransferencia = tipoTx === 'PAGAMENTO_FATURA' || tipoTx === 'ESTORNO' || tipoTx === 'CASHBACK' || ehCredito;
+  // ⚠️ PAGAMENTO DE FATURA e CRÉDITO/ESTORNO são coisas DIFERENTES e não podem
+  // sair com a mesma cara — era o que acontecia (tudo virava categoria
+  // 'Fatura'), e por isso "Crédito de parcelamento de compra" aparecia como
+  // pagamento de fatura e o estorno não abatia nada:
+  //   · pagamento da fatura → NEUTRO na fatura (abate via `pagamentos_fatura`;
+  //     somar aqui contaria em dobro);
+  //   · estorno/cashback/crédito de parcelamento → ABATE a fatura (é consumo
+  //     que voltou; devolve limite também).
+  // Quem lê essa diferença é `services/valorFatura.js`, pela dupla
+  // `transferencia = true` + categoria.
+  const pagouFatura = tipoTx === 'PAGAMENTO_FATURA'
+    || ehPagamentoFaturaDescricao(descricao, tx.category_ref);
+  // Exige `ehCredito`: um "ESTORNO" que venha como DÉBITO é cobrança de
+  // verdade (estorno de um crédito anterior) e tem de seguir como Gasto.
+  const creditoAjuste = ehCredito && !pagouFatura;
+
+  // Os DOIS ficam fora de receita/gasto do dashboard (resumoTransacoes trata
+  // `transferencia` assim) — estorno não pode virar "receita comum".
+  const ehTransferencia = pagouFatura || creditoAjuste;
 
   return {
     externalId: String(tx.id),
     ehGasto: !ehCredito,
     valor: Math.abs(valor),
     descricao,
-    categoria: ehTransferencia ? CATEGORIA_FATURA : categoriaDe(descricao, tx.category_ref),
+    categoria: pagouFatura ? CATEGORIA_FATURA
+      : creditoAjuste ? CATEGORIA_ESTORNO
+        : categoriaDe(descricao, tx.category_ref),
     data,
     transferencia: ehTransferencia,
     // Parcela que ainda não foi cobrada nasce NÃO paga (o resto do cartão nasce
