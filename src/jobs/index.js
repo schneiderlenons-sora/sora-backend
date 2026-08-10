@@ -591,7 +591,7 @@ cron.schedule('*/15 * * * *', async () => {
       `🌐 https://www.forsora.com/grow/habitos`;
     await lembrete(u.phone, txt,
       `🎯 Você ainda tem *${pendentes}* hábito${pendentes === 1 ? '' : 's'} pra marcar hoje. Bora fechar o dia? 💪 Responda *fiz todos* que eu marco tudo.`,
-      { id: 'aurora', aviso: 'habitos', seed: u.id });
+      { id: 'loki', aviso: 'habitos', seed: u.id });
     console.log(`🎯 Lembrete de hábitos → ${u.phone} (${pendentes} pendentes)`);
   }
 });
@@ -672,7 +672,7 @@ cron.schedule('0 9 * * *', async () => {
       `Quando fizer, responda *fiz a manutenção ${m.nome}* que eu marco e reprogramo a próxima.`;
     await lembrete(phone, txt,
       `🔧 *Manutenção: ${m.icone || ''} ${m.nome}* — ${m.ultima_data ? `venceu ${quando}` : 'ainda não registrada'}. Quando fizer, responda *fiz a manutenção ${m.nome}*.`,
-      { id: 'aurora', aviso: 'manutencoes', seed: m.id });
+      { id: 'loki', aviso: 'manutencoes', seed: m.id });
     await supabase.from('manutencoes').update({ lembrete_ultimo: hojeStr }).eq('id', m.id);
     console.log(`🔧 Lembrete manutenção → ${phone}: ${m.nome}`);
   }
@@ -727,7 +727,7 @@ cron.schedule('*/15 * * * *', async () => {
       `Ver agenda: 🌐 https://www.forsora.com/grow/agenda`;
     await lembrete(phone, txt,
       `📅 *${c.titulo}* — ${quando}${c.local ? ` · 📍 ${c.local}` : ''}`,
-      { id: 'aurora', aviso: 'compromissos', seed: c.id });
+      { id: 'loki', aviso: 'compromissos', seed: c.id });
     console.log(`📅 Lembrete compromisso → ${phone}: ${c.titulo}`);
   }
 });
@@ -1247,7 +1247,7 @@ const CAPA = process.env.SORA_CAPA_URL || `${APP_URL_RESUMO}/sora-capa.png`;
 //
 // A saída NÃO foi criar `resumo_semanal_v2`/`resumo_mensal_v2`: o
 // `agente_aviso` (fase 3) já é um template de recado LIVRE ({{2}}), com a cara
-// do agente no cabeçalho. O resumo é do Jacques, então ele passa por lá —
+// do agente no cabeçalho. O resumo é do Sora, então ele passa por lá —
 // cabe a manchete, a frase E o Grow, sem pedir mais nenhuma aprovação à Meta.
 // Com a fase 3 desligada, cai no template aprovado de sempre.
 //
@@ -1301,7 +1301,7 @@ cron.schedule('*/15 * * * *', async () => {
         const grow = await coletarGrow(u.id, ini, fim).catch(() => ({}));
         const insight = await gerarInsight({ periodo: 'semana', atual, anterior, grow });
         const corpo = montarCorpoSemanal({ atual, anterior, insight, grow });
-        const vestida = falar('jacques', 'resumo-semanal', {
+        const vestida = falar('sora', 'resumo-semanal', {
           texto: `${corpo}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`,
           core: coreResumo(insight, atual),
           seed: u.id,
@@ -1310,9 +1310,9 @@ cron.schedule('*/15 * * * *', async () => {
         await enviarProativo(u.phone, {
           texto: vestida.texto,
           // O `agente_aviso` leva a MANCHETE inteira (que o template
-          // `resumo_semanal` não tem onde encaixar) e a cara do Jacques. Se a
+          // `resumo_semanal` não tem onde encaixar) e a cara do Sora. Se a
           // fase 3 estiver desligada, cai no template aprovado de sempre.
-          template: templateAgente('jacques', vestida.coreAgente) || {
+          template: templateAgente('sora', vestida.coreAgente) || {
             name: 'resumo_semanal',
             // corpo: {{1}} nome · {{2}} gasto · {{3}} recebido | cabeçalho IMAGE = capa
             params: [primeiroNome, brl(atual.gastos), brl(atual.receitas)],
@@ -1359,7 +1359,7 @@ cron.schedule('*/15 * * * *', async () => {
         const grow = await coletarGrow(u.id, ini, fim).catch(() => ({}));
         const insight = await gerarInsight({ periodo: 'mes', atual, anterior, grow });
         const corpo = montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight, grow });
-        const vestida = falar('jacques', 'resumo-mensal', {
+        const vestida = falar('sora', 'resumo-mensal', {
           texto: `${corpo}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`,
           core: coreResumo(insight, atual, mesNome),
           seed: u.id,
@@ -1367,7 +1367,7 @@ cron.schedule('*/15 * * * *', async () => {
         const primeiroNome = (u.name || 'tudo bem').split(' ')[0];
         await enviarProativo(u.phone, {
           texto: vestida.texto,
-          template: templateAgente('jacques', vestida.coreAgente) || {
+          template: templateAgente('sora', vestida.coreAgente) || {
             name: 'resumo_mensal',
             params: [primeiroNome, mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
             opts: { headerImage: CAPA }, // cabeçalho IMAGE = capa

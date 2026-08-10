@@ -45,8 +45,8 @@ const MAX_CORE = 900;
 const AGENTES = {
   sardinha:            { nome: 'Sardinha',        emoji: '🐟', arte: true },
   'don-baleone':       { nome: 'Don Baleone',     emoji: '🐋', arte: true },
-  jacques:             { nome: 'Jacques',         emoji: '🎥', arte: false },
-  aurora:              { nome: 'Aurora',          emoji: '🌅', arte: false },
+  sora:             { nome: 'Sora',         emoji: '🎥', arte: true },
+  loki:              { nome: 'Loki',          emoji: '🌅', arte: true },
   'dr-house':          { nome: 'Dr. House',       emoji: '🩺', arte: true },
   'detetive-watson':   { nome: 'Detetive Watson', emoji: '🔍', arte: true },
   osvaldo:             { nome: 'Osvaldo',         emoji: '💰', arte: true },
@@ -110,18 +110,18 @@ const VOZES = {
             'Fica a seu critério, claro. Eu apenas noto.'],
   },
 
-  // ── Jacques: narrador de documentário ─────────────────────────────────
+  // ── Sora: narrador de documentário ─────────────────────────────────
   // O resumo JÁ vem com manchete e frase próprias (gerarInsight). Aqui a voz
   // é só a moldura de quem está narrando — abertura curta, sem competir com
   // o texto que a IA escreveu.
-  'jacques.resumo-semanal': {
+  'sora.resumo-semanal': {
     abre: ['Sete dias observando você. O relatório:',
            'Encerrada a semana de observação.',
            'Mais um ciclo registrado. Vejamos:'],
     fecha: ['Seguimos acompanhando.', 'A expedição continua.',
             'Volto no próximo domingo.'],
   },
-  'jacques.resumo-mensal': {
+  'sora.resumo-mensal': {
     abre: ['Um mês inteiro de observação. O balanço:',
            'Fecha-se mais um ciclo. O que os dados contam:',
            'Trinta dias depois, o retrato:'],
@@ -130,26 +130,26 @@ const VOZES = {
             'Até o próximo fechamento.'],
   },
 
-  // ── Aurora: calma, matinal, organizada ────────────────────────────────
-  'aurora.briefing': {
+  // ── Loki: calma, matinal, organizada ────────────────────────────────
+  'loki.briefing': {
     abre: ['Bom dia. Separei o seu dia:', 'Bom dia! Antes de começar, olha só:',
            'Bom dia. O dia de hoje, resumido:'],
     fecha: ['Tenha um bom dia. ☀️', 'Vai com calma que dá tempo.',
             'Qualquer coisa, tô por aqui.'],
   },
-  'aurora.habitos': {
+  'loki.habitos': {
     abre: ['Antes de fechar o dia...', 'Passando pra revisar o dia com você.',
            'Só um minutinho antes de dormir.'],
     fecha: ['Amanhã tem mais. 🌙', 'Fecha o dia bonito, vai.',
             'Você tá mais perto do que imagina.'],
   },
-  'aurora.compromissos': {
+  'loki.compromissos': {
     abre: ['Lembrete da sua agenda:', 'Isso aqui tá chegando:',
            'Passando pra você não se atrasar.'],
     fecha: ['Deixei anotado no seu dia.', 'Vai com tempo.',
             'Tô de olho no relógio por você.'],
   },
-  'aurora.manutencoes': {
+  'loki.manutencoes': {
     abre: ['Uma tarefa da casa pedindo atenção:',
            'Aquilo da casa que você vem adiando...',
            'A casa mandou lembrar de uma coisa.'],

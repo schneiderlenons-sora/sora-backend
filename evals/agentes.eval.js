@@ -108,11 +108,11 @@ console.log('── 6. catálogo consistente ──');
   }
   // A mesma seed tem de dar sempre a mesma fala (previsível pra teste e evita
   // o mesmo aviso mudar de tom a cada tentativa de envio).
-  const a = falar('aurora', 'habitos', { texto: 't', seed: 'u1' });
-  const b = falar('aurora', 'habitos', { texto: 't', seed: 'u1' });
+  const a = falar('loki', 'habitos', { texto: 't', seed: 'u1' });
+  const b = falar('loki', 'habitos', { texto: 't', seed: 'u1' });
   ok(a.texto === b.texto, 'mesma seed = mesma fala');
-  const c = falar('aurora', 'habitos', { texto: 't', seed: 'u2' });
-  ok(a.texto !== c.texto || VOZES['aurora.habitos'].abre.length === 1,
+  const c = falar('loki', 'habitos', { texto: 't', seed: 'u2' });
+  ok(a.texto !== c.texto || VOZES['loki.habitos'].abre.length === 1,
     'seeds diferentes tendem a falas diferentes');
 }
 console.log('  ok');
@@ -151,16 +151,29 @@ console.log('── 7. template do agente ──');
   ok(templateAgente('nao-existe', 'x') === null, 'agente desconhecido não monta template');
   ok(templateAgente('don-baleone', '') === null, 'recado vazio não monta template');
 
-  // Agente SEM arte (Jacques/Aurora ainda não têm .png) tem de cair na capa da
-  // Sora. Apontar pra um arquivo inexistente faria a Meta RECUSAR a mensagem
-  // inteira — o agente ficaria mudo por falta de desenho.
-  const semArte = templateAgente('jacques', 'Sete dias observando você.');
-  ok(semArte !== null, 'agente sem arte ainda monta o template');
-  ok(!semArte.opts.headerImage.includes('/agentes/jacques.png'),
-    `agente sem arte NÃO aponta pro png inexistente (veio "${semArte.opts.headerImage}")`);
-  ok(semArte.opts.headerImage.includes('sora-capa'),
-    'agente sem arte usa a capa genérica da Sora');
-  ok(semArte.params[0] === 'Jacques', 'e o nome dele continua no {{1}}');
+  // TODOS os 8 agentes já têm arte hoje. Este bloco cobre o caso `arte: false`
+  // porque ele volta a acontecer a cada agente NOVO (fase 4): apontar o
+  // cabeçalho pra um .png inexistente faz a Meta RECUSAR a mensagem inteira, e
+  // o agente ficaria mudo por falta de desenho.
+  const semArte = templateAgente('__fantasma__', 'x');
+  ok(semArte === null, 'agente que não existe no catálogo não monta template');
+
+  // Simula um agente recém-criado, ainda sem arquivo de imagem.
+  AGENTES.__novo__ = { nome: 'Novato', emoji: '🐣', arte: false };
+  const novo = templateAgente('__novo__', 'Primeiro recado.');
+  ok(novo !== null, 'agente sem arte ainda monta o template');
+  ok(!novo.opts.headerImage.includes('__novo__'),
+    `agente sem arte NÃO aponta pro png inexistente (veio "${novo.opts.headerImage}")`);
+  ok(novo.opts.headerImage.includes('sora-capa'), 'ele cai na capa genérica da Sora');
+  ok(novo.params[0] === 'Novato', 'e o nome dele continua no {{1}}');
+  delete AGENTES.__novo__;
+
+  // E os 8 de verdade têm de apontar pro arquivo PRÓPRIO.
+  for (const id of Object.keys(AGENTES)) {
+    const t3 = templateAgente(id, 'recado');
+    ok(t3.opts.headerImage.includes(`/agentes/${id}.png`),
+      `${id}: usa a capa própria (veio "${t3.opts.headerImage}")`);
+  }
 }
 console.log('  ok');
 
