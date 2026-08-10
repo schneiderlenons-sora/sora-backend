@@ -242,6 +242,29 @@ function pagoDaFatura(bill) {
 }
 
 /**
+ * Fatura SIMULADA — o campo novo da Polp (ago/2026), que vale pra todos os
+ * bancos: quanto a fatura EM ANDAMENTO daria se fechasse agora.
+ *
+ * É exatamente o número que faltava. Até aqui, no trilho Celcoin, a fatura em
+ * aberto tinha de ser somada das transações do ciclo, porque o emissor só
+ * publica `bill_total_amount` DEPOIS que a fatura fecha (ver CLAUDE.md). O
+ * simulado resolve isso na fonte — e já vem líquido de pagamentos, então
+ * também conserta o caso "paguei a fatura e o painel não atualizou".
+ *
+ * Procura em vários lugares porque a Polp ainda está estabilizando o contrato
+ * e o campo pode vir na fatura OU no cartão. `null` = não veio; nada muda.
+ */
+function faturaSimulada(fonte) {
+  if (!fonte || typeof fonte !== 'object') return null;
+  const v = fonte.simulated_bill_total_amount != null
+    ? fonte.simulated_bill_total_amount
+    : (fonte.simulatedBillTotalAmount != null ? fonte.simulatedBillTotalAmount : null);
+  const n = money(v);
+  // Zero é resposta VÁLIDA (fatura quitada) — só descarta o que não veio.
+  return n == null ? null : Math.max(0, n);
+}
+
+/**
  * Fatura em ABERTO = a de vencimento mais próximo que ainda NÃO passou.
  *
  * ⚠️ NÃO tem fallback pra "a mais recente". Isso era um bug caro: o `List Bills`
@@ -292,8 +315,32 @@ function ultimaFaturaPublicada(bills) {
  * pela ocorrência mais recente — `bills` vem em ordem DESC de vencimento
  * (doc da Polp), então a primeira ocorrência de um dia já é a mais nova.
  */
+/**
+ * ⚠️ A moda considera só as faturas RECENTES (`JANELA_MODA`), não a história
+ * toda. Quando o banco MUDA o dia de fechamento/vencimento — e o Mercado Pago
+ * muda —, a moda de 12 faturas antigas continua vencendo a realidade por meses,
+ * e o painel fica preso na data velha (caso real: painel 12/17, app 8/14).
+ *
+ * A janela é de 6 e não de 2 de propósito: com poucas faturas, UMA anomalia
+ * (fechamento adiado por feriado) empata com a regra e o desempate por
+ * recência elegeria justamente a anomalia — que é o bug que a moda veio
+ * corrigir. Com 6, a anomalia perde; com uma mudança real, ela vira maioria em
+ * ~3 ciclos. Se não houver faturas recentes com o campo, cai pra lista toda.
+ */
+const JANELA_MODA = 6;
+
+function recentes(bills, campo) {
+  // Ordena SEMPRE (não confia na ordem que a API mandou): o desempate por
+  // recência depende de o índice 0 ser mesmo a fatura mais nova.
+  return (Array.isArray(bills) ? bills : [])
+    .filter((b) => b && b[campo] && b.due_date)
+    .sort((a, b) => String(b.due_date).localeCompare(String(a.due_date)))
+    .slice(0, JANELA_MODA);
+}
+
 function diaMaisFrequente(bills, campo) {
-  const arr = Array.isArray(bills) ? bills : [];
+  const janela = recentes(bills, campo);
+  const arr = janela.length ? janela : (Array.isArray(bills) ? bills : []);
   const cont = new Map(); // dia → { n, pos: índice da 1ª ocorrência }
   arr.forEach((b, i) => {
     const d = diaDoMes(b && b[campo]);
@@ -511,7 +558,22 @@ function normalizeCartao(card, bills, hoje) {
 
   // A FATURA vem do banco: total − o que já foi pago nela.
   const totalFatura = aberta ? money(aberta.bill_total_amount) : null;
-  const faturaRestante = totalFatura == null ? null : Math.max(0, cent(totalFatura - pagoDaFatura(aberta)));
+  const publicadaRestante = totalFatura == null ? null : Math.max(0, cent(totalFatura - pagoDaFatura(aberta)));
+
+  // ⭐ FATURA SIMULADA (campo novo da Polp, ago/2026) TEM PRIORIDADE.
+  //
+  // É o valor da fatura EM ANDAMENTO, já líquido de pagamentos. Resolve de uma
+  // vez os dois furos que sobravam no trilho Celcoin:
+  //   · o emissor só publica `bill_total_amount` depois que a fatura FECHA, e
+  //     o Mercado Pago nunca publica a aberta — a tela tinha de somar as
+  //     transações do ciclo, que sai a menos quando há parcelamento;
+  //   · fatura paga continuava aparecendo cheia, porque o MP não manda
+  //     `payments[]` e não havia o que descontar.
+  //
+  // Procuro na fatura aberta E no cartão: sem fatura publicada (o caso do MP)
+  // só o cartão pode trazer. Ausente = `null` e tudo segue como antes.
+  const simulada = faturaSimulada(aberta) ?? faturaSimulada(card);
+  const faturaRestante = simulada != null ? simulada : publicadaRestante;
 
   return {
     externalId: String(card.id),
@@ -543,17 +605,26 @@ function normalizeCartao(card, bills, hoje) {
       of_bill_atual: aberta ? String(aberta.id) : null,
       of_limite_usado: usado,
     },
+    // Quanto a fatura simulada disse (ou `null`). Vai pro relatório do sync e
+    // pro diagnóstico — é como a gente confere se o campo novo bate com o app
+    // do banco sem ter de ler o JSON cru inteiro.
+    faturaSimulada: simulada,
     faturaAberta: aberta
       ? {
           billId: String(aberta.id),
           total: totalFatura,
           pago: pagoDaFatura(aberta),
           restante: faturaRestante,
+          simulada,
           fechamento: ymd(aberta.bill_closing_date),
           vencimento: ymd(aberta.due_date),
           parcelada: !!aberta.is_instalment,
         }
-      : null,
+      // Sem fatura publicada (o caso do Mercado Pago) o simulado ainda vale:
+      // é o único número do banco disponível pro ciclo em andamento.
+      : (simulada != null
+        ? { billId: null, total: null, pago: 0, restante: simulada, simulada, estimada: false, fonte: 'simulada' }
+        : null),
   };
 }
 
@@ -1288,7 +1359,12 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // sempre a MENOS (medido: R$ 1.870,24 numa fatura real de R$ 3.423,57).
         // A soma por transação fica como último recurso, pra emissor que não
         // informa limite usado.
-        if (!(n.faturaAberta && n.faturaAberta.total > 0)) {
+        // ⭐ Com a FATURA SIMULADA da Polp não há nada a estimar: o banco disse
+        // quanto é a fatura em andamento. Todo o bloco abaixo (limite usado,
+        // parcelas a vencer, soma das transações) existe só porque esse número
+        // não existia. Tendo ele, qualquer estimativa nossa seria pior.
+        const temSimulada = n.faturaSimulada != null;
+        if (!temSimulada && !(n.faturaAberta && n.faturaAberta.total > 0)) {
           // Parcela a vencer = transação com data no FUTURO. Medida, nunca
           // projetada (projetar já deu 6.379 onde o real era 2.504).
           const futuras = cent((txs || []).reduce((s, t) => {
@@ -1413,6 +1489,7 @@ module.exports = {
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
+  faturaSimulada,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };

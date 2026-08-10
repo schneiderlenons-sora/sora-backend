@@ -15,6 +15,7 @@
 // =============================================================================
 const {
   escolherFaturaAberta, ultimaFaturaPublicada, faturaPorLimite,
+  faturaSimulada, diaMaisFrequente, normalizeCartao,
 } = require('../src/services/polpCelcoinSync');
 
 const falhas = [];
@@ -123,6 +124,71 @@ console.log('── 3. regressão do caso real ──');
   // `faturaPorLimite` continua existindo (emissor que informe parcela a vencer
   // datada no futuro se beneficia), mas NÃO é mais a fonte da fatura no Celcoin.
   eq(faturaPorLimite(5000, 1576.43), 3423.57, 'a regra segue correta quando há o dado');
+}
+console.log('  ok');
+
+// ── 4. FATURA SIMULADA (campo novo da Polp, ago/2026) ─────────────────────
+// É o valor da fatura EM ANDAMENTO, já líquido de pagamentos. Tem prioridade
+// sobre tudo: enquanto ele não existia, a fatura aberta precisava ser estimada
+// (limite usado, parcelas a vencer, soma de transações) — e toda estimativa
+// erra. Tendo o número do banco, estimar seria pior.
+console.log('── 4. fatura simulada ──');
+{
+  eq(faturaSimulada({ simulated_bill_total_amount: { amount: 842.15 } }), 842.15, 'lê o campo novo');
+  eq(faturaSimulada({ simulatedBillTotalAmount: { amount: 842.15 } }), 842.15, 'aceita camelCase (contrato ainda mudando)');
+  eq(faturaSimulada({ simulated_bill_total_amount: { amount: 0 } }), 0,
+    'ZERO é resposta válida — é a fatura quitada, não "campo ausente"');
+  eq(faturaSimulada({}), null, 'sem o campo devolve null (nada muda)');
+  eq(faturaSimulada(null), null, 'nulo não quebra');
+
+  // O caso do Mercado Pago: NUNCA publica a fatura aberta, e a última publicada
+  // já foi paga. Sem o simulado a fatura tinha de ser estimada; com ele, sai do
+  // banco. É também o que conserta "paguei a fatura e o painel não atualizou".
+  const cartaoMP = { id: 'mp', identification: { name: 'Mercado Pago' },
+    limits: [{ limit_type: 'LIMITE_CREDITO_TOTAL', limit_amount: { amount: 2900 }, used_amount: { amount: 3047.81 } }] };
+  const billsMP = [{ id: 'b1', bill_closing_date: '2026-07-08', due_date: '2026-07-14',
+    bill_total_amount: { amount: 1200 }, payments: [{ amount: { amount: 1200 } }] }];
+
+  const semSim = normalizeCartao(cartaoMP, billsMP, '2026-08-10');
+  eq(semSim.saldoFatura, null, 'sem o campo, segue como antes (o sync estima depois)');
+
+  const comSim = normalizeCartao({ ...cartaoMP, simulated_bill_total_amount: { amount: 842.15 } }, billsMP, '2026-08-10');
+  eq(comSim.saldoFatura, -842.15, 'com o campo, a fatura vem do banco (saldo negativo = fatura a pagar)');
+  eq(comSim.faturaAberta.restante, 842.15, 'e o restante exposto bate');
+
+  const quitado = normalizeCartao({ ...cartaoMP, simulated_bill_total_amount: { amount: 0 } }, billsMP, '2026-08-10');
+  eq(Math.abs(quitado.saldoFatura), 0, 'fatura quitada zera o saldo — o bug do "paguei e não atualizou"');
+
+  // ⚠️ O simulado NUNCA pode ser confundido com o limite usado (3.047,81 aqui).
+  ok(comSim.saldoFatura !== -3047.81, 'jamais exibe o limite usado como fatura');
+}
+console.log('  ok');
+
+// ── 5. Dia de fechamento/vencimento acompanha MUDANÇA do banco ────────────
+console.log('── 5. datas seguem o banco quando ele muda ──');
+{
+  const b = (venc, fecha) => ({ due_date: venc, bill_closing_date: fecha });
+
+  // Caso real (Mercado Pago): o banco mudou de 17/12 pra 14/08 e o painel ficou
+  // preso na data velha, porque a moda de TODA a história ainda apontava 17.
+  const mudou = [
+    b('2026-08-14', '2026-08-08'), b('2026-07-14', '2026-07-08'), b('2026-06-14', '2026-06-08'),
+    b('2026-05-17', '2026-05-12'), b('2026-04-17', '2026-04-12'), b('2026-03-17', '2026-03-12'),
+    b('2026-02-17', '2026-02-12'), b('2026-01-17', '2026-01-12'), b('2025-12-17', '2025-12-12'),
+  ];
+  eq(diaMaisFrequente(mudou, 'due_date'), 14, 'vencimento segue a mudança recente, não a história');
+  eq(diaMaisFrequente(mudou, 'bill_closing_date'), 8, 'fechamento idem');
+
+  // …mas uma anomalia isolada (feriado adiou o vencimento) NÃO pode virar regra:
+  // é exatamente pra isso que a moda existe.
+  const anomalia = [
+    b('2026-08-16', '2026-08-11'), b('2026-07-14', '2026-07-08'), b('2026-06-14', '2026-06-08'),
+    b('2026-05-14', '2026-05-08'), b('2026-04-14', '2026-04-08'), b('2026-03-14', '2026-03-08'),
+  ];
+  eq(diaMaisFrequente(anomalia, 'due_date'), 14, 'um vencimento deslocado não vira a nova regra');
+
+  eq(diaMaisFrequente([], 'due_date'), null, 'sem faturas, null');
+  eq(diaMaisFrequente([b('2026-08-14', '2026-08-08')], 'due_date'), 14, 'uma fatura só ainda serve');
 }
 console.log('  ok');
 

@@ -492,22 +492,57 @@ async function diagnosticoCelcoin(req, res) {
         // ↓ o teste que importa: `fatura.restante` tem de bater com o app do banco
         conferir: {
           fatura_que_a_sora_vai_mostrar: n.faturaAberta ? n.faturaAberta.restante : null,
+          // ⭐ campo NOVO da Polp (ago/2026): a fatura em andamento, já líquida
+          // de pagamentos. Se este bater com o app do banco, ele vira a fonte.
+          fatura_simulada: n.faturaSimulada,
           saldo_gravado_na_wallet: n.saldoFatura,
           limite: n.extras.limite,
           fecha_dia: n.extras.dia_fechamento,
           vence_dia: n.extras.dia_vencimento,
           minimo: n.extras.pagamento_minimo,
         },
+        // ── DE ONDE SAEM AS DATAS ────────────────────────────────────────────
+        // O dia de fechamento/vencimento saiu errado num MP real (painel 12/17,
+        // app 8/14). Aqui dá pra ver, lado a lado, o que cada candidata daria —
+        // sem isso a correção vira chute.
+        datas: {
+          moda_de_todas: {
+            fecha: sync.diaMaisFrequente(bills, 'bill_closing_date'),
+            vence: sync.diaMaisFrequente(bills, 'due_date'),
+          },
+          ultimas_3: (() => {
+            const rec = (bills || []).filter((b) => b && b.due_date)
+              .sort((a, b) => String(b.due_date).localeCompare(String(a.due_date))).slice(0, 3);
+            return {
+              fecha: sync.diaMaisFrequente(rec, 'bill_closing_date'),
+              vence: sync.diaMaisFrequente(rec, 'due_date'),
+              usadas: rec.map((b) => String(b.due_date).slice(0, 10)),
+            };
+          })(),
+          fatura_mais_recente: (() => {
+            const u = sync.ultimaFaturaPublicada(bills);
+            return u ? { fecha: String(u.bill_closing_date || '').slice(0, 10), vence: String(u.due_date || '').slice(0, 10) } : null;
+          })(),
+          campos_de_data_no_cartao: Object.keys(raw || {}).filter((k) => /date|day|dia|clos|due/i.test(k))
+            .reduce((o, k) => { o[k] = raw[k]; return o; }, {}),
+        },
         faturas: bills.map((b) => ({
           id: b.id,
           fecha: String(b.bill_closing_date || '').slice(0, 10),
           vence: String(b.due_date || '').slice(0, 10),
           total: sync.money(b.bill_total_amount),
+          simulada: sync.faturaSimulada(b),
           pago: sync.pagoDaFatura(b),
           restante: (sync.money(b.bill_total_amount) ?? 0) - sync.pagoDaFatura(b),
           minimo: sync.money(b.bill_minimum_amount),
           parcelada: !!b.is_instalment,
           encargos: (b.finance_charges || []).map((f) => ({ tipo: f.type, valor: sync.money(f.amount) })),
+          // Qualquer campo novo que a Polp tenha passado a mandar na fatura e a
+          // gente ainda não lê — é assim que a próxima mudança aparece sozinha.
+          campos_desconhecidos: Object.keys(b || {}).filter((k) => ![
+            'id', 'bill_closing_date', 'due_date', 'bill_total_amount', 'bill_minimum_amount',
+            'payments', 'is_instalment', 'finance_charges', 'simulated_bill_total_amount',
+          ].includes(k)),
         })),
         limits_crus: raw.limits,
       };
