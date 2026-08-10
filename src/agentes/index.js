@@ -101,6 +101,15 @@ const VOZES = {
             'Segura a mão até o fim do mês, faz isso por mim.'],
   },
 
+  // ── Detetive Watson: deduz em voz alta, sempre com a prova ────────────
+  'detetive-watson.duplicadas': {
+    abre: ['Elementar.', 'Uma observação, se me permite.',
+           'Havia algo estranho nos seus registros.'],
+    fecha: ['Duas entradas, uma compra só. O resto é dedução.',
+            'Não acuso sem prova — e a prova está aí.',
+            'Fica a seu critério, claro. Eu apenas noto.'],
+  },
+
   // ── Jacques: narrador de documentário ─────────────────────────────────
   // O resumo JÁ vem com manchete e frase próprias (gerarInsight). Aqui a voz
   // é só a moldura de quem está narrando — abertura curta, sem competir com

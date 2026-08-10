@@ -1387,6 +1387,11 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     // seria dezenas de leituras à toa.
     if (novasTx > 0) {
       require('./limites').verificarLimiteEmBackground(grupoId, null);
+      // Duplicata nasce AQUI: ou o provedor mandou a mesma compra duas vezes,
+      // ou a pessoa já tinha digitado o que o banco acabou de trazer. Este é o
+      // instante certo pro Watson olhar — e ele só fala do que apareceu nas
+      // últimas 24h, pra não repetir o mesmo alerta a cada sync.
+      require('./duplicadas').avisarDuplicadasEmBackground(grupoId, null);
     }
 
     return { novas: novasTx, ...relatorio };

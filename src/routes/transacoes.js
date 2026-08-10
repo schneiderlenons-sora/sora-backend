@@ -67,6 +67,31 @@ async function aplicarCategoriaNoEstabelecimento({ grupoId, userId, descricao, c
   return { termo, atualizadas };
 }
 
+// GET /api/transacoes/duplicadas/:phone — o que o Detetive Watson encontrou.
+//
+// Vem ANTES de `/:phone` só por clareza (a rota tem 2 segmentos, então não
+// haveria conflito de qualquer forma). Devolve GRUPOS, não pares: a mesma
+// compra pode ter entrado 3 vezes, e mostrar 3 pares faria o usuário apagar
+// demais. O primeiro de cada grupo é o mais antigo — o que se deve manter.
+router.get('/duplicadas/:phone', auth, async (req, res) => {
+  try {
+    const user = usuarioReq(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
+    const { buscarDuplicadas, explicar } = require('../services/duplicadas');
+    const grupos = await buscarDuplicadas(user.grupo_ativo, {
+      dias: Math.min(365, parseInt(req.query.dias, 10) || 90),
+    });
+    res.json({
+      total: grupos.length,
+      grupos: grupos.map((g) => ({
+        motivo: g.motivo,
+        explicacao: explicar(g),
+        transacoes: g.transacoes,
+      })),
+    });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // GET /api/transacoes/:phone?mes=2026-05&tipo=Gasto&categoria=Mercado&limit=50&offset=0&criado_por_me=true&criado_por_phone=XX
 router.get('/:phone', auth, async (req, res) => {
   try {
