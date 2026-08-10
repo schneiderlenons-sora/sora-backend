@@ -75,6 +75,14 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     // Campos de cartão de crédito (migration 023) — só inclui quando enviados
     if (dia_fechamento !== undefined) row.dia_fechamento = dia_fechamento || null;
     if (dia_vencimento !== undefined) row.dia_vencimento = dia_vencimento || null;
+    // Data informada À MÃO vira a palavra final: o sync do Open Finance para de
+    // regravar esses dois campos (migration 114). Existe porque o banco às vezes
+    // está errado — o Mercado Pago publica "fecha 12 / vence 17" enquanto o app
+    // dele mostra 8 / 14, e sem isso a correção do usuário voltava atrás no dia
+    // seguinte. Tolerante: se a 114 não rodou, o upsert cai no catch e segue.
+    if (dia_fechamento !== undefined || dia_vencimento !== undefined) {
+      row.datas_manuais = !!(dia_fechamento || dia_vencimento);
+    }
     if (bandeira       !== undefined) row.bandeira       = bandeira || null;
     if (ultimos4       !== undefined) row.ultimos4       = ultimos4 || null;
 

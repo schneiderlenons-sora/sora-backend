@@ -1028,9 +1028,22 @@ async function upsertWallet(grupoId, userId, n, saldo) {
     if (error) await supabase.from('wallets').update({ tipo: n.tipo, ...patchSaldo }).eq('id', id);
   };
 
+  // ⚠️ `select('*')` de propósito: `datas_manuais` é da migration 114 e, se ela
+  // ainda não rodou, um select POR NOME de coluna falha inteiro — `ja` viria
+  // null e o sync criaria uma carteira NOVA, duplicando o cartão do usuário.
+  // Com '*', a coluna ausente simplesmente não vem e o `if` abaixo é falso.
   const { data: ja } = await supabase.from('wallets')
-    .select('id, nome').eq('grupo_id', grupoId).eq('of_conta_id', n.externalId).maybeSingle();
+    .select('*').eq('grupo_id', grupoId).eq('of_conta_id', n.externalId).maybeSingle();
   if (ja) {
+    // ⚠️ Data corrigida À MÃO tem a palavra final (migration 114). O banco às
+    // vezes está errado: o Mercado Pago publica "fecha 12 / vence 17" em TODAS
+    // as faturas enquanto o app dele mostra 8 / 14 — ele mudou o ciclo e ainda
+    // não publicou fatura nenhuma no ciclo novo, então a API não tem como saber.
+    // Sem esta trava, a correção do usuário voltava atrás no sync seguinte.
+    if (ja.datas_manuais) {
+      delete extras.dia_fechamento;
+      delete extras.dia_vencimento;
+    }
     await atualizar(ja.id);
     return ja.nome;
   }
