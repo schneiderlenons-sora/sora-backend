@@ -106,6 +106,49 @@
 > excepcional (100% dos hábitos, treino todo dia) sem precisar de dado novo —
 > tudo já calculado em `coletoresGrow.js` + `fallbackInsight`/`gerarInsight`.
 
+## 3c. `agente_aviso` — A TRIPULAÇÃO (fase 3) — **criar e aprovar**
+
+O aviso deixa de chegar com a capa genérica da Sora e passa a chegar **com a
+foto e o nome do agente dono** (Sardinha, Don Baleone, Dr. House…).
+
+> 🔑 **UM template serve os 8 agentes.** A imagem do cabeçalho é parâmetro de
+> ENVIO (`opts.headerImage` em `services/whatsapp.js`), não fica presa no
+> modelo aprovado. Cada disparo manda a URL do agente que está falando — e
+> agente novo entra **sem** passar pela revisão da Meta de novo.
+
+- **Nome:** `agente_aviso` · **Categoria: Utilidade** · pt_BR
+- **Cabeçalho:** **Imagem** (obrigatório — é a cara do agente).
+  Na criação a Meta pede uma imagem de exemplo: use
+  `https://www.forsora.com/agentes/don-baleone.png`.
+- **Corpo:**
+  ```
+  🐋 Recado da tripulação: {{1}}
+
+  {{2}}
+
+  Abra o painel pra ver os detalhes.
+  ```
+- **Botão:** URL estática · texto `Ver meus agentes` → `https://www.forsora.com/agentes`
+- **Params do código:** `[nomeDoAgente, recadoNaVozDele]`
+- **Amostras que a Meta pede:**
+  `{{1}}` = `Don Baleone`
+  `{{2}}` = `Escuta aqui, chefe... a parcela do Nubank vence em 3 dias: R$ 629,51. Não me faça mandar o Sardinha aí.`
+
+**Ordem de ativação (importante):**
+1. **Frontend em produção primeiro.** A Meta busca a capa pela URL pública e as
+   imagens vivem em `public/agentes/` do painel. Com o branch `agentes` ainda
+   não mergeado, a URL dá **404 e a Meta recusa a mensagem inteira**.
+2. Criar e aprovar o `agente_aviso`.
+3. `AGENTES_TEMPLATE=1` no Render (e `AGENTES_VOZ=1`, se ainda não estiver).
+
+**Se algo falhar, o aviso não se perde:** o código tenta o `agente_aviso` e, se
+o envio falhar (não aprovado, imagem fora do ar), cai automaticamente no
+`lembretes_gerais` de sempre — mesmo padrão do `recorrencias_hoje`.
+
+**Envs:** `AGENTES_TEMPLATE` (liga) · `WHATSAPP_TPL_AGENTE` (troca o nome do
+modelo sem deploy, volta atrás de emergência) · `NEXT_PUBLIC_APP_URL` (base da
+URL das capas).
+
 ## 4. `briefing_matinal`  — a ligar (`jobs/index.js`, JOB 1K)
 
 - **Nome:** `briefing_matinal` · Utilidade · pt_BR

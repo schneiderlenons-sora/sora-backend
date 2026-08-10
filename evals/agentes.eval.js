@@ -17,7 +17,9 @@
 // Rodar:  npm run eval:agentes
 // =============================================================================
 process.env.AGENTES_VOZ = '1';                    // liga a voz SÓ neste processo
-const { falar, temVoz, AGENTES, VOZES } = require('../src/agentes');
+process.env.AGENTES_TEMPLATE = '1';               // e a fase 3 (template do agente)
+process.env.NEXT_PUBLIC_APP_URL = 'https://www.forsora.com';
+const { falar, temVoz, templateAgente, AGENTES, VOZES } = require('../src/agentes');
 
 const falhas = [];
 const ok = (c, m) => { if (!c) falhas.push(m); };
@@ -112,6 +114,56 @@ console.log('── 6. catálogo consistente ──');
   const c = falar('aurora', 'habitos', { texto: 't', seed: 'u2' });
   ok(a.texto !== c.texto || VOZES['aurora.habitos'].abre.length === 1,
     'seeds diferentes tendem a falas diferentes');
+}
+console.log('  ok');
+
+// ── 7. Template com a cara do agente (fase 3) ───────────────────────────
+console.log('── 7. template do agente ──');
+{
+  const t = templateAgente('don-baleone', 'Escuta aqui, chefe... R$ 629,51 vence em 3 dias.');
+  ok(t !== null, 'com AGENTES_TEMPLATE=1 o template é montado');
+  ok(t.name === 'agente_aviso', `nome do template (veio "${t.name}")`);
+  ok(t.params.length === 2, `2 parâmetros: nome e recado (veio ${t.params.length})`);
+  ok(t.params[0] === 'Don Baleone', `{{1}} é o NOME do agente (veio "${t.params[0]}")`);
+  ok(t.params[1].includes('629,51'), '{{2}} carrega o recado com o valor');
+  ok(!t.params[1].startsWith('Don Baleone'),
+    'o recado NÃO repete o nome — ele já é o {{1}} (senão sai "Don Baleone: Don Baleone: ...")');
+  ok(t.opts.headerImage === 'https://www.forsora.com/agentes/don-baleone.png',
+    `capa aponta pro arquivo do agente (veio "${t.opts.headerImage}")`);
+
+  // A imagem é parâmetro de ENVIO: cada agente manda a sua com o MESMO template.
+  const t2 = templateAgente('dr-house', 'Dose das 14h.');
+  ok(t2.name === t.name, 'todos os agentes usam UM template só (1 aprovação na Meta)');
+  ok(t2.opts.headerImage !== t.opts.headerImage, 'mas cada um com a SUA capa');
+
+  // Regras de parâmetro da Meta.
+  for (const chave of Object.keys(VOZES)) {
+    const [ag, av] = chave.split('.');
+    const v = falar(ag, av, { texto: 'linha1\nlinha2', core: 'fato R$ 10,00', seed: 's' });
+    const tpl = templateAgente(ag, v.coreAgente);
+    ok(tpl !== null, `${chave}: template montado`);
+    ok(!/[\r\n\t]/.test(tpl.params[1]), `${chave}: parâmetro sem quebra de linha (a Meta rejeita)`);
+    ok(tpl.params[1].length <= 1024, `${chave}: parâmetro dentro do limite`);
+    ok(tpl.params[1].includes('R$ 10,00'), `${chave}: o fato sobrevive`);
+    ok(/^https:\/\/.+\.png$/.test(tpl.opts.headerImage), `${chave}: capa é URL pública .png`);
+  }
+
+  ok(templateAgente('nao-existe', 'x') === null, 'agente desconhecido não monta template');
+  ok(templateAgente('don-baleone', '') === null, 'recado vazio não monta template');
+}
+console.log('  ok');
+
+// ── 8. Fase 3 desligada = template do agente nem aparece ────────────────
+console.log('── 8. fase 3 desligada ──');
+{
+  const { execFileSync } = require('child_process');
+  const mod = require('path').resolve(__dirname, '../src/agentes').replace(/\\/g, '\\\\');
+  const saida = execFileSync(process.execPath, ['-e', `
+    delete process.env.AGENTES_TEMPLATE;
+    const { templateAgente } = require('${mod}');
+    process.stdout.write(JSON.stringify(templateAgente('don-baleone', 'recado')));
+  `], { encoding: 'utf8' });
+  ok(saida === 'null', `sem AGENTES_TEMPLATE não monta template do agente (veio ${saida})`);
 }
 console.log('  ok');
 

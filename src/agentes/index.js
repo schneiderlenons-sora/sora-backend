@@ -20,6 +20,19 @@
 
 const VOZ_LIGADA = process.env.AGENTES_VOZ === '1';
 
+// ── Template com a CARA do agente (fase 3) ──────────────────────────────────
+// A imagem do cabeçalho é parâmetro de ENVIO, não fica presa no template
+// aprovado (services/whatsapp.js → opts.headerImage). Por isso UM template
+// aprovado serve os 8 agentes, cada um mandando a sua foto — e agente novo
+// entra sem passar pela revisão da Meta de novo.
+//
+// ⚠️ SÓ LIGAR DEPOIS QUE O FRONTEND ESTIVER EM PRODUÇÃO: a Meta busca a imagem
+// pela URL pública, e os arquivos vivem em `public/agentes/` do painel. Com o
+// branch ainda não mergeado, a URL dá 404 e a Meta recusa a mensagem inteira.
+const TEMPLATE_LIGADO = process.env.AGENTES_TEMPLATE === '1';
+const TPL_AGENTE = process.env.WHATSAPP_TPL_AGENTE || 'agente_aviso';
+const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.forsora.com').replace(/\/$/, '');
+
 // Limite de parâmetro de template da Meta é 1024; deixo folga porque o `core`
 // vem de fora e pode crescer. Passando disso, o fecho é cortado (a informação
 // fica; some só a piada).
@@ -168,10 +181,40 @@ function falar(agenteId, avisoId, { texto = '', core = '', seed } = {}) {
   const semFecho = `${agente.emoji} ${agente.nome}: ${abre} ${baseCore}`;
   const coreNovo = comFecho.length <= MAX_CORE ? comFecho : semFecho;
 
-  return { texto: textoNovo, core: coreNovo };
+  // `coreAgente` = o MESMO recado SEM o "emoji Nome:" na frente. É o que vai no
+  // template `agente_aviso`, onde o nome já é o {{1}} e a foto é o cabeçalho —
+  // repetir o nome no corpo ficaria "Don Baleone: Don Baleone: ...".
+  const agComFecho = `${abre} ${baseCore} ${fecha}`;
+  const coreAgente = agComFecho.length <= MAX_CORE ? agComFecho : `${abre} ${baseCore}`;
+
+  return { texto: textoNovo, core: coreNovo, coreAgente };
+}
+
+/**
+ * Template com a foto e o nome do agente, pro envio FORA da janela de 24h.
+ *
+ * Devolve `null` quando a fase 3 está desligada ou o agente é desconhecido —
+ * aí quem chama cai no `lembretes_gerais` de sempre.
+ *
+ * @param {string} agenteId
+ * @param {string} core  recado em UMA linha, já sem o nome do agente
+ */
+function templateAgente(agenteId, core) {
+  const agente = AGENTES[agenteId];
+  if (!TEMPLATE_LIGADO || !agente || !core) return null;
+  return {
+    name: TPL_AGENTE,
+    // {{1}} nome do agente · {{2}} o recado na voz dele
+    params: [agente.nome, String(core).replace(/\s*[\r\n\t]+\s*/g, ' ').trim().slice(0, MAX_CORE)],
+    // A Meta EXIGE o parâmetro de header em todo envio quando o template tem
+    // cabeçalho de mídia — senão recusa e o aviso não chega.
+    opts: { headerImage: `${APP_URL}/agentes/${agenteId}.png` },
+  };
 }
 
 /** O aviso tem dono com fala pronta? (usado pelo eval e pelo diagnóstico) */
 const temVoz = (agenteId, avisoId) => !!VOZES[`${agenteId}.${avisoId}`];
 
-module.exports = { falar, temVoz, AGENTES, VOZES, VOZ_LIGADA };
+module.exports = {
+  falar, temVoz, templateAgente, AGENTES, VOZES, VOZ_LIGADA, TEMPLATE_LIGADO,
+};

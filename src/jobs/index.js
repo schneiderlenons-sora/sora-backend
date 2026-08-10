@@ -5,7 +5,7 @@ const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageir
 const { criarPendente } = require('../services/pendentes');
 const { avisosLigados, briefingLigado } = require('../services/avisos');
 const { enviarProativo, provedor } = require('../services/proativo');
-const { falar } = require('../agentes');
+const { falar, templateAgente } = require('../agentes');
 const yahooFinance    = require('yahoo-finance2').default;
 
 // Gera ID curto de 6 caracteres
@@ -24,21 +24,39 @@ const oneLine = (s) => String(s || '').replace(/\s*[\r\n\t]+\s*/g, ' ').trim();
 // agente dono daquele aviso (src/agentes). Com AGENTES_VOZ desligado, `falar`
 // devolve o texto original intacto — por isso dá pra passar o agente em todos
 // os pontos sem mudar nada no que é entregue hoje.
-const lembrete = (phone, texto, core, agente) => {
+const lembrete = async (phone, texto, core, agente) => {
   const vestida = agente
     ? falar(agente.id, agente.aviso, { texto, core, seed: agente.seed })
     : { texto, core };
-  return enviarProativo(phone, {
-    texto: vestida.texto,
-    // O template 'lembretes_gerais' tem cabeçalho de IMAGEM → a Meta EXIGE a capa
-    // no header em todo envio (senão rejeita e o lembrete não chega). `CAPA` é
-    // resolvido em tempo de chamada (o cron dispara após o módulo carregar).
-    template: {
-      name: 'lembretes_gerais',
-      params: [oneLine(vestida.core || vestida.texto)],
-      opts: { headerImage: CAPA },
-    },
-  });
+
+  // Fase 3: fora da janela de 24h o aviso vai no template do AGENTE — a foto
+  // dele no cabeçalho e o nome no {{1}}. `null` quando a fase está desligada.
+  const tplAgente = agente
+    ? templateAgente(agente.id, vestida.coreAgente || core || texto)
+    : null;
+
+  // O template 'lembretes_gerais' tem cabeçalho de IMAGEM → a Meta EXIGE a capa
+  // no header em todo envio (senão rejeita e o lembrete não chega). `CAPA` é
+  // resolvido em tempo de chamada (o cron dispara após o módulo carregar).
+  const tplPadrao = {
+    name: 'lembretes_gerais',
+    params: [oneLine(vestida.core || vestida.texto)],
+    opts: { headerImage: CAPA },
+  };
+
+  // Se o `agente_aviso` ainda não estiver aprovado (ou a imagem der 404), o
+  // envio falha e caímos no template de sempre: o aviso NUNCA deixa de chegar
+  // por causa da capa bonita. Mesmo padrão já usado no `recorrencias_hoje`.
+  //
+  // ⚠️ Só tenta a 1ª via no provider 'meta'. Fora dele o `enviarProativo`
+  // ignora o template e manda o TEXTO — que retorna `undefined` (o
+  // `enviarTexto` não devolve nada). Aí o "não entregou" seria falso e a
+  // pessoa receberia a MESMA mensagem duas vezes.
+  if (tplAgente && provedor() === 'meta') {
+    const entregue = await enviarProativo(phone, { texto: vestida.texto, template: tplAgente });
+    if (entregue) return entregue;
+  }
+  return enviarProativo(phone, { texto: vestida.texto, template: tplPadrao });
 };
 
 // Formata valor em BRL pros params de template (ex.: "R$ 1.240,00").
