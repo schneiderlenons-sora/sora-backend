@@ -27,11 +27,11 @@ const MAX_CORE = 900;
 
 const AGENTES = {
   sardinha:   { nome: 'Sardinha',        emoji: '🐟' },
-  baleaone:   { nome: 'Don Baleaone',    emoji: '🐋' },
+  'don-baleone': { nome: 'Don Baleone',    emoji: '🐋' },
   jacques:    { nome: 'Jacques',         emoji: '🎥' },
   aurora:     { nome: 'Aurora',          emoji: '🌅' },
   'dr-house': { nome: 'Dr. House',       emoji: '🩺' },
-  watson:     { nome: 'Detetive Watson', emoji: '🔍' },
+  'detetive-watson':   { nome: 'Detetive Watson', emoji: '🔍' },
   osvaldo:    { nome: 'Osvaldo',         emoji: '💰' },
   oraculo:    { nome: 'Oráculo',         emoji: '🔮' },
 };
@@ -68,15 +68,15 @@ const VOZES = {
             'Qualquer coisa me chama.'],
   },
 
-  // ── Don Baleaone: puxa a orelha, nunca ofende ─────────────────────────
-  'baleaone.dividas': {
+  // ── Don Baleone: puxa a orelha, nunca ofende ─────────────────────────
+  'don-baleone.dividas': {
     abre: ['Escuta aqui, chefe...', 'Chefe. Uma palavrinha.',
            'Senta aqui que a gente precisa conversar.'],
     fecha: ['Não me faça mandar o Sardinha aí. 🤌',
             'Eu finjo que não vi. Uma vez.',
             'Resolve isso e a gente continua amigo. 🤌'],
   },
-  'baleaone.limite': {
+  'don-baleone.limite': {
     abre: ['Escuta aqui, chefe...', 'Chefe, isso aqui passou do ponto.',
            'Eu não queria ter que falar isso, mas...'],
     fecha: ['Da próxima, quem vai chorar é a sua conta bancária. 🤌',
@@ -142,7 +142,7 @@ const escolher = (lista, seed) =>
 /**
  * Veste um aviso com a voz do agente dono.
  *
- * @param {string} agenteId  'baleaone' | 'sardinha' | ...
+ * @param {string} agenteId  'don-baleone' | 'sardinha' | ...
  * @param {string} avisoId   'dividas' | 'limite' | ...
  * @param {{texto?: string, core?: string, seed?: string}} msg
  *        `texto` = mensagem rica (Z-API / dentro da janela de 24h)

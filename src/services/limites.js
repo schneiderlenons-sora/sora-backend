@@ -99,14 +99,14 @@ async function avisarGrupo(grupoId, fallbackPhone, msg, template) {
   const destinos = membros.filter((m) => !vistos.has(m.phone) && vistos.add(m.phone));
   if (!destinos.length && fallbackPhone) destinos.push({ phone: fallbackPhone, nome: null });
 
-  // Estourar o teto é o aviso mais característico do Don Baleaone — o
+  // Estourar o teto é o aviso mais característico do Don Baleone — o
   // "mafioso" que puxa a orelha. Com AGENTES_VOZ desligado, `falar` devolve o
   // texto original intacto (ver src/agentes).
   const { falar } = require('../agentes');
 
   for (const d of destinos) {
     try {
-      const vestida = falar('baleaone', 'limite', { texto: msg, seed: d.phone });
+      const vestida = falar('don-baleone', 'limite', { texto: msg, seed: d.phone });
       await enviarProativo(d.phone, {
         texto: vestida.texto,
         template: typeof template === 'function' ? template(d.nome) : template,

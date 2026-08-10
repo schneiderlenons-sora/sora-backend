@@ -30,7 +30,7 @@ console.log('── 1. voz desligada não muda nada ──');
   const saida = execFileSync(process.execPath, ['-e', `
     delete process.env.AGENTES_VOZ;
     const { falar } = require('${require('path').resolve(__dirname, '../src/agentes').replace(/\\/g, '\\\\')}');
-    const r = falar('baleaone', 'dividas', { texto: 'ORIGINAL', core: 'CORE' });
+    const r = falar('don-baleone', 'dividas', { texto: 'ORIGINAL', core: 'CORE' });
     process.stdout.write(JSON.stringify(r));
   `], { encoding: 'utf8' });
   const r = JSON.parse(saida);
@@ -43,10 +43,10 @@ console.log('  ok');
 console.log('── 2. o miolo do aviso sobrevive ──');
 {
   const original = '🔔 *Lembrete de dívida*\n📌 *Empréstimo* (Nubank)\n💵 R$ 629,51\n📅 Vence em 3 dias';
-  const r = falar('baleaone', 'dividas', { texto: original, core: 'Empréstimo R$ 629,51 vence em 3 dias', seed: 'x' });
+  const r = falar('don-baleone', 'dividas', { texto: original, core: 'Empréstimo R$ 629,51 vence em 3 dias', seed: 'x' });
   ok(r.texto.includes(original), 'o texto original aparece INTEIRO na mensagem vestida');
   ok(r.texto.includes('629,51'), 'o valor sobrevive');
-  ok(r.texto.includes('Don Baleaone'), 'a mensagem é assinada pelo agente');
+  ok(r.texto.includes('Don Baleone'), 'a mensagem é assinada pelo agente');
   ok(r.core.includes('629,51'), 'o valor também sobrevive no core do template');
   ok(r.texto !== original, 'e a mensagem realmente mudou (a voz entrou)');
 }
@@ -75,7 +75,7 @@ console.log(`  ok (${Object.keys(VOZES).length} vozes conferidas)`);
 console.log('── 4. aviso comprido não estoura o limite ──');
 {
   const enorme = 'X'.repeat(880);
-  const r = falar('baleaone', 'limite', { texto: 't', core: enorme, seed: 'a' });
+  const r = falar('don-baleone', 'limite', { texto: 't', core: enorme, seed: 'a' });
   ok(r.core.includes(enorme), 'o fato inteiro continua no core mesmo sendo enorme');
   ok(r.core.length <= 1024, `core segue dentro do limite (veio ${r.core.length})`);
 }
@@ -87,11 +87,11 @@ console.log('── 5. agente/aviso desconhecido cai no original ──');
   const r = falar('inexistente', 'nada', { texto: 'T', core: 'C' });
   ok(r.texto === 'T' && r.core === 'C', 'agente desconhecido devolve o original');
 
-  const r2 = falar('baleaone', 'aviso-que-nao-existe', { texto: 'T', core: 'C' });
+  const r2 = falar('don-baleone', 'aviso-que-nao-existe', { texto: 'T', core: 'C' });
   ok(r2.texto === 'T' && r2.core === 'C', 'aviso sem voz devolve o original');
 
-  ok(temVoz('baleaone', 'dividas') === true, 'temVoz reconhece o que existe');
-  ok(temVoz('baleaone', 'xpto') === false, 'temVoz nega o que não existe');
+  ok(temVoz('don-baleone', 'dividas') === true, 'temVoz reconhece o que existe');
+  ok(temVoz('don-baleone', 'xpto') === false, 'temVoz nega o que não existe');
 }
 console.log('  ok');
 

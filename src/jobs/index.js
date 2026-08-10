@@ -899,7 +899,7 @@ cron.schedule('0 9 * * *', async () => {
     // antecedência de 3 dias e atraso seguem no cron). Briefing off → manda.
     if (venceHoje && await briefingLigado(grupo.dono_id)) continue;
 
-    await lembrete(user.phone, mensagem, null, { id: 'baleaone', aviso: 'dividas', seed: d.id });
+    await lembrete(user.phone, mensagem, null, { id: 'don-baleone', aviso: 'dividas', seed: d.id });
     await supabase.from('dividas').update({ ultimo_lembrete_em: hojeStr }).eq('id', d.id);
   }
   console.log('✅ Lembretes de dívidas processados.');
