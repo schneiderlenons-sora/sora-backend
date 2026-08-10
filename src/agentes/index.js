@@ -130,32 +130,42 @@ const VOZES = {
             'Até o próximo fechamento.'],
   },
 
-  // ── Loki: calma, matinal, organizada ────────────────────────────────
+  // ── Loki: o certinho debochado ─────────────────────────────────────────
+  // Mantém tudo em ordem e ironiza de leve quando você esquece. Seco e curto,
+  // nunca ofensivo — a piada é com a SITUAÇÃO, jamais com a pessoa.
+  // Sem tratamento no feminino (sobra do nome antigo) e sem "bom dia": o
+  // personagem é noturno; o briefing é o resumo que ele deixa pronto.
   'loki.briefing': {
-    abre: ['Bom dia. Separei o seu dia:', 'Bom dia! Antes de começar, olha só:',
-           'Bom dia. O dia de hoje, resumido:'],
-    fecha: ['Tenha um bom dia. ☀️', 'Vai com calma que dá tempo.',
-            'Qualquer coisa, tô por aqui.'],
+    abre: ['Já organizei o seu dia. De nada.',
+           'Enquanto você dormia, eu li sua agenda.',
+           'Seu dia, resumido — porque alguém tinha que fazer isso.'],
+    fecha: ['Eu cumpro a minha parte. A sua é sair da cama.',
+            'Anotado e conferido. Agora é com você.',
+            'Não me faça repetir tudo amanhã.'],
   },
   'loki.habitos': {
-    abre: ['Antes de fechar o dia...', 'Passando pra revisar o dia com você.',
-           'Só um minutinho antes de dormir.'],
-    fecha: ['Amanhã tem mais. 🌙', 'Fecha o dia bonito, vai.',
-            'Você tá mais perto do que imagina.'],
+    abre: ['Faltou coisa na sua lista de hoje.',
+           'Conferindo os hábitos. Alerta de spoiler: tem pendência.',
+           'Você marcou quase tudo hoje. Quase.'],
+    fecha: ['Dois toques e o dia fecha. Dois.',
+            'Amanhã a gente finge que hoje foi perfeito.',
+            'Não julgo. Só registro.'],
   },
   'loki.compromissos': {
-    abre: ['Lembrete da sua agenda:', 'Isso aqui tá chegando:',
-           'Passando pra você não se atrasar.'],
-    fecha: ['Deixei anotado no seu dia.', 'Vai com tempo.',
-            'Tô de olho no relógio por você.'],
+    abre: ['Isso aqui está chegando, caso tenha esquecido.',
+           'Lembrete que você jurou não precisar:',
+           'Sua agenda tem uma opinião sobre o seu horário:'],
+    fecha: ['Chegue no horário e me faça parecer bom nisso.',
+            'Já estava anotado. Como sempre.',
+            'O relógio é meu. O atraso seria seu.'],
   },
   'loki.manutencoes': {
-    abre: ['Uma tarefa da casa pedindo atenção:',
-           'Aquilo da casa que você vem adiando...',
-           'A casa mandou lembrar de uma coisa.'],
-    fecha: ['Leva poucos minutos e sai da sua cabeça.',
-            'Depois de feito, eu marco pra você.',
-            'Hoje é um bom dia pra resolver.'],
+    abre: ['Aquilo da casa continua ali, te encarando.',
+           'Tarefa da casa vencida. De novo.',
+           'A casa pediu pra lembrar. Não foi a primeira vez.'],
+    fecha: ['Cinco minutos e você para de me dar trabalho.',
+            'Resolve hoje e eu paro de falar nisso.',
+            'Eu marco quando estiver feito. Se estiver.'],
   },
 
   // ── Dr. House: diagnóstico sarcástico, sempre certo ───────────────────
