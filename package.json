@@ -30,7 +30,9 @@
     "eval:resumo-grow": "node evals/resumoGrow.eval.js",
     "eval:vencimento-divida": "node evals/vencimentoDivida.eval.js",
     "eval:divida-duplicada": "node evals/dividaDuplicada.eval.js",
-    "eval:valor-fatura": "node evals/valorFatura.eval.js"
+    "eval:valor-fatura": "node evals/valorFatura.eval.js",
+    "eval:agentes": "node evals/agentes.eval.js",
+    "agentes:preview": "node scripts/preview-agentes.js"
   },
   "engines": {
     "node": ">=20.0.0"

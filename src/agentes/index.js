@@ -1,0 +1,177 @@
+// =============================================================================
+// A VOZ dos agentes da Sora.
+//
+// Cada família de aviso tem um DONO — um personagem — e a mensagem passa a ser
+// escrita na voz dele. Interruptor cinza é silenciado; recado de personagem é
+// lido. O gatilho, o horário e o conteúdo continuam idênticos.
+//
+// ⚠️ A VOZ ENVOLVE O TEXTO, NUNCA O REESCREVE.
+// A mensagem final é `assinatura + abertura + TEXTO ORIGINAL + fecho`. Isso é
+// deliberado: se a personalidade reescrevesse o miolo, um valor ou uma data
+// poderiam se perder na brincadeira — e aviso financeiro errado é pior do que
+// aviso sem graça. Aqui o miolo é intocado por construção.
+//
+// LIGA/DESLIGA: `AGENTES_VOZ=1` no Render. Desligado (padrão) tudo sai
+// exatamente como sai hoje — dá pra subir o código e revisar o tom antes.
+//
+// Espelha o catálogo do painel em `sora-frontend/lib/agentes.ts`: os `id` de
+// agente e de aviso são os MESMOS nos dois lados.
+// =============================================================================
+
+const VOZ_LIGADA = process.env.AGENTES_VOZ === '1';
+
+// Limite de parâmetro de template da Meta é 1024; deixo folga porque o `core`
+// vem de fora e pode crescer. Passando disso, o fecho é cortado (a informação
+// fica; some só a piada).
+const MAX_CORE = 900;
+
+const AGENTES = {
+  sardinha:   { nome: 'Sardinha',        emoji: '🐟' },
+  baleaone:   { nome: 'Don Baleaone',    emoji: '🐋' },
+  jacques:    { nome: 'Jacques',         emoji: '🎥' },
+  aurora:     { nome: 'Aurora',          emoji: '🌅' },
+  'dr-house': { nome: 'Dr. House',       emoji: '🩺' },
+  watson:     { nome: 'Detetive Watson', emoji: '🔍' },
+  osvaldo:    { nome: 'Osvaldo',         emoji: '💰' },
+  oraculo:    { nome: 'Oráculo',         emoji: '🔮' },
+};
+
+// ── As falas ────────────────────────────────────────────────────────────────
+// Chave = `<agente>.<aviso>`. `abre` entra antes do texto, `fecha` depois.
+// 3–4 variações cada, sorteadas — a mesma frase toda semana vira ruído.
+const VOZES = {
+  // ── Sardinha: o vigia afobado das contas ──────────────────────────────
+  'sardinha.recorrencias': {
+    abre: ['Chefia! Passando o olho na agenda de hoje...',
+           'Opa! Achei uma coisa que vence hoje.',
+           'Corre aqui que tem conta batendo na porta.'],
+    fecha: ['Se já pagou, me ignora que eu finjo que não falei nada.',
+            'Marquei aqui pra não deixar passar.',
+            'Tô de olho, pode seguir.'],
+  },
+  'sardinha.lembretes': {
+    abre: ['Chefia, lembrete na área!', 'Ó, você me pediu pra avisar disso.',
+           'Passando pra cobrar o que você mesmo mandou eu cobrar.'],
+    fecha: ['Cumpri minha parte, o resto é com você.',
+            'Anotado e avisado. 🐟', 'Tô só fazendo meu trabalho, viu.'],
+  },
+  'sardinha.parcelas': {
+    abre: ['Parcela chegando, chefia.', 'Mais uma prestação batendo o ponto.',
+           'Olha ela aí, pontual como sempre.'],
+    fecha: ['Falta cada vez menos.', 'Uma a menos pra contar.',
+            'Já já acaba, aguenta firme.'],
+  },
+  'sardinha.fatura': {
+    abre: ['Fatura na área, chefia.', 'Notícia do cartão pra você.',
+           'Passando o informe do cartão.'],
+    fecha: ['Anota aí pra não esquecer.', 'Tô de olho no prazo por você.',
+            'Qualquer coisa me chama.'],
+  },
+
+  // ── Don Baleaone: puxa a orelha, nunca ofende ─────────────────────────
+  'baleaone.dividas': {
+    abre: ['Escuta aqui, chefe...', 'Chefe. Uma palavrinha.',
+           'Senta aqui que a gente precisa conversar.'],
+    fecha: ['Não me faça mandar o Sardinha aí. 🤌',
+            'Eu finjo que não vi. Uma vez.',
+            'Resolve isso e a gente continua amigo. 🤌'],
+  },
+  'baleaone.limite': {
+    abre: ['Escuta aqui, chefe...', 'Chefe, isso aqui passou do ponto.',
+           'Eu não queria ter que falar isso, mas...'],
+    fecha: ['Da próxima, quem vai chorar é a sua conta bancária. 🤌',
+            'Eu finjo que não vi. Uma vez.',
+            'Segura a mão até o fim do mês, faz isso por mim.'],
+  },
+
+  // ── Aurora: calma, matinal, organizada ────────────────────────────────
+  'aurora.briefing': {
+    abre: ['Bom dia. Separei o seu dia:', 'Bom dia! Antes de começar, olha só:',
+           'Bom dia. O dia de hoje, resumido:'],
+    fecha: ['Tenha um bom dia. ☀️', 'Vai com calma que dá tempo.',
+            'Qualquer coisa, tô por aqui.'],
+  },
+  'aurora.habitos': {
+    abre: ['Antes de fechar o dia...', 'Passando pra revisar o dia com você.',
+           'Só um minutinho antes de dormir.'],
+    fecha: ['Amanhã tem mais. 🌙', 'Fecha o dia bonito, vai.',
+            'Você tá mais perto do que imagina.'],
+  },
+  'aurora.compromissos': {
+    abre: ['Lembrete da sua agenda:', 'Isso aqui tá chegando:',
+           'Passando pra você não se atrasar.'],
+    fecha: ['Deixei anotado no seu dia.', 'Vai com tempo.',
+            'Tô de olho no relógio por você.'],
+  },
+  'aurora.manutencoes': {
+    abre: ['Uma tarefa da casa pedindo atenção:',
+           'Aquilo da casa que você vem adiando...',
+           'A casa mandou lembrar de uma coisa.'],
+    fecha: ['Leva poucos minutos e sai da sua cabeça.',
+            'Depois de feito, eu marco pra você.',
+            'Hoje é um bom dia pra resolver.'],
+  },
+
+  // ── Dr. House: diagnóstico sarcástico, sempre certo ───────────────────
+  'dr-house.medicamentos': {
+    abre: ['Prescrição em atraso.', 'Vamos tentar de novo:', 'Hora da dose.'],
+    fecha: ['Eu diria que pular invalida o tratamento, mas você já sabe disso.',
+            'Todo mundo mente sobre ter tomado. Não seja todo mundo.',
+            'Não é sugestão, é prescrição.'],
+  },
+  'dr-house.consultas': {
+    abre: ['Anota na agenda antes que esqueça:', 'Diagnóstico da sua semana:',
+           'Sua agenda médica não se organiza sozinha.'],
+    fecha: ['Leve os exames. Não, eles não estão "em algum lugar".',
+            'Aparecer é metade do tratamento.',
+            'Chegue no horário. Eu sei que você já pensou em remarcar.'],
+  },
+};
+
+// ── Sorteio estável ─────────────────────────────────────────────────────────
+// Seed opcional deixa o eval determinístico e evita repetir a mesma abertura
+// pro mesmo item no mesmo dia.
+function hash(s) {
+  let h = 0;
+  for (let i = 0; i < String(s).length; i++) h = (h * 31 + String(s).charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+const escolher = (lista, seed) =>
+  lista[(seed == null ? Math.floor(Math.random() * lista.length) : hash(seed)) % lista.length];
+
+/**
+ * Veste um aviso com a voz do agente dono.
+ *
+ * @param {string} agenteId  'baleaone' | 'sardinha' | ...
+ * @param {string} avisoId   'dividas' | 'limite' | ...
+ * @param {{texto?: string, core?: string, seed?: string}} msg
+ *        `texto` = mensagem rica (Z-API / dentro da janela de 24h)
+ *        `core`  = versão de UMA linha usada como parâmetro do template
+ * @returns {{texto: string, core: string}} — devolve o original quando a voz
+ *          está desligada ou quando não existe fala pra esse aviso.
+ */
+function falar(agenteId, avisoId, { texto = '', core = '', seed } = {}) {
+  const voz = VOZES[`${agenteId}.${avisoId}`];
+  const agente = AGENTES[agenteId];
+  if (!VOZ_LIGADA || !voz || !agente) return { texto, core };
+
+  const s = seed == null ? null : `${agenteId}.${avisoId}.${seed}`;
+  const abre = escolher(voz.abre, s);
+  const fecha = escolher(voz.fecha, s == null ? null : `${s}.f`);
+  const nome = `${agente.emoji} *${agente.nome}*`;
+
+  const textoNovo = `${nome}\n_${abre}_\n\n${texto}\n\n_${fecha}_`;
+
+  // O core vai como parâmetro de template: UMA linha e com teto de tamanho.
+  const baseCore = core || texto;
+  const comFecho = `${agente.emoji} ${agente.nome}: ${abre} ${baseCore} ${fecha}`;
+  const semFecho = `${agente.emoji} ${agente.nome}: ${abre} ${baseCore}`;
+  const coreNovo = comFecho.length <= MAX_CORE ? comFecho : semFecho;
+
+  return { texto: textoNovo, core: coreNovo };
+}
+
+/** O aviso tem dono com fala pronta? (usado pelo eval e pelo diagnóstico) */
+const temVoz = (agenteId, avisoId) => !!VOZES[`${agenteId}.${avisoId}`];
+
+module.exports = { falar, temVoz, AGENTES, VOZES, VOZ_LIGADA };

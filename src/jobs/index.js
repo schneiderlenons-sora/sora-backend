@@ -5,6 +5,7 @@ const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageir
 const { criarPendente } = require('../services/pendentes');
 const { avisosLigados, briefingLigado } = require('../services/avisos');
 const { enviarProativo, provedor } = require('../services/proativo');
+const { falar } = require('../agentes');
 const yahooFinance    = require('yahoo-finance2').default;
 
 // Gera ID curto de 6 caracteres
@@ -19,13 +20,26 @@ const oneLine = (s) => String(s || '').replace(/\s*[\r\n\t]+\s*/g, ' ').trim();
 // no {{1}} — SEMPRE em linha única (senão a Meta rejeita e o lembrete não chega).
 // A escolha é do enviarProativo (via WHATSAPP_PROVIDER); no 'zapi' o texto rico
 // de hoje é preservado.
-const lembrete = (phone, texto, core) => enviarProativo(phone, {
-  texto,
-  // O template 'lembretes_gerais' tem cabeçalho de IMAGEM → a Meta EXIGE a capa
-  // no header em todo envio (senão rejeita e o lembrete não chega). `CAPA` é
-  // resolvido em tempo de chamada (o cron dispara após o módulo carregar).
-  template: { name: 'lembretes_gerais', params: [oneLine(core || texto)], opts: { headerImage: CAPA } },
-});
+// `agente` (opcional) = { id, aviso, seed } → veste a mensagem com a VOZ do
+// agente dono daquele aviso (src/agentes). Com AGENTES_VOZ desligado, `falar`
+// devolve o texto original intacto — por isso dá pra passar o agente em todos
+// os pontos sem mudar nada no que é entregue hoje.
+const lembrete = (phone, texto, core, agente) => {
+  const vestida = agente
+    ? falar(agente.id, agente.aviso, { texto, core, seed: agente.seed })
+    : { texto, core };
+  return enviarProativo(phone, {
+    texto: vestida.texto,
+    // O template 'lembretes_gerais' tem cabeçalho de IMAGEM → a Meta EXIGE a capa
+    // no header em todo envio (senão rejeita e o lembrete não chega). `CAPA` é
+    // resolvido em tempo de chamada (o cron dispara após o módulo carregar).
+    template: {
+      name: 'lembretes_gerais',
+      params: [oneLine(vestida.core || vestida.texto)],
+      opts: { headerImage: CAPA },
+    },
+  });
+};
 
 // Formata valor em BRL pros params de template (ex.: "R$ 1.240,00").
 const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -366,7 +380,7 @@ cron.schedule('0 * * * *', async () => {
           template: { name: 'recorrencias_hoje', params: [listaParam], opts: { headerImage: CAPA } },
         });
       }
-      if (!entregue) await lembrete(phone, txt, core);
+      if (!entregue) await lembrete(phone, txt, core, { id: 'sardinha', aviso: 'recorrencias', seed: phone });
     }
   }
 
@@ -389,7 +403,7 @@ cron.schedule('0 * * * *', async () => {
       const core =
         `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} *${lem.descricao}* — R$ ${(lem.valor||0).toFixed(2)}\n` +
         `Vencimento: ${new Date(lem.data_vencimento).toLocaleDateString('pt-BR')}`;
-      await lembrete(phone, txt, core);
+      await lembrete(phone, txt, core, { id: 'sardinha', aviso: 'lembretes', seed: lem.id });
     }
     await supabase.from('lembretes').update({ enviado: true }).eq('id', lem.id);
   }
@@ -414,7 +428,7 @@ cron.schedule('0 * * * *', async () => {
         `📦 *Parcela vence hoje:* ${p.descricao} — ${p.parcelas_pagas + 1}/${p.total_parcelas}\n` +
         `💵 R$ ${p.valor_parcela.toFixed(2)} no cartão *${p.carteira}*\n` +
         `Pra pagar, responda: "pagar parcela da ${p.descricao}"`;
-      await lembrete(phone, txt, core);
+      await lembrete(phone, txt, core, { id: 'sardinha', aviso: 'parcelas', seed: p.id || p.descricao });
     }
   }
 
@@ -486,7 +500,8 @@ cron.schedule('* * * * *', async () => {
         `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''}\n` +
         `Quando tomar, responda *tomei ${med.nome}* pra eu marcar.${estoqueAviso}`;
       await lembrete(user.phone, txt,
-        `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''} — quando tomar, responda *tomei ${med.nome}*.${estoqueAviso}`);
+        `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''} — quando tomar, responda *tomei ${med.nome}*.${estoqueAviso}`,
+        { id: 'dr-house', aviso: 'medicamentos', seed: med.id });
       lembretesMedHoje.add(key);
       console.log(`💊 Lembrete med enviado: ${med.nome} → ${user.phone}`);
     }
@@ -557,7 +572,8 @@ cron.schedule('*/15 * * * *', async () => {
       `Responda *fiz todos* que eu marco todos de uma vez — ou abra o painel:\n` +
       `🌐 https://www.forsora.com/grow/habitos`;
     await lembrete(u.phone, txt,
-      `🎯 Você ainda tem *${pendentes}* hábito${pendentes === 1 ? '' : 's'} pra marcar hoje. Bora fechar o dia? 💪 Responda *fiz todos* que eu marco tudo.`);
+      `🎯 Você ainda tem *${pendentes}* hábito${pendentes === 1 ? '' : 's'} pra marcar hoje. Bora fechar o dia? 💪 Responda *fiz todos* que eu marco tudo.`,
+      { id: 'aurora', aviso: 'habitos', seed: u.id });
     console.log(`🎯 Lembrete de hábitos → ${u.phone} (${pendentes} pendentes)`);
   }
 });
@@ -637,7 +653,8 @@ cron.schedule('0 9 * * *', async () => {
       `${m.ultima_data ? `Tá na hora — venceu ${quando}.` : 'Você ainda não registrou essa manutenção.'}\n\n` +
       `Quando fizer, responda *fiz a manutenção ${m.nome}* que eu marco e reprogramo a próxima.`;
     await lembrete(phone, txt,
-      `🔧 *Manutenção: ${m.icone || ''} ${m.nome}* — ${m.ultima_data ? `venceu ${quando}` : 'ainda não registrada'}. Quando fizer, responda *fiz a manutenção ${m.nome}*.`);
+      `🔧 *Manutenção: ${m.icone || ''} ${m.nome}* — ${m.ultima_data ? `venceu ${quando}` : 'ainda não registrada'}. Quando fizer, responda *fiz a manutenção ${m.nome}*.`,
+      { id: 'aurora', aviso: 'manutencoes', seed: m.id });
     await supabase.from('manutencoes').update({ lembrete_ultimo: hojeStr }).eq('id', m.id);
     console.log(`🔧 Lembrete manutenção → ${phone}: ${m.nome}`);
   }
@@ -691,7 +708,8 @@ cron.schedule('*/15 * * * *', async () => {
       `*${c.titulo}*\n🕐 ${quando}${c.local ? `\n📍 ${c.local}` : ''}\n\n` +
       `Ver agenda: 🌐 https://www.forsora.com/grow/agenda`;
     await lembrete(phone, txt,
-      `📅 *${c.titulo}* — ${quando}${c.local ? ` · 📍 ${c.local}` : ''}`);
+      `📅 *${c.titulo}* — ${quando}${c.local ? ` · 📍 ${c.local}` : ''}`,
+      { id: 'aurora', aviso: 'compromissos', seed: c.id });
     console.log(`📅 Lembrete compromisso → ${phone}: ${c.titulo}`);
   }
 });
@@ -783,7 +801,8 @@ cron.schedule('0 9 * * *', async () => {
     if (c.local) partes.push(`📍 ${c.local}`);
     const txt = partes.join('\n');
     await lembrete(user.phone, txt,
-      `📅 *Consulta amanhã:* ${c.especialidade || c.profissional || 'Consulta'}${c.hora ? ` às ${c.hora.slice(0,5)}` : ''}${c.local ? ` · 📍 ${c.local}` : ''}`);
+      `📅 *Consulta amanhã:* ${c.especialidade || c.profissional || 'Consulta'}${c.hora ? ` às ${c.hora.slice(0,5)}` : ''}${c.local ? ` · 📍 ${c.local}` : ''}`,
+      { id: 'dr-house', aviso: 'consultas', seed: c.id });
   }
 
   // Retornos médicos pra próximos 7 dias (avisa só uma vez quando faltar exatamente 7d)
@@ -797,7 +816,8 @@ cron.schedule('0 9 * * *', async () => {
     if (!(await avisosLigados(r.user_id))) continue; // kill-switch
     const txt = `📆 *Retorno em 7 dias*\n\nSeu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana.\nQuer agendar pelo painel?`;
     await lembrete(user.phone, txt,
-      `📆 *Retorno em 7 dias:* seu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana. Quer agendar?`);
+      `📆 *Retorno em 7 dias:* seu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana. Quer agendar?`,
+      { id: 'dr-house', aviso: 'consultas', seed: r.id });
   }
   console.log('✅ Lembretes de consultas processados.');
 });
@@ -879,7 +899,7 @@ cron.schedule('0 9 * * *', async () => {
     // antecedência de 3 dias e atraso seguem no cron). Briefing off → manda.
     if (venceHoje && await briefingLigado(grupo.dono_id)) continue;
 
-    await lembrete(user.phone, mensagem);
+    await lembrete(user.phone, mensagem, null, { id: 'baleaone', aviso: 'dividas', seed: d.id });
     await supabase.from('dividas').update({ ultimo_lembrete_em: hojeStr }).eq('id', d.id);
   }
   console.log('✅ Lembretes de dívidas processados.');
@@ -905,7 +925,7 @@ cron.schedule('0 9 * * *', async () => {
     const { data: user } = await supabase.from('users').select('phone').eq('id', grupo.dono_id).maybeSingle();
     if (!user?.phone) return;
     if (!(await avisosLigados(grupo.dono_id))) return;
-    await lembrete(user.phone, texto, core);
+    await lembrete(user.phone, texto, core, { id: 'sardinha', aviso: 'fatura', seed: row.id || row.cartao_id });
     if (pendenteCtx) {
       try { await criarPendente({ userId: grupo.dono_id, tipoPergunta: 'rolar_fatura', contexto: pendenteCtx, expiresInMin: 60 * 26 }); }
       catch { /* noop */ }
