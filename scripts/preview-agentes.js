@@ -18,6 +18,10 @@ const EXEMPLOS = {
     '💳 *Parcela 3/12 — Notebook*\n💵 R$ 291,58 no cartão *Nubank*\nPra pagar, responda: "pagar parcela da Notebook"',
   'sardinha.fatura':
     '💳 *Fatura do Nubank*\nFechou em R$ 1.544,01 e vence dia 02/09.',
+  'jacques.resumo-semanal':
+    '📊 *Sua semana*\n\n*Semana mais calma*\nVocê cortou o delivery pela metade e migrou pra padaria.\n\n💸 Gastos: R$ 412,90\n💰 Receitas: R$ 1.200,00\n🎯 Hábitos: 71% da semana\n🏃 Treino: 3 sessões',
+  'jacques.resumo-mensal':
+    '🧾 *Fechamento de Julho*\n\n*Mês de equilíbrio*\nReceitas superaram gastos pela primeira vez em três ciclos.\n\n💸 Gastos: R$ 2.100,00\n💰 Receitas: R$ 3.400,00\n📊 Saldo: R$ 1.300,00',
   'don-baleone.dividas':
     '🔔 *Lembrete de dívida*\n\n📌 *Empréstimo* (Nubank)\n💵 R$ 629,51\n📅 Vence em *3 dias* (dia 10)',
   'don-baleone.limite':

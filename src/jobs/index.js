@@ -1240,19 +1240,27 @@ const APP_URL_RESUMO = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 // SORA_CAPA_URL no Render; default aponta pro /public do site.
 const CAPA = process.env.SORA_CAPA_URL || `${APP_URL_RESUMO}/sora-capa.png`;
 
-// ⚠️ A manchete personalizada (insight.titulo — "Semana mais digital" etc.)
-// só chega no WhatsApp quando o provider é 'meta' se tiver ONDE encaixar:
-// o template aprovado hoje (`resumo_semanal`/`resumo_mensal`) tem texto FIXO
-// com só nome+valores — fora da janela de 24h, SÓ o template aprovado sai
-// (services/proativo.js manda ele sempre que existe, nunca cai pro texto
-// livre). Preparei o `resumo_semanal_v2`/`resumo_mensal_v2` (mais a manchete
-// como variável nova) — texto sugerido em docs/MIGRACAO-WHATSAPP-TEMPLATES.md.
-// Enquanto a Meta não aprovar, ISTO FICA false e a Sora manda o template
-// antigo (sem a manchete) — trocar pra true quebraria o envio de TODO MUNDO
-// se o template novo não existir/não estiver aprovado ainda. O texto rico
-// (frase + linhas do Grow) já vale hoje pra Z-API e pra quem está dentro da
-// janela de 24h no Meta.
-const RESUMO_TEMPLATE_V2 = false;
+// ⚠️ A manchete personalizada (insight.titulo — "Semana mais calma" etc.) e as
+// linhas do Grow não cabem no template `resumo_semanal`/`resumo_mensal`, que
+// tem texto FIXO com só nome+valores. Fora da janela de 24h só o template sai,
+// então esse conteúdo simplesmente não chegava.
+//
+// A saída NÃO foi criar `resumo_semanal_v2`/`resumo_mensal_v2`: o
+// `agente_aviso` (fase 3) já é um template de recado LIVRE ({{2}}), com a cara
+// do agente no cabeçalho. O resumo é do Jacques, então ele passa por lá —
+// cabe a manchete, a frase E o Grow, sem pedir mais nenhuma aprovação à Meta.
+// Com a fase 3 desligada, cai no template aprovado de sempre.
+//
+// Este `core` é o que vira o {{2}}: UMA linha, com o que mais importa primeiro
+// (manchete → frase → números), porque o parâmetro tem teto de tamanho e é o
+// fim que é cortado.
+function coreResumo(insight, atual, mesNome) {
+  const cabeca = [insight?.titulo, insight?.frase].filter(Boolean).join('. ');
+  const numeros = mesNome
+    ? `${mesNome}: gastos ${brl(atual.gastos)}, receitas ${brl(atual.receitas)}, saldo ${brl(atual.saldo)}.`
+    : `Gastos ${brl(atual.gastos)} e receitas ${brl(atual.receitas)}.`;
+  return oneLine(`${cabeca ? `${cabeca} ` : ''}${numeros}`);
+}
 
 function addDiasISO(str, n) {
   const [Y, M, D] = str.split('-').map(Number);
@@ -1292,16 +1300,19 @@ cron.schedule('*/15 * * * *', async () => {
         // disso; os coletores mesmos filtram "usa de verdade" (ver o arquivo).
         const grow = await coletarGrow(u.id, ini, fim).catch(() => ({}));
         const insight = await gerarInsight({ periodo: 'semana', atual, anterior, grow });
-        const txt = `${montarCorpoSemanal({ atual, anterior, insight, grow })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`;
+        const corpo = montarCorpoSemanal({ atual, anterior, insight, grow });
+        const vestida = falar('jacques', 'resumo-semanal', {
+          texto: `${corpo}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`,
+          core: coreResumo(insight, atual),
+          seed: u.id,
+        });
         const primeiroNome = (u.name || 'tudo bem').split(' ')[0];
         await enviarProativo(u.phone, {
-          texto: txt,
-          template: RESUMO_TEMPLATE_V2 ? {
-            name: 'resumo_semanal_v2',
-            // corpo: {{1}} nome · {{2}} manchete · {{3}} gasto · {{4}} recebido
-            params: [primeiroNome, insight.titulo, brl(atual.gastos), brl(atual.receitas)],
-            opts: { headerImage: CAPA },
-          } : {
+          texto: vestida.texto,
+          // O `agente_aviso` leva a MANCHETE inteira (que o template
+          // `resumo_semanal` não tem onde encaixar) e a cara do Jacques. Se a
+          // fase 3 estiver desligada, cai no template aprovado de sempre.
+          template: templateAgente('jacques', vestida.coreAgente) || {
             name: 'resumo_semanal',
             // corpo: {{1}} nome · {{2}} gasto · {{3}} recebido | cabeçalho IMAGE = capa
             params: [primeiroNome, brl(atual.gastos), brl(atual.receitas)],
@@ -1347,16 +1358,16 @@ cron.schedule('*/15 * * * *', async () => {
         // Grow (hábitos/tarefas/treino/estudos) — SEMPRE por user_id, igual ao semanal.
         const grow = await coletarGrow(u.id, ini, fim).catch(() => ({}));
         const insight = await gerarInsight({ periodo: 'mes', atual, anterior, grow });
-        const txt = `${montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight, grow })}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`;
+        const corpo = montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight, grow });
+        const vestida = falar('jacques', 'resumo-mensal', {
+          texto: `${corpo}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`,
+          core: coreResumo(insight, atual, mesNome),
+          seed: u.id,
+        });
         const primeiroNome = (u.name || 'tudo bem').split(' ')[0];
         await enviarProativo(u.phone, {
-          texto: txt,
-          template: RESUMO_TEMPLATE_V2 ? {
-            name: 'resumo_mensal_v2',
-            // corpo: {{1}} nome · {{2}} mês · {{3}} manchete · {{4}} gasto · {{5}} recebido · {{6}} saldo
-            params: [primeiroNome, mesNome, insight.titulo, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
-            opts: { headerImage: CAPA },
-          } : {
+          texto: vestida.texto,
+          template: templateAgente('jacques', vestida.coreAgente) || {
             name: 'resumo_mensal',
             params: [primeiroNome, mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
             opts: { headerImage: CAPA }, // cabeçalho IMAGE = capa

@@ -38,15 +38,19 @@ const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.forsora.com').r
 // fica; some só a piada).
 const MAX_CORE = 900;
 
+// `arte: false` = ainda não existe `public/agentes/<id>.png` no painel. Esses
+// caem na capa genérica da Sora, porque URL de imagem que dá 404 faz a Meta
+// RECUSAR a mensagem inteira — o agente ficaria mudo por falta de desenho.
+// Quando a arte chegar, é só virar pra `true`.
 const AGENTES = {
-  sardinha:   { nome: 'Sardinha',        emoji: '🐟' },
-  'don-baleone': { nome: 'Don Baleone',    emoji: '🐋' },
-  jacques:    { nome: 'Jacques',         emoji: '🎥' },
-  aurora:     { nome: 'Aurora',          emoji: '🌅' },
-  'dr-house': { nome: 'Dr. House',       emoji: '🩺' },
-  'detetive-watson':   { nome: 'Detetive Watson', emoji: '🔍' },
-  osvaldo:    { nome: 'Osvaldo',         emoji: '💰' },
-  oraculo:    { nome: 'Oráculo',         emoji: '🔮' },
+  sardinha:            { nome: 'Sardinha',        emoji: '🐟', arte: true },
+  'don-baleone':       { nome: 'Don Baleone',     emoji: '🐋', arte: true },
+  jacques:             { nome: 'Jacques',         emoji: '🎥', arte: false },
+  aurora:              { nome: 'Aurora',          emoji: '🌅', arte: false },
+  'dr-house':          { nome: 'Dr. House',       emoji: '🩺', arte: true },
+  'detetive-watson':   { nome: 'Detetive Watson', emoji: '🔍', arte: true },
+  osvaldo:             { nome: 'Osvaldo',         emoji: '💰', arte: true },
+  oraculo:             { nome: 'Oráculo',         emoji: '🔮', arte: true },
 };
 
 // ── As falas ────────────────────────────────────────────────────────────────
@@ -95,6 +99,26 @@ const VOZES = {
     fecha: ['Da próxima, quem vai chorar é a sua conta bancária. 🤌',
             'Eu finjo que não vi. Uma vez.',
             'Segura a mão até o fim do mês, faz isso por mim.'],
+  },
+
+  // ── Jacques: narrador de documentário ─────────────────────────────────
+  // O resumo JÁ vem com manchete e frase próprias (gerarInsight). Aqui a voz
+  // é só a moldura de quem está narrando — abertura curta, sem competir com
+  // o texto que a IA escreveu.
+  'jacques.resumo-semanal': {
+    abre: ['Sete dias observando você. O relatório:',
+           'Encerrada a semana de observação.',
+           'Mais um ciclo registrado. Vejamos:'],
+    fecha: ['Seguimos acompanhando.', 'A expedição continua.',
+            'Volto no próximo domingo.'],
+  },
+  'jacques.resumo-mensal': {
+    abre: ['Um mês inteiro de observação. O balanço:',
+           'Fecha-se mais um ciclo. O que os dados contam:',
+           'Trinta dias depois, o retrato:'],
+    fecha: ['Um novo mês começa — e eu estarei aqui.',
+            'Registrado para a posteridade.',
+            'Até o próximo fechamento.'],
   },
 
   // ── Aurora: calma, matinal, organizada ────────────────────────────────
@@ -207,8 +231,13 @@ function templateAgente(agenteId, core) {
     // {{1}} nome do agente · {{2}} o recado na voz dele
     params: [agente.nome, String(core).replace(/\s*[\r\n\t]+\s*/g, ' ').trim().slice(0, MAX_CORE)],
     // A Meta EXIGE o parâmetro de header em todo envio quando o template tem
-    // cabeçalho de mídia — senão recusa e o aviso não chega.
-    opts: { headerImage: `${APP_URL}/agentes/${agenteId}.png` },
+    // cabeçalho de mídia — senão recusa e o aviso não chega. Agente sem arte
+    // usa a capa da Sora (ver `arte` no catálogo).
+    opts: {
+      headerImage: agente.arte
+        ? `${APP_URL}/agentes/${agenteId}.png`
+        : (process.env.SORA_CAPA_URL || `${APP_URL}/sora-capa.png`),
+    },
   };
 }
 

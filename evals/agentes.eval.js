@@ -150,6 +150,17 @@ console.log('── 7. template do agente ──');
 
   ok(templateAgente('nao-existe', 'x') === null, 'agente desconhecido não monta template');
   ok(templateAgente('don-baleone', '') === null, 'recado vazio não monta template');
+
+  // Agente SEM arte (Jacques/Aurora ainda não têm .png) tem de cair na capa da
+  // Sora. Apontar pra um arquivo inexistente faria a Meta RECUSAR a mensagem
+  // inteira — o agente ficaria mudo por falta de desenho.
+  const semArte = templateAgente('jacques', 'Sete dias observando você.');
+  ok(semArte !== null, 'agente sem arte ainda monta o template');
+  ok(!semArte.opts.headerImage.includes('/agentes/jacques.png'),
+    `agente sem arte NÃO aponta pro png inexistente (veio "${semArte.opts.headerImage}")`);
+  ok(semArte.opts.headerImage.includes('sora-capa'),
+    'agente sem arte usa a capa genérica da Sora');
+  ok(semArte.params[0] === 'Jacques', 'e o nome dele continua no {{1}}');
 }
 console.log('  ok');
 
