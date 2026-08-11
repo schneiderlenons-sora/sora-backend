@@ -132,8 +132,12 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 // ─────────────────────────────────────────────────────────────────
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
+    // `nos_previstos` (migration 115): mostra/soma a parcela no card "Previstos
+    // do mês". Tolerante — sem a 115 o update com essa chave falha e o handler
+    // devolve o erro; por isso ela só chega aqui quando o painel manda.
     const allowed = ['titulo','credor','tipo','valor_total','valor_parcela','parcelas_total','parcelas_pagas',
-                     'taxa_juros','indexador','dia_vencimento','data_inicio','status','observacao','lembretes_ativos','imagem_url'];
+                     'taxa_juros','indexador','dia_vencimento','data_inicio','status','observacao','lembretes_ativos','imagem_url',
+                     'nos_previstos'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     patch.updated_at = new Date().toISOString();
