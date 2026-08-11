@@ -1016,7 +1016,23 @@ function normalizeInvestimento(inv) {
 /** Cria/atualiza a wallet da conta ou cartão. Devolve o NOME (chave das transações). */
 async function upsertWallet(grupoId, userId, n, saldo) {
   const nome = (n.nome || 'Conta').toString().trim().slice(0, 60);
-  const extras = Object.fromEntries(Object.entries(n.extras || {}).filter(([, v]) => v != null));
+
+  // Campos em que `null` é RESPOSTA, não ausência de dado — precisam ser
+  // GRAVADOS como null em vez de ignorados.
+  //
+  // ⚠️ `of_bill_atual` é o caso caro. O filtro geral de nulos existe pra não
+  // zerar o que o banco não mandou (ex.: dia_fechamento), mas nele null quer
+  // dizer "não há fatura publicada em aberto" — e como nunca era gravado, o
+  // cartão ficava apontando pra uma fatura VELHA pra sempre. O painel então
+  // filtrava as transações por aquela fatura morta e escondia tudo que veio
+  // depois do fechamento dela (caso real: fatura fechada em 08/08 mostrando
+  // lançamentos só até 31/07).
+  const NULO_VALIDO = new Set(['of_bill_atual']);
+  const extras = Object.fromEntries(
+    Object.entries(n.extras || {}).filter(([k, v]) => v != null || NULO_VALIDO.has(k)));
+  // `extras` só traz o que o normalize mandou; garante o null explícito.
+  if (n.extras && 'of_bill_atual' in n.extras) extras.of_bill_atual = n.extras.of_bill_atual ?? null;
+
   const patchSaldo = saldo == null ? {} : { saldo };
 
   // ⚠️ Se UMA coluna dos extras não existir (migration nova ainda não rodada), o
