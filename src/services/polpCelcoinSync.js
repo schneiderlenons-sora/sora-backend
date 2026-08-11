@@ -34,6 +34,8 @@ const {
 } = require('./categorizar');
 const { cicloPorCompetencia, competenciaAtual, hojeSP } = require('./cicloFatura');
 const { valorNaFatura } = require('./valorFatura');
+const { registrarPagamentosDoOF } = require('./faturaRollover');
+const { gravarParcelasPrevistas } = require('./parcelasPrevistas');
 
 const PROVIDER = 'polp-celcoin';
 const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -1392,6 +1394,10 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // quanto é a fatura em andamento. Todo o bloco abaixo (limite usado,
         // parcelas a vencer, soma das transações) existe só porque esse número
         // não existia. Tendo ele, qualquer estimativa nossa seria pior.
+        // ⚠️ declarada AQUI de propósito: o relatório logo abaixo a lê, e com
+        // ela dentro do `if` o bloco inteiro estourava ReferenceError — o
+        // try/catch engolia e o cartão saía do sync como { erro: ... }.
+        let estimada = null;
         const temSimulada = n.faturaSimulada != null;
         if (!temSimulada && !(n.faturaAberta && n.faturaAberta.total > 0)) {
           // Parcela a vencer = transação com data no FUTURO. Medida, nunca
@@ -1423,7 +1429,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           // quando há parcelamento (a parcela desta fatura vem com a data da
           // compra) — e a tela diz isso, em vez de exibir um número redondo e
           // errado. O limite usado vai pra barra de limite, que é o lugar dele.
-          const estimada = faturaPorTransacoes(normalizadas, txs, n, hoje);
+          estimada = faturaPorTransacoes(normalizadas, txs, n, hoje);
           const fonte = n.fonteFatura || 'ciclo';
 
           if (estimada != null) {
@@ -1439,10 +1445,37 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           }
         }
 
+        // O pagamento da fatura JÁ vinha como transação, mas nunca chegava em
+        // `pagamentos_fatura` — que é de onde sai `restante = fatura − pago`.
+        // Sem isto a fatura ficava eternamente "em aberto" no painel mesmo
+        // depois de paga (queixa real). Tolerante: não derruba o sync.
+        let pagamentosRegistrados = 0;
+        // Parcelas que o BANCO já sabe que vão cair e a Sora não: o Mercado
+        // Pago manda parcela sem o marcador "N/M", então a 2ª nunca vira
+        // transação e a fatura FUTURA saía a menos (medido: 282,27 onde o app
+        // mostrava 558,78). Projeção — não vira transação.
+        let parcelasProjetadas = 0;
+        try {
+          const { data: w } = await supabase.from('wallets')
+            .select('*')                       // '*': colunas novas (114) podem não existir
+            .eq('grupo_id', grupoId).eq('of_conta_id', n.externalId).maybeSingle();
+          if (w) {
+            pagamentosRegistrados = await registrarPagamentosDoOF(grupoId, w);
+            const parcelamentos = await celcoin.listarParcelamentos(n.externalId);
+            // `normalizadas` entra pra NÃO projetar por cima do que o sync já
+            // lançou: cartão que manda "N/M" tem a parcela futura redistribuída
+            // como transação, e projetar de novo contaria em dobro.
+            parcelasProjetadas = await gravarParcelasPrevistas(
+              grupoId, w, parcelamentos, hoje, normalizadas);
+          }
+        } catch { /* ignora */ }
+
         relatorio.cartoes.push({
           cartao: walletNome, limite: n.extras.limite,
           fatura: n.faturaAberta, estimada: estimada != null || undefined,
           txs: txs.length, novas,
+          pagamentos_fatura: pagamentosRegistrados || undefined,
+          parcelas_previstas: parcelasProjetadas || undefined,
         });
       } catch (e) { relatorio.cartoes.push({ erro: e.message }); }
     }

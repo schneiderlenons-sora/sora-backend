@@ -5,9 +5,25 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta, registrarTransferencia, registrarFaturaExterna } = require('../services/contaDebito');
-const { statusFatura, materializarRollover } = require('../services/faturaRollover');
+const { statusFatura, materializarRollover, pagoDaFatura } = require('../services/faturaRollover');
 const { competenciaAtual, cicloPorCompetencia, competenciaVizinha, hojeSP } = require('../services/cicloFatura');
 const norm     = p => p?.replace(/\D/g, '');
+
+// Parcelas a vencer projetadas pelo sync do Open Finance (migration 116).
+// Tolerante: enquanto a migration não rodar, devolve vazio e a tela some com o
+// bloco — nunca derruba a listagem de faturas.
+async function parcelasPrevistasDe(cartaoId, competencia) {
+  try {
+    const { data, error } = await supabase.from('of_parcelas_previstas')
+      .select('descricao, valor, parcela_num, parcela_total')
+      .eq('cartao_id', cartaoId).eq('competencia', competencia)
+      .order('valor', { ascending: false });
+    if (error) return { linhas: [], total: 0 };
+    const linhas = data || [];
+    const total = Math.round(linhas.reduce((s, p) => s + (Number(p.valor) || 0), 0) * 100) / 100;
+    return { linhas, total };
+  } catch { return { linhas: [], total: 0 }; }
+}
 
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
 function variantesPhone(phone) {
@@ -224,7 +240,14 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
       if (data) rollover = data;
     } catch { /* tolerante à 096 */ }
 
-    res.json({ ...st, competencia, rollover });
+    // Parcelas que o banco já sabe que vão cair nesta fatura e que a Sora não
+    // tem como transação (o Mercado Pago manda parcela sem o marcador "N/M").
+    // É PROJEÇÃO (migration 116) — some e é regravada a cada sync. Só existe
+    // pra competência FUTURA: na fatura em curso a compra já veio pelo extrato
+    // e somar as duas fontes contaria em dobro.
+    const { linhas: previstas, total: totalPrevisto } = await parcelasPrevistasDe(cartaoId, competencia);
+
+    res.json({ ...st, competencia, rollover, parcelas_previstas: previstas, total_previsto: totalPrevisto });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -256,16 +279,33 @@ router.get('/faturas/:phone', auth, async (req, res) => {
       const ehOF = !!c.of_conta_id;
 
       let fatura, pago = 0, restante;
-      if (ehOF && offset === 0 && typeof c.saldo === 'number' && c.saldo < 0) {
+      // `doBanco` = o valor exibido veio do emissor, não da nossa soma do ciclo.
+      const doBanco = ehOF && offset === 0 && typeof c.saldo === 'number' && c.saldo < 0;
+      if (doBanco) {
         // Open Finance na fatura atual: o banco é a fonte (saldo = −fatura).
         // ⚠️ Saldo ZERO não é fatura zerada — é o banco ainda não ter publicado
         // o total do ciclo em aberto. Nesse caso soma pelo ciclo, como manual.
         fatura = Math.round(-(c.saldo) * 100) / 100;
         restante = fatura;
+        // O VALOR do banco fica intocado (regra de ouro do Open Finance): aqui
+        // só LEMOS o que já foi pago pra saber se a fatura está quitada. O
+        // pagamento vem do próprio extrato do banco desde que o sync passou a
+        // registrá-lo (services/faturaRollover.registrarPagamentosDoOF).
+        pago = await pagoDaFatura(c.id, competencia);
       } else {
         const st = await statusFatura(grupoId, c, competencia);
         fatura = st.fatura; pago = st.pago; restante = st.restante;
       }
+      // A tela usa isto pra pular pra fatura seguinte quando esta já foi paga —
+      // era a queixa: pagou dia 09, fechou dia 08, e o painel ficava parado na
+      // fatura quitada. É sinal de NAVEGAÇÃO; não altera nenhum valor.
+      //
+      // ⚠️ NUNCA quando o valor vem do banco (`doBanco`): ali o `fatura` é do
+      // emissor e o `pago` sai do nosso livro de pagamentos — bases diferentes.
+      // Medido no cartão do Mercado Pago: o banco publica 560,68 (que é a
+      // fatura ANTERIOR) enquanto os pagamentos do ciclo somam 2.809,28, e
+      // comparar os dois daria "quitada" numa fatura em aberto.
+      const quitada = !doBanco && fatura > 0.01 && pago >= fatura - 0.01;
 
       // Fatura ANTERIOR que já venceu e ainda tem saldo: sem isto ela sumiria da
       // tela (a "atual" é sempre a próxima a vencer, que pode estar vazia) e o
@@ -284,11 +324,18 @@ router.get('/faturas/:phone', auth, async (req, res) => {
         } catch { /* informativo — nunca derruba a listagem */ }
       }
 
+      // Parcelas que o banco conhece e a Sora não (só em fatura FUTURA — ver
+      // parcelasPrevistasDe). Entram como parcela SEPARADA do total: quem soma
+      // as transações continua sendo `somarFatura`, intocado.
+      const prev = await parcelasPrevistasDe(c.id, competencia);
+
       faturas.push({
         cartao_id: c.id, nome: c.nome, limite: c.limite ?? null,
         competencia, ini: ciclo.ini, fim: ciclo.fim, fimExcl: ciclo.fimExcl,
         venc: ciclo.venc, label: ciclo.label, porCiclo: ciclo.porCiclo,
-        of: ehOF, fatura, pago, restante, vencida,
+        of: ehOF, fatura, pago, restante, vencida, quitada,
+        fechada: ciclo.fim < hoje,
+        parcelas_previstas: prev.linhas, total_previsto: prev.total,
       });
     }
 

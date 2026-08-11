@@ -116,6 +116,43 @@ console.log('── 3. caso real (Mercado Pago, 03/08, R$ 2.243,60) ──');
 }
 console.log('  ok');
 
+// ── 5. Qual FATURA o pagamento quitou ──────────────────────────────────────
+//
+// Segunda metade do mesmo bug: o pagamento entrava como transação e parava aí.
+// Nada chegava em `pagamentos_fatura`, que é de onde sai `restante = fatura −
+// pago` — então a fatura ficava "em aberto" pra sempre no painel, mesmo depois
+// de o usuário ter pago (queixa real de cliente do Mercado Pago).
+//
+// A competência é a do vencimento MAIS PRÓXIMO da data do pagamento — mesma
+// ideia de `vencimentoCoberto` (services/vencimentoDivida.js). Escolher sempre
+// "a próxima a vencer" jogaria todo pagamento atrasado pra fatura errada.
+console.log('── 5. competência que o pagamento quitou ──');
+{
+  const { competenciaDoPagamento } = require('../src/services/faturaRollover');
+  const CARTAO = { dia_fechamento: 8, dia_vencimento: 13 };   // o cartão do caso
+
+  // Os dois pagamentos REAIS medidos na conta do cliente.
+  eq(competenciaDoPagamento(CARTAO, '2026-08-09'), '2026-08',
+    'pagou 09/08 a fatura que fechou 08/08 e vence 13/08');
+  eq(competenciaDoPagamento(CARTAO, '2026-08-03'), '2026-08',
+    'pagou 03/08 (antecipado): 10 dias do venc de agosto × 21 do de julho');
+
+  // Atrasado: NÃO pode pular pra fatura seguinte.
+  eq(competenciaDoPagamento(CARTAO, '2026-07-20'), '2026-07',
+    'pagou 20/07 com atraso — quita a de julho, não a de agosto');
+  eq(competenciaDoPagamento(CARTAO, '2026-08-14'), '2026-08',
+    'um dia depois do vencimento ainda é a fatura daquele vencimento');
+
+  // Vira o ano.
+  eq(competenciaDoPagamento(CARTAO, '2026-01-02'), '2026-01',
+    'início de janeiro quita a de janeiro (venc 13/01), não a de dezembro');
+
+  // Sem ciclo configurado não dá pra afirmar competência — melhor não gravar.
+  eq(competenciaDoPagamento({ dia_fechamento: null, dia_vencimento: null }, '2026-08-09'), null,
+    'cartão sem dia de vencimento não gera pagamento_fatura');
+}
+console.log('  ok');
+
 // ── Resultado ──────────────────────────────────────────────────────────────
 console.log('');
 if (falhas.length) {

@@ -111,3 +111,95 @@ async function materializarRollover(row, cartaoNome, cartao) {
 }
 
 module.exports = { TZ, ymHoje, mesSeguinte, somaFaturaCiclo, pagoDaFatura, statusFatura, materializarRollover, cent };
+
+// =============================================================================
+// PAGAMENTO DE FATURA VINDO DO OPEN FINANCE
+//
+// BUG QUE ISTO CORRIGE: o sync já importava o pagamento da fatura como
+// transação (`Recebimento` + `transferencia`, categoria Fatura) — medido numa
+// conta real: R$ 2.243,60 em 03/08 e R$ 565,68 em 09/08. Mas NADA disso chegava
+// em `pagamentos_fatura`, que é a tabela que o `statusFatura` consulta pra
+// calcular `restante = fatura − pago`. Resultado: `pago = 0` pra sempre, a
+// fatura nunca ficava quitada e o painel continuava parado nela.
+// =============================================================================
+
+/**
+ * Competência que um pagamento feito em `dataPg` quitou.
+ *
+ * É a fatura de vencimento MAIS PRÓXIMO da data do pagamento — a mesma ideia de
+ * `vencimentoCoberto` em services/vencimentoDivida.js. Pagar dia 09 uma fatura
+ * que vence dia 13 é "pagou a de agosto" (adiantado); pagar dia 20 é "pagou a
+ * de agosto atrasado", não a de setembro. Escolher sempre a próxima a vencer
+ * jogaria todo pagamento atrasado pra fatura errada.
+ */
+function competenciaDoPagamento(cartao, dataPg) {
+  const { competenciaAtual, competenciaVizinha } = require('./cicloFatura');
+  // Sem dia de vencimento o ciclo cai no mês-calendário (legado) e o "mais
+  // próximo" passa a comparar com o ÚLTIMO DIA do mês — pagar 09/08 daria a
+  // competência de julho. Melhor não gravar do que gravar na fatura errada.
+  if (!cartao || !cartao.dia_vencimento) return null;
+  const dia = String(dataPg).slice(0, 10);
+  const proxima = competenciaAtual(cartao, dia);
+  if (!proxima) return null;
+  const anterior = competenciaVizinha(cartao, proxima, -1);
+
+  const dist = (comp) => {
+    const c = cicloPorCompetencia(cartao, comp);
+    if (!c || !c.venc) return Infinity;
+    return Math.abs(Date.parse(`${c.venc}T12:00:00Z`) - Date.parse(`${dia}T12:00:00Z`));
+  };
+  return dist(anterior) < dist(proxima) ? anterior : proxima;
+}
+
+/**
+ * Registra em `pagamentos_fatura` os pagamentos que o Open Finance trouxe.
+ *
+ * Idempotente por `transacao_id` — o sync roda todo dia e não pode empilhar o
+ * mesmo pagamento. Tolerante de ponta a ponta: nada aqui derruba o sync.
+ *
+ * @returns {Promise<number>} quantos pagamentos NOVOS foram registrados
+ */
+async function registrarPagamentosDoOF(grupoId, cartao) {
+  try {
+    if (!grupoId || !cartao?.id || !cartao?.nome) return 0;
+    // ⚠️ `ehPagamentoFaturaCat` (valorFatura.js), NÃO o `ehPagamentoFatura` do
+    // catálogo: aquele compara a string EXATA e devolve false pra '💳 Fatura'.
+    const { ehPagamentoFaturaCat } = require('./valorFatura');
+
+    // Só o que veio do banco (`of_tx_id`) e é reconhecidamente pagamento de
+    // fatura. Lançamento manual continua entrando pelo fluxo do painel.
+    const { data: pgs } = await supabase.from('transacoes')
+      .select('id, valor, data, categoria, transferencia, of_tx_id')
+      .eq('grupo_id', grupoId).ilike('carteira_nome', cartao.nome)
+      .eq('tipo', 'Recebimento').not('of_tx_id', 'is', null)
+      .order('data', { ascending: false }).limit(200);
+    const candidatos = (pgs || []).filter(
+      (t) => t.transferencia === true && ehPagamentoFaturaCat(t.categoria) && Number(t.valor) > 0);
+    if (!candidatos.length) return 0;
+
+    // Quais já foram registrados (chave: transacao_id).
+    const { data: jaTem } = await supabase.from('pagamentos_fatura')
+      .select('transacao_id').eq('cartao_id', cartao.id)
+      .in('transacao_id', candidatos.map((t) => t.id));
+    const registrados = new Set((jaTem || []).map((p) => p.transacao_id));
+
+    const novos = [];
+    for (const t of candidatos) {
+      if (registrados.has(t.id)) continue;
+      const competencia = competenciaDoPagamento(cartao, t.data);
+      if (!competencia) continue;
+      novos.push({
+        grupo_id: grupoId, cartao_id: cartao.id, competencia,
+        valor: cent(t.valor), data: String(t.data).slice(0, 10), transacao_id: t.id,
+      });
+    }
+    if (!novos.length) return 0;
+
+    const { error } = await supabase.from('pagamentos_fatura').insert(novos);
+    if (error) return 0;                     // migration 096 pendente, p.ex.
+    return novos.length;
+  } catch { return 0; }
+}
+
+module.exports.competenciaDoPagamento = competenciaDoPagamento;
+module.exports.registrarPagamentosDoOF = registrarPagamentosDoOF;
