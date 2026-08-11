@@ -5,9 +5,14 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta, registrarTransferencia, registrarFaturaExterna } = require('../services/contaDebito');
-const { statusFatura, materializarRollover, pagoDaFatura } = require('../services/faturaRollover');
+const { statusFatura, materializarRollover } = require('../services/faturaRollover');
 const { competenciaAtual, cicloPorCompetencia, competenciaVizinha, hojeSP } = require('../services/cicloFatura');
+const { valorExibido } = require('../services/faturaVista');
 const norm     = p => p?.replace(/\D/g, '');
+
+/** Aritmética do valor exibido — fonte única em services/faturaVista.js. */
+const vistaDaFatura = (cartao, competencia, st) =>
+  valorExibido(cartao, competencia, st, { parcelasPrevistas: parcelasPrevistasDe });
 
 // Parcelas a vencer projetadas pelo sync do Open Finance (migration 116).
 // Tolerante: enquanto a migration não rodar, devolve vazio e a tela some com o
@@ -229,6 +234,7 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
       : competenciaAtual(cartao);
 
     const st = await statusFatura(grupoId, cartao, competencia);
+    const vista = await vistaDaFatura(cartao, competencia, st);
 
     // Rollover aguardando confirmação (se a tabela existir).
     let rollover = null;
@@ -247,7 +253,10 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
     // e somar as duas fontes contaria em dobro.
     const { linhas: previstas, total: totalPrevisto } = await parcelasPrevistasDe(cartaoId, competencia);
 
-    res.json({ ...st, competencia, rollover, parcelas_previstas: previstas, total_previsto: totalPrevisto });
+    res.json({
+      ...st, ...vista, competencia, rollover,
+      parcelas_previstas: previstas, total_previsto: totalPrevisto,
+    });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -278,34 +287,9 @@ router.get('/faturas/:phone', auth, async (req, res) => {
       const ciclo = cicloPorCompetencia(c, competencia);
       const ehOF = !!c.of_conta_id;
 
-      let fatura, pago = 0, restante;
-      // `doBanco` = o valor exibido veio do emissor, não da nossa soma do ciclo.
-      const doBanco = ehOF && offset === 0 && typeof c.saldo === 'number' && c.saldo < 0;
-      if (doBanco) {
-        // Open Finance na fatura atual: o banco é a fonte (saldo = −fatura).
-        // ⚠️ Saldo ZERO não é fatura zerada — é o banco ainda não ter publicado
-        // o total do ciclo em aberto. Nesse caso soma pelo ciclo, como manual.
-        fatura = Math.round(-(c.saldo) * 100) / 100;
-        restante = fatura;
-        // O VALOR do banco fica intocado (regra de ouro do Open Finance): aqui
-        // só LEMOS o que já foi pago pra saber se a fatura está quitada. O
-        // pagamento vem do próprio extrato do banco desde que o sync passou a
-        // registrá-lo (services/faturaRollover.registrarPagamentosDoOF).
-        pago = await pagoDaFatura(c.id, competencia);
-      } else {
-        const st = await statusFatura(grupoId, c, competencia);
-        fatura = st.fatura; pago = st.pago; restante = st.restante;
-      }
-      // A tela usa isto pra pular pra fatura seguinte quando esta já foi paga —
-      // era a queixa: pagou dia 09, fechou dia 08, e o painel ficava parado na
-      // fatura quitada. É sinal de NAVEGAÇÃO; não altera nenhum valor.
-      //
-      // ⚠️ NUNCA quando o valor vem do banco (`doBanco`): ali o `fatura` é do
-      // emissor e o `pago` sai do nosso livro de pagamentos — bases diferentes.
-      // Medido no cartão do Mercado Pago: o banco publica 560,68 (que é a
-      // fatura ANTERIOR) enquanto os pagamentos do ciclo somam 2.809,28, e
-      // comparar os dois daria "quitada" numa fatura em aberto.
-      const quitada = !doBanco && fatura > 0.01 && pago >= fatura - 0.01;
+      // Mesma conta da rota de status — fonte única (ver `valorExibido`).
+      const st = await statusFatura(grupoId, c, competencia);
+      const { fatura, pago, restante, quitada } = await vistaDaFatura(c, competencia, st);
 
       // Fatura ANTERIOR que já venceu e ainda tem saldo: sem isto ela sumiria da
       // tela (a "atual" é sempre a próxima a vencer, que pode estar vazia) e o

@@ -153,6 +153,50 @@ console.log('── 5. competência que o pagamento quitou ──');
 }
 console.log('  ok');
 
+// ── 6. "Paga depois do fechamento" — a regra pra virar de fatura ───────────
+//
+// Só se pode dar a fatura por encerrada (e passar pra seguinte) quando existe
+// pagamento DEPOIS da data de fechamento que cobre o valor dela.
+//
+// Pagamento ANTES do fechamento NÃO conta. No Mercado Pago é comum abater a
+// fatura em curso aos poucos: nesta conta real a fatura de agosto era de
+// R$ 2.804,28, levou R$ 2.243,60 no dia 03 (fechando dia 08) e o banco passou a
+// publicar R$ 560,68 — ela seguia aberta. Quem a encerrou foi o pagamento de
+// R$ 565,68 no dia 09, DEPOIS do fechamento.
+console.log('── 6. paga depois do fechamento ──');
+{
+  const { quitadaDepoisDoFechamento } = require('../src/services/faturaRollover');
+  const CICLO = { ini: '2026-07-09', fim: '2026-08-08', venc: '2026-08-13' };
+
+  // O caso real, com os dois pagamentos.
+  const reais = [
+    { valor: 2243.60, data: '2026-08-03' },   // antes do fechamento: abate, não encerra
+    { valor:  565.68, data: '2026-08-09' },   // depois: encerra
+  ];
+  eq(quitadaDepoisDoFechamento(reais, 560.68, CICLO), true,
+    'R$ 565,68 pagos em 09/08 cobrem a fatura de R$ 560,68 que fechou em 08/08');
+
+  eq(quitadaDepoisDoFechamento([reais[0]], 560.68, CICLO), false,
+    'só o abatimento de 03/08 NÃO encerra a fatura — ela ainda vai fechar');
+
+  // Pagamento parcial depois do fechamento também não encerra.
+  eq(quitadaDepoisDoFechamento([{ valor: 300, data: '2026-08-10' }], 560.68, CICLO), false,
+    'pagamento parcial depois do fechamento não quita');
+
+  // Um centavo de folga (arredondamento do emissor).
+  eq(quitadaDepoisDoFechamento([{ valor: 560.67, data: '2026-08-10' }], 560.68, CICLO), true,
+    'diferença de 1 centavo conta como quitada');
+
+  // Bordas.
+  eq(quitadaDepoisDoFechamento([], 560.68, CICLO), false, 'sem pagamento não quita');
+  eq(quitadaDepoisDoFechamento(reais, 0, CICLO), false,
+    'fatura zerada não é "quitada" — não há o que encerrar');
+  eq(quitadaDepoisDoFechamento(reais, 560.68, null), false, 'sem ciclo não decide');
+  eq(quitadaDepoisDoFechamento([{ valor: 999, data: '2026-08-08' }], 560.68, CICLO), false,
+    'pagamento NO dia do fechamento ainda é "durante o ciclo"');
+}
+console.log('  ok');
+
 // ── Resultado ──────────────────────────────────────────────────────────────
 console.log('');
 if (falhas.length) {

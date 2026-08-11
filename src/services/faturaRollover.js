@@ -151,6 +151,39 @@ function competenciaDoPagamento(cartao, dataPg) {
   return dist(anterior) < dist(proxima) ? anterior : proxima;
 }
 
+/** Pagamentos registrados numa competência (valor + data), do mais novo. */
+async function pagamentosDaFatura(cartaoId, competencia) {
+  try {
+    const { data, error } = await supabase.from('pagamentos_fatura')
+      .select('valor, data').eq('cartao_id', cartaoId).eq('competencia', competencia)
+      .order('data', { ascending: false });
+    return error ? [] : (data || []);
+  } catch { return []; }
+}
+
+/**
+ * A fatura foi PAGA depois de fechar?
+ *
+ * É a regra que o usuário pediu, literal: só se pode dar a fatura por encerrada
+ * (e passar pra seguinte) quando existe pagamento DEPOIS da data de fechamento
+ * que cobre o valor dela. Pagamento feito ANTES do fechamento não conta: no
+ * Mercado Pago é comum abater a fatura em curso aos poucos (medido nesta conta:
+ * R$ 2.243,60 no dia 03, com a fatura fechando dia 08) — e ela continua aberta
+ * até fechar e ser quitada.
+ *
+ * ⚠️ No cartão de Open Finance, o valor da fatura já vem LÍQUIDO de pagamentos
+ * (o `simulated_bill_total_amount` desconta os abatimentos do ciclo). Por isso
+ * comparamos só com o que entrou DEPOIS do fechamento — descontar tudo de novo
+ * zeraria fatura que ainda está de pé.
+ */
+function quitadaDepoisDoFechamento(pagamentos, fatura, ciclo) {
+  if (!(Number(fatura) > 0.01) || !ciclo?.fim) return false;
+  const depois = (pagamentos || [])
+    .filter((p) => String(p.data).slice(0, 10) > ciclo.fim)
+    .reduce((s, p) => s + (Number(p.valor) || 0), 0);
+  return cent(depois) >= cent(fatura) - 0.01;
+}
+
 /**
  * Registra em `pagamentos_fatura` os pagamentos que o Open Finance trouxe.
  *
@@ -203,3 +236,5 @@ async function registrarPagamentosDoOF(grupoId, cartao) {
 
 module.exports.competenciaDoPagamento = competenciaDoPagamento;
 module.exports.registrarPagamentosDoOF = registrarPagamentosDoOF;
+module.exports.pagamentosDaFatura = pagamentosDaFatura;
+module.exports.quitadaDepoisDoFechamento = quitadaDepoisDoFechamento;
