@@ -201,11 +201,29 @@ router.delete('/sair/:grupo_id', auth, async (req, res) => {
     await supabase.from('grupo_membros').delete()
       .eq('grupo_id', grupoId).eq('user_id', user.id);
 
-    // Se era o grupo ativo, troca para qualquer outro (ou null)
+    // Se era o grupo ativo, troca para qualquer outro.
+    //
+    // ⚠️ BUG REAL (relato de cliente, ago/2026): esta busca olhava só
+    // `grupo_membros` — mas o grupo Pessoal do próprio usuário (o único que
+    // sempre existe, criado no cadastro) é dono por `grupos.dono_id` e NUNCA
+    // ganha uma linha em `grupo_membros` (é assim desde a criação — ver o
+    // helper de papel logo no topo do arquivo). Quem saía de um grupo
+    // compartilhado sem estar em nenhum outro `grupo_membros` (o caso comum:
+    // só ela e o Pessoal) ficava com `grupo_ativo = null` pra sempre — conta
+    // órfã, TODO comando no WhatsApp respondendo "Erro ao carregar seu
+    // perfil". Agora cai pro grupo mais antigo que o usuário É DONO antes de
+    // aceitar `null`.
     if (user.grupo_ativo === grupoId) {
       const { data: prox } = await supabase.from('grupo_membros')
         .select('grupo_id').eq('user_id', user.id).limit(1).maybeSingle();
-      await supabase.from('users').update({ grupo_ativo: prox?.grupo_id || null }).eq('id', user.id);
+      let novoAtivo = prox?.grupo_id || null;
+      if (!novoAtivo) {
+        const { data: proprio } = await supabase.from('grupos')
+          .select('id').eq('dono_id', user.id)
+          .order('created_at', { ascending: true }).limit(1).maybeSingle();
+        novoAtivo = proprio?.id || null;
+      }
+      await supabase.from('users').update({ grupo_ativo: novoAtivo }).eq('id', user.id);
     }
 
     res.json({ ok: true });
@@ -249,6 +267,26 @@ router.delete('/membro/:membro_id', auth, async (req, res) => {
     if (meuPapel?.papel !== 'admin') return res.status(403).json({ erro: 'Apenas admins podem remover membros.' });
 
     await supabase.from('grupo_membros').delete().eq('id', req.params.membro_id);
+
+    // Mesmo ajuste do endpoint "sair": se o grupo removido era o `grupo_ativo`
+    // do membro expulso, ele fica preso lendo/gravando num grupo do qual não
+    // faz mais parte. Cai pro grupo mais antigo que ele É DONO (o Pessoal, que
+    // nunca tem linha em `grupo_membros`) antes de aceitar `null`.
+    const { data: expulso } = await supabase.from('users')
+      .select('grupo_ativo').eq('id', membro.user_id).maybeSingle();
+    if (expulso?.grupo_ativo === membro.grupo_id) {
+      const { data: prox } = await supabase.from('grupo_membros')
+        .select('grupo_id').eq('user_id', membro.user_id).limit(1).maybeSingle();
+      let novoAtivo = prox?.grupo_id || null;
+      if (!novoAtivo) {
+        const { data: proprio } = await supabase.from('grupos')
+          .select('id').eq('dono_id', membro.user_id)
+          .order('created_at', { ascending: true }).limit(1).maybeSingle();
+        novoAtivo = proprio?.id || null;
+      }
+      await supabase.from('users').update({ grupo_ativo: novoAtivo }).eq('id', membro.user_id);
+    }
+
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
