@@ -44,12 +44,10 @@ const MAX_CORE = 900;
 // arte cai na capa genérica da Sora, porque URL de imagem que dá 404 faz a
 // Meta RECUSAR a mensagem inteira — o agente ficaria mudo por falta de
 // desenho. Quando a arte chegar, é só virar pra `true`.
-// ⚠️ `sora` está `false` de propósito: falta `whatsapp/sora.png` na pasta
-// (os outros 7 já têm). Suba o arquivo e vire pra `true`.
 const AGENTES = {
   sardinha:            { nome: 'Sardinha',        emoji: '🐟', arte: true },
   'don-baleone':       { nome: 'Don Baleone',     emoji: '🐋', arte: true },
-  sora:             { nome: 'Sora',         emoji: '🎥', arte: false },
+  sora:             { nome: 'Sora',         emoji: '🎥', arte: true },
   loki:              { nome: 'Loki',          emoji: '🌅', arte: true },
   'dr-house':          { nome: 'Dr. House',       emoji: '🩺', arte: true },
   'detetive-watson':   { nome: 'Detetive Watson', emoji: '🔍', arte: true },

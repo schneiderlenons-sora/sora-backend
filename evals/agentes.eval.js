@@ -155,11 +155,10 @@ console.log('── 7. template do agente ──');
   ok(templateAgente('nao-existe', 'x') === null, 'agente desconhecido não monta template');
   ok(templateAgente('don-baleone', '') === null, 'recado vazio não monta template');
 
-  // Este bloco cobre o caso `arte: false` — hoje é o caso real do `sora`
-  // (falta `agentes/whatsapp/sora.png` na pasta), e volta a acontecer a cada
-  // agente NOVO (fase 4): apontar o cabeçalho pra um .png inexistente faz a
-  // Meta RECUSAR a mensagem inteira, e o agente ficaria mudo por falta de
-  // desenho.
+  // Este bloco cobre o caso `arte: false` — hoje os 8 têm arte, mas volta a
+  // acontecer a cada agente NOVO (fase 4): apontar o cabeçalho pra um .png
+  // inexistente faz a Meta RECUSAR a mensagem inteira, e o agente ficaria
+  // mudo por falta de desenho.
   const semArte = templateAgente('__fantasma__', 'x');
   ok(semArte === null, 'agente que não existe no catálogo não monta template');
 
@@ -173,8 +172,8 @@ console.log('── 7. template do agente ──');
   ok(novo.params[0] === 'Novato', 'e o nome dele continua no {{1}}');
   delete AGENTES.__novo__;
 
-  // Os agentes COM arte apontam pro arquivo próprio, na pasta whatsapp/; o
-  // `sora` (sem arte hoje) cai na capa genérica — não pro png inexistente.
+  // Os agentes COM arte apontam pro arquivo próprio, na pasta whatsapp/ — os
+  // 8 hoje. O `else` cobre o dia em que um agente novo entrar sem arte ainda.
   for (const id of Object.keys(AGENTES)) {
     const t3 = templateAgente(id, 'recado');
     if (AGENTES[id].arte) {
