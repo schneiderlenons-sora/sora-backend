@@ -221,20 +221,39 @@ const BANDEIRA = {
  * (CREDITO_A_VISTA, CREDITO_PARCELADO, SAQUE_*) e por consolidação
  * (CONSOLIDADO/INDIVIDUAL). O limite do cartão é o LIMITE_CREDITO_TOTAL;
  * preferimos CONSOLIDADO quando existe (é o teto do cartão inteiro).
+ *
+ * ⚠️ SEM `LIMITE_CREDITO_TOTAL`, DEVOLVE null — NÃO "o maior que houver".
+ *
+ * O fallback antigo pegava o maior `limit_amount` da lista, e isso produziu um
+ * número claramente errado num Nubank real: o cartão mandou UMA única linha,
+ * `LIMITE_CREDITO_MODALIDADE_OPERACAO` / `line_name: OUTROS` /
+ * `line_name_additional_info: "Limite Nupay"`, com limite R$ 300,45. O painel
+ * passou a exibir "limite R$ 300,45 · usado R$ 300,45 (100%)" num cartão cuja
+ * fatura daquele mês foi R$ 2.293,71 — ou seja, uma sub-modalidade do NuPay
+ * virou o teto do cartão inteiro.
+ *
+ * `MODALIDADE_OPERACAO` é, por definição, o limite de UMA modalidade (NuPay,
+ * saque, parcelado) — nunca o do cartão. Preferir "não sei" a um teto falso:
+ * limite errado contamina a barra de uso e o alerta de limite estourado.
  */
 function limiteTotalDoCartao(limits) {
+  // `respondeu` separa "o banco disse que não tem limite total" de "o banco
+  // ainda não sincronizou os limites" (a doc avisa: `limits` pode vir null).
+  // É o que permite LIMPAR um limite errado sem apagar um limite bom quando a
+  // resposta simplesmente não veio — ver `extras` em normalizeCartao.
+  const respondeu = Array.isArray(limits) && limits.length > 0;
   const arr = Array.isArray(limits) ? limits : [];
   const totais = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_TOTAL');
   const escolhido =
     totais.find((l) => l.consolidation_type === 'CONSOLIDADO') ||
     totais[0] ||
-    // Sem LIMITE_CREDITO_TOTAL: pega o maior limite informado (melhor que nada).
-    arr.slice().sort((a, b) => (money0(b && b.limit_amount) - money0(a && a.limit_amount)))[0];
-  if (!escolhido) return { limite: null, usado: null, disponivel: null };
+    null;
+  if (!escolhido) return { limite: null, usado: null, disponivel: null, respondeu };
   return {
     limite: money(escolhido.limit_amount),
     usado: money(escolhido.used_amount),
     disponivel: money(escolhido.available_amount),
+    respondeu,
   };
 }
 
@@ -543,7 +562,7 @@ function analisarParcelamentos(lista) {
 function normalizeCartao(card, bills, hoje) {
   const ident = card.identification || {};
   const nome = (ident.name || card.name || card.brand_name || 'Cartão').toString().trim().slice(0, 60);
-  const { limite, usado, disponivel } = limiteTotalDoCartao(card.limits);
+  const { limite, usado, disponivel, respondeu: limiteRespondeu } = limiteTotalDoCartao(card.limits);
   const aberta = escolherFaturaAberta(bills, hoje);
   // O VALOR só sai de uma fatura de fato aberta. A DATA (dia_fechamento/
   // dia_vencimento) usa a MODA entre as faturas conhecidas (diaMaisFrequente),
@@ -607,6 +626,13 @@ function normalizeCartao(card, bills, hoje) {
       // dela junto com as do ciclo novo (R$ 5.013,99 no lugar de R$ 3.423,57).
       of_bill_atual: aberta ? String(aberta.id) : null,
       of_limite_usado: usado,
+      // ⚠️ Marca que o banco RESPONDEU sobre limites. Não é coluna: o
+      // `upsertWallet` lê e remove antes de gravar. Serve pra distinguir
+      // "não tem limite total" (grava null, limpando um limite errado — o
+      // caso do "Limite Nupay" de R$ 300,45 virando teto do cartão) de
+      // "limits ainda não sincronizou" (a doc avisa que vem null), onde
+      // apagar o limite bom seria pior.
+      _limiteRespondeu: limiteRespondeu,
     },
     // Quanto a fatura simulada disse (ou `null`). Vai pro relatório do sync e
     // pro diagnóstico — é como a gente confere se o campo novo bate com o app
@@ -1053,11 +1079,25 @@ async function upsertWallet(grupoId, userId, n, saldo) {
   // filtrava as transações por aquela fatura morta e escondia tudo que veio
   // depois do fechamento dela (caso real: fatura fechada em 08/08 mostrando
   // lançamentos só até 31/07).
-  const NULO_VALIDO = new Set(['of_bill_atual']);
+  // `limite`/`of_limite_usado` entram na lista SÓ quando o banco respondeu
+  // sobre limites (`_limiteRespondeu`) — aí `null` quer dizer "este cartão não
+  // tem LIMITE_CREDITO_TOTAL", e gravar null LIMPA um limite errado guardado
+  // antes (o "Limite Nupay" de R$ 300,45 que virava teto do cartão). Quando o
+  // banco não respondeu, `null` é ausência de dado e não pode apagar o que já
+  // está lá — a doc avisa que `limits` vem null enquanto não sincroniza.
+  const limiteRespondeu = n.extras && n.extras._limiteRespondeu === true;
+  const NULO_VALIDO = new Set(
+    limiteRespondeu ? ['of_bill_atual', 'limite', 'of_limite_usado'] : ['of_bill_atual']);
   const extras = Object.fromEntries(
-    Object.entries(n.extras || {}).filter(([k, v]) => v != null || NULO_VALIDO.has(k)));
+    Object.entries(n.extras || {})
+      .filter(([k]) => k !== '_limiteRespondeu')        // flag interna, não é coluna
+      .filter(([k, v]) => v != null || NULO_VALIDO.has(k)));
   // `extras` só traz o que o normalize mandou; garante o null explícito.
   if (n.extras && 'of_bill_atual' in n.extras) extras.of_bill_atual = n.extras.of_bill_atual ?? null;
+  if (limiteRespondeu) {
+    extras.limite = n.extras.limite ?? null;
+    extras.of_limite_usado = n.extras.of_limite_usado ?? null;
+  }
 
   const patchSaldo = saldo == null ? {} : { saldo };
 

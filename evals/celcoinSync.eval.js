@@ -57,6 +57,23 @@ ok(L.limite === 5000 && L.usado === 1200 && L.disponivel === 3800,
   `limite total errado: ${JSON.stringify(L)} — não pode pegar a linha de SAQUE`);
 ok(S.limiteTotalDoCartao([]).limite === null, 'limits vazio → null');
 ok(S.limiteTotalDoCartao(null).limite === null, 'limits null → null');
+
+// ⚠️ CASO REAL (Nubank, ago/2026): o cartão mandou UMA única linha de limite, e
+// era o "Limite Nupay" — uma MODALIDADE, não o teto do cartão. O fallback
+// antigo ("sem TOTAL, pega o maior") adotou os R$ 300,45 como limite do
+// cartão, e o painel passou a mostrar "limite R$ 300,45 · 100% usado" num
+// cartão cuja fatura do mês foi R$ 2.293,71.
+// Preferir NULL a um teto falso: limite errado contamina a barra de uso e o
+// alerta de limite estourado.
+const soNupay = S.limiteTotalDoCartao([
+  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'INDIVIDUAL',
+    identification_number: '0864', line_name: 'OUTROS', line_name_additional_info: 'Limite Nupay',
+    limit_amount: { amount: '300.4500' }, used_amount: { amount: '300.45' },
+    available_amount: { amount: '0.00' } },
+]);
+ok(soNupay.limite === null,
+  `só MODALIDADE_OPERACAO (NuPay) NÃO pode virar limite do cartão — veio ${JSON.stringify(soNupay)}`);
+ok(soNupay.usado === null, 'e nem o "usado" da modalidade vira o usado do cartão');
 console.log('  ok');
 
 // ── 5. Fatura em aberto = próximo vencimento ≥ hoje ────────────────────────
