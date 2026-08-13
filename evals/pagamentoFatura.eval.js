@@ -21,7 +21,7 @@
 // Rodar:  npm run eval:pagamento-fatura
 // =============================================================================
 const { ehPagamentoFaturaDescricao, CATEGORIA_FATURA } = require('../src/services/categorizar');
-const { normalizeTxConta } = require('../src/services/polpCelcoinSync');
+const { normalizeTxConta, normalizeTxCartao } = require('../src/services/polpCelcoinSync');
 
 const falhas = [];
 const ok = (c, m) => { if (!c) falhas.push(m); };
@@ -113,6 +113,74 @@ console.log('── 3. caso real (Mercado Pago, 03/08, R$ 2.243,60) ──');
     credit_debit_type: 'DEBITO',
   });
   eq(gasto.transferencia, false, 'compra comum continua gasto');
+}
+console.log('  ok');
+
+// ── 4B. "Pagamento recebido" NO CARTÃO (Nubank) ────────────────────────────
+//
+// O bug mais caro deste arquivo. O Nubank descreve o pagamento da fatura como
+// "Pagamento recebido" — sem "fatura", sem "cartão". O detector compartilhado
+// exige as duas palavras juntas (senão "pagamento pix" numa conta viraria
+// transferência), então a linha caía em crédito de ajuste → Reembolso → e
+// ABATIA a fatura. A fatura do app ficava MENOR que a do banco: medido numa
+// conta real, R$ 2.293,71 de abatimento indevido levaram a soma do ciclo a
+// −R$ 2.256,09.
+console.log('── 4B. "Pagamento recebido" no cartão ──');
+{
+  const hoje = '2026-08-13';
+  const pg = normalizeTxCartao({
+    id: 'tx-nu-1',
+    transaction_name: 'Pagamento recebido',
+    brazilian_amount: { amount: '2293.71' },
+    credit_debit_type: 'CREDITO',
+    transaction_date_time: '2026-08-07T10:00:00Z',
+  }, hoje);
+  eq(pg.categoria, CATEGORIA_FATURA, 'vira pagamento de FATURA, não Reembolso');
+  eq(pg.transferencia, true, 'e segue como transferência (fora do gasto)');
+
+  // O campo ESTRUTURADO da Polp também tem de bastar sozinho — é o caminho
+  // mais confiável, e o regex antigo não casava com ele: "credit_card_payment"
+  // tem UNDERSCORE, e o padrão pedia \s* entre as palavras.
+  const porRef = normalizeTxCartao({
+    id: 'tx-nu-2',
+    transaction_name: 'Qualquer coisa',
+    brazilian_amount: { amount: '500' },
+    credit_debit_type: 'CREDITO',
+    category_ref: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT',
+    transaction_date_time: '2026-08-07T10:00:00Z',
+  }, hoje);
+  eq(porRef.categoria, CATEGORIA_FATURA, 'category_ref sozinho já identifica o pagamento');
+
+  // ⚠️ O QUE NÃO PODE SER CONFUNDIDO — estes continuam ABATENDO a fatura,
+  // porque são consumo que voltou, não quitação:
+  const estorno = normalizeTxCartao({
+    id: 'tx-nu-3',
+    transaction_name: 'Estorno de Uber - NuPay',
+    brazilian_amount: { amount: '66.95' },
+    credit_debit_type: 'CREDITO',
+    transaction_date_time: '2026-08-12T10:00:00Z',
+  }, hoje);
+  ok(estorno.categoria !== CATEGORIA_FATURA, 'estorno NÃO vira pagamento de fatura');
+
+  const credParc = normalizeTxCartao({
+    id: 'tx-nu-4',
+    transaction_name: 'Crédito de parcelamento de compra',
+    brazilian_amount: { amount: '88.96' },
+    credit_debit_type: 'CREDITO',
+    transaction_date_time: '2026-08-07T10:00:00Z',
+  }, hoje);
+  ok(credParc.categoria !== CATEGORIA_FATURA,
+    'crédito de parcelamento NÃO vira pagamento (ele abate, e as parcelas somam)');
+
+  // DÉBITO com a mesma descrição não é quitação — é cobrança.
+  const debito = normalizeTxCartao({
+    id: 'tx-nu-5',
+    transaction_name: 'Pagamento recebido',
+    brazilian_amount: { amount: '100' },
+    credit_debit_type: 'DEBITO',
+    transaction_date_time: '2026-08-07T10:00:00Z',
+  }, hoje);
+  ok(debito.categoria !== CATEGORIA_FATURA, 'débito com a mesma descrição não é pagamento de fatura');
 }
 console.log('  ok');
 

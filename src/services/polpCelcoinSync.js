@@ -36,6 +36,7 @@ const { cicloPorCompetencia, competenciaAtual, hojeSP } = require('./cicloFatura
 const { valorNaFatura } = require('./valorFatura');
 const { registrarPagamentosDoOF } = require('./faturaRollover');
 const { gravarParcelasPrevistas } = require('./parcelasPrevistas');
+const { salvarFaturas } = require('./faturasBanco');
 
 const PROVIDER = 'polp-celcoin';
 const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -835,7 +836,30 @@ function normalizeTxCartao(tx, hoje) {
   //     que voltou; devolve limite também).
   // Quem lê essa diferença é `services/valorFatura.js`, pela dupla
   // `transferencia = true` + categoria.
+  // ⚠️ `ehPagamentoNoCartao` é EXCLUSIVO desta função (transações de CARTÃO).
+  //
+  // BUG REAL, e o mais caro que este arquivo já teve: o Nubank descreve o
+  // pagamento da fatura como **"Pagamento recebido"** — sem a palavra "fatura"
+  // nem "cartão". O `ehPagamentoFaturaDescricao` (compartilhado com as contas)
+  // exige as duas palavras juntas, de propósito, então não casava. A linha caía
+  // em `creditoAjuste` → categoria Reembolso → e ABATIA a fatura.
+  //
+  // Efeito medido na conta do relato: um pagamento de R$ 2.293,71 entrando como
+  // abatimento derrubava a soma do ciclo pra −R$ 2.256,09. É exatamente o
+  // sintoma que o cliente descreveu — a fatura do app MENOR que a do banco.
+  //
+  // Por que não pôr "pagamento recebido" no regex compartilhado: numa CONTA
+  // bancária "Pagamento recebido" é uma receita de verdade (alguém te pagou), e
+  // marcá-la como transferência a apagaria do dashboard. Aqui é seguro porque
+  // um CRÉDITO num cartão de crédito com essa descrição só pode ser a quitação
+  // da fatura — cartão não recebe salário.
+  const ehPagamentoNoCartao = ehCredito
+    && /\bpagamento\s+recebido\b/.test(
+      String(descricao || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, ''));
+
   const pagouFatura = tipoTx === 'PAGAMENTO_FATURA'
+    || tx.category_ref === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT'
+    || ehPagamentoNoCartao
     || ehPagamentoFaturaDescricao(descricao, tx.category_ref);
   // Exige `ehCredito`: um "ESTORNO" que venha como DÉBITO é cobrança de
   // verdade (estorno de um crédito anterior) e tem de seguir como Gasto.
@@ -1455,11 +1479,17 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // transação e a fatura FUTURA saía a menos (medido: 282,27 onde o app
         // mostrava 558,78). Projeção — não vira transação.
         let parcelasProjetadas = 0;
+        // Faturas PUBLICADAS pelo banco (migration 118). É o valor oficial —
+        // até aqui a Sora recebia `bill_total_amount` a cada sync e descartava,
+        // reconstruindo o número pela soma das transações importadas. Guardar
+        // tira o valor da fatura do terreno da reconstrução (ver faturasBanco.js).
+        let faturasSalvas = 0;
         try {
           const { data: w } = await supabase.from('wallets')
             .select('*')                       // '*': colunas novas (114) podem não existir
             .eq('grupo_id', grupoId).eq('of_conta_id', n.externalId).maybeSingle();
           if (w) {
+            faturasSalvas = await salvarFaturas(grupoId, w.id, bills);
             pagamentosRegistrados = await registrarPagamentosDoOF(grupoId, w);
             const parcelamentos = await celcoin.listarParcelamentos(n.externalId);
             // `normalizadas` entra pra NÃO projetar por cima do que o sync já
@@ -1476,6 +1506,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           txs: txs.length, novas,
           pagamentos_fatura: pagamentosRegistrados || undefined,
           parcelas_previstas: parcelasProjetadas || undefined,
+          faturas_banco: faturasSalvas || undefined,
         });
       } catch (e) { relatorio.cartoes.push({ erro: e.message }); }
     }
