@@ -38,14 +38,18 @@ const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.forsora.com').r
 // fica; some só a piada).
 const MAX_CORE = 900;
 
-// `arte: false` = ainda não existe `public/agentes/<id>.png` no painel. Esses
-// caem na capa genérica da Sora, porque URL de imagem que dá 404 faz a Meta
-// RECUSAR a mensagem inteira — o agente ficaria mudo por falta de desenho.
-// Quando a arte chegar, é só virar pra `true`.
+// `arte: false` = ainda não existe `public/agentes/whatsapp/<id>.png` no
+// painel (a capa do WhatsApp, 1200×630 — pasta separada da arte do painel,
+// que é 640×640/320×320 e serve outra finalidade, ver lib/agentes.ts). Sem
+// arte cai na capa genérica da Sora, porque URL de imagem que dá 404 faz a
+// Meta RECUSAR a mensagem inteira — o agente ficaria mudo por falta de
+// desenho. Quando a arte chegar, é só virar pra `true`.
+// ⚠️ `sora` está `false` de propósito: falta `whatsapp/sora.png` na pasta
+// (os outros 7 já têm). Suba o arquivo e vire pra `true`.
 const AGENTES = {
   sardinha:            { nome: 'Sardinha',        emoji: '🐟', arte: true },
   'don-baleone':       { nome: 'Don Baleone',     emoji: '🐋', arte: true },
-  sora:             { nome: 'Sora',         emoji: '🎥', arte: true },
+  sora:             { nome: 'Sora',         emoji: '🎥', arte: false },
   loki:              { nome: 'Loki',          emoji: '🌅', arte: true },
   'dr-house':          { nome: 'Dr. House',       emoji: '🩺', arte: true },
   'detetive-watson':   { nome: 'Detetive Watson', emoji: '🔍', arte: true },
@@ -252,9 +256,15 @@ function templateAgente(agenteId, core) {
     // A Meta EXIGE o parâmetro de header em todo envio quando o template tem
     // cabeçalho de mídia — senão recusa e o aviso não chega. Agente sem arte
     // usa a capa da Sora (ver `arte` no catálogo).
+    //
+    // ⚠️ `whatsapp/` é pasta SEPARADA de `public/agentes/<id>.png` (essa é a
+    // arte do painel — poster do vídeo, 640×640). A capa de mensagem tem
+    // dimensão PRÓPRIA (1200×630, o formato que o WhatsApp/Meta espera pra
+    // preview de link/cabeçalho) — arquivo errado aqui não é "meio certo", a
+    // Meta corta ou recusa a imagem inteira.
     opts: {
       headerImage: agente.arte
-        ? `${APP_URL}/agentes/${agenteId}.png`
+        ? `${APP_URL}/agentes/whatsapp/${agenteId}.png`
         : (process.env.SORA_CAPA_URL || `${APP_URL}/sora-capa.png`),
     },
   };

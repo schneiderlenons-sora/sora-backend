@@ -128,8 +128,12 @@ console.log('── 7. template do agente ──');
   ok(t.params[1].includes('629,51'), '{{2}} carrega o recado com o valor');
   ok(!t.params[1].startsWith('Don Baleone'),
     'o recado NÃO repete o nome — ele já é o {{1}} (senão sai "Don Baleone: Don Baleone: ...")');
-  ok(t.opts.headerImage === 'https://www.forsora.com/agentes/don-baleone.png',
-    `capa aponta pro arquivo do agente (veio "${t.opts.headerImage}")`);
+  // ⚠️ Pasta PRÓPRIA (`agentes/whatsapp/`), separada de `public/agentes/<id>.png`
+  // (a arte do painel, 640×640 — poster do vídeo). A capa de mensagem é
+  // 1200×630, o formato que a Meta espera pra cabeçalho — arquivo da pasta
+  // errada não é "meio certo", é a Meta recusando a imagem inteira.
+  ok(t.opts.headerImage === 'https://www.forsora.com/agentes/whatsapp/don-baleone.png',
+    `capa aponta pro arquivo do agente, na pasta whatsapp/ (veio "${t.opts.headerImage}")`);
 
   // A imagem é parâmetro de ENVIO: cada agente manda a sua com o MESMO template.
   const t2 = templateAgente('dr-house', 'Dose das 14h.');
@@ -151,10 +155,11 @@ console.log('── 7. template do agente ──');
   ok(templateAgente('nao-existe', 'x') === null, 'agente desconhecido não monta template');
   ok(templateAgente('don-baleone', '') === null, 'recado vazio não monta template');
 
-  // TODOS os 8 agentes já têm arte hoje. Este bloco cobre o caso `arte: false`
-  // porque ele volta a acontecer a cada agente NOVO (fase 4): apontar o
-  // cabeçalho pra um .png inexistente faz a Meta RECUSAR a mensagem inteira, e
-  // o agente ficaria mudo por falta de desenho.
+  // Este bloco cobre o caso `arte: false` — hoje é o caso real do `sora`
+  // (falta `agentes/whatsapp/sora.png` na pasta), e volta a acontecer a cada
+  // agente NOVO (fase 4): apontar o cabeçalho pra um .png inexistente faz a
+  // Meta RECUSAR a mensagem inteira, e o agente ficaria mudo por falta de
+  // desenho.
   const semArte = templateAgente('__fantasma__', 'x');
   ok(semArte === null, 'agente que não existe no catálogo não monta template');
 
@@ -168,11 +173,17 @@ console.log('── 7. template do agente ──');
   ok(novo.params[0] === 'Novato', 'e o nome dele continua no {{1}}');
   delete AGENTES.__novo__;
 
-  // E os 8 de verdade têm de apontar pro arquivo PRÓPRIO.
+  // Os agentes COM arte apontam pro arquivo próprio, na pasta whatsapp/; o
+  // `sora` (sem arte hoje) cai na capa genérica — não pro png inexistente.
   for (const id of Object.keys(AGENTES)) {
     const t3 = templateAgente(id, 'recado');
-    ok(t3.opts.headerImage.includes(`/agentes/${id}.png`),
-      `${id}: usa a capa própria (veio "${t3.opts.headerImage}")`);
+    if (AGENTES[id].arte) {
+      ok(t3.opts.headerImage.includes(`/agentes/whatsapp/${id}.png`),
+        `${id}: usa a capa própria em whatsapp/ (veio "${t3.opts.headerImage}")`);
+    } else {
+      ok(t3.opts.headerImage.includes('sora-capa'),
+        `${id}: sem arte, cai na capa genérica (veio "${t3.opts.headerImage}")`);
+    }
   }
 }
 console.log('  ok');
