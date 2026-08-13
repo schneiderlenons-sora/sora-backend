@@ -149,7 +149,9 @@ console.log('── 7. template do agente ──');
     ok(!/[\r\n\t]/.test(tpl.params[1]), `${chave}: parâmetro sem quebra de linha (a Meta rejeita)`);
     ok(tpl.params[1].length <= 1024, `${chave}: parâmetro dentro do limite`);
     ok(tpl.params[1].includes('R$ 10,00'), `${chave}: o fato sobrevive`);
-    ok(/^https:\/\/.+\.png$/.test(tpl.opts.headerImage), `${chave}: capa é URL pública .png`);
+    // `(\?v=\d+)?` de propósito: `capaVersao` (ver catálogo) anexa `?v=N` pra
+    // descachear uma URL que a Meta já tentou buscar e recusou antes.
+    ok(/^https:\/\/.+\.png(\?v=\d+)?$/.test(tpl.opts.headerImage), `${chave}: capa é URL pública .png`);
   }
 
   ok(templateAgente('nao-existe', 'x') === null, 'agente desconhecido não monta template');

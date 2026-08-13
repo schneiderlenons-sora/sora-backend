@@ -47,7 +47,13 @@ const MAX_CORE = 900;
 const AGENTES = {
   sardinha:            { nome: 'Sardinha',        emoji: '🐟', arte: true },
   'don-baleone':       { nome: 'Don Baleone',     emoji: '🐋', arte: true },
-  sora:             { nome: 'Sora',         emoji: '🎥', arte: true },
+  // ⚠️ `capaVersao: 2` — a Meta buscou a URL do `sora.png` quando ela ainda
+  // dava 404 (o arquivo tinha ficado sem commit no frontend) e parece ter
+  // guardado essa falha em cache: mesmo depois do arquivo corrigido e
+  // respondendo 200, o envio continuava sendo recusado com a MESMA URL.
+  // `?v=2` força a Meta a tratar como uma URL nova e buscar de novo — não
+  // muda o arquivo nem a imagem, só evita o cache da tentativa ruim.
+  sora:             { nome: 'Sora',         emoji: '🎥', arte: true, capaVersao: 2 },
   loki:              { nome: 'Loki',          emoji: '🌅', arte: true },
   'dr-house':          { nome: 'Dr. House',       emoji: '🩺', arte: true },
   'detetive-watson':   { nome: 'Detetive Watson', emoji: '🔍', arte: true },
@@ -262,7 +268,10 @@ function templateAgente(agenteId, core) {
     // Meta corta ou recusa a imagem inteira.
     opts: {
       headerImage: agente.arte
-        ? `${APP_URL}/agentes/whatsapp/${agenteId}.png`
+        // `?v=N` (ver `capaVersao` no catálogo) só existe pra "descachear" uma
+        // URL que a Meta já tentou buscar e falhou (404 anterior). Sem
+        // capaVersao, a URL não leva query — comportamento de sempre.
+        ? `${APP_URL}/agentes/whatsapp/${agenteId}.png${agente.capaVersao ? `?v=${agente.capaVersao}` : ''}`
         : (process.env.SORA_CAPA_URL || `${APP_URL}/sora-capa.png`),
     },
   };
