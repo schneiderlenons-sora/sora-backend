@@ -59,7 +59,7 @@ _Fala em texto ou áudio, em linguagem natural_ 😉
 
 ━━━━━━━━━━━━━━━━
 ✨ *Quer ver TODOS os comandos?*
-Acesse a *Central da Sora* no app 👉
+Acesse a aba *Comandos* no app 👉
 www.forsora.com/central-sora`;
 
 const WELCOME_TEXT = (nome) => `👋 *Olá, ${nome}! Bem-vindo(a) à Sora!* 🌿

@@ -57,7 +57,7 @@ function montarMensagem({ nome, primeiroAcesso, onboardingCompleto }) {
       `• _resumo_ — relatório completo: receitas, gastos, saldo e top categorias`,
       `• _almocei arroz, feijão e frango_ — eu calculo calorias, proteínas, carbs e gorduras`,
       ``,
-      `Pra ver tudo que sei fazer, digite *ajuda* a qualquer momento — ou abra a *Central da Sora* no painel pra ver todos os comandos detalhados. 🙌`,
+      `Pra ver tudo que sei fazer, digite *ajuda* a qualquer momento — ou abra a aba *Comandos* no painel pra ver todos os comandos detalhados. 🙌`,
     );
     return linhas.join('\n');
   }
