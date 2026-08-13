@@ -73,18 +73,22 @@ router.get('/diag', async (req, res) => {
     } catch (e) { return res.json({ welcome: dest, nome, sent: false, error: e.response?.data?.error || e.message }); }
   }
 
-  // Testa a capa + a voz dos 8 agentes de UMA vez, pro número do DONO.
-  // Uso: &testeagentes=1 (nenhum outro parâmetro — ver o porquê abaixo).
+  // Testa a capa + a voz dos agentes, pro número do DONO.
+  // Uso: &testeagentes=1            → os 8 de uma vez
+  //      &testeagentes=1&agente=sora → só um (reteste sem reenviar os outros 7)
   //
   // ⚠️ NÚMERO HARDCODED DE PROPÓSITO. Não lê `to` da query nem de lugar
   // nenhum: é pra ser IMPOSSÍVEL este teste vazar pra um cliente de verdade,
   // mesmo por engano de quem chama a URL. Se um dia servir outro número, muda
-  // aqui no código — nunca vira parâmetro.
+  // aqui no código — nunca vira parâmetro. `agente` só FILTRA quais dos 8
+  // rodam; o destino continua o mesmo, sempre.
   if (req.query.testeagentes) {
     const NUMERO_DONO = '5532999167475';
     const { AGENTES, VOZES, falar, templateAgente } = require('../agentes');
     const resultados = [];
-    for (const id of Object.keys(AGENTES)) {
+    const alvo = req.query.agente ? [req.query.agente] : Object.keys(AGENTES);
+    for (const id of alvo) {
+      if (!AGENTES[id]) { resultados.push({ agente: id, ok: false, motivo: 'agente desconhecido' }); continue; }
       // Usa o PRIMEIRO aviso cadastrado pra esse agente (se houver) — exercita
       // o mesmo caminho de produção (falar → templateAgente). Osvaldo/Oráculo
       // ainda não têm voz (fase 4): testam só template + foto, com um recado
