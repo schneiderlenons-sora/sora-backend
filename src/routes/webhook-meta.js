@@ -73,6 +73,42 @@ router.get('/diag', async (req, res) => {
     } catch (e) { return res.json({ welcome: dest, nome, sent: false, error: e.response?.data?.error || e.message }); }
   }
 
+  // Testa a capa + a voz dos 8 agentes de UMA vez, pro número do DONO.
+  // Uso: &testeagentes=1 (nenhum outro parâmetro — ver o porquê abaixo).
+  //
+  // ⚠️ NÚMERO HARDCODED DE PROPÓSITO. Não lê `to` da query nem de lugar
+  // nenhum: é pra ser IMPOSSÍVEL este teste vazar pra um cliente de verdade,
+  // mesmo por engano de quem chama a URL. Se um dia servir outro número, muda
+  // aqui no código — nunca vira parâmetro.
+  if (req.query.testeagentes) {
+    const NUMERO_DONO = '5532999167475';
+    const { AGENTES, VOZES, falar, templateAgente } = require('../agentes');
+    const resultados = [];
+    for (const id of Object.keys(AGENTES)) {
+      // Usa o PRIMEIRO aviso cadastrado pra esse agente (se houver) — exercita
+      // o mesmo caminho de produção (falar → templateAgente). Osvaldo/Oráculo
+      // ainda não têm voz (fase 4): testam só template + foto, com um recado
+      // fixo, porque `templateAgente` não depende de `falar` pra existir.
+      const avisoId = Object.keys(VOZES).find((k) => k.startsWith(`${id}.`))?.split('.')[1];
+      const vestida = avisoId
+        ? falar(id, avisoId, {
+            texto: `Teste do agente ${AGENTES[id].nome} — se você recebeu isso com a foto certa, deu tudo certo! 🎉`,
+            core: 'Mensagem de teste — tudo funcionando por aqui.',
+            seed: 'teste-agentes',
+          })
+        : { coreAgente: `Teste do agente ${AGENTES[id].nome} — ainda sem voz própria (fase 4), mas template e foto já funcionam.` };
+      const tpl = templateAgente(id, vestida.coreAgente || vestida.core);
+      if (!tpl) { resultados.push({ agente: id, ok: false, motivo: 'AGENTES_TEMPLATE desligado ou sem core' }); continue; }
+      const ok = await wa.enviarTemplate(NUMERO_DONO, tpl.name, tpl.params, 'pt_BR', tpl.opts);
+      resultados.push({
+        agente: id, ok, comVoz: !!avisoId, headerImage: tpl.opts.headerImage,
+        erro: ok ? undefined : wa.getLastSendError?.(),
+      });
+      await new Promise((r) => setTimeout(r, 1200)); // não estourar rate limit da Meta
+    }
+    return res.json({ destino: NUMERO_DONO, agentesVoz: process.env.AGENTES_VOZ === '1', agentesTemplate: process.env.AGENTES_TEMPLATE === '1', resultados });
+  }
+
   const env = {
     provider: process.env.WHATSAPP_PROVIDER || 'zapi',
     hasToken: !!TOKEN,
