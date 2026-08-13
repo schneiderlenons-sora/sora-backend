@@ -250,9 +250,17 @@ cron.schedule('0 * * * *', async () => {
       // continua saindo, se ele quiser.
       if (modo === 'nao_lancar') {
         if (!querLembrete) continue;
+        // ⚠️ BUG REAL: este modo não cria transação (é o design — "a Sora não
+        // lança nada"), e o job roda de novo a cada hora dentro da janela
+        // 8h–10h SP. Sem essa marca, o MESMO lembrete entrava no balde 3x
+        // (08h, 09h, 10h) — não havia nada que se pudesse checar pra saber
+        // "já avisei hoje". Mesmo padrão do `ultimo_previsto_ym` (sql/099):
+        // dedup NA PRÓPRIA recorrência, por dia.
+        if (rec.ultimo_lembrete_dia === sp.dataStr) continue;
         const phoneL = await phoneDoUser(rec.criado_por, rec.grupo_id);
         if (phoneL && await avisosLigados(rec.criado_por)) {
           bucket(phoneL).soLembrete.push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo });
+          try { await supabase.from('recorrencias').update({ ultimo_lembrete_dia: sp.dataStr }).eq('id', rec.id); } catch {}
         }
         continue;
       }
@@ -719,8 +727,25 @@ cron.schedule('*/15 * * * *', async () => {
     if (!phone) continue;
     if (!(await avisosLigados(c.user_id))) continue; // kill-switch (não marca enviado p/ reativar depois)
 
+    // ⚠️ "Hoje" é responsabilidade do BRIEFING MATINAL (JOB 1K), que já lista
+    // TUDO que acontece hoje — inclusive este compromisso — na mesma mensagem.
+    // Mesmo princípio já aplicado à fatura do cartão ("vence hoje é do
+    // briefing, se ligado, não repetimos aqui"; ver JOB de faturas): sem esta
+    // checagem o usuário recebia o compromisso duas vezes, uma do Loki aqui e
+    // outra dentro do briefing (bug real relatado). Só suprime quando é HOJE —
+    // lembrete de amanhã ("1 dia antes") ou atrasado continua saindo normal,
+    // porque o briefing de hoje não fala do de amanhã.
+    const ehHoje = c.data === sp.dataStr;
+    if (ehHoje && await briefingLigado(c.user_id)) {
+      await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
+      continue;
+    }
+
     await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
-    const quando = c.hora ? `hoje às ${c.hora}` : 'hoje';
+    // "Hoje" só quando é hoje DE VERDADE — o lembrete de "1 dia antes" cai
+    // aqui com c.data = amanhã, e dizer "hoje às 9h" pra um compromisso de
+    // amanhã confundiria o usuário.
+    const quando = c.hora ? `${ehHoje ? 'hoje' : 'amanhã'} às ${c.hora}` : (ehHoje ? 'hoje' : 'amanhã');
     const txt =
       `📅 *Lembrete de compromisso*\n\n` +
       `*${c.titulo}*\n🕐 ${quando}${c.local ? `\n📍 ${c.local}` : ''}\n\n` +
@@ -774,17 +799,28 @@ cron.schedule('*/15 * * * *', async () => {
     });
     const dataFmt = new Date(sp.dataStr + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
     const txt =
-      `☀️ *Bom dia!*\nSua agenda de hoje (${dataFmt}):\n\n${linhas.join('\n')}\n\n` +
+      `Sua agenda de hoje (${dataFmt}):\n\n${linhas.join('\n')}\n\n` +
       `Tenha um ótimo dia! 💜`;
     // Param {{2}} do template em LINHA ÚNICA — a Meta rejeita \n no parâmetro (era
     // por isso que o briefing não chegava). Junta os eventos com " · ".
     const resumo = oneLine(linhas.join('  ·  ')).slice(0, 900);
+    // O BRIEFING É DO LOKI — ele é o dono da agenda (compromissos, hábitos,
+    // manutenções já são a voz dele). `falar()` veste o texto rico e o `core`
+    // (fora da janela de 24h) na personalidade dele; `templateAgente('loki', …)`
+    // manda a CARA dele no cabeçalho. Mesmo padrão do resumo semanal/mensal
+    // (`falar('sora', …)` + `templateAgente('sora', …)`): sem AGENTES_TEMPLATE
+    // ligado, ou sem `core`, cai pro `briefing_matinal` de sempre — nunca fica
+    // mudo.
+    const vestida = falar('loki', 'briefing', { texto: txt, core: resumo, seed: u.id });
     await enviarProativo(u.phone, {
-      texto: txt,
-      // 'briefing_matinal' tem cabeçalho de IMAGEM → manda a capa no header.
-      template: { name: 'briefing_matinal', params: [(u.name || 'tudo bem').split(' ')[0], resumo], opts: { headerImage: CAPA } },
+      texto: vestida.texto,
+      template: templateAgente('loki', vestida.coreAgente || resumo) || {
+        name: 'briefing_matinal',
+        params: [(u.name || 'tudo bem').split(' ')[0], resumo],
+        opts: { headerImage: CAPA },
+      },
     });
-    console.log(`☀️ Briefing → ${u.phone} (${eventos.length} itens)`);
+    console.log(`☀️ Briefing (Loki) → ${u.phone} (${eventos.length} itens)`);
   }
 });
 
