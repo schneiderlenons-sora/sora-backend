@@ -137,6 +137,85 @@ console.log('── 6. utilitários ──');
 }
 console.log('  ok');
 
+// ── 7. SUSPEITAS: o que o Watson PERGUNTA (≠ do que ele AFIRMA) ─────────
+// A separação é a decisão central do agente. Confirmada tem PROVA (mesmo
+// milissegundo, ou origens diferentes); suspeita é só coincidência — e a
+// coincidência, medida na base, é legítima na maioria das vezes.
+console.log('── 7. suspeitas separadas das confirmadas ──');
+{
+  const { ehSuspeita, analisar, ehDuplicata: ehDup } = require('../src/services/duplicadas');
+
+  // Mesmo valor + carteira + descrição, 1 dia de diferença, AMBAS do banco com
+  // horas distintas → não é prova de nada, mas merece ser perguntado.
+  const a = tx({ id: 's1', valor: 17.8, observacao: 'PADARIA SP', data: '2026-08-01T09:00:00.000+00:00', of_tx_id: 'x1' });
+  const b = tx({ id: 's2', valor: 17.8, observacao: 'PADARIA SP', data: '2026-08-02T15:30:00.000+00:00', of_tx_id: 'x2' });
+  ok(ehSuspeita(a, b) === 'mesmo-valor-e-descricao', 'mesmo valor+descrição em 1 dia é SUSPEITA');
+  ok(ehDup(a, b) === null, '…mas NÃO é duplicata confirmada (o banco disse que são duas)');
+
+  // Descrição diferente não vira suspeita — senão vira "mesmo valor no dia",
+  // que em conta movimentada acusa qualquer coisa.
+  const c = tx({ id: 's3', valor: 17.8, observacao: 'MERCADO', data: '2026-08-01T10:00:00.000+00:00', of_tx_id: 'x3' });
+  ok(ehSuspeita(a, c) === null, 'descrição diferente NÃO é suspeita');
+
+  // Mais de 1 dia também não.
+  const d = tx({ id: 's4', valor: 17.8, observacao: 'PADARIA SP', data: '2026-08-05T10:00:00.000+00:00', of_tx_id: 'x4' });
+  ok(ehSuspeita(a, d) === null, '4 dias de diferença NÃO é suspeita');
+
+  // ⚠️ O invariante que mais importa: nada aparece nas DUAS listas.
+  const dupA = tx({ id: 'd1', valor: 56.66, observacao: 'CHINOCA', data: '2026-07-10T18:48:00.324+00:00' });
+  const dupB = tx({ id: 'd2', valor: 56.66, observacao: 'CHINOCA', data: '2026-07-10T18:48:00.324+00:00' });
+  const r = analisar([a, b, dupA, dupB, c, d]);
+  ok(r.confirmadas.length === 1, 'a do mesmo instante entra em confirmadas');
+  ok(r.suspeitas.length === 1, 'a da padaria entra em suspeitas');
+
+  const idsConf = new Set(r.confirmadas.flatMap((g) => g.transacoes.map((t) => t.id)));
+  const idsSusp = new Set(r.suspeitas.flatMap((g) => g.transacoes.map((t) => t.id)));
+  const cruzou = [...idsConf].filter((i) => idsSusp.has(i));
+  ok(cruzou.length === 0, `transação não pode estar nas duas listas (cruzou: ${cruzou.join(',')})`);
+
+  // Parcela/recorrente/transferência continuam fora dos DOIS lados.
+  const p1 = tx({ id: 'p1', valor: 99, observacao: 'CURSO', parcela_total: 3, data: '2026-08-01T10:00:00Z' });
+  const p2 = tx({ id: 'p2', valor: 99, observacao: 'CURSO', parcela_total: 3, data: '2026-08-02T10:00:00Z' });
+  const r2 = analisar([p1, p2]);
+  ok(r2.confirmadas.length === 0 && r2.suspeitas.length === 0, 'parcela não entra em nenhuma das listas');
+
+  // O aviso proativo do WhatsApp NÃO pode passar a falar de suspeita: é o que
+  // transformaria o Watson em agente que grita lobo.
+  ok(acharDuplicadas([a, b]).length === 0, 'acharDuplicadas (usado no aviso) ignora suspeitas');
+}
+console.log('  ok');
+
+// ── 8. Gatilho do WhatsApp ──────────────────────────────────────────────
+// O risco aqui é o CONTRÁRIO do detector: pegar frase demais. "Paguei duas
+// vezes o aluguel" é um RELATO — virar investigação seria a Sora ignorando o
+// que a pessoa disse.
+console.log('── 8. gatilho do WhatsApp ──');
+{
+  const { ehPedidoDuplicadas, pediuFatura } = require('../src/handlers/duplicadas');
+
+  const pega = [
+    'tem alguma duplicada?', 'watson', 'chama o watson',
+    'tem lançamento repetido?', 'confere se tem transação duplicada',
+    'acho que tem compra em dobro', 'verifica duplicadas na fatura',
+    'tem algo duplicado?', 'olha se tem cobrança repetida',
+  ];
+  for (const f of pega) ok(ehPedidoDuplicadas(f) === true, `deveria disparar: "${f}"`);
+
+  const ignora = [
+    'paguei duas vezes o aluguel',      // relato, não pedido
+    'gastei 50 no mercado',
+    'quanto gastei esse mês?',
+    'me manda o resumo',
+    'comprei duas pizzas',
+    'transferi 2 vezes pro joão hoje de manhã e queria saber se deu certo o segundo',  // longa demais
+  ];
+  for (const f of ignora) ok(ehPedidoDuplicadas(f) === false, `NÃO deveria disparar: "${f}"`);
+
+  ok(pediuFatura('tem duplicada na fatura?') === true, 'escopo de fatura reconhecido');
+  ok(pediuFatura('tem duplicada?') === false, 'sem "fatura" o escopo é geral');
+}
+console.log('  ok');
+
 // ── Resultado ────────────────────────────────────────────────────────────
 console.log('');
 if (falhas.length) {

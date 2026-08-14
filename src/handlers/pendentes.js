@@ -79,6 +79,13 @@ async function resolverPendente(pendente, mensagem, ctx) {
   const msg = (mensagem || '').trim();
   const lower = msg.toLowerCase();
 
+  // ─── DETETIVE WATSON: escolher e apagar a cópia duplicada ──────
+  if (pendente.tipo_pergunta === 'escolher_duplicada'
+      || pendente.tipo_pergunta === 'confirmar_exclusao_dup') {
+    const { resolverDuplicada } = require('./duplicadas');
+    return resolverDuplicada(pendente, msg, phone);
+  }
+
   // ─── ROLAR FATURA (rollover do cartão, migration 096) ──────────
   if (pendente.tipo_pergunta === 'rolar_fatura') {
     const { rollover_id, cartao_nome, valor } = pendente.contexto || {};

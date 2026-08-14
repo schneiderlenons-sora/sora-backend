@@ -484,6 +484,20 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       return;
     }
 
+    // Detetive Watson: "tem alguma duplicada?" → investiga e lista, sem IA.
+    // ANTES do FAQ porque "duplicada" é pedido de AÇÃO, não pergunta genérica.
+    if (!data && user?.grupo_ativo) {
+      const watson = require('../handlers/duplicadas');
+      if (watson.ehPedidoDuplicadas(mensagem)) {
+        try {
+          if (await watson.responderDuplicadas(phone, user, mensagem)) {
+            console.log(`🔍 [${phone}] Watson: duplicadas`);
+            return;
+          }
+        } catch (e) { console.warn('[watson]', e.message); }   // cai pro fluxo normal
+      }
+    }
+
     // FAQ local-first: perguntas comuns (planos, painel, como funciona, suporte…)
     // respondidas na hora, sem IA. Só pega PERGUNTAS (gatilhos com "como/o que/…"),
     // nunca comandos/lançamentos. Vale pra lead também (informação é livre).

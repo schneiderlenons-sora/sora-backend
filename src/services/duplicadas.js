@@ -90,14 +90,41 @@ function ehDuplicata(a, b) {
 }
 
 /**
- * Agrupa as duplicatas de uma lista de transações.
+ * SUSPEITA (≠ duplicata): mesmo valor, mesma carteira, MESMA descrição, ≤1 dia.
+ *
+ * ⚠️ Esta regra é sabidamente RUIDOSA — é a mesma que, medida na base (4.357
+ * gastos), acusa 27 pares em que a MAIORIA é legítima (dois Pix de R$ 17,80 pro
+ * mesmo comerciante no mesmo dia acontece). Por isso ela NUNCA entra no aviso
+ * proativo do WhatsApp nem vem pré-selecionada: só aparece num bloco separado
+ * do painel, rotulado como "pode ser", pro usuário decidir olhando.
+ *
+ * A diferença pra `ehDuplicata` é de PROVA, não de força de palpite: lá existe
+ * evidência (mesmo milissegundo, ou origens diferentes); aqui só coincidência.
+ */
+function ehSuspeita(a, b) {
+  if (!elegivel(a) || !elegivel(b)) return null;
+  if (a.id && b.id && a.id === b.id) return null;
+  if (Number(a.valor) !== Number(b.valor)) return null;
+  if (normTexto(a.carteira_nome) !== normTexto(b.carteira_nome)) return null;
+  // Descrição igual é obrigatória aqui: sem ela sobra "mesmo valor no mesmo
+  // dia", que em conta movimentada acusa qualquer coisa.
+  if (normTexto(a.observacao) !== normTexto(b.observacao)) return null;
+  if (diffDias(a.data, b.data) > 1) return null;
+  return 'mesmo-valor-e-descricao';
+}
+
+/**
+ * Agrupa lançamentos que casam por `comparar`.
  *
  * Devolve `[{ motivo, transacoes: [...] }]` — grupos, não pares, porque a
  * mesma compra pode ter entrado 3 vezes (aconteceu na base) e mostrar 3 pares
  * separados faria o usuário apagar demais.
+ *
+ * `ignorar` = ids já consumidos por uma análise anterior (as confirmadas), pra
+ * a mesma transação não aparecer nas duas listas do painel.
  */
-function acharDuplicadas(transacoes) {
-  const lista = (transacoes || []).filter(elegivel);
+function agrupar(transacoes, comparar, ignorar) {
+  const lista = (transacoes || []).filter((t) => elegivel(t) && !(ignorar && ignorar.has(t.id)));
   const visto = new Set();
   const grupos = [];
 
@@ -110,7 +137,7 @@ function acharDuplicadas(transacoes) {
       if (visto.has(lista[j].id)) continue;
       // Compara com QUALQUER um já no grupo: o 3º lançamento pode casar com o
       // 2º e não com o 1º (horas diferentes, origens diferentes).
-      const m = grupo.map((g) => ehDuplicata(g, lista[j])).find(Boolean);
+      const m = grupo.map((g) => comparar(g, lista[j])).find(Boolean);
       if (!m) continue;
       grupo.push(lista[j]);
       visto.add(lista[j].id);
@@ -128,16 +155,41 @@ function acharDuplicadas(transacoes) {
   return grupos;
 }
 
+function acharDuplicadas(transacoes) {
+  return agrupar(transacoes, ehDuplicata, null);
+}
+
+/**
+ * As duas listas de uma vez, sem sobreposição.
+ *
+ * ⚠️ `confirmadas` é o que o Watson AFIRMA; `suspeitas` é o que ele PERGUNTA.
+ * Misturar as duas destrói a confiança no agente — é a decisão central deste
+ * arquivo, e o eval trava que uma transação nunca aparece nas duas.
+ */
+function analisar(transacoes) {
+  const confirmadas = acharDuplicadas(transacoes);
+  const usados = new Set();
+  for (const g of confirmadas) for (const t of g.transacoes) usados.add(t.id);
+  return { confirmadas, suspeitas: agrupar(transacoes, ehSuspeita, usados) };
+}
+
 /** Frase curta descrevendo a prova — é o que o Watson mostra. */
 function explicar(grupo) {
   const n = grupo.transacoes.length;
   const quantas = n === 2 ? 'duas vezes' : `${n} vezes`;
-  return grupo.motivo === 'mesmo-instante'
-    ? `lançada ${quantas} no mesmo instante — mesmo valor, mesma conta, mesmo segundo`
-    : `lançada ${quantas}: uma digitada por você e outra trazida pelo banco`;
+  if (grupo.motivo === 'mesmo-instante') {
+    return `lançada ${quantas} no mesmo instante — mesmo valor, mesma conta, mesmo segundo`;
+  }
+  if (grupo.motivo === 'manual-e-banco') {
+    return `lançada ${quantas}: uma digitada por você e outra trazida pelo banco`;
+  }
+  // Suspeita: a frase precisa deixar claro que é PERGUNTA, não acusação.
+  return `${quantas} o mesmo valor e a mesma descrição, com 1 dia de diferença — pode ser compra repetida de verdade`;
 }
 
 // ── Acesso ao banco ─────────────────────────────────────────────────────────
+
+const COLUNAS = 'id, id_curto, valor, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia';
 
 /** Duplicatas do grupo nos últimos `dias`. */
 async function buscarDuplicadas(grupoId, { dias = 90 } = {}) {
@@ -145,10 +197,55 @@ async function buscarDuplicadas(grupoId, { dias = 90 } = {}) {
   const supabase = require('../db/supabase');
   const desde = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
   const { data } = await supabase.from('transacoes')
-    .select('id, id_curto, valor, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia')
+    .select(COLUNAS)
     .eq('grupo_id', grupoId).eq('tipo', 'Gasto').gte('data', desde)
     .order('data', { ascending: false }).limit(2000);
   return acharDuplicadas(data || []);
+}
+
+/**
+ * Análise sob demanda (o botão do Watson no painel e o comando no WhatsApp).
+ *
+ * `cartaoId` recorta pela FATURA ATUAL daquele cartão. ⚠️ Fatura NÃO é
+ * mês-calendário: o ciclo vai do dia seguinte ao fechamento anterior até o
+ * fechamento, e cruza meses (regra canônica em `services/cicloFatura.js`).
+ * Filtrar por mês aqui traria a fatura errada — é o mesmo erro que o CLAUDE.md
+ * já registra pro resto do painel.
+ *
+ * Cartão sem `dia_fechamento` cai no comportamento de sempre (últimos `dias`),
+ * que é o mesmo fallback do resto do sistema.
+ */
+async function buscarAnalise(grupoId, { dias = 90, cartaoId = null } = {}) {
+  if (!grupoId) return { confirmadas: [], suspeitas: [], escopo: null };
+  const supabase = require('../db/supabase');
+
+  let q = supabase.from('transacoes').select(COLUNAS)
+    .eq('grupo_id', grupoId).eq('tipo', 'Gasto');
+  let escopo = { tipo: 'geral', dias };
+
+  if (cartaoId) {
+    const { data: w } = await supabase.from('wallets')
+      .select('id, nome, dia_fechamento, dia_vencimento')
+      .eq('id', cartaoId).eq('grupo_id', grupoId).maybeSingle();
+
+    if (w && w.dia_fechamento) {
+      const { competenciaAtual, cicloPorCompetencia } = require('./cicloFatura');
+      const comp = competenciaAtual(w);
+      const ciclo = cicloPorCompetencia(w, comp);
+      q = q.eq('carteira_nome', w.nome).gte('data', ciclo.ini).lt('data', ciclo.fimExcl);
+      escopo = { tipo: 'fatura', cartao: w.nome, competencia: comp, ini: ciclo.ini, fim: ciclo.fim };
+    } else if (w) {
+      // Sem data de fechamento não existe ciclo — filtra só pelo cartão.
+      q = q.eq('carteira_nome', w.nome)
+        .gte('data', new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10));
+      escopo = { tipo: 'cartao', cartao: w.nome, dias };
+    }
+  } else {
+    q = q.gte('data', new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10));
+  }
+
+  const { data } = await q.order('data', { ascending: false }).limit(2000);
+  return { ...analisar(data || []), escopo };
 }
 
 const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -215,6 +312,7 @@ function avisarDuplicadasEmBackground(grupoId, phone) {
 
 module.exports = {
   acharDuplicadas, ehDuplicata, buscarDuplicadas, explicar,
+  ehSuspeita, analisar, buscarAnalise,
   avisarDuplicadas, avisarDuplicadasEmBackground,
   normTexto, temHoraReal, diffDias, elegivel,
 };

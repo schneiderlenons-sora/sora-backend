@@ -73,21 +73,27 @@ async function aplicarCategoriaNoEstabelecimento({ grupoId, userId, descricao, c
 // haveria conflito de qualquer forma). Devolve GRUPOS, não pares: a mesma
 // compra pode ter entrado 3 vezes, e mostrar 3 pares faria o usuário apagar
 // demais. O primeiro de cada grupo é o mais antigo — o que se deve manter.
+// `?cartao=<wallet_id>` recorta pela FATURA ATUAL daquele cartão (ciclo real de
+// fechamento, não mês-calendário). Sem ele, últimos `dias`.
+//
+// Devolve DUAS listas: `grupos` (o que o Watson AFIRMA, com prova) e
+// `suspeitas` (o que ele PERGUNTA). Misturar as duas é o que faria o agente
+// acusar inocente — ver o cabeçalho de services/duplicadas.js.
 router.get('/duplicadas/:phone', auth, async (req, res) => {
   try {
     const user = usuarioReq(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
-    const { buscarDuplicadas, explicar } = require('../services/duplicadas');
-    const grupos = await buscarDuplicadas(user.grupo_ativo, {
+    const { buscarAnalise, explicar } = require('../services/duplicadas');
+    const { confirmadas, suspeitas, escopo } = await buscarAnalise(user.grupo_ativo, {
       dias: Math.min(365, parseInt(req.query.dias, 10) || 90),
+      cartaoId: req.query.cartao || null,
     });
+    const vestir = (g) => ({ motivo: g.motivo, explicacao: explicar(g), transacoes: g.transacoes });
     res.json({
-      total: grupos.length,
-      grupos: grupos.map((g) => ({
-        motivo: g.motivo,
-        explicacao: explicar(g),
-        transacoes: g.transacoes,
-      })),
+      total: confirmadas.length,
+      grupos: confirmadas.map(vestir),
+      suspeitas: suspeitas.map(vestir),
+      escopo,
     });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
