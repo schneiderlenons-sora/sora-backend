@@ -105,36 +105,92 @@ router.get('/:phone/distribuicao', auth, exigirPlano('kit', 'premium', 'black'),
 });
 
 // POST /api/investimentos
+//
+// ⚠️ O `error` do insert É LIDO. Antes a rota fazia `const { data } = await
+// ...insert()` e respondia `res.json(data)`: quando o insert falhava, `data`
+// vinha null e o painel recebia **200 OK com null** — achava que salvou, fechava
+// o modal e recarregava a lista vazia. Era o relato "não está salvando" SEM
+// nenhuma mensagem de erro. A causa por trás era a CHECK constraint de `tipo`
+// (migration 121), mas qualquer falha futura teria sumido do mesmo jeito.
 router.post('/', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { phone, tipo, nome, ticker, quantidade, preco_unitario, valor_aportado, data_compra } = req.body;
+    const {
+      tipo, nome, ticker, quantidade, preco_unitario, valor_aportado, data_compra,
+      is_reserva_emergencia, taxa_anual, data_vencimento, indexador, percentual_indexador,
+    } = req.body;
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
+    if (!tipo || !nome) return res.status(400).json({ erro: 'Informe o tipo e o nome do investimento.' });
+
     const qtd   = parseFloat(quantidade) || 1;
     const preco = parseFloat(preco_unitario) || parseFloat(valor_aportado);
+    const aporte = parseFloat(valor_aportado);
+    if (!Number.isFinite(aporte)) return res.status(400).json({ erro: 'Informe o valor investido.' });
 
-    const { data } = await supabase.from('investimentos').insert({
+    const base = {
       grupo_id: grupoId, tipo, nome,
       ticker: ticker || null,
       quantidade: qtd, preco_unitario: preco,
-      valor_aportado: parseFloat(valor_aportado),
+      valor_aportado: aporte,
       valor_atual: qtd * preco,
-      data_compra: data_compra || new Date().toISOString()
-    }).select().single();
+      data_compra: data_compra || new Date().toISOString(),
+    };
+    const linha = { ...base };
+    // Campos que o modal JÁ enviava e a rota descartava em silêncio — inclusive
+    // `is_reserva_emergencia`, que é o que faz o tipo "Reserva" contar na aba
+    // Reserva de emergência.
+    const extras = {
+      is_reserva_emergencia: is_reserva_emergencia === true || undefined,
+      taxa_anual: taxa_anual != null ? parseFloat(taxa_anual) : undefined,
+      data_vencimento: data_vencimento || undefined,
+      indexador: indexador || undefined,
+      percentual_indexador: percentual_indexador != null ? parseFloat(percentual_indexador) : undefined,
+    };
+    for (const [k, v] of Object.entries(extras)) if (v !== undefined) linha[k] = v;
+
+    let { data, error } = await supabase.from('investimentos').insert(linha).select().single();
+
+    // Coluna nova ainda sem migration → regrava só com o essencial, em vez de
+    // perder o investimento inteiro (lição do CLAUDE.md).
+    if (error && Object.keys(extras).some((k) => (error.message || '').includes(k))) {
+      ({ data, error } = await supabase.from('investimentos').insert(base).select().single());
+    }
+
+    if (error) {
+      // O CHECK de `tipo` era exatamente este caso: mensagem crua do Postgres
+      // não ajuda ninguém, então traduz.
+      const constraintTipo = /investimentos_tipo_check/i.test(error.message || '');
+      console.error('[investimentos] insert falhou:', error.message);
+      return res.status(constraintTipo ? 400 : 500).json({
+        erro: constraintTipo
+          ? `O tipo "${tipo}" ainda não está liberado no banco. Rode a migration sql/121_investimentos_tipo_check.sql.`
+          : `Não consegui salvar: ${error.message}`,
+      });
+    }
 
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 // PUT /api/investimentos/:id
+// Mesmo problema do POST: o `error` era descartado e a edição "sumia" sem aviso.
 router.put('/:id', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const campos = ['nome','ticker','quantidade','preco_unitario','valor_atual','valor_aportado'];
     const update = {};
     campos.forEach(c => { if (req.body[c] !== undefined) update[c] = req.body[c]; });
-    const { data } = await supabase.from('investimentos')
+    if (!Object.keys(update).length) return res.status(400).json({ erro: 'Nada para atualizar.' });
+
+    const { data, error } = await supabase.from('investimentos')
       .update(update).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
+    if (error) {
+      console.error('[investimentos] update falhou:', error.message);
+      return res.status(500).json({ erro: `Não consegui atualizar: ${error.message}` });
+    }
+    // `single()` sem linha = id de outro grupo (ou apagado). 404 explícito em vez
+    // de 200 com null.
+    if (!data) return res.status(404).json({ erro: 'Investimento não encontrado.' });
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
