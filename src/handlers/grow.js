@@ -185,6 +185,58 @@ function temDataHora(mensagem) {
   return !!(parseDataPt(s) || parseHoraPt(s));
 }
 
+// ── TÍTULO DO COMPROMISSO ───────────────────────────────────────────────────
+//
+// Extraído do handler pra ficar TESTÁVEL (era código solto no meio do fluxo, e
+// por isso o bug do "De cancelar o hotel" não tinha eval que o pegasse).
+//
+// Recebe o texto já sem o verbo de agenda e os matches de data/hora, e devolve
+// só a informação principal: "me lembra de cancelar o hotel amanhã" →
+// "Cancelar o hotel".
+//
+// ⚠️ A remoção da data/hora é CASE-INSENSITIVE de propósito. `parseDataPt`
+// devolve `matched` já em minúsculas (ele trabalha sobre `t.toLowerCase()`),
+// mas o título mantém o texto ORIGINAL — e `String.replace` com string é
+// sensível a maiúsculas. Em áudio o Whisper capitaliza a primeira palavra, e
+// frases como "Amanhã preciso ligar…" deixavam o "Amanhã" no título.
+const CONECTORES_BORDA = '(?:de|do|da|dos|das|no|na|nos|nas|em|para|pra|pro|por|com|a|o|as|os|à|às|ao|aos|um|uma|e|que)';
+
+function tituloCompromisso(base, dt, hr) {
+  const semAcento = (s) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  const escapar = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  let t = String(base || '');
+  // Case-insensitive: o `matched` vem minúsculo, o título não.
+  if (dt?.matched) t = t.replace(new RegExp(escapar(dt.matched), 'gi'), ' ');
+  if (hr?.matched) t = t.replace(new RegExp(escapar(hr.matched), 'gi'), ' ');
+
+  t = t.replace(/\b(?:de|pela|pela)\s+(manh[ãa]|tarde|noite)\b/gi, ' ');
+  t = t.replace(/\bda\s+(manh[ãa]|tarde|noite)\b/gi, ' ');
+  // Verbos do pedido, em qualquer posição ("me lembra", "me avisa", "lembrar").
+  t = t.replace(/\b(?:me\s+)?(?:avis\w+|lembr\w+)\b/gi, ' ');
+  // ⚠️ `:` e `–—-` entram na limpeza. A versão antiga era `[,;.!?]` e deixava
+  // "me lembra: de cancelar o hotel" virar ": de cancelar o hotel" — aí a
+  // remoção do conector nunca disparava (a string não COMEÇA com "de") e o
+  // título saía com o "de" preso. Transcrição de áudio adiciona esses sinais
+  // com frequência.
+  t = t.replace(/[,;.!?:·–—-]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // ⚠️ EM LOOP, nas duas pontas. Uma passada só resolvia "de cancelar" mas não
+  // "de a reunião" nem o que sobra depois de tirar a data do meio da frase.
+  // Era o bug do relato: "me lembra DE cancelar o hotel amanhã" salvava
+  // "De cancelar o hotel".
+  const inicio = new RegExp(`^${CONECTORES_BORDA}\\s+`, 'i');
+  const fim    = new RegExp(`\\s+${CONECTORES_BORDA}$`, 'i');
+  for (let i = 0; i < 4; i++) {
+    const antes = t;
+    t = t.replace(inicio, '').replace(fim, '').trim();
+    if (t === antes) break;
+  }
+
+  if (!t || semAcento(t).length < 2) return 'Compromisso';
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
 // ── TAREFA ──────────────────────────────────────────────────────────────────
 const RE_TAREFA_NL = /\b(?:me\s+)?lembr(?:a|ar|e)\s+de\b|\btenho\s+que\b|\bpreciso\s+(?:de\s+)?(?=[a-zà-ú]+(?:ar|er|ir)\b)|\bn[ãa]o\s+(?:posso\s+)?esquecer(?:\s+de)?\b|\bn[ãa]o\s+esque[çc]a\s+de\b|^(?:tarefa|todo|to-?do)\b|\b(?:anota[r]?|cria[r]?|adiciona[r]?|nova)\s+tarefa\b/i;
 
@@ -914,15 +966,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
       return;
     }
     const dataISO = dt ? dt.iso : isoD(new Date());
-    let titulo = base;
-    if (dt?.matched) titulo = titulo.replace(dt.matched, ' ');
-    if (hr?.matched) titulo = titulo.replace(hr.matched, ' ');
-    titulo = titulo.replace(/\bda\s+(manh[ãa]|tarde|noite)\b/gi, ' ');
-    titulo = titulo.replace(/\b(me\s+)?(avis\w+|lembr\w+)\b/gi, ' ');
-    titulo = titulo.replace(/[,;.!?]+/g, ' ').replace(/\s+/g, ' ').trim();
-    titulo = titulo.replace(/^(de|do|da|no|na|para|pra|pro|[àa]s|o|a|um|uma|e)\s+/i, '').replace(/\s+(de|do|da|no|na|para|pra|pro|e|[àa]s)$/i, '').trim();
-    if (!titulo) titulo = 'Compromisso';
-    titulo = titulo.charAt(0).toUpperCase() + titulo.slice(1);
+    const titulo = tituloCompromisso(base, dt, hr);
     const hora = hr ? hr.hora : null;
     const antecedencia = ant ? ant.minutos : (hora ? 60 : 0);
     const { data: novoComp, error } = await supabase.from('compromissos').insert({
@@ -1046,6 +1090,10 @@ module.exports.pareceTarefa        = pareceTarefa;
 module.exports.pareceNota          = pareceNota;
 module.exports.pareceConsultaNota  = pareceConsultaNota;
 module.exports.extrairTituloTarefa = extrairTituloTarefa;
+module.exports.tituloCompromisso   = tituloCompromisso;
+// Parsers PT expostos pro eval montar o cenário real (data/hora → matched).
+module.exports.parseDataPt         = parseDataPt;
+module.exports.parseHoraPt         = parseHoraPt;
 module.exports.extrairTextoNota    = extrairTextoNota;
 module.exports.categoriaTarefa     = categoriaTarefa;
 module.exports.temDataHora         = temDataHora;

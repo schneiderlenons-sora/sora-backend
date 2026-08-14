@@ -238,6 +238,64 @@ console.log('── 10. título só com o essencial ──');
 }
 console.log('  ok');
 
+// ── 11. TÍTULO DO LEMBRETE/COMPROMISSO = só o essencial ────────────────────
+// Print real: "me lembra de cancelar o hotel amanhã" foi salvo como
+// "De cancelar o hotel" — o conector do pedido ficou preso no título.
+// A extração vivia SOLTA dentro do handler (por isso nenhum eval a cobria);
+// agora é `tituloCompromisso`, testável.
+console.log('── 11. título do compromisso ──');
+{
+  // Reproduz o pré-processamento REAL do handler (msg minúscula + limpeza do
+  // verbo de agenda), pra o teste bater com produção e não com uma versão ideal.
+  const resto = (m) => m.toLowerCase().trim()
+    .replace(/^\s*sora[,!.\s]+/i, '')
+    .replace(/^\s*(anota[r]?|agenda[r]?|marca[r]?)(\s+a[íi])?\s+(que\s+)?/i, '')
+    .replace(/\b(que\s+eu\s+)?tenho\b|\btem\b|\bvou\s+ter\b/gi, ' ')
+    .replace(/\bque\s+vem\b/gi, ' ').replace(/\b(me\s+)?lembr\w+\b/gi, ' ')
+    .replace(/\b(uma|um)\b/gi, ' ').replace(/\bque\b/gi, ' ')
+    .replace(/\s+/g, ' ').trim();
+
+  const titulo = (msg) => {
+    const r = resto(msg);
+    const dt = G.parseDataPt(r);
+    const hr = G.parseHoraPt(dt && dt.matched ? r.replace(dt.matched, ' ') : r);
+    return G.tituloCompromisso(r, dt, hr);
+  };
+
+  eq(titulo('me lembra de cancelar o hotel amanhã'), 'Cancelar o hotel', 'caso do print');
+  eq(titulo('Me lembra de cancelar o hotel amanhã.'), 'Cancelar o hotel', 'com maiúscula e ponto');
+  // ⚠️ Dois-pontos/travessão: a limpeza antiga era [,;.!?] e NÃO os cobria —
+  // o título virava ": de cancelar o hotel" e o conector nunca era removido,
+  // porque a string não COMEÇAVA com "de". Ditado por áudio gera isso.
+  eq(titulo('Me lembra: de cancelar o hotel amanhã'), 'Cancelar o hotel', 'dois-pontos do ditado');
+  eq(titulo('Me lembra - de cancelar o hotel amanhã'), 'Cancelar o hotel', 'travessão do ditado');
+  // ⚠️ `parseDataPt` devolve `matched` MINÚSCULO e o replace era
+  // case-sensitive → "Amanhã" sobrava dentro do título.
+  eq(titulo('Amanhã me lembra de cancelar o hotel'), 'Cancelar o hotel', 'data no início e capitalizada');
+
+  // Formatos que já funcionavam — não podem regredir.
+  eq(titulo('me lembra de ligar pro médico segunda às 15h'), 'Ligar pro médico', 'dia da semana + hora');
+  eq(titulo('me lembra de mandar o relatório sexta'), 'Mandar o relatório', 'só dia da semana');
+  eq(titulo('me lembra da reunião com o cliente amanhã às 9h'), 'Reunião com o cliente', '"da" no lugar de "de"');
+  eq(titulo('tenho consulta no dentista terça 15h'), 'Consulta no dentista', 'sem verbo de lembrete');
+
+  // Sobrou só conector/nada → rótulo genérico, nunca um título "De".
+  eq(titulo('me lembra amanhã'), 'Compromisso', 'sem assunto vira "Compromisso"');
+
+  // ⚠️ INVARIANTE do relato: nenhum título começa com conector solto.
+  for (const m of [
+    'me lembra de cancelar o hotel amanhã',
+    'Me lembra: de cancelar o hotel amanhã',
+    'me lembra da reunião com o cliente amanhã às 9h',
+    'Amanhã me lembra de cancelar o hotel',
+    'me lembra de pagar o boleto dia 20',
+  ]) {
+    ok(!/^(de|do|da|no|na|pra|para|o|a|e|que)\s/i.test(titulo(m)),
+      `título não pode começar com conector: "${titulo(m)}" ← ${m}`);
+  }
+}
+console.log('  ok');
+
 // ── Resultado ──────────────────────────────────────────────────────────────
 console.log('');
 if (falhas.length) {
