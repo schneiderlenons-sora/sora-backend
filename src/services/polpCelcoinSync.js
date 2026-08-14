@@ -181,14 +181,20 @@ const TIPO_CONTA = {
   CONTA_PAGAMENTO_PRE_PAGA: 'Corrente',
 };
 
-function normalizeConta(acc) {
+function normalizeConta(acc, instituicao) {
   const ident = acc.identification || {};
   const bal   = acc.balance || null;
   const over  = acc.overdraft_limit || null;
   const tipo  = TIPO_CONTA[ident.type || acc.type] || 'Corrente';
 
   // Nome: a conta não tem "nome" no Open Finance — montamos com o banco + tipo.
-  const banco = (acc.brand_name || 'Banco').toString().trim();
+  //
+  // ⚠️ `brand_name` VEM VAZIO em parte das contas, e aí a carteira nascia
+  // chamada literalmente "Banco" (medido: 4 carteiras assim, com 779
+  // transações — virou relato de cliente). O consentimento SABE de que
+  // instituição se trata (`of_conexoes.instituicao`), então ela entra como
+  // 2º recurso; "Banco" só sobra quando nem isso existe.
+  const banco = (acc.brand_name || instituicao || 'Banco').toString().trim();
   const sufixo = tipo === 'Poupança' ? ' Poupança' : '';
   const nome = `${banco}${sufixo}`.slice(0, 60);
 
@@ -1555,7 +1561,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     // 2. CONTAS → wallet + transações
     for (const raw of await celcoin.listarContas(consentId)) {
       try {
-        const n = normalizeConta(raw);
+        const n = normalizeConta(raw, conexao.instituicao);
         const walletNome = await upsertWallet(grupoId, userId, n, n.saldo);
         const txs = await celcoin.listarTransacoesConta(n.externalId, { fromDate });
         const novas = await inserirTransacoes(grupoId, userId, walletNome, txs.map(normalizeTxConta));

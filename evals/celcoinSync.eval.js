@@ -289,6 +289,29 @@ for (const fam of ['bank_fixed_income', 'credit_fixed_income', 'fund', 'treasure
 }
 console.log('  ok');
 
+// ── 6B. Nome da conta: brand_name → instituição do consent → "Banco" ──────
+// `brand_name` vem vazio em parte das contas e a carteira nascia chamada
+// literalmente "Banco" (medido: 4 carteiras assim, 779 transações). Virou
+// relato de cliente. O consentimento sabe a instituição — ela é o 2º recurso.
+console.log('── 6B. nome da conta (fallback de brand_name) ──');
+{
+  const eq = (a, b, m) => ok(a === b, `${m} (esperado ${JSON.stringify(b)}, veio ${JSON.stringify(a)})`);
+  const conta = (extra) => ({ id: 'a1', type: 'CONTA_DEPOSITO_A_VISTA', ...extra });
+
+  eq(S.normalizeConta(conta({ brand_name: 'Nubank' }), 'Itaú').nome, 'Nubank',
+    'brand_name manda quando existe');
+  eq(S.normalizeConta(conta({}), 'Nubank').nome, 'Nubank',
+    'sem brand_name usa a instituição do consentimento');
+  eq(S.normalizeConta(conta({ brand_name: '' }), 'Bradesco').nome, 'Bradesco',
+    'brand_name VAZIO também cai pra instituição');
+  eq(S.normalizeConta(conta({}), null).nome, 'Banco',
+    '"Banco" só quando não há nem instituição');
+  // Poupança mantém o sufixo em qualquer um dos caminhos.
+  eq(S.normalizeConta(conta({ type: 'CONTA_POUPANCA' }), 'Nubank').nome, 'Nubank Poupança',
+    'sufixo de poupança preservado no fallback');
+}
+console.log('  ok');
+
 // ── 12B. Produto na RAIZ vence o `product` legado ─────────────────────────
 // A doc (versão atual): "Campos de `product` passam a existir na raiz. O objeto
 // `product` aninhado é LEGADO" e "pode retornar null se o Product Identification

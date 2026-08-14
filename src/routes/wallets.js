@@ -142,6 +142,112 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// PUT /api/wallets/:id — edita a conta/cartão POR ID (inclusive RENOMEAR).
+//
+// ⚠️ POR QUE ESTA ROTA EXISTE: o `POST /` salva com
+// `upsert(onConflict: 'grupo_id,nome')` — a chave é o NOME. Renomear por lá não
+// renomeia nada: como não existe carteira com o nome novo, ele CRIA outra e a
+// antiga fica intacta. Era o relato do cliente ("edito, salvo, mas permanece o
+// nome Banco"). Vale pra qualquer carteira, não só as do Open Finance.
+//
+// ⚠️⚠️ RENOMEAR TEM DE CASCATEAR. Transação NÃO aponta pra wallet por id: ela
+// guarda `carteira_nome` (texto). Renomear só a wallet transforma todo o
+// histórico em conta-fantasma — o bug que o CLAUDE.md já registra. Medido na
+// base: as 4 carteiras chamadas "Banco" têm 779 transações. As duas únicas
+// tabelas que ligam por nome são `transacoes.carteira_nome` e
+// `recorrencias.carteira` (conferido: `dividas`/`metas` não têm essa coluna).
+//
+// ✅ SEGURO PRO OPEN FINANCE: o sync casa a carteira por `of_conta_id`, nunca
+// por nome, e o `upsertWallet` NÃO grava `nome` em carteira existente — ele
+// devolve `ja.nome`, então os lançamentos novos já entram com o nome escolhido
+// pelo usuário. Renomear não desliga nem duplica a conexão.
+router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const grupoId = req.grupoId;
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+
+    const { data: atual } = await supabase.from('wallets')
+      .select('*').eq('id', req.params.id).eq('grupo_id', grupoId).maybeSingle();
+    if (!atual) return res.status(404).json({ erro: 'Conta não encontrada' });
+
+    const {
+      nome, tipo, saldo, limite, cheque_especial,
+      dia_fechamento, dia_vencimento, bandeira, ultimos4,
+    } = req.body;
+
+    const nomeNovo = typeof nome === 'string' ? nome.trim().slice(0, 60) : null;
+    const renomeando = !!nomeNovo && nomeNovo !== atual.nome;
+
+    // Nome duplicado no grupo quebraria o unique (grupo_id,nome) e, pior,
+    // fundiria duas contas na visão das transações (que casam por nome).
+    if (renomeando) {
+      const { data: colide } = await supabase.from('wallets')
+        .select('id').eq('grupo_id', grupoId).ilike('nome', nomeNovo)
+        .neq('id', atual.id).maybeSingle();
+      if (colide) {
+        return res.status(409).json({
+          erro: `Você já tem uma conta chamada "${nomeNovo}". Escolha outro nome.`,
+          motivo: 'nome_duplicado',
+        });
+      }
+    }
+
+    const patch = {};
+    if (renomeando)                    patch.nome   = nomeNovo;
+    if (tipo   !== undefined)          patch.tipo   = tipo;
+    if (saldo  !== undefined && saldo !== null) patch.saldo = saldo;
+    if (limite !== undefined)          patch.limite = limite;
+    if (cheque_especial !== undefined) patch.cheque_especial = Math.abs(Number(cheque_especial) || 0);
+    if (bandeira !== undefined)        patch.bandeira = bandeira || null;
+    if (ultimos4 !== undefined)        patch.ultimos4 = ultimos4 || null;
+    if (dia_fechamento !== undefined)  patch.dia_fechamento = dia_fechamento || null;
+    if (dia_vencimento !== undefined)  patch.dia_vencimento = dia_vencimento || null;
+    // Data corrigida à mão vira a palavra final pro sync do OF (migration 114).
+    if (dia_fechamento !== undefined || dia_vencimento !== undefined) {
+      patch.datas_manuais = !!(dia_fechamento || dia_vencimento);
+    }
+    if (!Object.keys(patch).length) return res.json(atual);
+
+    // Renomeia a WALLET primeiro: é a operação que pode falhar por constraint,
+    // e falhar aqui não deixa rastro. Só depois mexemos nas 700+ transações.
+    let { data, error } = await supabase.from('wallets')
+      .update(patch).eq('id', atual.id).select().single();
+    // Tolerante às migrations 094 (cheque_especial) e 114 (datas_manuais).
+    if (error) {
+      const { cheque_especial: _c, datas_manuais: _d, ...simples } = patch;
+      ({ data, error } = await supabase.from('wallets')
+        .update(simples).eq('id', atual.id).select().single());
+    }
+    if (error) throw error;
+
+    let movidas = 0;
+    if (renomeando) {
+      // `%` e `_` são curingas no ilike — sem escapar, uma conta "Banco_1"
+      // arrastaria as transações de "Banco11" junto.
+      const alvo = atual.nome.replace(/([%_\\])/g, '\\$1');
+      const { count, error: eTx } = await supabase.from('transacoes')
+        .update({ carteira_nome: nomeNovo }, { count: 'exact' })
+        .eq('grupo_id', grupoId).ilike('carteira_nome', alvo);
+
+      if (eTx) {
+        // Cascata falhou → desfaz o rename pra NÃO deixar histórico órfão.
+        await supabase.from('wallets').update({ nome: atual.nome }).eq('id', atual.id);
+        return res.status(500).json({ erro: 'Não consegui renomear os lançamentos dessa conta. Nada foi alterado.' });
+      }
+      movidas = count || 0;
+
+      // Recorrências apontam por nome também. Tolerante: falhar aqui não
+      // justifica desfazer o rename (o histórico, que é o caro, já foi).
+      try {
+        await supabase.from('recorrencias').update({ carteira: nomeNovo })
+          .eq('grupo_id', grupoId).ilike('carteira', alvo);
+      } catch { /* segue */ }
+    }
+
+    res.json({ ...data, renomeada: renomeando || undefined, transacoes_movidas: movidas || undefined });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // POST /api/wallets/fatura/pagar — paga a fatura do cartão debitando de UMA ou
 // VÁRIAS contas (cria uma transação de saída por conta e desconta cada saldo).
 //
