@@ -289,6 +289,58 @@ for (const fam of ['bank_fixed_income', 'credit_fixed_income', 'fund', 'treasure
 }
 console.log('  ok');
 
+// ── 12B. Produto na RAIZ vence o `product` legado ─────────────────────────
+// A doc (versão atual): "Campos de `product` passam a existir na raiz. O objeto
+// `product` aninhado é LEGADO" e "pode retornar null se o Product Identification
+// ainda não foi sincronizado". Lendo só o legado, o investimento perdia ticker,
+// nome e datas de uma vez — e em renda variável um FII virava "Ações".
+console.log('── 12B. produto na raiz (product legado = null) ──');
+{
+  const eq = (a, b, m) => ok(a === b, `${m} (esperado ${JSON.stringify(b)}, veio ${JSON.stringify(a)})`);
+
+  // Só a RAIZ (product null) — o formato novo.
+  const raiz = {
+    __familia: 'variable_income', id: 'vi-1', ticker: 'MXRF11',
+    isin_code: 'BRMXRFCTF002', product: null,
+    balance: { quantity: '10.000000', gross_amount: { amount: '105.70', currency: 'BRL' } },
+  };
+  eq(S.tipoInvestimento(raiz), 'FIIs', 'ticker da raiz classifica como FII');
+  const n = S.normalizeInvestimento(raiz);
+  eq(n.ticker, 'MXRF11', 'ticker vem da raiz');
+  eq(n.valor_atual, 105.7, 'posição preservada');
+
+  // Só o LEGADO — formato antigo continua funcionando (sem regressão).
+  const legado = {
+    __familia: 'variable_income', id: 'vi-2',
+    product: { ticker: 'XPML11', isin_code: 'BRXPMLCTF001' },
+    balance: { gross_amount: { amount: '309.33', currency: 'BRL' } },
+  };
+  eq(S.tipoInvestimento(legado), 'FIIs', 'ticker do product legado ainda vale');
+  eq(S.normalizeInvestimento(legado).ticker, 'XPML11', 'ticker do legado preservado');
+
+  // Os dois presentes e divergentes → a RAIZ manda.
+  const ambos = {
+    __familia: 'variable_income', id: 'vi-3', ticker: 'GARE11',
+    product: { ticker: 'ANTIGO4' },
+    balance: { gross_amount: { amount: '89.54', currency: 'BRL' } },
+  };
+  eq(S.normalizeInvestimento(ambos).ticker, 'GARE11', 'raiz vence o legado');
+  eq(S.tipoInvestimento(ambos), 'FIIs', 'e a classificação segue a raiz');
+
+  // Renda fixa: remuneração na raiz também precisa ser lida.
+  const rf = {
+    __familia: 'bank_fixed_income', id: 'rf-1', product: null,
+    name: 'CDB Banco X', due_date: '2027-01-10',
+    remuneration: { indexer: 'CDI', post_fixed_indexer_percentage: '1.020000' },
+    balance: { net_amount: { amount: '1000.00', currency: 'BRL' } },
+  };
+  const nrf = S.normalizeInvestimento(rf);
+  eq(nrf.indexador, 'CDI', 'indexador da raiz');
+  eq(nrf.percentual_indexador, 102, '1.02 → 102% do CDI');
+  eq(nrf.data_vencimento, '2027-01-10', 'vencimento da raiz');
+}
+console.log('  ok');
+
 // ── 13. Fatura EM ABERTO: o banco não publica o total ─────────────────────
 // Caso real (Mercado Pago, jul/2026): 26 compras importadas e o painel mostrava
 // "R$ 0,00", porque `bill_total_amount` só é publicado quando o ciclo FECHA.

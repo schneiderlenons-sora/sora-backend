@@ -295,6 +295,41 @@ router.post('/atualizar-precos/:phone', auth, exigirPlano('kit', 'premium', 'bla
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// GET /api/investimentos/caixinhas/:phone
+// Caixinhas / cofrinhos vindos do Open Finance (saldos reservados).
+//
+// ⚠️ Esse dinheiro NÃO está no saldo da conta — a doc da Celcoin diz que
+// `balance.available_amount` "não inclui (…) reservas de saldo". Por isso a
+// aba mostra o total separado: somar junto ao saldo seria inventar, e não
+// mostrar era esconder dinheiro do cliente.
+//
+// Leitura TOLERANTE: a tabela existe desde a 069, mas as colunas de remuneração
+// são da 120. Se a migration não rodou, devolve o básico em vez de estourar
+// (lição da casa: coluna nova em select de caminho crítico derruba a aba toda).
+router.get('/caixinhas/:phone', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
+  try {
+    const grupoId = await getGrupoId(req);
+    if (!grupoId) return res.status(404).json({ erro: 'Grupo não encontrado.' });
+
+    const COMPLETO = 'id,nome,tipo,saldo,moeda,atualizado_em,indexador,indexador_pct,taxa_pre,periodicidade';
+    let { data, error } = await supabase.from('of_caixinhas')
+      .select(COMPLETO).eq('grupo_id', grupoId).order('saldo', { ascending: false });
+
+    if (error) {
+      const r2 = await supabase.from('of_caixinhas')
+        .select('id,nome,tipo,saldo,moeda,atualizado_em').eq('grupo_id', grupoId)
+        .order('saldo', { ascending: false });
+      // Tabela ausente (069 pendente) → lista vazia, a aba só não mostra a seção.
+      if (r2.error) return res.json({ caixinhas: [], total: 0 });
+      data = r2.data;
+    }
+
+    const caixinhas = data || [];
+    const total = caixinhas.reduce((s, c) => s + (Number(c.saldo) || 0), 0);
+    res.json({ caixinhas, total: Math.round(total * 100) / 100 });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // GET /api/investimentos/reserva/:phone
 router.get('/reserva/:phone', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {

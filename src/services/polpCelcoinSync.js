@@ -210,6 +210,57 @@ function normalizeConta(acc) {
   };
 }
 
+// ── Normalização: CAIXINHA (saldo reservado) ────────────────────────────────
+//
+// "Caixinhas" do Nubank e cofrinhos afins. Esse dinheiro **não está** no saldo
+// da conta: a doc de `GET /accounts/{id}` diz que `balance.available_amount`
+// "não inclui cheque especial, investimentos automáticos nem reservas de
+// saldo". Então somar a caixinha à parte NÃO duplica — pelo contrário, sem
+// isso o dinheiro não aparecia em lugar nenhum do painel.
+//
+// ⚠️ `available_amount` é um **ARRAY**, não um valor. A doc descreve "saldos
+// disponíveis na reserva", cada item `{ amount, currency, remuneration? }` —
+// ler `available_amount.amount` direto devolveria `undefined` e a caixinha
+// entraria zerada. Somamos todos os itens.
+//
+// ⚠️ `amount` vem como STRING com 2 a 4 casas ("1000.0400"). `money()` já
+// converte; o `cent()` no fim é que impede a quarta casa de virar centavo
+// fantasma na soma.
+function normalizeCaixinha(r, ofContaId) {
+  // O id estável é `reserved_identification` (UUID no Open Finance). O campo
+  // `id` é "identificador INTERNO da reserva" na Polp — não serve como chave
+  // de dedup entre syncs.
+  const externalId = r.reserved_identification || (r.id != null ? String(r.id) : null);
+  if (!externalId) return null;
+
+  const itens = Array.isArray(r.available_amount)
+    ? r.available_amount
+    : (r.available_amount ? [r.available_amount] : []);
+
+  const saldo = cent(itens.reduce((s, a) => s + (money(a) ?? 0), 0));
+
+  // A remuneração fica em cada item; pegamos a primeira que existir (uma
+  // caixinha rende de um jeito só — múltiplos itens são moedas/faixas).
+  const rem = (itens.find((a) => a && a.remuneration) || {}).remuneration || null;
+
+  return {
+    externalId: String(externalId),
+    of_conta_id: ofContaId ? String(ofContaId) : null,
+    // `reserved_name` é null quando o usuário não nomeou a reserva.
+    nome: (r.reserved_name || 'Caixinha').toString().trim().slice(0, 120),
+    tipo: 'caixinha',
+    saldo,
+    moeda: (itens.find((a) => a && a.currency) || {}).currency || 'BRL',
+    indexador: rem && rem.indexer ? String(rem.indexer).replace(/_/g, ' ') : null,
+    indexador_pct: rem ? pct(rem.post_fixed_indexer_percentage) : null,
+    taxa_pre: rem ? pct(rem.pre_fixed_rate) : null,
+    rate_type: (rem && rem.rate_type) || null,
+    periodicidade: (rem && rem.rate_periodicity) || null,
+    calculo: (rem && rem.calculation) || null,
+    atualizado_em: r.updated_at || null,
+  };
+}
+
 // ── Normalização: CARTÃO ────────────────────────────────────────────────────
 const BANDEIRA = {
   VISA: 'Visa', MASTERCARD: 'Mastercard', ELO: 'Elo', HIPERCARD: 'Hipercard',
@@ -998,6 +1049,38 @@ function normalizeDivida(item, kind) {
 // Ações · FIIs · ETFs · Cripto · Tesouro Direto · CDB · Previdência · Reserva ·
 // Imóveis · Negócio · Caixa · Renda Fixa · Fundos  (os 2 últimos entram junto
 // com este trilho — ver CORES_TIPO no InvestimentosClient).
+/**
+ * Campos do produto: RAIZ primeiro, `product` aninhado como último recurso.
+ *
+ * ⚠️ A doc da Celcoin (versão atual) é explícita: "Campos de `product` passam a
+ * existir na raiz. O objeto `product` aninhado é LEGADO — preferir os campos da
+ * raiz" e "`product` (legado) pode retornar **null** se o Product Identification
+ * ainda não foi sincronizado".
+ *
+ * Lendo só o legado (como era), todo investimento cujo produto ainda não
+ * sincronizou perdia ticker, nome, ISIN e datas de uma vez — virava
+ * "Investimento" genérico, e em renda variável caía como "Ações" mesmo sendo
+ * FII, porque a classificação depende do ticker.
+ */
+const CAMPOS_PRODUTO = [
+  'product_name', 'name', 'ticker', 'isin_code', 'due_date', 'purchase_date',
+  'remuneration', 'anbima_category', 'issuer_institution_cnpj_number',
+];
+function produtoDe(inv) {
+  const legado = inv.product || {};
+  const p = {};
+  for (const k of CAMPOS_PRODUTO) p[k] = inv[k] != null ? inv[k] : legado[k];
+  return p;
+}
+
+/**
+ * ⚠️ LIMITE CONHECIDO em renda variável: a Celcoin **não manda tipo de ativo** —
+ * o recurso só tem `ticker` e `isin_code` (conferido na doc de
+ * variable-incomes/show). Então FII × ETF × ação sai de heurística de ticker:
+ * final 11 → FII. Isso classifica **ETF como FII** (BOVA11, IVVB11) e direito
+ * de subscrição (final 12/13) como ação. Sem campo de tipo na origem não dá pra
+ * resolver direito — e chutar uma lista de ETFs conhecidos envelhece mal.
+ */
 function tipoInvestimento(inv) {
   const fam = inv.__familia;
   if (fam === 'treasure_title') return 'Tesouro Direto';
@@ -1005,14 +1088,14 @@ function tipoInvestimento(inv) {
   if (fam === 'credit_fixed_income') return 'Renda Fixa'; // Debêntures/CRI/CRA
   if (fam === 'fund') return 'Fundos';
   if (fam === 'variable_income') {
-    const t = (inv.product && inv.product.ticker) || '';
+    const t = produtoDe(inv).ticker || '';
     return /11$/.test(String(t)) ? 'FIIs' : 'Ações';    // FII normalmente termina em 11
   }
   return 'Renda Fixa';
 }
 
 function normalizeInvestimento(inv) {
-  const p = inv.product || {};
+  const p = produtoDe(inv);
   const b = inv.balance || {};
   const rem = p.remuneration || {};
   const fam = inv.__familia;
@@ -1376,6 +1459,58 @@ async function upsertInvestimento(grupoId, n) {
   return 'criado';
 }
 
+/**
+ * Cria/atualiza a caixinha e devolve o external id (pra reconciliação).
+ *
+ * ⚠️ Tolerante à migration 120 ainda não rodada: as colunas de remuneração são
+ * novas, e a lição da casa é que coluna nova em caminho crítico derruba a
+ * feature inteira antes do SQL rodar. Se o insert completo falhar, regrava só
+ * com o que a 069 já tinha — a caixinha aparece no painel sem o "rende X% do
+ * CDI", em vez de não aparecer.
+ */
+async function upsertCaixinha(grupoId, userId, conexaoId, n) {
+  const base = {
+    conexao_id: conexaoId, user_id: userId, grupo_id: grupoId,
+    provider: PROVIDER, external_id: n.externalId,
+    nome: n.nome, tipo: n.tipo, saldo: n.saldo, moeda: n.moeda,
+    atualizado_em: n.atualizado_em || new Date().toISOString(),
+  };
+  const completo = {
+    ...base,
+    of_conta_id: n.of_conta_id,
+    indexador: n.indexador, indexador_pct: n.indexador_pct, taxa_pre: n.taxa_pre,
+    rate_type: n.rate_type, periodicidade: n.periodicidade, calculo: n.calculo,
+  };
+
+  const { error } = await supabase.from('of_caixinhas')
+    .upsert(completo, { onConflict: 'provider,external_id' });
+  if (!error) return n.externalId;
+
+  const { error: e2 } = await supabase.from('of_caixinhas')
+    .upsert(base, { onConflict: 'provider,external_id' });
+  if (e2) throw new Error(`caixinha: ${e2.message}`);
+  return n.externalId;
+}
+
+/**
+ * Apaga as caixinhas da conta que o banco não mandou mais (o usuário fechou a
+ * caixinha). É PROJEÇÃO do estado do banco, igual `of_faturas` — não há dado do
+ * usuário aqui pra preservar.
+ *
+ * ⚠️ Só é chamado quando a leitura na Polp DEU CERTO. Reconciliar em cima de
+ * uma falha de rede apagaria todas as caixinhas do cliente.
+ */
+async function reconciliarCaixinhas(grupoId, ofContaId, idsVistos) {
+  if (!ofContaId) return 0;
+  try {
+    let q = supabase.from('of_caixinhas').delete()
+      .eq('grupo_id', grupoId).eq('provider', PROVIDER).eq('of_conta_id', String(ofContaId));
+    if (idsVistos.length) q = q.not('external_id', 'in', `(${idsVistos.map((i) => `"${i}"`).join(',')})`);
+    const { error } = await q;
+    return error ? 0 : 1;
+  } catch { return 0; }   // migration 120 pendente (sem of_conta_id) → não reconcilia
+}
+
 // ── Orquestração ────────────────────────────────────────────────────────────
 
 /**
@@ -1393,7 +1528,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
   const { grupo_id: grupoId, user_id: userId } = conexao;
   const hoje = hojeSP();
   const fromDate = new Date(Date.now() - dias * 864e5).toISOString().slice(0, 10);
-  const relatorio = { contas: [], cartoes: [], dividas: [], investimentos: [], avisos: [] };
+  const relatorio = { contas: [], caixinhas: [], cartoes: [], dividas: [], investimentos: [], avisos: [] };
 
   // 1. Estado do consentimento. Sem AUTHORISED não há dado pra importar.
   let consent = null;
@@ -1429,6 +1564,28 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           conta: walletNome, saldo: n.saldo, txs: txs.length, novas,
           pendente_sync: !n.sincronizado || undefined,
         });
+
+        // 2b. CAIXINHAS (saldos reservados) — só quando o banco diz que existem.
+        // Bloco à parte e tolerante: caixinha é informativa, e falha aqui não
+        // pode derrubar a conta nem as transações, que são o essencial.
+        if (raw.balance && raw.balance.has_reserved_balance === true) {
+          try {
+            const reservas = await celcoin.listarSaldosReservados(n.externalId);
+            const vistos = [];
+            let total = 0;
+            for (const r of reservas) {
+              const c = normalizeCaixinha(r, n.externalId);
+              if (!c) continue;
+              await upsertCaixinha(grupoId, userId, conexao.id, c);
+              vistos.push(c.externalId);
+              total = cent(total + c.saldo);
+            }
+            // Lista vazia é resposta VÁLIDA ("tem o produto, não tem reserva") —
+            // e aí a reconciliação limpa o que sobrou de um sync anterior.
+            await reconciliarCaixinhas(grupoId, n.externalId, vistos);
+            relatorio.caixinhas.push({ conta: walletNome, quantidade: vistos.length, total });
+          } catch (e) { relatorio.caixinhas.push({ conta: walletNome, erro: e.message }); }
+        }
       } catch (e) { relatorio.contas.push({ erro: e.message }); }
     }
 
@@ -1618,7 +1775,7 @@ module.exports = {
   // expostos pra teste/diagnóstico (puros, sem banco)
   money, pct, cetParaMensal, diaDoMes, categoriaDe,
   ehPagamentoFatura: require('./categorizar').ehPagamentoFatura,
-  normalizeConta, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
+  normalizeConta, normalizeCaixinha, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,

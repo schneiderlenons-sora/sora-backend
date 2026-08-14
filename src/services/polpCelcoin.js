@@ -207,6 +207,21 @@ async function listarTransacoesConta(accountId, { fromDate, toDate, max = 20 } =
   });
 }
 
+// ── Saldos reservados ("Caixinhas" do Nubank, cofrinhos, reservas) ──────────
+// Só chamar quando `conta.balance.has_reserved_balance === true` — a doc é
+// explícita ("Consulte balance.has_reserved_balance na conta antes de chamar").
+// Lista VAZIA é resposta legítima: o banco oferece o produto e o cliente não
+// tem nenhuma reserva.
+//
+// ⚠️ Não confundir com investimento: a doc avisa que este endpoint "não inclui
+// reservas atreladas a investimentos do CPF/CNPJ" (essas vêm pelas APIs de
+// Investimentos) — então não há risco de contar a mesma coisa duas vezes.
+async function listarSaldosReservados(accountId, { max = 5 } = {}) {
+  try {
+    return await paginado(`/accounts/${encodeURIComponent(accountId)}/reserved-balances`, { max });
+  } catch (e) { console.warn('[celcoin] reserved-balances:', e.message); return []; }
+}
+
 // ── Cartões (entidade SEPARADA no v2) ───────────────────────────────────────
 async function listarCartoes(consentId, query = {}) {
   return paginado(`/consents/${encodeURIComponent(consentId)}/credit-cards`, { query });
@@ -299,7 +314,7 @@ module.exports = {
   configurado, api, paginado,
   listarInstituicoes,
   criarConsentimento, getConsentimento, revogarConsentimento, listarConsentimentos, syncSchedules,
-  listarContas, listarTransacoesConta,
+  listarContas, listarTransacoesConta, listarSaldosReservados,
   listarCartoes, listarTransacoesCartao, listarFaturas, listarParcelamentos, listarRecorrencias,
   listarEmprestimos, listarFinanciamentos,
   listarInvestimentos, listarInvestimentosFamilia, listarTransacoesInvestimento,
