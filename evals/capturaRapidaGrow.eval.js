@@ -192,6 +192,52 @@ console.log('── 9. prioridade + marcador ──');
 }
 console.log('  ok');
 
+// ── 10. TÍTULO = SÓ O ESSENCIAL (bug do áudio, ago/2026) ───────────────────
+// Print real: o usuário falou "Anote que eu tenho que terminar a edição dos
+// agentes da Sora" e a tarefa foi salva com a FRASE INTEIRA. Eram 4 falhas
+// somadas — cada bloco abaixo trava uma.
+console.log('── 10. título só com o essencial ──');
+{
+  const tit = (m) => G.extrairTituloTarefa(m);
+
+  // (a) "ANOTE" (imperativo em -e) — a regex só aceitava anota/anotar, então
+  //     nenhum prefixo casava e a frase inteira virava título.
+  eq(tit('Anote que eu tenho que terminar a edição dos agentes da Sora'),
+     'Terminar a edição dos agentes da Sora', 'a) "Anote que eu tenho que…"');
+  eq(tit('Anotem que preciso revisar o contrato'), 'Revisar o contrato', 'a) "anotem"');
+
+  // (b) Pronome sujeito no meio: depois de tirar "anota que" sobrava
+  //     "EU tenho que X" e o `^tenho que` (ancorado) não casava mais.
+  eq(tit('Anota que eu tenho que terminar a edição dos agentes da Sora'),
+     'Terminar a edição dos agentes da Sora', 'b) "eu" entre o cue e o verbo');
+  eq(tit('Anotar que eu preciso revisar o contrato'), 'Revisar o contrato', 'b) "anotar que eu preciso"');
+
+  // (c) Pedido no FIM da frase (cue nas duas pontas).
+  eq(tit('Preciso terminar de fazer o trabalho'), 'Terminar de fazer o trabalho', 'c) sem pedido');
+  eq(tit('Preciso terminar de fazer o trabalho, anota pra mim'),
+     'Terminar de fazer o trabalho', 'c) "…, anota pra mim"');
+  eq(tit('preciso terminar o relatório, anota aí'), 'Terminar o relatório', 'c) "…, anota aí"');
+  eq(tit('tenho que pagar o boleto por favor'), 'Pagar o boleto', 'c) "por favor" no fim');
+
+  // (d) Recheio entre o verbo e o "que" — é como se encadeia uma 2ª tarefa.
+  eq(tit('Anota também que tenho que fazer a edição do vídeo'),
+     'Fazer a edição do vídeo', 'd) "anota TAMBÉM que"');
+  eq(tit('anota aí que preciso ligar pro dentista'), 'Ligar pro dentista', 'd) "anota aí que"');
+
+  // ⚠️ GUARDA: o verbo "anotar" pode ser o PRÓPRIO conteúdo da tarefa. Sem
+  // vírgula e sem objeto de pedido depois, ele NÃO pode ser comido.
+  eq(tit('preciso anotar as ideias da reunião'), 'Anotar as ideias da reunião',
+     'guarda: "anotar" como conteúdo não é removido');
+
+  // E tudo isso continua sendo reconhecido COMO tarefa.
+  for (const m of [
+    'Anote que eu tenho que terminar a edição dos agentes da Sora',
+    'Preciso terminar de fazer o trabalho, anota pra mim',
+    'Anota também que tenho que fazer a edição do vídeo',
+  ]) eq(G.pareceTarefa(m), true, `ainda é tarefa: "${m}"`);
+}
+console.log('  ok');
+
 // ── Resultado ──────────────────────────────────────────────────────────────
 console.log('');
 if (falhas.length) {

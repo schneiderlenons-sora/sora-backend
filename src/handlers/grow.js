@@ -205,7 +205,24 @@ function temMarcadorTarefaExplicito(mensagem) {
 // ("anota que tenho que X", "anota que preciso X"), é tarefa disfarçada de
 // nota. Mesma regra que RE_NOTA_FRACA (mais abaixo) usa pra detectar nota;
 // aqui também serve pra DESEMBRULHAR o texto ao extrair o título da tarefa.
-const RE_ANOTA_QUE = /^\s*anota[r]?\s+(?:a[íi]\s+)?que\s+/i;
+// ⚠️ O verbo aceita as 4 formas que a pessoa realmente fala: "anota", "anote"
+// (imperativo em -e, o MAIS comum por áudio), "anotar" e "anotem". Só
+// `anota[r]?` deixava "Anote que eu tenho que X" passar inteiro pro título —
+// era o bug do print do cliente.
+// Entre o verbo e o "que" cabe recheio: "anota AÍ que", "anota TAMBÉM que",
+// "anota PRA MIM que" — e eles podem se empilhar, por isso o `*`.
+const RE_ANOTA_QUE = /^\s*anot(?:a|e|ar|em)\s+(?:(?:a[íi]|tamb[ée]m|pra\s+mim|pro\s+mim|por\s+favor|isso|tudo)\s+)*que\s+/i;
+
+// O pedido pode vir NO FIM ("preciso terminar o trabalho, anota pra mim").
+// Duas regras separadas de propósito, pra não comer conteúdo legítimo:
+//   1. com vírgula → basta o verbo ("…, anota pra mim" / "…, pode anotar")
+//   2. sem vírgula → exige objeto explícito ("… anota aí"), senão uma tarefa
+//      que TERMINA em "anotar" (ex.: "preciso anotar") perderia o verbo.
+const RE_PEDIDO_FINAL = [
+  /\s*[,;]\s*(?:por\s+favor[,\s]+)?(?:pode|poderia|consegue)?\s*anot(?:a|e|ar|em)\b[^,;]*$/i,
+  /\s+anot(?:a|e|ar|em)\s+(?:a[íi]|isso|tudo|pra\s+mim|pro\s+mim)\s*$/i,
+  /\s*[,;]?\s*por\s+favor\s*$/i,
+];
 
 // "até <dia>" é PRAZO de tarefa, não horário de compromisso — ex.: "preciso
 // terminar o relatório até sexta". Só conta como prazo quando NÃO tem hora
@@ -253,6 +270,11 @@ function categoriaTarefa(titulo) {
 // "Tarefa:" (dobrado) ou "tarefa:" (depois de "nova") grudado no título.
 const PREFIXOS_TAREFA = [
   RE_ANOTA_QUE,
+  // ⚠️ Pronome sujeito é o elo que faltava: depois de tirar "anota que" sobrava
+  // "EU tenho que terminar X", e o `^tenho que` (ancorado) não casava mais —
+  // o título saía "Eu tenho que terminar X". Como os prefixos rodam em LOOP,
+  // tirar o "eu" aqui deixa o "tenho que" casar na volta seguinte.
+  /^\s*eu\s+/i,
   /^\s*(?:me\s+)?lembr(?:a|ar|e)\s+de\s+/i,
   /^\s*tenho\s+que\s+/i,
   /^\s*preciso\s+(?:de\s+)?/i,
@@ -267,6 +289,15 @@ const PREFIXOS_TAREFA = [
 
 function extrairTituloTarefa(mensagem) {
   let t = mensagem.replace(/^\s*sora[,!.:\s]+/i, '').trim();
+  // O pedido no FIM sai antes dos prefixos: "preciso terminar o trabalho, anota
+  // pra mim" tem cue nas DUAS pontas, e só tirar o da frente deixaria o
+  // "anota pra mim" grudado no título.
+  for (let i = 0; i < 3; i++) {
+    const antes = t;
+    for (const re of RE_PEDIDO_FINAL) t = t.replace(re, '');
+    if (t === antes) break;
+  }
+  t = t.trim();
   for (let i = 0; i < 4; i++) {   // teto de segurança; na prática nunca repete mais que 2x
     const antes = t;
     for (const re of PREFIXOS_TAREFA) t = t.replace(re, '');
