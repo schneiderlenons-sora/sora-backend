@@ -11,8 +11,97 @@ async function inserirComDono(tabela, base, donoId) {
   if (error) await supabase.from(tabela).insert(base);
 }
 
+const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/**
+ * Lista as contas/receitas fixas do mês — "quais meus gastos fixos desse mês?".
+ *
+ * Separa em JÁ PASSOU × AINDA VEM pelo dia de hoje: é o que a pergunta quer
+ * saber de verdade (quanto ainda vai sair do bolso este mês).
+ *
+ * ⚠️ Data por `hojeSP()`, nunca `new Date().toISOString()` — este é UTC, e
+ * depois das 21h no Brasil o dia já virou; a conta do dia seguinte apareceria
+ * como "já passou". Mesma regra do resto do sistema.
+ */
+async function listarRecorrencias(data, ctx) {
+  const { phone, grupoId } = ctx;
+  const filtro = data.filtro === 'Gasto' || data.filtro === 'Receita' ? data.filtro : null;
+
+  const cols = 'tipo, categoria, valor, dia_vencimento, descricao';
+  let q = supabase.from('recorrencias').select(`${cols}, valor_variavel`)
+    .eq('grupo_id', grupoId).eq('ativa', true);
+  if (filtro) q = q.eq('tipo', filtro);
+  let { data: rows, error } = await q.order('dia_vencimento', { ascending: true });
+  // Migration 066 (valor_variavel) pendente → refaz sem ela em vez de quebrar.
+  if (error) {
+    let q2 = supabase.from('recorrencias').select(cols)
+      .eq('grupo_id', grupoId).eq('ativa', true);
+    if (filtro) q2 = q2.eq('tipo', filtro);
+    ({ data: rows } = await q2.order('dia_vencimento', { ascending: true }));
+  }
+  const lista = rows || [];
+
+  if (!lista.length) {
+    const nada = filtro === 'Gasto' ? 'nenhum gasto fixo cadastrado'
+      : filtro === 'Receita' ? 'nenhuma receita fixa cadastrada'
+      : 'nenhuma recorrência cadastrada';
+    await enviarTexto(phone,
+      `🔁 Você tem ${nada}.\n\nPra criar, é só mandar: *todo mês 1000 aluguel dia 5* 📌`);
+    return;
+  }
+
+  const { hojeSP } = require('../services/cicloFatura');
+  const hoje = parseInt(hojeSP().slice(8, 10), 10);
+
+  const linha = (r) => {
+    const dia = r.dia_vencimento ? `dia ${String(r.dia_vencimento).padStart(2, '0')}` : 'sem dia';
+    // Conta de valor variável não tem valor fixo — exibir um número seria mentir.
+    const valor = r.valor_variavel ? '_valor varia_' : brl(r.valor);
+    const icone = r.tipo === 'Receita' ? '💰' : '💸';
+    return `${icone} *${valor}* · ${String(r.descricao || r.categoria || 'Sem descrição').slice(0, 34)} — ${dia}`;
+  };
+
+  const passou = lista.filter((r) => r.dia_vencimento && r.dia_vencimento < hoje);
+  const vem    = lista.filter((r) => !r.dia_vencimento || r.dia_vencimento >= hoje);
+
+  // Só soma valor FIXO — variável entra como contagem, não como número inventado.
+  const somar = (tipo) => lista
+    .filter((r) => r.tipo === tipo && !r.valor_variavel)
+    .reduce((s, r) => s + (Number(r.valor) || 0), 0);
+  const variaveis = lista.filter((r) => r.valor_variavel).length;
+
+  const titulo = filtro === 'Gasto' ? '💸 *Seus gastos fixos do mês*'
+    : filtro === 'Receita' ? '💰 *Suas receitas fixas do mês*'
+    : '🔁 *Suas recorrências do mês*';
+  const partes = [titulo];
+
+  if (vem.length)    partes.push(`\n*Ainda vem (do dia ${hoje} em diante)*\n${vem.map(linha).join('\n')}`);
+  if (passou.length) partes.push(`\n*Já passou neste mês*\n${passou.map(linha).join('\n')}`);
+
+  const totGasto = somar('Gasto');
+  const totRec   = somar('Receita');
+  const resumo = [];
+  if (totGasto > 0 && filtro !== 'Receita') resumo.push(`sai ${brl(totGasto)}`);
+  if (totRec   > 0 && filtro !== 'Gasto')   resumo.push(`entra ${brl(totRec)}`);
+  if (resumo.length) {
+    partes.push(`\n📊 Todo mês ${resumo.join(' e ')}`
+      + (variaveis ? `, mais ${variaveis} conta${variaveis > 1 ? 's' : ''} de valor variável.` : '.'));
+  }
+  // Sobra líquida só faz sentido quando os DOIS lados aparecem.
+  if (!filtro && totGasto > 0 && totRec > 0) {
+    const sobra = totRec - totGasto;
+    partes.push(sobra >= 0
+      ? `Sobram ${brl(sobra)} depois das fixas.`
+      : `⚠️ As fixas passam das receitas em ${brl(Math.abs(sobra))}.`);
+  }
+
+  await enviarTexto(phone, partes.join('\n'));
+}
+
 module.exports = async function handleRecorrencias(data, ctx) {
   const { phone, grupoId, user } = ctx;
+
+  if (data.acao === 'listar_recorrencias') return listarRecorrencias(data, ctx);
 
   // ── CONFIRMAR PREVISTO (conta variável) ────────────────────────────────
   // "confirmar luz 243" → acha o lançamento PREVISTO/pendente da conta variável,

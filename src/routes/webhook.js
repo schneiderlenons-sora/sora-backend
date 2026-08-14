@@ -657,6 +657,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       // Recorrências e lembretes
       case 'set_recorrente':
       case 'cancelar_recorrencia':
+      case 'listar_recorrencias':
       case 'criar_lembrete':
       case 'confirmar_previsto':
         await require('../handlers/recorrencias')(data, ctx);

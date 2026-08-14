@@ -196,6 +196,40 @@ function interpretarRapido(message) {
   if ((m = msg.match(/(cancelar|parar)\s+recorr[eê]ncia\s+(.+)/i)))
     return { acao: 'cancelar_recorrencia', descricao: m[2].trim() };
 
+  // --- LISTAR RECORRÊNCIAS: "quais meus gastos fixos desse mês?" ------------
+  // Vem DEPOIS de set_recorrente/cancelar de propósito: aquelas são comandos
+  // com valor e dia; esta é a CONSULTA. Trocar a ordem faria "todo mês 1000
+  // aluguel dia 5" cair aqui e virar listagem em vez de cadastro.
+  //
+  // ⚠️ Ancorado (^…$) e sem número: a frase é só a pergunta. Sem isso,
+  // "paguei o aluguel, que é meu maior gasto fixo" viraria listagem — e a
+  // regra da casa é que o regex NUNCA chuta (quando não bate, a IA decide).
+  {
+    const alvo = String(msg).trim()
+      // "desse mês", "do mês", "deste mês", "esse mês" no fim são ruído aqui:
+      // recorrência é mensal por definição, então o mês é sempre o atual.
+      // ⚠️ Lista EXPLÍCITA: a versão "esperta" (`d?es?t?[ae]`) não casava com
+      // "desse" (dois esses) — a frase inteira escapava e caía na regra
+      // genérica de "gastos", virando resumo do mês em vez da listagem.
+      .replace(/\s+(?:desse|deste|dessa|desta|nesse|neste|nessa|nesta|do|no|esse|este|essa|esta)\s+m[eê]s\s*\??$/i, '')
+      .replace(/\?+$/, '').trim();
+
+    const ABRE = '(?:quais|quais\\s+s[ãa]o|que|me\\s+mostra|mostra[r]?|ver|listar?|lista|tenho|quero\\s+ver)';
+    const POSSE = '(?:meus|minhas|os|as|meu|minha)';
+
+    // Gastos fixos / contas fixas → só despesas.
+    if (new RegExp(`^(?:${ABRE}\\s+)?(?:${POSSE}\\s+)?(?:gastos?|contas?|despesas?)\\s+fix[oa]s?$`, 'i').test(alvo))
+      return { acao: 'listar_recorrencias', filtro: 'Gasto' };
+
+    // Receitas fixas / entradas fixas → só receitas.
+    if (new RegExp(`^(?:${ABRE}\\s+)?(?:${POSSE}\\s+)?(?:receitas?|entradas?|ganhos?|sal[áa]rios?)\\s+fix[oa]s?$`, 'i').test(alvo))
+      return { acao: 'listar_recorrencias', filtro: 'Receita' };
+
+    // Recorrências (sem qualificar) → tudo.
+    if (new RegExp(`^(?:${ABRE}\\s+)?(?:${POSSE}\\s+)?recorr[eê]ncias?$`, 'i').test(alvo))
+      return { acao: 'listar_recorrencias', filtro: null };
+  }
+
   // --- PARCELAMENTO SEM CARTÃO → vira um parcelamento em Dívidas ---
   // ANTES do parcelado de cartão. Gatilhos EXPLÍCITOS (não chuta): "sem cartão"
   // OU "parcelei ... com <pessoa>". Sempre exige "em Nx de Y"; senão vai pra IA.

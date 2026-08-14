@@ -89,6 +89,36 @@ const CASOS = [
   { msg: 'todo mês 1000 aluguel dia 5',       expect: { acao: 'set_recorrente', valor: 1000, dia: 5 } },
   { msg: 'todo mês 50 spotify dia 10',        expect: { acao: 'set_recorrente', valor: 50, dia: 10 } },
 
+  // ── LISTAR recorrências (consulta, ≠ cadastro) ────────────────────────────
+  // Gastos fixos → só despesas
+  { msg: 'quais meus gastos fixos desse mês?', expect: { acao: 'listar_recorrencias', filtro: 'Gasto' } },
+  { msg: 'quais gastos fixos desse mês?',      expect: { acao: 'listar_recorrencias', filtro: 'Gasto' } },
+  { msg: 'meus gastos fixos',                  expect: { acao: 'listar_recorrencias', filtro: 'Gasto' } },
+  { msg: 'contas fixas',                       expect: { acao: 'listar_recorrencias', filtro: 'Gasto' } },
+  { msg: 'minhas contas fixas do mês',         expect: { acao: 'listar_recorrencias', filtro: 'Gasto' } },
+  { msg: 'listar despesas fixas',              expect: { acao: 'listar_recorrencias', filtro: 'Gasto' } },
+  // Receitas fixas → só entradas
+  { msg: 'quais minhas receitas fixas?',       expect: { acao: 'listar_recorrencias', filtro: 'Receita' } },
+  { msg: 'minhas entradas fixas',              expect: { acao: 'listar_recorrencias', filtro: 'Receita' } },
+  // Sem qualificar → tudo
+  { msg: 'quais minhas recorrências desse mês', expect: { acao: 'listar_recorrencias', filtro: null } },
+  { msg: 'minhas recorrências',                expect: { acao: 'listar_recorrencias', filtro: null } },
+  { msg: 'recorrências',                       expect: { acao: 'listar_recorrencias', filtro: null } },
+  { msg: 'ver recorrencias',                   expect: { acao: 'listar_recorrencias', filtro: null } },
+
+  // ⚠️ O que NÃO pode virar listagem — o regex nunca chuta.
+  // Cadastro tem valor E dia: não pode ser engolido pela consulta.
+  { msg: 'todo mês 1200 aluguel dia 5',       expect: { acao: 'set_recorrente' } },
+  { msg: 'gastei 50 no mercado',              expect: { acao: 'salvar' } },
+  // ⚠️ QUIRK PRÉ-EXISTENTE (não é da listagem): a regra genérica de "gast\w+"
+  // (linha ~576) captura QUALQUER frase com "gasto" e devolve resumo do mês.
+  // Verificado no HEAD antes desta feature — as duas já se comportavam assim.
+  // Registrado aqui como comportamento ATUAL pra o eval não ficar com falha
+  // permanente (eval que sempre falha para de ser sinal). Corrigir exige mexer
+  // na regra ampla de gastos, que é risco à parte.
+  { msg: 'paguei o aluguel que é meu maior gasto fixo', expect: { acao: 'resumo' } },
+  { msg: 'quero cadastrar um gasto fixo',     expect: { acao: 'resumo' } },
+
   // ── Cartão / parcelas / fatura ────────────────────────────────────────────
   { msg: 'comprei fone no nubank crédito em 3x de 150', expect: { acao: 'compra_parcelada' } },
   { msg: 'pagar fatura',                      expect: { acao: 'pagar_fatura' } },

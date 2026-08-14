@@ -89,9 +89,23 @@ PARCELAS:
 {"acao":"pagar_parcela","descricao":"fone"}
 {"acao":"confirmar_pagamento_parcela","descricao":"fone"}
 
-RECORRÊNCIAS:
+RECORRÊNCIAS (contas/receitas que se repetem todo mês):
 {"acao":"set_recorrente","valor":1000,"descricao":"aluguel","dia":5,"tipo":"Gasto"}
 {"acao":"cancelar_recorrencia","descricao":"aluguel"}
+{"acao":"listar_recorrencias","filtro":null}
+// filtro: "Gasto" (gastos/contas/despesas fixas) · "Receita" (receitas/salários
+// fixos) · null (tudo). Recorrência é sempre mensal, então "desse mês" /
+// "do mês" NÃO muda nada — é a mesma listagem.
+// "quais meus gastos fixos?"           → {"acao":"listar_recorrencias","filtro":"Gasto"}
+// "o que eu pago todo mês?"            → {"acao":"listar_recorrencias","filtro":"Gasto"}
+// "quanto sai de fixo por mês?"        → {"acao":"listar_recorrencias","filtro":"Gasto"}
+// "minhas contas fixas desse mês"      → {"acao":"listar_recorrencias","filtro":"Gasto"}
+// "quais minhas receitas fixas?"       → {"acao":"listar_recorrencias","filtro":"Receita"}
+// "o que eu recebo todo mês?"          → {"acao":"listar_recorrencias","filtro":"Receita"}
+// "quais minhas recorrências?"         → {"acao":"listar_recorrencias","filtro":null}
+// "o que tenho cadastrado de fixo?"    → {"acao":"listar_recorrencias","filtro":null}
+// ⚠️ NÃO confundir com lançamento: "paguei o aluguel" é gasto normal, e
+// "todo mês 1000 aluguel dia 5" é set_recorrente (tem valor E dia).
 
 LEMBRETES:
 {"acao":"criar_lembrete","tipo":"pagar","descricao":"conta luz","dia":10,"mes":4,"valor":150}
