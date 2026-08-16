@@ -1,0 +1,33 @@
+-- =============================================================================
+-- 123 — Fatura do cartão no card "Previstos do mês" (`wallets.nos_previstos`)
+--
+-- PEDIDO DE USUÁRIO: "por que os valores de cartão de crédito não aparecem como
+-- previsto no mês? Isso ajudaria na previsão de saldos."
+--
+-- Ele está certo: a fatura é a maior despesa previsível de muita gente e ficava
+-- de fora justamente do card que existe pra prever o mês.
+--
+-- Esta coluna é o MESMO mecanismo de `dividas.nos_previstos` (migration 115):
+-- deixa tirar a fatura da previsão sem apagar nada — o cartão segue inteiro na
+-- aba Cartão de crédito. Diferença: aqui o usuário também consegue COLOCAR de
+-- volta pela própria tela (na dívida ele precisava ir até a aba Dívidas).
+--
+-- ⚠️ POR QUE `default true`: quem já usa o painel passa a ver a fatura no
+-- previsto sem precisar configurar nada — que é o comportamento pedido.
+--
+-- ⚠️ RISCO DE CONTAR EM DOBRO (medido antes de construir): o CLAUDE.md orienta
+-- cadastrar contas de valor variável — inclusive cartão — como recorrência. Se
+-- alguém tem a fatura como recorrência E ela passa a entrar sozinha, conta duas
+-- vezes. MEDIDO na base: de 240 recorrências ativas, apenas **1** é fatura de
+-- cartão ("CARTÃO CAIXA"), afetando **1 grupo**. O painel avisa quando detecta
+-- essa sobreposição em vez de somar calado.
+--
+-- Idempotente. Rodar no Supabase → SQL Editor.
+-- =============================================================================
+
+alter table public.wallets add column if not exists nos_previstos boolean not null default true;
+
+-- =============================================================================
+-- Verificação:
+--   select nome, tipo, nos_previstos from public.wallets where tipo = 'Crédito';
+-- =============================================================================

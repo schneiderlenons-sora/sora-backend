@@ -172,7 +172,7 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
 
     const {
       nome, tipo, saldo, limite, cheque_especial,
-      dia_fechamento, dia_vencimento, bandeira, ultimos4,
+      dia_fechamento, dia_vencimento, bandeira, ultimos4, nos_previstos,
     } = req.body;
 
     const nomeNovo = typeof nome === 'string' ? nome.trim().slice(0, 60) : null;
@@ -200,6 +200,8 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (cheque_especial !== undefined) patch.cheque_especial = Math.abs(Number(cheque_especial) || 0);
     if (bandeira !== undefined)        patch.bandeira = bandeira || null;
     if (ultimos4 !== undefined)        patch.ultimos4 = ultimos4 || null;
+    // Tirar/colocar a fatura no card "Previstos do mês" (migration 123).
+    if (nos_previstos !== undefined)   patch.nos_previstos = !!nos_previstos;
     if (dia_fechamento !== undefined)  patch.dia_fechamento = dia_fechamento || null;
     if (dia_vencimento !== undefined)  patch.dia_vencimento = dia_vencimento || null;
     // Data corrigida à mão vira a palavra final pro sync do OF (migration 114).
@@ -212,9 +214,18 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     // e falhar aqui não deixa rastro. Só depois mexemos nas 700+ transações.
     let { data, error } = await supabase.from('wallets')
       .update(patch).eq('id', atual.id).select().single();
-    // Tolerante às migrations 094 (cheque_especial) e 114 (datas_manuais).
+    // Tolerante às migrations 094 (cheque_especial), 114 (datas_manuais) e
+    // 123 (nos_previstos): tenta com tudo e refaz só com o essencial.
     if (error) {
-      const { cheque_especial: _c, datas_manuais: _d, ...simples } = patch;
+      const { cheque_especial: _c, datas_manuais: _d, nos_previstos: _n, ...simples } = patch;
+      // ⚠️ Sem nada pra regravar, a única mudança pedida era justamente a
+      // coluna que não existe. Silenciar aqui faria o toggle "funcionar" na
+      // tela e voltar sozinho no reload — pior que um erro claro.
+      if (!Object.keys(simples).length) {
+        return res.status(400).json({
+          erro: 'Recurso ainda não liberado no banco. Rode a migration sql/123_cartao_nos_previstos.sql.',
+        });
+      }
       ({ data, error } = await supabase.from('wallets')
         .update(simples).eq('id', atual.id).select().single());
     }
@@ -382,8 +393,12 @@ router.get('/faturas/:phone', auth, async (req, res) => {
     const offset = parseInt(req.query.offset, 10) || 0;
     const hoje = hojeSP();
 
+    // ⚠️ `select('*')` de propósito: `nos_previstos` é da migration 123 e, se
+    // ela ainda não rodou, um select por NOME de coluna falha inteiro e a tela
+    // de faturas some. Com '*' a coluna ausente simplesmente não vem (mesma
+    // lição do `datas_manuais` no upsertWallet).
     const { data: cartoes } = await supabase.from('wallets')
-      .select('id, nome, saldo, limite, of_conta_id, dia_fechamento, dia_vencimento')
+      .select('*')
       .eq('grupo_id', grupoId).eq('tipo', 'Crédito').order('created_at', { ascending: true });
 
     const faturas = [];
@@ -426,6 +441,9 @@ router.get('/faturas/:phone', auth, async (req, res) => {
         of: ehOF, fatura, pago, restante, vencida, quitada,
         fechada: ciclo.fim < hoje,
         parcelas_previstas: prev.linhas, total_previsto: prev.total,
+        // Entra no card "Previstos do mês"? (migration 123). Sem a coluna,
+        // `undefined !== false` → true, que é o padrão desejado.
+        nos_previstos: c.nos_previstos !== false,
       });
     }
 
