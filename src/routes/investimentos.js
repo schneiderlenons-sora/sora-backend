@@ -224,22 +224,36 @@ router.post('/aportes', auth, exigirPlano('kit', 'premium', 'black'), exigirPerm
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
-    const { data: aporte } = await supabase.from('aportes').insert({
-      grupo_id: grupoId, valor: parseFloat(valor),
+    const v = parseFloat(valor);
+    if (!Number.isFinite(v) || v <= 0) return res.status(400).json({ erro: 'Informe um valor maior que zero.' });
+
+    // `tipo` NÃO é enviado de propósito: a coluna tem default 'aporte'
+    // (migration 122), então isto continua funcionando antes de ela rodar.
+    // ⚠️ O `error` É LIDO — esta rota tinha o mesmo defeito do POST de
+    // investimento: `const { data } = insert()` e `res.json(data)` devolviam
+    // 200 com null quando falhava, e o painel achava que tinha salvado.
+    const { data: aporte, error: eAp } = await supabase.from('aportes').insert({
+      grupo_id: grupoId, valor: v,
       investimento_id: investimento_id || null,
       descricao: descricao || 'Aporte manual'
     }).select().single();
+    if (eAp) {
+      console.error('[aportes] insert falhou:', eAp.message);
+      return res.status(500).json({ erro: `Não consegui registrar o aporte: ${eAp.message}` });
+    }
 
     // Atualiza o investimento vinculado
     let nomeInv = null;
     if (investimento_id) {
       const { data: inv } = await supabase.from('investimentos')
-        .select('nome, valor_aportado, valor_atual').eq('id', investimento_id).single();
+        .select('nome, valor_aportado, valor_atual').eq('id', investimento_id)
+        .eq('grupo_id', grupoId).maybeSingle();
       if (inv) {
         nomeInv = inv.nome;
         await supabase.from('investimentos').update({
-          valor_aportado: inv.valor_aportado + parseFloat(valor),
-          valor_atual:    inv.valor_atual    + parseFloat(valor)
+          valor_aportado: (Number(inv.valor_aportado) || 0) + v,
+          valor_atual:    (Number(inv.valor_atual)    || 0) + v,
+          ultima_atualizacao: new Date().toISOString(),
         }).eq('id', investimento_id);
       }
     }
@@ -257,6 +271,74 @@ router.post('/aportes', auth, exigirPlano('kit', 'premium', 'black'), exigirPerm
     }
 
     res.json({ ...aporte, debito });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// POST /api/investimentos/resgates — tira dinheiro de um investimento.
+//
+// Relato de usuário: "não achei a opção de resgate de investimentos". Não
+// achou porque não existia — só METAS tinham resgate.
+//
+// ⚠️ O abatimento é PROPORCIONAL (services/resgateInvestimento.js): mexer só
+// no valor atual e deixar o aportado intacto faria um saque parcial virar
+// "prejuízo" na tela. Travado em `npm run eval:resgate`.
+router.post('/resgates', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { valor, investimento_id, descricao, wallet_id } = req.body;
+    const grupoId = await getGrupoId(req);
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+    if (!investimento_id) return res.status(400).json({ erro: 'Escolha de qual investimento é o resgate.' });
+
+    const { data: inv, error: eInv } = await supabase.from('investimentos')
+      .select('id, nome, valor_aportado, valor_atual, quantidade')
+      .eq('id', investimento_id).eq('grupo_id', grupoId).maybeSingle();
+    if (eInv) return res.status(500).json({ erro: `Não consegui ler o investimento: ${eInv.message}` });
+    if (!inv) return res.status(404).json({ erro: 'Investimento não encontrado.' });
+
+    const { aplicarResgate } = require('../services/resgateInvestimento');
+    const calc = aplicarResgate(inv, valor);
+    if (!calc.ok) return res.status(400).json({ erro: calc.erro });
+
+    // Extrato primeiro: se a linha do resgate falhar, nada foi alterado ainda.
+    const linha = {
+      grupo_id: grupoId, valor: calc.resgatado,
+      investimento_id, tipo: 'resgate',
+      descricao: descricao || `Resgate: ${inv.nome}`,
+    };
+    let { data: mov, error: eMov } = await supabase.from('aportes').insert(linha).select().single();
+    // Migration 122 pendente (sem a coluna `tipo`) → o resgate NÃO pode entrar
+    // como se fosse aporte, senão o extrato mente. Melhor recusar com instrução.
+    if (eMov && /tipo/i.test(eMov.message || '')) {
+      return res.status(400).json({
+        erro: 'Resgate ainda não liberado no banco. Rode a migration sql/122_aportes_resgate.sql.',
+      });
+    }
+    if (eMov) return res.status(500).json({ erro: `Não consegui registrar o resgate: ${eMov.message}` });
+
+    const { error: eUp } = await supabase.from('investimentos')
+      .update({ ...calc.patch, ultima_atualizacao: new Date().toISOString() })
+      .eq('id', investimento_id).eq('grupo_id', grupoId);
+    if (eUp) {
+      // Desfaz o extrato pra não sobrar resgate registrado sem efeito nenhum.
+      await supabase.from('aportes').delete().eq('id', mov.id);
+      return res.status(500).json({ erro: `Não consegui atualizar o investimento: ${eUp.message}` });
+    }
+
+    // Opcional: o dinheiro volta pra uma conta (entrada marcada como
+    // transferência — resgate não é renda nova, ver creditarConta).
+    let credito = null;
+    if (wallet_id) {
+      try {
+        const { creditarConta } = require('../services/contaDebito');
+        credito = await creditarConta({
+          grupoId, walletId: wallet_id, valor: calc.resgatado,
+          categoria: 'Investimentos', observacao: `Resgate: ${inv.nome}`,
+          userId: req.userId,
+        });
+      } catch (e) { credito = { erro: e.message }; }
+    }
+
+    res.json({ ...mov, zerou: calc.zerou, credito });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

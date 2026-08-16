@@ -36,6 +36,7 @@
     "eval:parcelas-previstas": "node evals/parcelasPrevistas.eval.js",
     "eval:fatura-vista": "node evals/faturaVista.eval.js",
     "eval:caixinhas": "node evals/caixinhas.eval.js",
+    "eval:resgate": "node evals/resgateInvestimento.eval.js",
     "agentes:preview": "node scripts/preview-agentes.js"
   },
   "engines": {

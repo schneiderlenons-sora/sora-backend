@@ -52,6 +52,55 @@ async function debitarConta({ grupoId, walletId, valor, categoria, observacao, u
 }
 
 // =============================================================================
+// creditarConta — o INVERSO de debitarConta: soma o valor ao saldo da conta e
+// registra uma transação de entrada (Recebimento).
+//
+// Usado no RESGATE de investimento — o dinheiro sai da aplicação e volta pra
+// conta. Mesma mecânica por `carteira_nome` do débito.
+//
+// ⚠️ `transferencia: true` de propósito: resgatar NÃO é renda nova, é dinheiro
+// que já era seu mudando de lugar. Sem essa marca, todo resgate entraria como
+// "Recebimento" comum e inflaria a receita do mês nos relatórios e no resumo —
+// a pessoa "ganharia" R$ 10.000 num mês em que só moveu a própria poupança.
+// É a mesma razão pela qual pagamento de fatura é marcado assim.
+// =============================================================================
+async function creditarConta({ grupoId, walletId, valor, categoria, observacao, userId, data }) {
+  const v = parseFloat(valor);
+  if (!grupoId || !walletId || !v || v <= 0) return null;
+
+  const { data: wallet } = await supabase.from('wallets')
+    .select('id, nome, saldo').eq('id', walletId).eq('grupo_id', grupoId).maybeSingle();
+  if (!wallet) throw new Error('Conta não encontrada');
+
+  const base = {
+    id_curto:      Math.random().toString(36).substring(2, 8).toUpperCase(),
+    grupo_id:      grupoId,
+    criado_por:    userId || null,
+    tipo:          'Recebimento',
+    categoria:     categoria || 'Investimentos',
+    valor:         v,
+    observacao:    observacao || '',
+    carteira_nome: wallet.nome,
+    pago:          true,
+    data:          data || new Date().toISOString(),
+  };
+
+  let { data: tx, error } = await supabase.from('transacoes')
+    .insert({ ...base, transferencia: true }).select().single();
+  // Tolerante à migration 046 (coluna `transferencia`): sem ela, grava sem —
+  // melhor o resgate existir do que falhar por causa da flag.
+  if (error && /transferencia/i.test(error.message || '')) {
+    ({ data: tx, error } = await supabase.from('transacoes').insert(base).select().single());
+  }
+  if (error) throw error;
+
+  await supabase.from('wallets')
+    .update({ saldo: (wallet.saldo || 0) + v }).eq('id', wallet.id);
+
+  return { tx, conta: { id: wallet.id, nome: wallet.nome } };
+}
+
+// =============================================================================
 // registrarTransferencia — grava UMA transação representando a transferência
 // entre contas (marcada com transferencia=true pra ficar fora dos relatórios
 // de gasto). NÃO mexe em saldo (quem chama já ajustou origem e destino).
@@ -119,4 +168,4 @@ async function registrarFaturaExterna({ grupoId, valor, observacao, userId }) {
   return { tx, externo: true };
 }
 
-module.exports = { debitarConta, registrarTransferencia, registrarFaturaExterna };
+module.exports = { debitarConta, creditarConta, registrarTransferencia, registrarFaturaExterna };
