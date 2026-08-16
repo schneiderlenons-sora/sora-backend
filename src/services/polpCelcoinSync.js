@@ -729,14 +729,64 @@ const NAO_EFETIVADA = new Set(['LANCAMENTO_FUTURO', 'TRANSACAO_PROCESSANDO']);
 const efetivada = (tx) => !NAO_EFETIVADA.has(String(tx && tx.completed_authorised_payment_type || ''));
 
 /** Transação de CONTA. Devolve `null` quando não deve ser importada. */
+// Nomes que o banco manda como "descrição" mas não descrevem NADA — são o tipo
+// da operação, não com quem ela foi feita. Medido numa conta real: 115 de 377
+// transações tinham a descrição literal "Pix", e o cliente reclamou que não
+// dava pra revisar categoria nenhuma ("não trazem para onde o pix foi feito").
+const RE_DESC_GENERICA = /^\s*(?:pix|ted|doc|transfer[êe]ncia|transferencia|pagamento|dep[óo]sito|deposito|saque|d[ée]bito|debito|cr[ée]dito|credito|compra|boleto|tarifa|estorno|recebimento|envio)\s*$/i;
+
+/** Só os dígitos, mascarado no meio: 12345678901 → •••.456.789-•• */
+function documentoMascarado(doc) {
+  const d = String(doc || '').replace(/\D/g, '');
+  if (d.length === 11) return `•••.${d.slice(3, 6)}.${d.slice(6, 9)}-••`;      // CPF
+  if (d.length === 14) return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/••••-••`; // CNPJ
+  return null;
+}
+
+/**
+ * Descrição legível de uma transação de conta.
+ *
+ * ⚠️ A ORDEM É O BUG QUE ISTO CORRIGE. Antes era
+ * `transaction_name || cp.alias || cp.name` — e como o banco manda
+ * `transaction_name: "Pix"` em TODO pix, a contraparte NUNCA era usada, mesmo
+ * quando existia (Netflix, iFood…). O nome genérico vencia o nome real.
+ *
+ * ⚠️ A doc avisa que `counterparty` só é enriquecida quando
+ * `partie_cnpj_cpf` é **CNPJ**: pix pra pessoa física não tem nome, e nunca
+ * vai ter. Pra esses, o melhor possível é o TIPO + o documento mascarado —
+ * some o "Pix" solto e vira algo que dá pra reconhecer no extrato.
+ */
+function descricaoTx(tx) {
+  const cp = tx.counterparty || {};
+  const bruta = String(tx.transaction_name || '').trim();
+  const generica = !bruta || RE_DESC_GENERICA.test(bruta);
+
+  // Contraparte real vence — `alias` (nome fantasia, "Netflix") antes de
+  // `name` (razão social, "NETFLIX ENTRETENIMENTO BRASIL LTDA.").
+  const nome = String(cp.alias || cp.name || '').trim();
+  if (nome) return generica && bruta ? `${bruta} · ${nome}` : nome;
+
+  // Sem contraparte: a descrição do banco serve, desde que diga algo.
+  if (!generica) return bruta;
+
+  // Genérica e sem contraparte — monta o melhor identificador possível.
+  const partes = [bruta || String(tx.type || '').replace(/_/g, ' ')].filter(Boolean);
+  const extra = String(tx.type_additional_info || '').trim();
+  if (extra && !RE_DESC_GENERICA.test(extra)) partes.push(extra);
+  else {
+    const doc = documentoMascarado(tx.partie_cnpj_cpf);
+    if (doc) partes.push(doc);
+  }
+  return partes.join(' · ').slice(0, 200) || 'Transação';
+}
+
 function normalizeTxConta(tx) {
   if (!efetivada(tx)) return null;
 
   const valor = money(tx.transaction_amount);
   if (valor == null) return null;
   const ehGasto = (tx.credit_debit_type || '').toString().toUpperCase() === 'DEBITO';
-  const cp = tx.counterparty || {};
-  const descricao = (tx.transaction_name || cp.alias || cp.name || '').toString();
+  const descricao = descricaoTx(tx);
 
   // Transferência entre contas próprias / aporte não é consumo.
   const ref = tx.category_ref || '';
@@ -1277,6 +1327,29 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     }
   } catch { /* migration 113 pendente */ }
 
+  // ── Melhora a descrição das linhas JÁ importadas ────────────────────────
+  //
+  // O sync nunca reescreve linha existente (de propósito — senão apagaria a
+  // categoria que o usuário corrigiu à mão). Mas a descrição genérica é um
+  // caso à parte: quem já importou 115 pix chamados só "Pix" ficaria com eles
+  // pra sempre, mesmo depois do fix — e foi exatamente essa a queixa.
+  //
+  // ⚠️ ESTREITO DE PROPÓSITO: só troca quando a descrição GUARDADA é genérica
+  // ("Pix", "TED"…) E a nova diz mais. Nunca toca em descrição que o usuário
+  // escreveu ou corrigiu — pra isso ela teria de ser exatamente "Pix", o que
+  // ninguém digita. Tolerante: falhar aqui não pode derrubar a importação.
+  try {
+    const melhoraveis = validas.filter((t) => existentes.has(t.externalId)
+      && t.descricao && !RE_DESC_GENERICA.test(t.descricao));
+    for (const t of melhoraveis) {
+      const { data: atual } = await supabase.from('transacoes')
+        .select('id, observacao').eq('of_tx_id', t.externalId).eq('grupo_id', grupoId).maybeSingle();
+      if (!atual || !RE_DESC_GENERICA.test(String(atual.observacao || ''))) continue;
+      await supabase.from('transacoes')
+        .update({ observacao: t.descricao.slice(0, 200) }).eq('id', atual.id);
+    }
+  } catch { /* melhoria cosmética: nunca derruba o sync */ }
+
   let novas = validas.filter((t) => !existentes.has(t.externalId)).map((t) => ({
     id_curto: idCurto(), grupo_id: grupoId, criado_por: userId || null,
     tipo: t.ehGasto ? 'Gasto' : 'Recebimento',
@@ -1782,6 +1855,7 @@ module.exports = {
   money, pct, cetParaMensal, diaDoMes, categoriaDe,
   ehPagamentoFatura: require('./categorizar').ehPagamentoFatura,
   normalizeConta, normalizeCaixinha, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
+  descricaoTx, documentoMascarado,
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,

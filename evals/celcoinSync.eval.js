@@ -312,6 +312,58 @@ console.log('── 6B. nome da conta (fallback de brand_name) ──');
 }
 console.log('  ok');
 
+// ── 8B. Descrição do PIX: contraparte vence o nome genérico ───────────────
+// Relato de cliente: "os lançamentos de PIX não trazem um descritivo de para
+// onde o pix foi feito, dificultando a revisão manual das categorias".
+// Medido na conta dele: 115 de 377 transações com a descrição literal "Pix".
+// Causa: a ordem era `transaction_name || counterparty` — e como o banco manda
+// `transaction_name: "Pix"` em todo pix, a contraparte NUNCA era usada.
+console.log('── 8B. descrição do PIX (contraparte) ──');
+{
+  const eq = (a, b, m) => ok(a === b, `${m} (esperado ${JSON.stringify(b)}, veio ${JSON.stringify(a)})`);
+  const d = (tx) => S.descricaoTx(tx);
+
+  // O caso que estava quebrado: genérico + contraparte real → usa a contraparte.
+  eq(d({ transaction_name: 'Pix', counterparty: { alias: 'Netflix', name: 'NETFLIX ENTRETENIMENTO BRASIL LTDA.' } }),
+     'Pix · Netflix', 'genérico + contraparte → mostra os dois');
+  // `alias` (nome fantasia) antes de `name` (razão social) — mais legível.
+  eq(d({ transaction_name: 'Compra', counterparty: { alias: 'iFood', name: 'IFOOD COM AGENCIA LTDA' } }),
+     'Compra · iFood', 'alias vence razão social');
+  eq(d({ transaction_name: 'Pix', counterparty: { name: 'PADARIA CENTRAL LTDA' } }),
+     'Pix · PADARIA CENTRAL LTDA', 'cai na razão social quando não há alias');
+
+  // Descrição que JÁ diz algo não pode ser estragada.
+  eq(d({ transaction_name: 'Pix recebido - Vander Nelson Sposito' }),
+     'Pix recebido - Vander Nelson Sposito', 'descrição específica é preservada');
+  eq(d({ transaction_name: 'MERCADO LIVRE*COMPRA' }), 'MERCADO LIVRE*COMPRA', 'nome de loja preservado');
+
+  // ⚠️ A doc avisa: contraparte só é enriquecida com CNPJ. Pix pra PESSOA
+  // FÍSICA nunca terá nome — o melhor possível é tipo + documento mascarado.
+  eq(d({ transaction_name: 'Pix', partie_cnpj_cpf: '12345678901' }),
+     'Pix · •••.456.789-••', 'sem contraparte, mostra o CPF mascarado');
+  eq(d({ transaction_name: 'Pix', partie_cnpj_cpf: '13487809000140' }),
+     'Pix · 13.487.809/••••-••', 'CNPJ mascarado quando não houve enrichment');
+
+  // `type_additional_info` entra antes do documento quando diz algo.
+  eq(d({ transaction_name: 'Pix', type_additional_info: 'Aluguel agosto' }),
+     'Pix · Aluguel agosto', 'informação adicional é aproveitada');
+
+  // Nada de nada → não pode virar string vazia.
+  ok(d({}).length > 0, 'sem dado nenhum ainda devolve algo');
+  eq(d({ transaction_name: 'Pix' }), 'Pix', 'genérico sem mais nada continua "Pix"');
+
+  // ⚠️ NÃO pode ficar pior que antes: descrição nunca vazia.
+  for (const tx of [{}, { transaction_name: '' }, { transaction_name: 'Pix' }, { counterparty: {} }]) {
+    ok(typeof d(tx) === 'string' && d(tx).trim().length > 0, `descrição nunca vazia: ${JSON.stringify(tx)}`);
+  }
+
+  // A mascara não pode vazar o documento inteiro.
+  const masc = S.documentoMascarado('12345678901');
+  ok(!masc.includes('123'), 'CPF mascarado não mostra os 3 primeiros dígitos');
+  eq(S.documentoMascarado('123'), null, 'documento inválido não vira máscara');
+}
+console.log('  ok');
+
 // ── 12B. Produto na RAIZ vence o `product` legado ─────────────────────────
 // A doc (versão atual): "Campos de `product` passam a existir na raiz. O objeto
 // `product` aninhado é LEGADO" e "pode retornar null se o Product Identification
