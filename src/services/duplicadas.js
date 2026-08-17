@@ -52,13 +52,25 @@ function diffDias(a, b) {
   return Math.abs(Math.round((x - y) / 86400000));
 }
 
-/** Transação que NUNCA entra na análise (repete por natureza ou não é consumo). */
-function elegivel(t) {
-  if (!t || t.tipo !== 'Gasto') return false;
+/**
+ * O que NUNCA entra em análise nenhuma: repete por natureza ou não é lançamento.
+ * Parcela e conta fixa se repetem de propósito — acusá-las seria sempre errado.
+ */
+function elegivelBase(t) {
+  if (!t) return false;
   if (t.parcela_total) return false;      // parcela repete de propósito
   if (t.recorrente) return false;         // conta fixa idem
-  if (t.transferencia) return false;      // não é consumo
   return Number(t.valor) > 0;
+}
+
+/**
+ * Elegível pras regras de CONSUMO (mesmo-instante e suspeita).
+ *
+ * Transferência e recebimento ficam de fora aqui porque essas regras olham
+ * "comprei a mesma coisa duas vezes?" — e transferência não é compra.
+ */
+function elegivel(t) {
+  return elegivelBase(t) && t.tipo === 'Gasto' && !t.transferencia;
 }
 
 const daOF = (t) => !!(t.of_tx_id || t.pluggy_tx_id);
@@ -68,20 +80,52 @@ const daOF = (t) => !!(t.of_tx_id || t.pluggy_tx_id);
  * Devolve o motivo (string) ou `null`.
  */
 function ehDuplicata(a, b) {
-  if (!elegivel(a) || !elegivel(b)) return null;
+  if (!elegivelBase(a) || !elegivelBase(b)) return null;
   if (a.id && b.id && a.id === b.id) return null;
   if (Number(a.valor) !== Number(b.valor)) return null;
+
+  // ⚠️⚠️ AS DUAS TRAVAS QUE PROTEGEM O PAGAMENTO DE FATURA ⚠️⚠️
+  //
+  // O Open Finance traz a quitação da fatura pelas DUAS PONTAS, e isso é
+  // CORRETO — não é duplicata. Caso real medido (R$ 70,00 em 09/06):
+  //
+  //   Gasto        R$70  carteira "Banco"     "Pagamento de fatura"
+  //   Recebimento  R$70  carteira "platinum"  "Pagamento recebido"
+  //
+  // Mesmo valor, mesmo instante. O que as separa é a CARTEIRA (a conta que
+  // pagou × o cartão que recebeu) e o TIPO (saída × entrada). Exigir os dois
+  // iguais é o que impede o agente de mandar apagar metade de uma quitação
+  // legítima — e deixar o cartão com a fatura eternamente em aberto.
+  //
+  // A trava de tipo é NOVA: antes ela existia por acidente, porque `elegivel`
+  // forçava tudo a 'Gasto'. Ao abrir a regra pra transferência e recebimento,
+  // ela vira explícita — senão as duas pernas passariam a casar.
+  if (a.tipo !== b.tipo) return null;
   if (normTexto(a.carteira_nome) !== normTexto(b.carteira_nome)) return null;
 
   const mesmaDesc = normTexto(a.observacao) === normTexto(b.observacao);
 
   // 1. Prova forte: o mesmo instante, ao milissegundo.
-  if (mesmaDesc && temHoraReal(a.data) && temHoraReal(b.data)
+  //
+  // ⚠️ Esta regra continua SÓ EM CONSUMO (`elegivel`), de propósito. Ela não
+  // precisou mudar pra resolver o caso do cliente — as 9 duplicatas dele são
+  // todas manual × banco — e abrir as duas de uma vez ampliaria o raio sem
+  // necessidade. Mudança de dinheiro se faz uma de cada vez.
+  if (elegivel(a) && elegivel(b)
+      && mesmaDesc && temHoraReal(a.data) && temHoraReal(b.data)
       && String(a.data) === String(b.data)) {
     return 'mesmo-instante';
   }
 
-  // 2. A mesma compra entrando por dois caminhos: digitada e importada.
+  // 2. O mesmo lançamento entrando por dois caminhos: digitado/importado de
+  //    arquivo e trazido pelo banco.
+  //
+  // ⚠️ Esta regra vale pra TRANSFERÊNCIA e RECEBIMENTO também (antes era só
+  // 'Gasto'). O que ela prova é a ORIGEM DIFERENTE — a mesma linha não pode
+  // ter vindo de duas fontes —, e isso independe de o lançamento ser consumo.
+  // Caso real: cliente importou o extrato em OFX e no dia seguinte conectou o
+  // Open Finance; das 9 duplicatas geradas, o agente pegava só 1, porque
+  // pagamento de fatura e transferência recebida caíam fora do filtro.
   if (daOF(a) !== daOF(b) && diffDias(a.data, b.data) <= 1) {
     return 'manual-e-banco';
   }
@@ -124,7 +168,14 @@ function ehSuspeita(a, b) {
  * a mesma transação não aparecer nas duas listas do painel.
  */
 function agrupar(transacoes, comparar, ignorar) {
-  const lista = (transacoes || []).filter((t) => elegivel(t) && !(ignorar && ignorar.has(t.id)));
+  // ⚠️ Filtra pelo BASE (parcela/recorrência/valor), não pelo `elegivel` de
+  // consumo. Cada comparador aplica a própria régua: `ehSuspeita` continua
+  // exigindo `elegivel` por dentro, e `ehDuplicata` decide por regra.
+  //
+  // Era aqui que a correção do "manual × banco" morria: as transferências
+  // eram descartadas ANTES de chegar na comparação, então abrir a regra não
+  // adiantava nada — o par nem era testado.
+  const lista = (transacoes || []).filter((t) => elegivelBase(t) && !(ignorar && ignorar.has(t.id)));
   const visto = new Set();
   const grupos = [];
 

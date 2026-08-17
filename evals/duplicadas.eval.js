@@ -216,6 +216,73 @@ console.log('── 8. gatilho do WhatsApp ──');
 }
 console.log('  ok');
 
+// ── 9. Manual × banco vale pra TRANSFERÊNCIA e RECEBIMENTO ──────────────
+// Caso real: cliente importou o extrato em OFX no dia 10 e conectou o Open
+// Finance no dia 11. O banco trouxe os MESMOS lançamentos → 9 duplicatas.
+// O agente pegava só 1, porque pagamento de fatura e transferência recebida
+// caíam fora do filtro de "consumo".
+console.log('── 9. manual × banco em transferência/recebimento ──');
+{
+  const { analisar } = require('../src/services/duplicadas');
+
+  // Pagamento de fatura (Gasto + transferencia) importado 2×, mesma carteira.
+  const fatA = tx({ id: 'f1', tipo: 'Gasto', valor: 70, transferencia: true, categoria: 'Fatura',
+    observacao: 'Pagamento de fatura', carteira_nome: 'Banco', data: '2026-06-09T08:22:40.826+00:00' });
+  const fatB = tx({ id: 'f2', tipo: 'Gasto', valor: 70, transferencia: true, categoria: 'Fatura',
+    observacao: 'Pagamento de fatura', carteira_nome: 'Banco', data: '2026-06-09T08:22:40.826+00:00',
+    of_tx_id: 'of-1' });
+  ok(ehDuplicata(fatA, fatB) === 'manual-e-banco', 'pagamento de fatura duplicado É acusado');
+
+  // Recebimento importado 2× (o filtro antigo exigia tipo === 'Gasto').
+  const recA = tx({ id: 'r1', tipo: 'Recebimento', valor: 2216.87, transferencia: false,
+    observacao: 'Transferência Recebida', carteira_nome: 'Banco', data: '2026-07-24T09:37:20.867+00:00' });
+  const recB = tx({ id: 'r2', tipo: 'Recebimento', valor: 2216.87, transferencia: false,
+    observacao: 'Transferência Recebida', carteira_nome: 'Banco', data: '2026-07-24T09:37:20.867+00:00',
+    of_tx_id: 'of-2' });
+  ok(ehDuplicata(recA, recB) === 'manual-e-banco', 'recebimento duplicado É acusado');
+
+  // ⚠️⚠️ O CASO QUE NÃO PODE REGREDIR NUNCA ⚠️⚠️
+  // O Open Finance traz a quitação da fatura pelas DUAS PONTAS, e isso é
+  // CORRETO. Medido na conta real (R$ 70,00 em 09/06):
+  //   Gasto       R$70 carteira "Banco"    "Pagamento de fatura"
+  //   Recebimento R$70 carteira "platinum" "Pagamento recebido"
+  // Mesmo valor, MESMO INSTANTE. Acusar isso mandaria o usuário apagar metade
+  // de uma quitação legítima e deixaria o cartão com a fatura eterna em aberto.
+  const pernaConta  = tx({ id: 'p1', tipo: 'Gasto', valor: 70, transferencia: true,
+    observacao: 'Pagamento de fatura', carteira_nome: 'Banco',
+    data: '2026-06-09T08:22:40.826+00:00', of_tx_id: 'of-a' });
+  const pernaCartao = tx({ id: 'p2', tipo: 'Recebimento', valor: 70, transferencia: true,
+    observacao: 'Pagamento recebido', carteira_nome: 'platinum',
+    data: '2026-06-09T08:22:40.975+00:00', of_tx_id: 'of-b' });
+  ok(ehDuplicata(pernaConta, pernaCartao) === null,
+    '⚠️ as DUAS PERNAS da fatura (conta paga × cartão recebe) NUNCA são duplicata');
+
+  // As travas, uma a uma — se qualquer uma cair, a de cima volta a falhar.
+  ok(ehDuplicata(pernaConta, { ...pernaCartao, carteira_nome: 'Banco' }) === null,
+    'mesma carteira mas TIPO diferente → não casa (trava do tipo)');
+  ok(ehDuplicata(pernaConta, { ...pernaCartao, tipo: 'Gasto' }) === null,
+    'mesmo tipo mas CARTEIRA diferente → não casa (trava da carteira)');
+
+  // O par legítimo não pode nem virar suspeita.
+  const r = analisar([pernaConta, pernaCartao]);
+  ok(r.confirmadas.length === 0 && r.suspeitas.length === 0,
+    'as duas pernas não aparecem nem como suspeita');
+
+  // Parcela e recorrência seguem fora, mesmo com a regra mais ampla.
+  ok(ehDuplicata(
+    tx({ id: 'x1', transferencia: true, parcela_total: 12 }),
+    tx({ id: 'x2', transferencia: true, parcela_total: 12, of_tx_id: 'of-x' })) === null,
+    'parcela continua fora mesmo em transferência');
+
+  // Duas transferências REAIS do banco (ambas OF) não são duplicata: a origem
+  // é a mesma, então não há prova nenhuma.
+  ok(ehDuplicata(
+    tx({ id: 'y1', tipo: 'Recebimento', valor: 50, of_tx_id: 'of-y1', data: '2026-08-01T10:00:00Z' }),
+    tx({ id: 'y2', tipo: 'Recebimento', valor: 50, of_tx_id: 'of-y2', data: '2026-08-01T15:00:00Z' })) === null,
+    'duas do banco (OF+OF) não são duplicata — sem origem diferente, sem prova');
+}
+console.log('  ok');
+
 // ── Resultado ────────────────────────────────────────────────────────────
 console.log('');
 if (falhas.length) {
