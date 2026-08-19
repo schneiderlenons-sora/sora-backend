@@ -825,6 +825,26 @@ router.get('/consents-reconciliar', async (req, res) => {
         });
       }
     }
+    // ── DESCONEXÕES DO CICLO (migration 129) ───────────────────────────────
+    //
+    // A Polp cobra por consentimento ativo NO CICLO, não por estoque no fim do
+    // mês. Uma conexão que viveu 20 dias e foi desconectada entra na fatura
+    // daquele mês e some da foto — é a explicação mais provável pros 35 do
+    // painel contra os 25 da API. Sem este bloco a diferença fica sem resposta.
+    //
+    // `?desde=YYYY-MM-DD` recorta o ciclo que se quer conferir.
+    let desconectadas = null;
+    try {
+      const desde = String(req.query.desde || '').slice(0, 10);
+      let qh = supabase.from('of_conexoes_historico')
+        .select('external_id, instituicao, status_final, criada_em, desconectada_em, motivo')
+        .order('desconectada_em', { ascending: false }).limit(200);
+      if (desde) qh = qh.gte('desconectada_em', desde);
+      const { data: hist, error: eh } = await qh;
+      if (eh) throw eh;
+      desconectadas = { total: (hist || []).length, desde: desde || 'sempre', itens: hist || [] };
+    } catch { /* migration 129 pendente */ }
+
     const idsPolp = new Set((consents || []).map((c) => String(c.id)));
     const soNaSora = (nossas || [])
       .filter((c) => !idsPolp.has(String(c.external_id)))
@@ -840,6 +860,8 @@ router.get('/consents-reconciliar', async (req, res) => {
       orfaos: orfaos.slice(0, 60),
       // O inverso: temos a linha e a Polp não conhece (sinal de dado velho).
       so_na_sora: soNaSora,
+      // Quantas SAÍRAM — some da foto, mas já foi cobrada no ciclo em que viveu.
+      desconectadas,
     });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -847,9 +869,26 @@ router.get('/consents-reconciliar', async (req, res) => {
 // Desconecta: remove o vínculo (histórico fica) + apaga no provedor.
 router.delete('/conexoes/:externalId', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { data: c } = await supabase.from('of_conexoes').select('id, provider')
+    const { data: c } = await supabase.from('of_conexoes').select('*')
       .eq('external_id', req.params.externalId).eq('grupo_id', req.grupoId).maybeSingle();
     if (!c) return res.status(404).json({ erro: 'Conexão não encontrada.' });
+    // ⚠️ GUARDA ANTES DE APAGAR (migration 129). A fatura da Polp cobra por
+    // consentimento ativo NO CICLO, então uma conexão que viveu 20 dias e foi
+    // desconectada continua sendo cobrada naquele mês. Sem este registro não
+    // há como conferir a conta deles — foi exatamente o que impediu de explicar
+    // os 35 do painel contra os 24 nossos.
+    //
+    // Tolerante: se a migration não rodou, a desconexão acontece do mesmo jeito.
+    // Perder o histórico é ruim; impedir o cliente de desconectar o banco é pior.
+    try {
+      await supabase.from('of_conexoes_historico').insert({
+        grupo_id: c.grupo_id, user_id: c.user_id || null,
+        provider: c.provider, external_id: String(c.external_id),
+        instituicao: c.instituicao || null, status_final: c.status || null,
+        criada_em: c.created_at || null, motivo: 'usuario',
+      });
+    } catch { /* migration 129 pendente */ }
+
     await supabase.from('of_conexoes').delete().eq('id', c.id);
     // Revoga no provedor CERTO (revogar consentimento na Celcoin, item na Pluggy).
     await providers.para(c.provider).removerConexao(req.params.externalId);
