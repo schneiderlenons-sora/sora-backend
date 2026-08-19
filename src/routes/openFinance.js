@@ -697,6 +697,30 @@ async function diagnosticoCelcoin(req, res) {
           const todasTx = await celcoin.listarTransacoesCartao(raw.id, { max: 3 });
           const norm = todasTx.map((t) => sync.normalizeTxCartao(t, hoje));
           const movidas = sync.redistribuirSemMarcador(norm, item.parcelamentos, hoje);
+          // Por plano: o que o sync enxerga de cada ocorrência. Sem isto,
+          // "realocadas: 0" não diz QUAL guarda barrou.
+          const porId = new Map();
+          for (const t of norm) if (t && t.externalId) porId.set(String(t.externalId), t);
+          const crus = new Map();
+          for (const t of todasTx) if (t && t.id) crus.set(String(t.id), t);
+          item.diagnostico_planos = (item.parcelamentos || []).map((pl) => ({
+            descricao: pl.description,
+            total: pl.totalInstallments,
+            pagas: pl.paidInstallments,
+            ocorrencias: (pl.occurrences || []).length,
+            linhas: (pl.occurrences || []).map((id) => {
+              const t = porId.get(String(id));
+              const cru = crus.get(String(id));
+              return {
+                achada: !!t,
+                charge: cru ? `${cru.charge_identificator}/${cru.charge_number}` : '(tx não lida)',
+                marcador_calculado: t ? (t.parcelaTotal ? `${t.parcelaNum}/${t.parcelaTotal}` : 'nenhum') : null,
+                data_calculada: t ? String(t.data).slice(0, 10) : null,
+                data_crua: cru ? String(cru.transaction_date_time || '').slice(0, 10) : null,
+                valor: t ? t.valor : null,
+              };
+            }),
+          }));
           item.redistribuicao = {
             parcelamentos_lidos: (item.parcelamentos || []).length,
             transacoes_sem_marcador: norm.filter((t) => t && t.ehGasto && !t.parcelaTotal).length,
