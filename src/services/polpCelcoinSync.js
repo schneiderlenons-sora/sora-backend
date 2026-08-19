@@ -954,38 +954,71 @@ function redistribuirSemMarcador(normalizadas, parcelamentos, hoje) {
     if (Number.isNaN(d.getTime())) return null;
     return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   };
+  const distanciaEmDias = (a, b) => {
+    const x = new Date(a).getTime(); const y = new Date(b).getTime();
+    if (Number.isNaN(x) || Number.isNaN(y)) return Infinity;
+    return Math.abs(x - y) / 86400000;
+  };
 
-  const usadas = new Set();
-  for (const plano of dedupParc(parcelamentos)) {
-    const total = plano.totalParcelas;
-    if (!(total >= 2)) continue;
-    const dia = diaSP(plano.compradoEm);
-    if (!dia) continue;
+  // ⚠️ O AGRUPAMENTO É ANCORADO NA TRANSAÇÃO, NUNCA NO `purchasedAt` DO PLANO.
+  // As duas fontes discordam do DIA em compra perto da meia-noite: numa conta
+  // real a transação veio `2026-07-14T00:14:02+00:00` (13/07 às 21h em São
+  // Paulo) e o plano veio `2026-07-14T03:14:02Z` (14/07 às 00h14) — 3 horas de
+  // diferença, exatamente o fuso. Casando por dia do plano, essa compra ficava
+  // de fora e a parcela seguia na fatura errada.
+  const semMarcador = linhas.filter((t) => t.ehGasto && !t.parcelaTotal && diaSP(t.data));
+  const grupos = new Map();
+  for (const t of semMarcador) {
+    const chave = `${diaSP(t.data)}|${Math.round(Math.abs(Number(t.valor) || 0))}`;
+    if (!grupos.has(chave)) grupos.set(chave, []);
+    grupos.get(chave).push(t);
+  }
 
-    const irmas = linhas.filter((t) => !usadas.has(t)
-      && t.ehGasto && !t.parcelaTotal
-      && diaSP(t.data) === dia
-      && Math.abs(Math.abs(Number(t.valor) || 0) - plano.valorParcela) <= 1);
+  const planos = dedupParc(parcelamentos);
+  const usados = new Set();
+  for (const irmas of grupos.values()) {
+    // Menos de 2 é compra normal (o emissor mandou só a 1ª parcela) — quem
+    // cobre o futuro é a projeção de `parcelasPrevistas`.
+    if (irmas.length < 2) continue;
 
-    // Menos de 2: nada a redistribuir. Mais que o total: agrupamento suspeito,
-    // melhor não mexer do que inventar parcela.
-    if (irmas.length < 2 || irmas.length > total) continue;
+    // O plano do banco é o que AUTORIZA o agrupamento: sem ele, duas compras
+    // iguais no mesmo dia virariam um parcelamento em 2x. Exige o conjunto
+    // COMPLETO — com 2 de 3 irmãs não dá pra saber se são a 1ª e a 2ª ou a 2ª
+    // e a 3ª, e numerar no chute joga a parcela na fatura errada.
+    const plano = planos.find((c) => !usados.has(c)
+      && c.totalParcelas === irmas.length
+      && Math.abs(c.valorParcela - Math.abs(Number(irmas[0].valor) || 0)) <= 1
+      // Tolera o desencontro de fuso, mas não junta compras de semanas
+      // diferentes que por acaso tenham o mesmo valor.
+      && distanciaEmDias(c.compradoEm, irmas[0].data) <= 1.5);
+    if (!plano) continue;
+    usados.add(plano);
 
+    // ⚠️ A ordem é por valor DECRESCENTE — o centavo a mais vai na PRIMEIRA
+    // parcela, não na última. Isso NÃO foi suposto: as duas ordens foram
+    // medidas contra a fatura que o banco publicou pro cliente, e só uma fecha.
+    //   crescente ....... R$ 1.596,20   (3 centavos a mais)
+    //   decrescente ..... R$ 1.596,17   = exatamente o app do banco
+    // (`parcelasPrevistas` documenta o contrário porque lá a parcela é
+    // CALCULADA do valor nominal; aqui os valores vêm prontos do banco e o que
+    // importa é só a ordem em que são atribuídos.)
     irmas.sort((a, b) => (Math.abs(b.valor) - Math.abs(a.valor)));
+
+    // A âncora é a data da PRÓPRIA transação (a 1ª parcela é cobrada na compra).
+    const ancora = irmas[0].data;
     irmas.forEach((t, k) => {
-      usadas.add(t);
       const n = k + 1;
       t.parcelaNum = n;
-      t.parcelaTotal = total;
-      t.parcelaGrupo = grupoDaParcela(baseSemMarcador(t.descricao), total, Math.abs(t.valor), plano.compradoEm);
+      t.parcelaTotal = irmas.length;
+      t.parcelaGrupo = grupoDaParcela(baseSemMarcador(t.descricao), irmas.length, Math.abs(t.valor), ancora);
       if (n === 1) return;                       // a 1ª fica na data da compra
-      const nova = dataDaParcela(plano.compradoEm, n);
-      if (!nova) return;
+      const data = dataDaParcela(ancora, n);
+      if (!data) return;
       t.dataAnterior = t.data;
-      t.data = nova;
+      t.data = data;
       // Parcela que ainda não foi cobrada nasce NÃO paga — mesma regra da
       // redistribuição por marcador.
-      t.pago = !(ymd(nova) && ymd(nova) > hoje);
+      t.pago = !(ymd(data) && ymd(data) > hoje);
       mudadas.push(t);
     });
   }
@@ -1856,9 +1889,11 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // dos 29 da base) o banco manda TODAS as parcelas com a data da COMPRA
         // — sem isto elas caem inteiras na fatura da compra e as seguintes
         // ficam vazias. Ver redistribuirSemMarcador.
-        let parcelamentos = [];
-        try { parcelamentos = await celcoin.listarParcelamentos(n.externalId); }
-        catch { /* tolerante: sem plano, não redistribui */ }
+        // `null` quando a leitura FALHA — diferente de [] ("não tem parcelamento").
+        // Com null nada é redistribuído E a projeção gravada fica intacta.
+        let parcelamentos = null;
+        try { parcelamentos = await celcoin.listarParcelamentos(n.externalId, { estrito: true }); }
+        catch { parcelamentos = null; }
         const redistribuidas = redistribuirSemMarcador(normalizadas, parcelamentos, hoje);
 
         const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadas);

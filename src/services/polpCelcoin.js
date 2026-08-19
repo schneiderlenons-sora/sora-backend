@@ -242,9 +242,17 @@ async function listarFaturas(cardId, { max = 8 } = {}) {
 
 // Parcelamentos derivados pela Polp: totalInstallments / paidInstallments /
 // occurrences[]. ⚠️ paidInstallments = parcelas ENCONTRADAS, não necessariamente pagas.
-async function listarParcelamentos(cardId, { max = 10 } = {}) {
+// ⚠️ `estrito` existe pra separar FALHA de "não tem parcelamento". Engolindo o
+// erro e devolvendo [], quem chama não distingue as duas coisas — e quem
+// REESCREVE a projeção a partir daqui apagaria as parcelas do cliente por causa
+// de uma falha de rede. Mesma regra já escrita pras caixinhas.
+async function listarParcelamentos(cardId, { max = 10, estrito = false } = {}) {
   try { return await paginado(`/credit-cards/${encodeURIComponent(cardId)}/installments`, { max }); }
-  catch (e) { console.warn('[celcoin] installments:', e.message); return []; }
+  catch (e) {
+    console.warn('[celcoin] installments:', e.message);
+    if (estrito) throw e;
+    return [];
+  }
 }
 
 // Assinaturas/recorrências detectadas (periodMonths, expectedDay, nextExpectedAt,

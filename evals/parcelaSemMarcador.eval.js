@@ -46,8 +46,11 @@ const doBanco = () => [
   tx('CHINOCA', 56.66, '2026-06-20T18:15:06Z'),
   tx('CHINOCA', 56.66, '2026-06-20T18:15:07Z'),
   tx('CHINOCA', 56.67, '2026-06-20T18:15:08Z'),
-  tx('PayU        *ADIDAS', 140.00, '2026-07-14T03:14:02Z'),
-  tx('PayU        *ADI', 139.99, '2026-07-14T03:14:03Z'),
+  // ⚠️ TIMESTAMPS REAIS: a transação vem 3h ANTES do `purchasedAt` do plano
+  // (00:14Z = 13/07 21h em São Paulo, contra 14/07 no plano). Casar pelo DIA do
+  // plano deixava esta compra de fora — ver §2B.
+  tx('PayU        *ADIDAS', 140.00, '2026-07-14T00:14:02+00:00'),
+  tx('PayU        *ADI', 139.99, '2026-07-14T00:14:02+00:00'),
   tx('JIM.COM PROSED ES', 79.86, '2026-08-03T22:31:55Z'),
   tx('JIM.COM PROSED ES', 79.87, '2026-08-03T22:31:56Z'),
 ];
@@ -87,6 +90,31 @@ console.log('── 2. o centavo a mais fica na 1ª parcela ──');
     .sort((a, b) => a.parcelaNum - b.parcelaNum);
   eq(chinoca.map((t) => t.valor).join('|'), '56.67|56.66|56.66', 'a de 56,67 é a 1ª, não a 3ª');
   eq(chinoca[0].parcelaTotal, 3, 'e todas sabem que são 3');
+}
+console.log('  ok');
+
+// ── 2B. O DIA DAS DUAS FONTES NÃO BATE ───────────────────────────────────
+//
+// Compra perto da meia-noite: a transação veio `2026-07-14T00:14:02+00:00`
+// (13/07 às 21h em São Paulo) e o plano veio `2026-07-14T03:14:02Z` (14/07 às
+// 00h14) — 3 horas de diferença, exatamente o fuso. Enquanto o agrupamento era
+// ancorado no `purchasedAt` do plano, esta compra ficava de fora e a 2ª parcela
+// seguia na fatura errada. O agrupamento é ancorado na TRANSAÇÃO.
+console.log('── 2B. dia divergente entre transação e plano ──');
+{
+  const linhas = doBanco();
+  redistribuirSemMarcador(linhas, PARCELAMENTOS, HOJE);
+  const adidas = linhas.filter((t) => /ADI/.test(t.descricao)).sort((a, b) => a.parcelaNum - b.parcelaNum);
+  eq(adidas.length, 2, 'as duas do Adidas foram encontradas');
+  eq(adidas[0].parcelaTotal, 2, 'e reconhecidas como parcelamento em 2x');
+  eq(String(adidas[1].data).slice(0, 10), '2026-08-13', 'a 2ª foi pra fatura seguinte');
+
+  // Mas o desencontro tem limite: plano de semanas atrás não agrupa.
+  const outroDia = [tx('X', 100, '2026-07-01T12:00:00Z'), tx('X', 100, '2026-07-01T12:00:01Z')];
+  const planoLonge = [{ description: 'X', amount: -100, totalInstallments: 2,
+    purchasedAt: '2026-07-20T12:00:00.000000Z', occurrences: ['a'] }];
+  eq(redistribuirSemMarcador(outroDia, planoLonge, HOJE).length, 0,
+    '19 dias de diferença não é desencontro de fuso: não agrupa');
 }
 console.log('  ok');
 
@@ -140,6 +168,32 @@ console.log('── 4. o que não pode ser agrupado ──');
   const jaMarcada = [{ ...tx('CHINOCA', 56.66, '2026-06-20T18:15:06Z'), parcelaTotal: 3, parcelaNum: 1 },
     { ...tx('CHINOCA', 56.67, '2026-06-20T18:15:08Z'), parcelaTotal: 3, parcelaNum: 3 }];
   eq(redistribuirSemMarcador(jaMarcada, PARCELAMENTOS, HOJE).length, 0, 'linha com marcador não é tocada de novo');
+}
+console.log('  ok');
+
+// ── 4B. CONJUNTO INCOMPLETO não é redistribuído ──────────────────────────
+//
+// A janela do sync é de 90 dias, então parcelamento antigo pode aparecer pela
+// METADE. Com 2 de 3 irmãs visíveis não dá pra saber se são a 1ª e a 2ª ou a
+// 2ª e a 3ª — numerar no chute jogaria a parcela na fatura errada, que é
+// exatamente o bug que isto veio consertar.
+console.log('── 4B. conjunto incompleto ──');
+{
+  const duasDeTres = [
+    tx('CHINOCA', 56.66, '2026-06-20T18:15:06Z'),
+    tx('CHINOCA', 56.67, '2026-06-20T18:15:08Z'),
+  ];
+  eq(redistribuirSemMarcador(duasDeTres, PARCELAMENTOS, HOJE).length, 0,
+    '2 irmãs pra um plano de 3x: não numera no chute');
+  eq(duasDeTres[0].parcelaTotal, null, 'e nenhuma ganha marcador');
+
+  // O conjunto completo do MESMO plano continua funcionando.
+  const tres = [
+    tx('CHINOCA', 56.66, '2026-06-20T18:15:06Z'),
+    tx('CHINOCA', 56.66, '2026-06-20T18:15:07Z'),
+    tx('CHINOCA', 56.67, '2026-06-20T18:15:08Z'),
+  ];
+  eq(redistribuirSemMarcador(tres, PARCELAMENTOS, HOJE).length, 2, 'as 3 completas redistribuem 2');
 }
 console.log('  ok');
 

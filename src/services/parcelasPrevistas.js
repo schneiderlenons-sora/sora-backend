@@ -215,6 +215,13 @@ function daCompetencia(previstas, competencia) {
 async function gravarParcelasPrevistas(grupoId, cartao, parcelamentos, hoje, txsDoCartao) {
   try {
     if (!grupoId || !cartao?.id) return 0;
+    // ⚠️ `null` = A LEITURA FALHOU (ver listarParcelamentos estrito). Reescrever
+    // a projeção aqui apagaria as parcelas do cliente por causa de uma falha de
+    // rede — e a fatura dele encolheria sozinha até o próximo sync dar certo.
+    // Foi exatamente o que aconteceu numa conta real: a fatura caiu de
+    // R$ 1.376,33 pra R$ 1.319,66 sem nenhuma compra ter mudado.
+    // Lista VAZIA é resposta válida ("não tem parcelamento") e aí sim reescreve.
+    if (!Array.isArray(parcelamentos)) return 0;
     const supabase = require('../db/supabase');
     // Fora as que o sync já lançou como transação (ver jaEhTransacao) — senão a
     // mesma parcela contaria duas vezes em cartão que manda "N/M".
