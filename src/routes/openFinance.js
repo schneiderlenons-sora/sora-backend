@@ -784,6 +784,66 @@ async function diagnosticoCelcoin(req, res) {
 
 router.get('/debug-celcoin/:consentId', authOuAdmin, diagnosticoCelcoin);
 
+// GET /api/open-finance/consents-reconciliar  (só com x-admin-secret)
+//
+// ⚠️ RECONCILIA O QUE A POLP COBRA COM O QUE A SORA USA. O painel da Polp
+// mostrou 35 consentimentos enquanto a Sora tinha 24 conexões — e a conta lá
+// é POR CONEXÃO, então a diferença é dinheiro.
+//
+// As causas possíveis, que este endpoint separa:
+//   · consentimento abandonado no meio (nunca chegou ao callback, então nunca
+//     virou linha nossa);
+//   · revogado/expirado que a Polp mantém no histórico;
+//   · RECONEXÃO — cada uma cria um consent NOVO lá e o antigo fica. Este é o
+//     caro: some da nossa tabela e continua na fatura deles.
+//
+// Só admin: lista consentimento de TODOS os clientes.
+router.get('/consents-reconciliar', async (req, res) => {
+  const secret = process.env.ADMIN_SECRET;
+  if (!secret || req.headers['x-admin-secret'] !== secret) {
+    return res.status(403).json({ erro: 'Só com x-admin-secret.' });
+  }
+  const celcoin = require('../services/polpCelcoin');
+  if (!celcoin.configurado()) return res.status(503).json({ erro: 'Celcoin não configurada.' });
+  try {
+    const consents = await celcoin.listarConsentimentos();
+    const { data: nossas } = await supabase.from('of_conexoes')
+      .select('external_id, status, instituicao, grupo_id, created_at').eq('provider', 'polp-celcoin');
+    const meus = new Map((nossas || []).map((c) => [String(c.external_id), c]));
+
+    const porStatus = {};
+    const orfaos = [];      // existe na Polp e NÃO na Sora → candidato a revogar
+    for (const c of consents || []) {
+      const st = String(c.status || c.status_label || '?');
+      porStatus[st] = (porStatus[st] || 0) + 1;
+      if (!meus.has(String(c.id))) {
+        orfaos.push({
+          id: c.id, status: st, execution_status: c.execution_status || null,
+          institution_id: c.institution_id || null,
+          cliente_user_id: c.cliente_user_id || null,
+          created_at: c.created_at || null,
+        });
+      }
+    }
+    const idsPolp = new Set((consents || []).map((c) => String(c.id)));
+    const soNaSora = (nossas || [])
+      .filter((c) => !idsPolp.has(String(c.external_id)))
+      .map((c) => ({ external_id: c.external_id, status: c.status, instituicao: c.instituicao }));
+
+    res.json({
+      na_polp: (consents || []).length,
+      na_sora: (nossas || []).length,
+      diferenca: (consents || []).length - (nossas || []).length,
+      polp_por_status: porStatus,
+      // O que a Polp conhece e nós não. É aqui que mora a cobrança extra.
+      orfaos_na_polp: orfaos.length,
+      orfaos: orfaos.slice(0, 60),
+      // O inverso: temos a linha e a Polp não conhece (sinal de dado velho).
+      so_na_sora: soNaSora,
+    });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // Desconecta: remove o vínculo (histórico fica) + apaga no provedor.
 router.delete('/conexoes/:externalId', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
