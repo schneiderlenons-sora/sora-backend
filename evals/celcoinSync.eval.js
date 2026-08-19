@@ -111,7 +111,17 @@ const CONTA = {
   },
 };
 const c = S.normalizeConta(CONTA);
-ok(c.saldo === 1500, 'saldo = available_amount; NÃO somar automatically_invested (é investimento)');
+// ⚠️ ESTE CASO MUDOU DE EXPECTATIVA (ago/2026) — antes cravava
+// `c.saldo === 1500` com a justificativa "não somar automatically_invested,
+// é investimento". A suposição estava ERRADA e um cliente provou:
+//     available_amount ............... R$     1,00
+//     automatically_invested_amount .. R$ 2.541,17
+//     app do Itaú mostrava ........... R$ 2.541,12
+// O painel exibia R$ 1,00. Aplicação automática não é investimento de
+// carteira: é saldo da conta que o banco rende sozinho e resgata quando o
+// cliente gasta — o próprio app soma. Detalhes na seção 6C.
+ok(c.saldo === 1700, 'saldo soma available (1500) + automatically_invested (200)');
+ok(c.extras.saldo_aplicado === 200, 'a parcela aplicada fica guardada pra tela explicar');
 ok(c.tipo === 'Corrente', 'CONTA_DEPOSITO_A_VISTA → Corrente');
 ok(c.nome === 'Itaú Unibanco', 'nome = brand_name');
 ok(c.extras.cheque_especial === 500, 'cheque especial contratado');
@@ -286,6 +296,62 @@ const TIPOS_PAINEL = ['Ações', 'FIIs', 'ETFs', 'Cripto', 'Tesouro Direto', 'CD
 for (const fam of ['bank_fixed_income', 'credit_fixed_income', 'fund', 'treasure_title', 'variable_income']) {
   const t = S.tipoInvestimento({ __familia: fam, product: {} });
   ok(TIPOS_PAINEL.includes(t), `família ${fam} → tipo "${t}" não existe no painel (CORES_TIPO)`);
+}
+console.log('  ok');
+
+// ── 6C. SALDO = disponível + aplicação automática ─────────────────────────
+// Relato de cliente: painel R$ 1,00 × app do Itaú R$ 2.541,12. O diagnóstico
+// (?foco=saldo) mostrou de onde vinha a diferença — números REAIS abaixo:
+//     available_amount ............... R$     1,00   ← era só isto que entrava
+//     automatically_invested_amount .. R$ 2.541,17
+// A doc da Celcoin diz que available_amount "não inclui (…) investimentos
+// automáticos". O Itaú joga quase todo o saldo numa aplicação que volta
+// sozinha quando o cliente gasta — é dinheiro disponível, e é o que o app soma.
+console.log('── 6C. saldo com aplicação automática ──');
+{
+  const eqc = (a, b, m) => ok(a === b, `${m} (esperado ${JSON.stringify(b)}, veio ${JSON.stringify(a)})`);
+  const conta = (balance) => ({ id: 'a1', type: 'CONTA_DEPOSITO_A_VISTA', brand_name: 'Itaú', balance });
+  const brl = (v) => ({ amount: String(v), currency: 'BRL' });
+
+  // ⚠️ O CASO REAL, ao centavo.
+  const real = S.normalizeConta(conta({
+    available_amount: brl('1.00'),
+    automatically_invested_amount: brl('2541.17'),
+    blocked_amount: brl('0.00'),
+  }));
+  eqc(real.saldo, 2542.17, 'saldo soma disponível + aplicado (o painel mostrava R$ 1,00)');
+  eqc(real.extras.saldo_aplicado, 2541.17, 'guarda a parcela aplicada pra tela poder explicar');
+
+  // Sem aplicação automática nada muda — a maioria das contas cai aqui.
+  const simples = S.normalizeConta(conta({ available_amount: brl('850.30') }));
+  eqc(simples.saldo, 850.30, 'conta sem aplicação automática segue igual');
+  eqc(simples.extras.saldo_aplicado, null, 'sem aplicação o campo é null, não 0');
+
+  // ⚠️ BLOQUEADO CONTINUA FORA: não é gastável.
+  const comBloqueio = S.normalizeConta(conta({
+    available_amount: brl('100.00'),
+    automatically_invested_amount: brl('50.00'),
+    blocked_amount: brl('999.00'),
+  }));
+  eqc(comBloqueio.saldo, 150, 'blocked_amount NÃO entra no saldo');
+
+  // Conta com o disponível zerado — o caso extremo do Itaú.
+  const soAplicado = S.normalizeConta(conta({
+    available_amount: brl('0.00'), automatically_invested_amount: brl('4000.00'),
+  }));
+  eqc(soAplicado.saldo, 4000, 'saldo todo aplicado ainda é saldo');
+
+  // ⚠️ Sem balance = NÃO SINCRONIZADO. Não pode virar 0, senão a conta
+  // apareceria zerada em vez de "aguardando o banco".
+  const semBalance = S.normalizeConta({ id: 'a2', type: 'CONTA_DEPOSITO_A_VISTA' });
+  eqc(semBalance.saldo, null, 'sem balance o saldo é null, nunca 0');
+  eqc(semBalance.sincronizado, false, '…e a conta fica marcada como não sincronizada');
+
+  // Centavos não podem acumular erro de float.
+  const centavos = S.normalizeConta(conta({
+    available_amount: brl('0.10'), automatically_invested_amount: brl('0.20'),
+  }));
+  eqc(centavos.saldo, 0.3, '0,10 + 0,20 = 0,30 (sem dízima de float)');
 }
 console.log('  ok');
 

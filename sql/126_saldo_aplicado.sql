@@ -1,0 +1,37 @@
+-- =============================================================================
+-- 126 — `wallets.saldo_aplicado`: quanto do saldo está na aplicação automática
+--
+-- RELATO: cliente comparou o painel com o app do Itaú — Sora R$ 1,00 × banco
+-- R$ 2.541,12 — e abriu chamado dizendo que o saldo estava errado.
+--
+-- CAUSA (confirmada pelo diagnóstico ?foco=saldo, não por suposição):
+--     available_amount ............... R$     1,00   ← só isto entrava
+--     automatically_invested_amount .. R$ 2.541,17   ← ignorado
+--     blocked_amount ................. R$     0,00
+--     app do Itaú mostrava ........... R$ 2.541,12
+--
+-- A doc da Celcoin diz que `available_amount` "não inclui cheque especial,
+-- investimentos automáticos nem reservas de saldo". Bancos como o Itaú jogam
+-- quase todo o saldo numa aplicação automática que volta sozinha quando o
+-- cliente gasta — ou seja, é dinheiro DISPONÍVEL, e é o que o app mostra.
+--
+-- `services/polpCelcoinSync.js` passou a somar os dois no `wallets.saldo`.
+-- Esta coluna guarda a PARCELA APLICADA, pra tela poder explicar "dos quais
+-- R$ X aplicados" — senão o saldo do cliente mudaria sozinho, sem motivo
+-- aparente, no primeiro sync depois do deploy.
+--
+-- ⚠️ NÃO duplica com a aba Investimentos: conferido na conta do cliente, as 11
+-- posições importadas (CDBs, fundos, Tesouro) não incluem a aplicação
+-- automática. Ela é produto DA CONTA e vem em `balance`, não pela API de
+-- investimentos.
+--
+-- Idempotente. Rodar no Supabase → SQL Editor.
+-- =============================================================================
+
+alter table public.wallets add column if not exists saldo_aplicado numeric(14,2);
+
+-- =============================================================================
+-- Verificação (contas que tinham dinheiro "escondido"):
+--   select nome, saldo, saldo_aplicado from public.wallets
+--    where saldo_aplicado is not null and saldo_aplicado > 0;
+-- =============================================================================

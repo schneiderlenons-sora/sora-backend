@@ -198,19 +198,47 @@ function normalizeConta(acc, instituicao) {
   const sufixo = tipo === 'Poupança' ? ' Poupança' : '';
   const nome = `${banco}${sufixo}`.slice(0, 60);
 
-  // Saldo = disponível. `blocked` e `automatically_invested` NÃO entram: o
-  // primeiro não é gastável e o segundo é investimento (entra na aba própria).
+  // ── SALDO = disponível + APLICAÇÃO AUTOMÁTICA ─────────────────────────────
+  //
+  // ⚠️ A doc da Celcoin diz que `available_amount` "não inclui cheque especial,
+  // investimentos automáticos nem reservas de saldo". Bancos como o Itaú jogam
+  // quase todo o saldo numa aplicação automática que volta sozinha quando o
+  // cliente gasta — então `available_amount` fica quase zerado e NÃO é o saldo
+  // que ele vê no app.
+  //
+  // MEDIDO na conta de um cliente (diagnóstico ?foco=saldo):
+  //     available_amount ............... R$     1,00   ← era só isto que entrava
+  //     automatically_invested_amount .. R$ 2.541,17
+  //     app do Itaú mostrava ........... R$ 2.541,12
+  // O painel exibia R$ 1,00 e ele abriu chamado dizendo que o saldo estava
+  // errado. Estava: o dinheiro existia, só não era somado.
+  //
+  // ⚠️ NÃO DUPLICA COM A ABA INVESTIMENTOS — conferido na mesma conta: as 11
+  // posições importadas (CDBs, fundos, Tesouro) não incluem a aplicação
+  // automática. Ela é produto DA CONTA, e por isso vem em `balance` e não pela
+  // API de investimentos.
+  //
+  // `blocked_amount` continua FORA: bloqueado não é gastável.
   const disponivel = bal ? money(bal.available_amount) : null;
+  const aplicado   = bal ? money(bal.automatically_invested_amount) : null;
+  // `null` só quando NADA veio — senão uma conta sem aplicação automática
+  // apareceria como "ainda não sincronizada".
+  const saldo = (disponivel == null && aplicado == null)
+    ? null
+    : cent((disponivel || 0) + (aplicado || 0));
 
   return {
     externalId: String(acc.id),
     nome,
     tipo,
-    saldo: disponivel,                     // null = ainda não sincronizado
+    saldo,                                 // null = ainda não sincronizado
     moeda: ident.currency || moeda(bal && bal.available_amount),
     extras: {
       // Cheque especial contratado (a Sora já tem esse conceito — migration 094).
       cheque_especial: over ? money(over.overdraft_contracted_limit) : null,
+      // Quanto do saldo está aplicado. A tela usa pra explicar "dos quais R$ X
+      // aplicados", em vez de o número simplesmente mudar sem motivo aparente.
+      saldo_aplicado: aplicado,
     },
     sincronizado: !!bal,
   };
