@@ -902,6 +902,97 @@ function parcelaDaTx(tx, descricao) {
 }
 
 /**
+ * PARCELA SEM MARCADOR: o banco manda TODAS as parcelas na data da COMPRA.
+ *
+ * ⚠️ Este é o outro jeito de o emissor mandar parcelamento, e ele estava sem
+ * tratamento. Medido na base: 8 dos 29 cartões de Open Finance NUNCA recebem
+ * `charge_identificator`/`charge_number` — e nesses o banco não deixa de
+ * mandar as parcelas: manda todas de uma vez, cada uma como transação
+ * própria, todas datadas no dia da compra, com centavos diferentes na última.
+ *
+ * Numa conta real (Mercado Pago, 87 transações, ZERO com marcador):
+ *   2026-06-20  56,66 · 56,66 · 56,67   CHINOCA        (3 parcelas)
+ *   2026-07-14 140,00 · 139,99          PayU *ADIDAS   (2 parcelas)
+ *   2026-08-03  79,86 ·  79,87          JIM.COM PROSED (2 parcelas)
+ *
+ * O efeito é que a fatura da COMPRA vem inflada e as seguintes vêm vazias:
+ * a fatura em aberto saía R$ 1.376,33 contra R$ 1.596,17 no app do banco, e
+ * a diferença era exatamente a 2ª parcela do Adidas mais a do Prosed
+ * (139,99 + 79,86). Redistribuindo, as duas pontas se resolvem — a fatura
+ * anterior para de contar parcela que não é dela.
+ *
+ * ⚠️ SÓ AGE COM 2 OU MAIS IRMÃS. Uma linha sozinha é a compra normal (o
+ * emissor mandou só a 1ª parcela, caso do Nubank/Itaú) — aí quem cobre o
+ * futuro é a projeção de `parcelasPrevistas`. Agir com uma só transformaria
+ * uma compra à vista em parcelamento.
+ *
+ * ⚠️ E SÓ COM O PLANO CONFIRMADO PELO BANCO (`/installments`): é ele que diz
+ * "esta compra tem N parcelas". Sem isso, duas compras iguais no mesmo dia
+ * (dois cafés de R$ 20) virariam um parcelamento em 2x.
+ *
+ * ⚠️ A ordem é por valor DECRESCENTE — o centavo a mais vai na PRIMEIRA
+ * parcela, não na última. Isso NÃO foi suposto: as duas ordens foram medidas
+ * contra a fatura que o banco publicou pro cliente, e só uma fecha.
+ *   crescente ....... R$ 1.596,20   (3 centavos a mais)
+ *   decrescente ..... R$ 1.596,17   = exatamente o app do banco
+ * (`parcelasPrevistas` documenta o contrário porque lá a parcela é CALCULADA a
+ * partir do valor nominal; aqui os valores vêm prontos do banco e o que importa
+ * é só a ordem em que são atribuídos.)
+ *
+ * @returns {Array} as linhas que MUDARAM de data (pra corrigir o histórico)
+ */
+function redistribuirSemMarcador(normalizadas, parcelamentos, hoje) {
+  const mudadas = [];
+  const linhas = (normalizadas || []).filter(Boolean);
+  if (!linhas.length || !Array.isArray(parcelamentos) || !parcelamentos.length) return mudadas;
+
+  // `deduplicar` já normaliza cada item por dentro — normalizar antes passaria
+  // o ARRAY inteiro como se fosse um item só.
+  const { deduplicar: dedupParc } = require('./parcelasPrevistas');
+  const diaSP = (iso) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  };
+
+  const usadas = new Set();
+  for (const plano of dedupParc(parcelamentos)) {
+    const total = plano.totalParcelas;
+    if (!(total >= 2)) continue;
+    const dia = diaSP(plano.compradoEm);
+    if (!dia) continue;
+
+    const irmas = linhas.filter((t) => !usadas.has(t)
+      && t.ehGasto && !t.parcelaTotal
+      && diaSP(t.data) === dia
+      && Math.abs(Math.abs(Number(t.valor) || 0) - plano.valorParcela) <= 1);
+
+    // Menos de 2: nada a redistribuir. Mais que o total: agrupamento suspeito,
+    // melhor não mexer do que inventar parcela.
+    if (irmas.length < 2 || irmas.length > total) continue;
+
+    irmas.sort((a, b) => (Math.abs(b.valor) - Math.abs(a.valor)));
+    irmas.forEach((t, k) => {
+      usadas.add(t);
+      const n = k + 1;
+      t.parcelaNum = n;
+      t.parcelaTotal = total;
+      t.parcelaGrupo = grupoDaParcela(baseSemMarcador(t.descricao), total, Math.abs(t.valor), plano.compradoEm);
+      if (n === 1) return;                       // a 1ª fica na data da compra
+      const nova = dataDaParcela(plano.compradoEm, n);
+      if (!nova) return;
+      t.dataAnterior = t.data;
+      t.data = nova;
+      // Parcela que ainda não foi cobrada nasce NÃO paga — mesma regra da
+      // redistribuição por marcador.
+      t.pago = !(ymd(nova) && ymd(nova) > hoje);
+      mudadas.push(t);
+    });
+  }
+  return mudadas;
+}
+
+/**
  * Data em que a parcela N é cobrada = compra + (N−1) meses.
  * Clampa o dia em 28 e ancora ao meio-dia UTC — MESMA regra do parcelamento
  * manual (handlers/parcelas.js), pra compra parcelada digitada e importada
@@ -1352,6 +1443,40 @@ async function upsertWallet(grupoId, userId, n, saldo) {
 }
 
 /** Insere transações novas (dedup por of_tx_id). Devolve quantas entraram. */
+/**
+ * Corrige a DATA das parcelas já importadas que a redistribuição realocou.
+ *
+ * ⚠️ O sync nunca reescreve linha existente — de propósito, pra não apagar a
+ * categoria que o usuário corrigiu à mão. Esta é uma exceção estreita e do
+ * mesmo tipo da melhora de descrição logo abaixo: só toca `data` e os campos
+ * de parcela, NUNCA categoria, valor ou observação. Sem ela o histórico
+ * continua com as 3 parcelas empilhadas na fatura da compra, e a fatura
+ * anterior segue inflada mesmo depois do conserto.
+ *
+ * Tolerante em tudo: falhar aqui não pode derrubar o sync.
+ */
+async function corrigirParcelasRedistribuidas(grupoId, linhas) {
+  let corrigidas = 0;
+  for (const t of linhas || []) {
+    if (!t || !t.externalId || !t.data) continue;
+    try {
+      const { data: atual } = await supabase.from('transacoes')
+        .select('id, data').eq('grupo_id', grupoId).eq('of_tx_id', t.externalId).maybeSingle();
+      if (!atual) continue;                       // ainda não importada: entra já certa
+      if (ymd(atual.data) === ymd(t.data)) continue;   // já está na data certa
+      const { error } = await supabase.from('transacoes').update({
+        data: t.data,
+        pago: t.pago,
+        parcela_num: t.parcelaNum || null,
+        parcela_total: t.parcelaTotal || null,
+        parcela_grupo: t.parcelaGrupo || null,
+      }).eq('id', atual.id);
+      if (!error) corrigidas++;
+    } catch { /* ignora */ }
+  }
+  return corrigidas;
+}
+
 async function inserirTransacoes(grupoId, userId, walletNome, txs) {
   const validas = txs.filter(Boolean);
   if (!validas.length) return 0;
@@ -1726,7 +1851,22 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
 
         const txs = await celcoin.listarTransacoesCartao(n.externalId, { fromDate });
         const normalizadas = txs.map((t) => normalizeTxCartao(t, hoje));
+
+        // ⚠️ PARCELAMENTOS ANTES DE INSERIR. Em cartão que não manda "N/M" (8
+        // dos 29 da base) o banco manda TODAS as parcelas com a data da COMPRA
+        // — sem isto elas caem inteiras na fatura da compra e as seguintes
+        // ficam vazias. Ver redistribuirSemMarcador.
+        let parcelamentos = [];
+        try { parcelamentos = await celcoin.listarParcelamentos(n.externalId); }
+        catch { /* tolerante: sem plano, não redistribui */ }
+        const redistribuidas = redistribuirSemMarcador(normalizadas, parcelamentos, hoje);
+
         const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadas);
+        // O histórico já importado ficou na data errada. Corrigir a DATA de uma
+        // parcela não é reescrever o que o usuário editou (o que a regra de
+        // "nunca reescrever" protege é a CATEGORIA) — e sem isso a fatura
+        // anterior segue contando parcela que não é dela.
+        if (redistribuidas.length) await corrigirParcelasRedistribuidas(grupoId, redistribuidas);
         novasTx += novas;
 
         // ⚠️ A fatura AINDA ABERTA quase nunca tem `bill_total_amount` — o banco
@@ -1816,7 +1956,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           if (w) {
             faturasSalvas = await salvarFaturas(grupoId, w.id, bills);
             pagamentosRegistrados = await registrarPagamentosDoOF(grupoId, w);
-            const parcelamentos = await celcoin.listarParcelamentos(n.externalId);
+            // já buscado acima (antes do insert) — não pagar a chamada duas vezes
             // `normalizadas` entra pra NÃO projetar por cima do que o sync já
             // lançou: cartão que manda "N/M" tem a parcela futura redistribuída
             // como transação, e projetar de novo contaria em dobro.
@@ -1898,6 +2038,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
 }
 
 module.exports = {
+  redistribuirSemMarcador,
   PROVIDER,
   sincronizarConsentimento,
   // expostos pra teste/diagnóstico (puros, sem banco)

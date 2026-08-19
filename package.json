@@ -37,7 +37,8 @@
     "eval:fatura-vista": "node evals/faturaVista.eval.js",
     "eval:caixinhas": "node evals/caixinhas.eval.js",
     "eval:resgate": "node evals/resgateInvestimento.eval.js",
-    "agentes:preview": "node scripts/preview-agentes.js"
+    "agentes:preview": "node scripts/preview-agentes.js",
+    "eval:parcela-sem-marcador": "node evals/parcelaSemMarcador.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

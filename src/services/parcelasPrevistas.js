@@ -167,9 +167,15 @@ function projetar(lista, cartao, hoje) {
  */
 function jaEhTransacao(linha, txsDoCartao, cartao) {
   const lista = txsDoCartao || [];
+  // ⚠️ DUAS FORMAS DE CHAVE. Quem chama daqui do sync passa as transações
+  // NORMALIZADAS (`parcelaNum`/`parcelaTotal`, camelCase); quem chama de uma
+  // rota passa linhas do banco (`parcela_num`/`parcela_total`). Lendo só a
+  // snake_case, esta checagem NUNCA casava no sync — ou seja, a proteção mais
+  // cara deste módulo estava desligada em produção, e cartão que manda "N/M"
+  // podia ter a parcela contada duas vezes (transação + projeção).
   const porMarcador = lista.some((t) => {
-    const total = Number(t && t.parcela_total);
-    const num = Number(t && t.parcela_num);
+    const total = Number(t && (t.parcela_total != null ? t.parcela_total : t.parcelaTotal));
+    const num = Number(t && (t.parcela_num != null ? t.parcela_num : t.parcelaNum));
     if (!total || !num) return false;
     if (total !== linha.total || num !== linha.parcela) return false;
     return Math.abs(Math.abs(Number(t.valor) || 0) - linha.valor) <= 1;
