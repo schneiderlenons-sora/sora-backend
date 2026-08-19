@@ -417,6 +417,31 @@ router.get('/faturas/:phone', auth, async (req, res) => {
         } catch { /* informativo — nunca derruba a listagem */ }
       }
 
+      // ⚠️ FATURA FECHADA E QUITADA: a tela precisa saber quanto vale a
+      // SEGUINTE, que é a que está viva. Sem isto o dashboard mostra R$ 0,00
+      // num cartão com compras novas — caso real medido: o EQI BLACK fechou
+      // 15/08, foi pago, e no dia 19 o dashboard exibia R$ 0,00 enquanto a aba
+      // de cartões exibia R$ 1.243,02 (as compras de 15 a 18/08). Duas telas,
+      // dois números, no mesmo cartão e no mesmo dia.
+      //
+      // A aba de cartões já pulava sozinha (CartaoClient), o dashboard não —
+      // então o pulo passa a vir PRONTO daqui, e as duas bebem da mesma fonte.
+      // Só é calculado quando realmente pula: uma consulta a mais por cartão
+      // quitado, não por cartão.
+      let proxima = null;
+      if (offset === 0 && quitada && ciclo.fim < hoje) {
+        try {
+          const compProx = competenciaVizinha(c, competencia, 1);
+          const cicloProx = cicloPorCompetencia(c, compProx);
+          const stProx = await statusFatura(grupoId, c, compProx);
+          const vProx = await vistaDaFatura(c, compProx, stProx);
+          proxima = {
+            competencia: compProx, restante: vProx.restante, fatura: vProx.fatura,
+            venc: cicloProx.venc, label: cicloProx.label,
+          };
+        } catch { /* informativo — nunca derruba a listagem */ }
+      }
+
       // Parcelas que o banco conhece e a Sora não (só em fatura FUTURA — ver
       // parcelasPrevistasDe). Entram como parcela SEPARADA do total: quem soma
       // as transações continua sendo `somarFatura`, intocado.
@@ -426,7 +451,7 @@ router.get('/faturas/:phone', auth, async (req, res) => {
         cartao_id: c.id, nome: c.nome, limite: c.limite ?? null,
         competencia, ini: ciclo.ini, fim: ciclo.fim, fimExcl: ciclo.fimExcl,
         venc: ciclo.venc, label: ciclo.label, porCiclo: ciclo.porCiclo,
-        of: ehOF, fatura, pago, restante, vencida, quitada,
+        of: ehOF, fatura, pago, restante, vencida, quitada, proxima,
         fechada: ciclo.fim < hoje,
         parcelas_previstas: prev.linhas, total_previsto: prev.total,
         // Entra no card "Previstos do mês"? (migration 123). Sem a coluna,
