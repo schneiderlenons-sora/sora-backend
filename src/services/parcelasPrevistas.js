@@ -222,10 +222,36 @@ async function gravarParcelasPrevistas(grupoId, cartao, parcelamentos, hoje, txs
     // R$ 1.376,33 pra R$ 1.319,66 sem nenhuma compra ter mudado.
     // Lista VAZIA é resposta válida ("não tem parcelamento") e aí sim reescreve.
     if (!Array.isArray(parcelamentos)) return 0;
+
+    // ⚠️ `purchasedAt` NÃO EXISTE na resposta de /installments — os campos
+    // documentados são só description, amount, totalInstallments,
+    // paidInstallments e occurrences. Sem a data da compra, `deduplicar`
+    // descarta TODO plano (ela exige `compradoEm`) e a projeção sai vazia,
+    // apagando as parcelas do cliente a cada sync. Foi o que aconteceu numa
+    // conta real: fatura R$ 1.376,33 → R$ 1.319,66 sem nenhuma compra mudar.
+    //
+    // A data sai da 1ª OCORRÊNCIA: o doc define occurrences como "IDs das
+    // transações do cartão, ordenadas por charge_identificator", então a
+    // primeira é a parcela mais antiga que o agregador viu. Quando o campo
+    // vier (versão futura da API), ele continua tendo prioridade.
+    const porId = new Map();
+    for (const t of txsDoCartao || []) {
+      const id = t && (t.externalId || t.of_tx_id);
+      if (id) porId.set(String(id), t);
+    }
+    const comData = parcelamentos.map((p) => {
+      if (p && (p.purchasedAt || p.purchased_at)) return p;
+      const ocor = p && Array.isArray(p.occurrences) ? p.occurrences : [];
+      for (const id of ocor) {
+        const t = porId.get(String(id));
+        if (t && t.data) return { ...p, purchasedAt: t.data };
+      }
+      return p;
+    });
     const supabase = require('../db/supabase');
     // Fora as que o sync já lançou como transação (ver jaEhTransacao) — senão a
     // mesma parcela contaria duas vezes em cartão que manda "N/M".
-    const linhas = projetar(parcelamentos, cartao, hoje)
+    const linhas = projetar(comData, cartao, hoje)
       .filter((l) => !jaEhTransacao(l, txsDoCartao, cartao));
 
     const { error: errDel } = await supabase.from('of_parcelas_previstas')

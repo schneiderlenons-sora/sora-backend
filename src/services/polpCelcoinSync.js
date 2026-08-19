@@ -904,40 +904,35 @@ function parcelaDaTx(tx, descricao) {
 /**
  * PARCELA SEM MARCADOR: o banco manda TODAS as parcelas na data da COMPRA.
  *
- * ⚠️ Este é o outro jeito de o emissor mandar parcelamento, e ele estava sem
- * tratamento. Medido na base: 8 dos 29 cartões de Open Finance NUNCA recebem
- * `charge_identificator`/`charge_number` — e nesses o banco não deixa de
- * mandar as parcelas: manda todas de uma vez, cada uma como transação
- * própria, todas datadas no dia da compra, com centavos diferentes na última.
+ * ⚠️ Medido na base: 8 dos 29 cartões de Open Finance nunca chegam com
+ * `charge_identificator`/`charge_number` nas transações. Nesses o emissor não
+ * deixa de mandar as parcelas — manda todas de uma vez, cada uma como
+ * transação própria, todas datadas no dia da compra:
  *
- * Numa conta real (Mercado Pago, 87 transações, ZERO com marcador):
- *   2026-06-20  56,66 · 56,66 · 56,67   CHINOCA        (3 parcelas)
- *   2026-07-14 140,00 · 139,99          PayU *ADIDAS   (2 parcelas)
- *   2026-08-03  79,86 ·  79,87          JIM.COM PROSED (2 parcelas)
+ *   2026-06-20   56,66 · 56,66 · 56,67   CHINOCA        (3 parcelas)
+ *   2026-07-14  140,00 · 139,99          PayU *ADIDAS   (2 parcelas)
+ *   2026-08-03   79,86 ·  79,87          JIM.COM PROSED (2 parcelas)
  *
- * O efeito é que a fatura da COMPRA vem inflada e as seguintes vêm vazias:
- * a fatura em aberto saía R$ 1.376,33 contra R$ 1.596,17 no app do banco, e
- * a diferença era exatamente a 2ª parcela do Adidas mais a do Prosed
- * (139,99 + 79,86). Redistribuindo, as duas pontas se resolvem — a fatura
- * anterior para de contar parcela que não é dela.
+ * A fatura da COMPRA vinha inflada e as seguintes vazias: a fatura em aberto
+ * saía R$ 1.376,33 contra R$ 1.596,17 no app do banco.
  *
- * ⚠️ SÓ AGE COM 2 OU MAIS IRMÃS. Uma linha sozinha é a compra normal (o
- * emissor mandou só a 1ª parcela, caso do Nubank/Itaú) — aí quem cobre o
- * futuro é a projeção de `parcelasPrevistas`. Agir com uma só transformaria
- * uma compra à vista em parcelamento.
+ * ⚠️ O AGRUPAMENTO SAI DE `occurrences[]`, NÃO DE HEURÍSTICA. O doc de
+ * `/credit-cards/{id}/installments` define: "occurrences: IDs das transações do
+ * cartão, ORDENADAS POR charge_identificator". Ou seja, o próprio agregador já
+ * diz exatamente quais transações formam a compra e em que ordem — não há o que
+ * adivinhar por dia, valor ou centavo.
  *
- * ⚠️ E SÓ COM O PLANO CONFIRMADO PELO BANCO (`/installments`): é ele que diz
- * "esta compra tem N parcelas". Sem isso, duas compras iguais no mesmo dia
- * (dois cafés de R$ 20) virariam um parcelamento em 2x.
+ * ⚠️ E `purchasedAt` NÃO EXISTE NA RESPOSTA. Os campos documentados são só
+ * description, amount, totalInstallments, paidInstallments e occurrences. Foi o
+ * erro que me custou três tentativas: eu casava a compra pelo `purchasedAt`, que
+ * vinha `undefined` em todo item, e aí NENHUM plano casava — o sintoma era
+ * "sincronizei e a fatura não mudou".
  *
- * ⚠️ A ordem é por valor DECRESCENTE — o centavo a mais vai na PRIMEIRA
- * parcela, não na última. Isso NÃO foi suposto: as duas ordens foram medidas
- * contra a fatura que o banco publicou pro cliente, e só uma fecha.
- *   crescente ....... R$ 1.596,20   (3 centavos a mais)
- *   decrescente ..... R$ 1.596,17   = exatamente o app do banco
- * (`parcelasPrevistas` documenta o contrário porque lá a parcela é CALCULADA a
- * partir do valor nominal; aqui os valores vêm prontos do banco e o que importa
- * é só a ordem em que são atribuídos.)
+ * ⚠️ `paidInstallments` = MAIOR charge_identificator observado, não a contagem.
+ * Com o histórico truncado (só a parcela 3/3 visível) ele vem 3 com uma
+ * ocorrência só. Por isso a numeração é ancorada no FIM: a última ocorrência é a
+ * parcela `paidInstallments` e conta-se pra trás. Numerar 1..N de frente jogaria
+ * a parcela na fatura errada justamente no histórico incompleto.
  *
  * @returns {Array} as linhas que MUDARAM de data (pra corrigir o histórico)
  */
@@ -946,74 +941,45 @@ function redistribuirSemMarcador(normalizadas, parcelamentos, hoje) {
   const linhas = (normalizadas || []).filter(Boolean);
   if (!linhas.length || !Array.isArray(parcelamentos) || !parcelamentos.length) return mudadas;
 
-  // `deduplicar` já normaliza cada item por dentro — normalizar antes passaria
-  // o ARRAY inteiro como se fosse um item só.
-  const { deduplicar: dedupParc } = require('./parcelasPrevistas');
-  const diaSP = (iso) => {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-  };
-  const distanciaEmDias = (a, b) => {
-    const x = new Date(a).getTime(); const y = new Date(b).getTime();
-    if (Number.isNaN(x) || Number.isNaN(y)) return Infinity;
-    return Math.abs(x - y) / 86400000;
-  };
+  const porId = new Map();
+  for (const t of linhas) if (t.externalId) porId.set(String(t.externalId), t);
 
-  // ⚠️ O AGRUPAMENTO É ANCORADO NA TRANSAÇÃO, NUNCA NO `purchasedAt` DO PLANO.
-  // As duas fontes discordam do DIA em compra perto da meia-noite: numa conta
-  // real a transação veio `2026-07-14T00:14:02+00:00` (13/07 às 21h em São
-  // Paulo) e o plano veio `2026-07-14T03:14:02Z` (14/07 às 00h14) — 3 horas de
-  // diferença, exatamente o fuso. Casando por dia do plano, essa compra ficava
-  // de fora e a parcela seguia na fatura errada.
-  const semMarcador = linhas.filter((t) => t.ehGasto && !t.parcelaTotal && diaSP(t.data));
-  const grupos = new Map();
-  for (const t of semMarcador) {
-    const chave = `${diaSP(t.data)}|${Math.round(Math.abs(Number(t.valor) || 0))}`;
-    if (!grupos.has(chave)) grupos.set(chave, []);
-    grupos.get(chave).push(t);
-  }
+  for (const plano of parcelamentos) {
+    const total = Number(plano && (plano.totalInstallments != null
+      ? plano.totalInstallments : plano.total_installments)) || 0;
+    const ocor = plano && plano.occurrences;
+    if (!(total >= 2) || !Array.isArray(ocor) || ocor.length < 2) continue;
 
-  const planos = dedupParc(parcelamentos);
-  const usados = new Set();
-  for (const irmas of grupos.values()) {
-    // Menos de 2 é compra normal (o emissor mandou só a 1ª parcela) — quem
-    // cobre o futuro é a projeção de `parcelasPrevistas`.
-    if (irmas.length < 2) continue;
+    const achadas = ocor.map((id) => porId.get(String(id))).filter(Boolean);
+    // Só age com o conjunto que o agregador declarou. Faltando transação, a
+    // numeração pelo fim erraria — e quem cobre o resto é a projeção.
+    if (achadas.length !== ocor.length) continue;
+    // Já tem marcador? Então a redistribuição por "N/M" cuidou dela.
+    if (achadas.some((t) => t.parcelaTotal)) continue;
+    // Crédito/estorno não é parcela de compra.
+    if (achadas.some((t) => !t.ehGasto)) continue;
 
-    // O plano do banco é o que AUTORIZA o agrupamento: sem ele, duas compras
-    // iguais no mesmo dia virariam um parcelamento em 2x. Exige o conjunto
-    // COMPLETO — com 2 de 3 irmãs não dá pra saber se são a 1ª e a 2ª ou a 2ª
-    // e a 3ª, e numerar no chute joga a parcela na fatura errada.
-    const plano = planos.find((c) => !usados.has(c)
-      && c.totalParcelas === irmas.length
-      && Math.abs(c.valorParcela - Math.abs(Number(irmas[0].valor) || 0)) <= 1
-      // Tolera o desencontro de fuso, mas não junta compras de semanas
-      // diferentes que por acaso tenham o mesmo valor.
-      && distanciaEmDias(c.compradoEm, irmas[0].data) <= 1.5);
-    if (!plano) continue;
-    usados.add(plano);
+    const ultima = Number(plano.paidInstallments != null
+      ? plano.paidInstallments : plano.paid_installments) || ocor.length;
+    const primeira = ultima - (ocor.length - 1);
+    if (!(primeira >= 1) || ultima > total) continue;
 
-    // ⚠️ A ordem é por valor DECRESCENTE — o centavo a mais vai na PRIMEIRA
-    // parcela, não na última. Isso NÃO foi suposto: as duas ordens foram
-    // medidas contra a fatura que o banco publicou pro cliente, e só uma fecha.
-    //   crescente ....... R$ 1.596,20   (3 centavos a mais)
-    //   decrescente ..... R$ 1.596,17   = exatamente o app do banco
-    // (`parcelasPrevistas` documenta o contrário porque lá a parcela é
-    // CALCULADA do valor nominal; aqui os valores vêm prontos do banco e o que
-    // importa é só a ordem em que são atribuídos.)
-    irmas.sort((a, b) => (Math.abs(b.valor) - Math.abs(a.valor)));
+    // ⚠️ A ÂNCORA É A 1ª OCORRÊNCIA, e ela NÃO é re-datada. Ela já está no dia
+    // certo (é a parcela que o banco cobrou junto com a compra) — recalcular a
+    // data dela só produziria ruído: `dataDaParcela` normaliza pro dia em São
+    // Paulo, e uma compra às 21h vira o dia anterior, mudando a linha sem
+    // mudar fatura nenhuma.
+    const ancora = achadas[0].data;
+    const grupo = grupoDaParcela(baseSemMarcador(achadas[0].descricao), total,
+      Math.abs(achadas[0].valor), ancora);
 
-    // A âncora é a data da PRÓPRIA transação (a 1ª parcela é cobrada na compra).
-    const ancora = irmas[0].data;
-    irmas.forEach((t, k) => {
-      const n = k + 1;
-      t.parcelaNum = n;
-      t.parcelaTotal = irmas.length;
-      t.parcelaGrupo = grupoDaParcela(baseSemMarcador(t.descricao), irmas.length, Math.abs(t.valor), ancora);
-      if (n === 1) return;                       // a 1ª fica na data da compra
-      const data = dataDaParcela(ancora, n);
-      if (!data) return;
+    achadas.forEach((t, k) => {
+      t.parcelaNum = primeira + k;
+      t.parcelaTotal = total;
+      t.parcelaGrupo = grupo;
+      if (k === 0) return;                     // a âncora fica onde está
+      const data = dataDaParcela(ancora, k + 1);
+      if (!data || ymd(data) === ymd(t.data)) return;
       t.dataAnterior = t.data;
       t.data = data;
       // Parcela que ainda não foi cobrada nasce NÃO paga — mesma regra da

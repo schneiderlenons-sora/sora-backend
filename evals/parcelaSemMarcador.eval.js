@@ -1,22 +1,31 @@
 // =============================================================================
 // EVAL — parcela SEM marcador "N/M" (o banco manda todas na data da COMPRA)
 //
-// Existe um segundo jeito de o emissor mandar parcelamento, e ele estava sem
-// tratamento. Medido na base: 8 dos 29 cartões de Open Finance NUNCA recebem
-// `charge_identificator`/`charge_number`. Nesses, o banco não deixa de mandar
-// as parcelas — manda TODAS de uma vez, cada uma como transação própria, todas
-// datadas no dia da compra, com centavo diferente numa delas.
+// Existe um segundo jeito de o emissor mandar parcelamento. Medido na base: 8
+// dos 29 cartões de Open Finance nunca chegam com `charge_identificator`/
+// `charge_number` nas transações. Nesses o emissor não deixa de mandar as
+// parcelas — manda TODAS de uma vez, cada uma como transação própria, todas
+// datadas no dia da compra:
 //
-// O CASO REAL (Mercado Pago, 87 transações, ZERO com marcador):
+//   2026-06-20   56,66 · 56,66 · 56,67   CHINOCA        (3 parcelas)
+//   2026-07-14  140,00 · 139,99          PayU *ADIDAS   (2 parcelas)
+//   2026-08-03   79,86 ·  79,87          JIM.COM PROSED (2 parcelas)
+//
+// A fatura da COMPRA vinha inflada e as seguintes vazias:
 //   fatura em aberto na Sora .... R$ 1.376,33
 //   fatura no app do banco ...... R$ 1.596,17
-//   diferença ................... R$   219,84  = 2ª do Adidas + 2ª do Prosed
 //
-// A fatura da COMPRA vinha inflada e as seguintes vazias. Redistribuindo, as
-// duas pontas se resolvem de uma vez.
+// ⚠️ O AGRUPAMENTO SAI DE `occurrences[]`, NÃO DE HEURÍSTICA. O doc de
+// `/credit-cards/{id}/installments` define: "occurrences: IDs das transações do
+// cartão, ORDENADAS POR charge_identificator". O agregador já diz quais
+// transações formam a compra e em que ordem.
+//
+// ⚠️ E `purchasedAt` NÃO EXISTE NA RESPOSTA — os campos documentados são só
+// description, amount, totalInstallments, paidInstallments e occurrences.
+// Casar a compra por `purchasedAt` (que vinha `undefined`) fazia NENHUM plano
+// casar, e o sintoma era "sincronizei e a fatura não mudou".
 // =============================================================================
 const { redistribuirSemMarcador } = require('../src/services/polpCelcoinSync');
-const { projetar, daCompetencia, jaEhTransacao } = require('../src/services/parcelasPrevistas');
 const { cicloPorCompetencia } = require('../src/services/cicloFatura');
 
 const falhas = [];
@@ -26,33 +35,30 @@ const eq = (a, b, m) => ok(a === b, `${m} (esperado ${JSON.stringify(b)}, veio $
 const CARTAO = { dia_fechamento: 8, dia_vencimento: 13 };
 const HOJE = '2026-08-19';
 
-// Payload REAL de /installments do cartão.
-const PARCELAMENTOS = [
-  { description: 'CHINOCA', amount: -56.67, totalInstallments: 3, paidInstallments: 3,
-    purchasedAt: '2026-06-20T18:15:06.000000Z', occurrences: ['a', 'b', 'c'] },
-  { description: 'JIM.COM PROSED ES', amount: -79.86, totalInstallments: 2, paidInstallments: 1,
-    purchasedAt: '2026-08-03T22:31:55.000000Z', occurrences: ['d'] },
-  { description: 'PayU *ADI', amount: -139.99, totalInstallments: 2, paidInstallments: 1,
-    purchasedAt: '2026-07-14T03:14:02.000000Z', occurrences: ['g'] },
-];
-
-const tx = (descricao, valor, data) => ({
-  externalId: `of-${descricao}-${valor}`, ehGasto: true, valor, descricao, data,
+// Transações como o banco as manda: todas na data da compra, sem marcador.
+const tx = (id, descricao, valor, data) => ({
+  externalId: id, ehGasto: true, valor, descricao, data,
   pago: true, parcelaNum: null, parcelaTotal: null,
 });
 
-// As transações REAIS, como o banco as manda: todas na data da compra.
 const doBanco = () => [
-  tx('CHINOCA', 56.66, '2026-06-20T18:15:06Z'),
-  tx('CHINOCA', 56.66, '2026-06-20T18:15:07Z'),
-  tx('CHINOCA', 56.67, '2026-06-20T18:15:08Z'),
-  // ⚠️ TIMESTAMPS REAIS: a transação vem 3h ANTES do `purchasedAt` do plano
-  // (00:14Z = 13/07 21h em São Paulo, contra 14/07 no plano). Casar pelo DIA do
-  // plano deixava esta compra de fora — ver §2B.
-  tx('PayU        *ADIDAS', 140.00, '2026-07-14T00:14:02+00:00'),
-  tx('PayU        *ADI', 139.99, '2026-07-14T00:14:02+00:00'),
-  tx('JIM.COM PROSED ES', 79.86, '2026-08-03T22:31:55Z'),
-  tx('JIM.COM PROSED ES', 79.87, '2026-08-03T22:31:56Z'),
+  tx('chi-1', 'CHINOCA', 56.67, '2026-06-20T18:15:06Z'),
+  tx('chi-2', 'CHINOCA', 56.66, '2026-06-20T18:15:07Z'),
+  tx('chi-3', 'CHINOCA', 56.66, '2026-06-20T18:15:08Z'),
+  tx('adi-1', 'PayU        *ADIDAS', 140.00, '2026-07-14T00:14:02+00:00'),
+  tx('adi-2', 'PayU        *ADI', 139.99, '2026-07-14T00:14:02+00:00'),
+  tx('pro-1', 'JIM.COM PROSED ES', 79.87, '2026-08-03T22:31:55Z'),
+  tx('pro-2', 'JIM.COM PROSED ES', 79.86, '2026-08-03T22:31:56Z'),
+];
+
+// Payload de /installments: só os 5 campos que a API devolve de verdade.
+const PLANOS = [
+  { description: 'CHINOCA', amount: -56.67, totalInstallments: 3,
+    paidInstallments: 3, occurrences: ['chi-1', 'chi-2', 'chi-3'] },
+  { description: 'PayU *ADI', amount: -139.99, totalInstallments: 2,
+    paidInstallments: 2, occurrences: ['adi-1', 'adi-2'] },
+  { description: 'JIM.COM PROSED ES', amount: -79.86, totalInstallments: 2,
+    paidInstallments: 2, occurrences: ['pro-1', 'pro-2'] },
 ];
 
 const somaDoCiclo = (linhas, competencia) => {
@@ -66,7 +72,9 @@ const somaDoCiclo = (linhas, competencia) => {
 console.log('── 1. a fatura em aberto fecha com o banco ──');
 {
   const linhas = doBanco();
-  redistribuirSemMarcador(linhas, PARCELAMENTOS, HOJE);
+  const mudadas = redistribuirSemMarcador(linhas, PLANOS, HOJE);
+  eq(mudadas.length, 4, 'quatro parcelas saem da fatura da compra');
+
   const CICLO_SEM_PARCELAS = 1319.66;          // as compras normais do ciclo
   const parcelas = somaDoCiclo(linhas, '2026-09');
   eq(parcelas, 276.51, 'as três parcelas que caem na fatura em aberto');
@@ -75,46 +83,24 @@ console.log('── 1. a fatura em aberto fecha com o banco ──');
 }
 console.log('  ok');
 
-// ── 2. A ordem do centavo NÃO é chute ────────────────────────────────────
+// ── 2. A ORDEM VEM DE `occurrences`, não de palpite ──────────────────────
 //
-// O centavo a mais vai na PRIMEIRA parcela. As duas ordens foram medidas
-// contra a fatura publicada: crescente dá 1.596,20 (3 centavos a mais),
-// decrescente dá 1.596,17. `parcelasPrevistas` documenta o contrário porque lá
-// a parcela é CALCULADA do valor nominal; aqui os valores vêm prontos do banco
-// e o que importa é só a ordem em que são atribuídos.
-console.log('── 2. o centavo a mais fica na 1ª parcela ──');
+// O centavo diferente é o arredondamento do banco. Qual parcela leva ele NÃO é
+// coisa nossa de decidir: `occurrences` já vem ordenada por
+// charge_identificator, então o índice É o número da parcela.
+console.log('── 2. a ordem é a de occurrences ──');
 {
   const linhas = doBanco();
-  redistribuirSemMarcador(linhas, PARCELAMENTOS, HOJE);
-  const chinoca = linhas.filter((t) => /CHINOCA/.test(t.descricao))
-    .sort((a, b) => a.parcelaNum - b.parcelaNum);
-  eq(chinoca.map((t) => t.valor).join('|'), '56.67|56.66|56.66', 'a de 56,67 é a 1ª, não a 3ª');
-  eq(chinoca[0].parcelaTotal, 3, 'e todas sabem que são 3');
-}
-console.log('  ok');
+  redistribuirSemMarcador(linhas, PLANOS, HOJE);
+  const chinoca = ['chi-1', 'chi-2', 'chi-3'].map((id) => linhas.find((t) => t.externalId === id));
+  eq(chinoca.map((t) => t.parcelaNum).join(''), '123', 'o índice em occurrences é o nº da parcela');
+  eq(chinoca.map((t) => t.valor).join('|'), '56.67|56.66|56.66', 'e os valores seguem essa ordem');
 
-// ── 2B. O DIA DAS DUAS FONTES NÃO BATE ───────────────────────────────────
-//
-// Compra perto da meia-noite: a transação veio `2026-07-14T00:14:02+00:00`
-// (13/07 às 21h em São Paulo) e o plano veio `2026-07-14T03:14:02Z` (14/07 às
-// 00h14) — 3 horas de diferença, exatamente o fuso. Enquanto o agrupamento era
-// ancorado no `purchasedAt` do plano, esta compra ficava de fora e a 2ª parcela
-// seguia na fatura errada. O agrupamento é ancorado na TRANSAÇÃO.
-console.log('── 2B. dia divergente entre transação e plano ──');
-{
-  const linhas = doBanco();
-  redistribuirSemMarcador(linhas, PARCELAMENTOS, HOJE);
-  const adidas = linhas.filter((t) => /ADI/.test(t.descricao)).sort((a, b) => a.parcelaNum - b.parcelaNum);
-  eq(adidas.length, 2, 'as duas do Adidas foram encontradas');
-  eq(adidas[0].parcelaTotal, 2, 'e reconhecidas como parcelamento em 2x');
-  eq(String(adidas[1].data).slice(0, 10), '2026-08-13', 'a 2ª foi pra fatura seguinte');
-
-  // Mas o desencontro tem limite: plano de semanas atrás não agrupa.
-  const outroDia = [tx('X', 100, '2026-07-01T12:00:00Z'), tx('X', 100, '2026-07-01T12:00:01Z')];
-  const planoLonge = [{ description: 'X', amount: -100, totalInstallments: 2,
-    purchasedAt: '2026-07-20T12:00:00.000000Z', occurrences: ['a'] }];
-  eq(redistribuirSemMarcador(outroDia, planoLonge, HOJE).length, 0,
-    '19 dias de diferença não é desencontro de fuso: não agrupa');
+  // Invertendo occurrences, a numeração inverte junto — prova que a fonte é ela.
+  const outras = doBanco();
+  const invertido = [{ ...PLANOS[0], occurrences: ['chi-3', 'chi-2', 'chi-1'] }];
+  redistribuirSemMarcador(outras, invertido, HOJE);
+  eq(outras.find((t) => t.externalId === 'chi-3').parcelaNum, 1, 'occurrences invertida inverte a parcela');
 }
 console.log('  ok');
 
@@ -122,11 +108,8 @@ console.log('  ok');
 console.log('── 3. cada parcela na sua fatura ──');
 {
   const linhas = doBanco();
-  redistribuirSemMarcador(linhas, PARCELAMENTOS, HOJE);
-  // Chinoca (3x, comprado 20/06): uma em cada fatura, nunca três na primeira.
+  redistribuirSemMarcador(linhas, PLANOS, HOJE);
   eq(somaDoCiclo(linhas, '2026-07'), 56.67, 'julho leva só a 1ª do Chinoca (antes levava as 3)');
-  // Agosto: 2ª do Chinoca + 1ª do Adidas + 1ª do Prosed.
-  // 2ª do Chinoca 56,66 + 1ª do Adidas 140,00 + 1ª do Prosed 79,87.
   eq(somaDoCiclo(linhas, '2026-08'), 276.53, 'agosto leva uma de cada');
   const total = [7, 8, 9].reduce((s, m) => s + somaDoCiclo(linhas, `2026-0${m}`), 0);
   // 609,71 = a soma das 7 linhas que o banco mandou. O dinheiro só mudou de
@@ -135,89 +118,69 @@ console.log('── 3. cada parcela na sua fatura ──');
 }
 console.log('  ok');
 
-// ── 4. O QUE NÃO PODE VIRAR PARCELAMENTO ─────────────────────────────────
-console.log('── 4. o que não pode ser agrupado ──');
+// ── 4. HISTÓRICO TRUNCADO: numerar pelo FIM ──────────────────────────────
+//
+// ⚠️ `paidInstallments` é o MAIOR charge_identificator observado, não a
+// contagem — está no doc. Com o histórico truncado (só as parcelas 2 e 3 de 3
+// visíveis) ele vem 3 com duas ocorrências. Numerar 1..N de frente jogaria a
+// 2ª parcela na fatura da 1ª, que é o erro que isto existe pra evitar.
+console.log('── 4. histórico truncado ──');
 {
-  // Uma linha sozinha é a compra normal (Nubank/Itaú mandam só a 1ª) — quem
-  // cobre o futuro é a projeção. Agrupar aqui viraria compra à vista em 9x.
-  const uma = [tx('MP*ALIEXPRESS', 347.52, '2026-04-25T02:25:53Z')];
+  const linhas = [
+    tx('t-2', 'LOJA', 100, '2026-07-10T12:00:00Z'),
+    tx('t-3', 'LOJA', 100, '2026-07-10T12:00:01Z'),
+  ];
+  const plano = [{ description: 'LOJA', amount: -100, totalInstallments: 3,
+    paidInstallments: 3, occurrences: ['t-2', 't-3'] }];
+  redistribuirSemMarcador(linhas, plano, HOJE);
+  eq(linhas[0].parcelaNum, 2, 'a primeira ocorrência visível é a parcela 2');
+  eq(linhas[1].parcelaNum, 3, 'e a seguinte é a 3');
+  eq(String(linhas[1].data).slice(0, 7), '2026-08', 'a 3ª vai pro mês seguinte');
+}
+console.log('  ok');
+
+// ── 5. O QUE NÃO PODE SER TOCADO ─────────────────────────────────────────
+console.log('── 5. o que não é redistribuído ──');
+{
+  // Uma ocorrência só = compra normal (o emissor mandou só a 1ª parcela).
+  // Quem cobre o futuro é a projeção de `parcelasPrevistas`.
+  const uma = [tx('ali-1', 'MP*ALIEXPRESS', 347.52, '2026-04-25T02:25:53Z')];
   const plano = [{ description: 'MP*ALIEXPRESS', amount: -347.52, totalInstallments: 9,
-    purchasedAt: '2026-04-25T02:25:53.000000Z', occurrences: ['a'] }];
-  eq(redistribuirSemMarcador(uma, plano, HOJE).length, 0, 'uma linha sozinha nunca é redistribuída');
+    paidInstallments: 1, occurrences: ['ali-1'] }];
+  eq(redistribuirSemMarcador(uma, plano, HOJE).length, 0, 'uma ocorrência só nunca é redistribuída');
   eq(uma[0].parcelaTotal, null, 'e não ganha marcador de parcela');
 
-  // Sem plano no /installments não há agrupamento: dois cafés de R$ 20 no
-  // mesmo dia não podem virar um parcelamento em 2x.
-  const cafes = [tx('CAFETERIA', 20, '2026-08-10T09:00:00Z'), tx('CAFETERIA', 20, '2026-08-10T15:00:00Z')];
-  eq(redistribuirSemMarcador(cafes, [], HOJE).length, 0, 'sem plano do banco, nada é agrupado');
-  eq(redistribuirSemMarcador(cafes, PARCELAMENTOS, HOJE).length, 0, 'e plano de OUTRA compra não serve');
+  // Transação que o sync não importou: sem o conjunto declarado, não age.
+  const faltando = [tx('chi-1', 'CHINOCA', 56.67, '2026-06-20T18:15:06Z')];
+  eq(redistribuirSemMarcador(faltando, PLANOS, HOJE).length, 0,
+    'faltando transação do plano, não numera pela metade');
 
-  // Mais irmãs que parcelas = agrupamento suspeito: não mexe.
-  const demais = [tx('X', 50, '2026-08-10T09:00:00Z'), tx('X', 50, '2026-08-10T10:00:00Z'),
-    tx('X', 50, '2026-08-10T11:00:00Z')];
-  const plano2 = [{ description: 'X', amount: -50, totalInstallments: 2,
-    purchasedAt: '2026-08-10T09:00:00.000000Z', occurrences: ['a'] }];
-  eq(redistribuirSemMarcador(demais, plano2, HOJE).length, 0, '3 linhas pra um plano de 2x não é redistribuído');
+  // Já tem marcador → a redistribuição por "N/M" cuidou dela.
+  const jaMarcada = doBanco().map((t) => (/CHINOCA/.test(t.descricao)
+    ? { ...t, parcelaNum: 1, parcelaTotal: 3 } : t));
+  eq(redistribuirSemMarcador(jaMarcada, [PLANOS[0]], HOJE).length, 0,
+    'linha com marcador não é tocada de novo');
 
-  // Crédito/estorno nunca entra.
-  const credito = [{ ...tx('CHINOCA', 56.66, '2026-06-20T18:15:06Z'), ehGasto: false },
-    { ...tx('CHINOCA', 56.67, '2026-06-20T18:15:08Z'), ehGasto: false }];
-  eq(redistribuirSemMarcador(credito, PARCELAMENTOS, HOJE).length, 0, 'crédito não é parcela de compra');
+  // Crédito/estorno não é parcela de compra.
+  const credito = doBanco().map((t) => (/CHINOCA/.test(t.descricao) ? { ...t, ehGasto: false } : t));
+  eq(redistribuirSemMarcador(credito, [PLANOS[0]], HOJE).length, 0, 'crédito não é parcela');
 
-  // Quem JÁ tem marcador é da outra rota (redistribuição por "N/M").
-  const jaMarcada = [{ ...tx('CHINOCA', 56.66, '2026-06-20T18:15:06Z'), parcelaTotal: 3, parcelaNum: 1 },
-    { ...tx('CHINOCA', 56.67, '2026-06-20T18:15:08Z'), parcelaTotal: 3, parcelaNum: 3 }];
-  eq(redistribuirSemMarcador(jaMarcada, PARCELAMENTOS, HOJE).length, 0, 'linha com marcador não é tocada de novo');
-}
-console.log('  ok');
-
-// ── 4B. CONJUNTO INCOMPLETO não é redistribuído ──────────────────────────
-//
-// A janela do sync é de 90 dias, então parcelamento antigo pode aparecer pela
-// METADE. Com 2 de 3 irmãs visíveis não dá pra saber se são a 1ª e a 2ª ou a
-// 2ª e a 3ª — numerar no chute jogaria a parcela na fatura errada, que é
-// exatamente o bug que isto veio consertar.
-console.log('── 4B. conjunto incompleto ──');
-{
-  const duasDeTres = [
-    tx('CHINOCA', 56.66, '2026-06-20T18:15:06Z'),
-    tx('CHINOCA', 56.67, '2026-06-20T18:15:08Z'),
-  ];
-  eq(redistribuirSemMarcador(duasDeTres, PARCELAMENTOS, HOJE).length, 0,
-    '2 irmãs pra um plano de 3x: não numera no chute');
-  eq(duasDeTres[0].parcelaTotal, null, 'e nenhuma ganha marcador');
-
-  // O conjunto completo do MESMO plano continua funcionando.
-  const tres = [
-    tx('CHINOCA', 56.66, '2026-06-20T18:15:06Z'),
-    tx('CHINOCA', 56.66, '2026-06-20T18:15:07Z'),
-    tx('CHINOCA', 56.67, '2026-06-20T18:15:08Z'),
-  ];
-  eq(redistribuirSemMarcador(tres, PARCELAMENTOS, HOJE).length, 2, 'as 3 completas redistribuem 2');
-}
-console.log('  ok');
-
-// ── 5. Redistribuiu → a projeção NÃO pode projetar por cima ──────────────
-//
-// O risco caro: se a parcela virou transação E for projetada, a fatura sai
-// MAIOR que a do banco — o inverso exato do bug de origem.
-console.log('── 5. sem contagem em dobro com a projeção ──');
-{
-  const linhas = doBanco();
-  redistribuirSemMarcador(linhas, PARCELAMENTOS, HOJE);
-  const sobra = projetar(PARCELAMENTOS, CARTAO, HOJE).filter((l) => !jaEhTransacao(l, linhas, CARTAO));
-  eq(daCompetencia(sobra, '2026-09').total, 0, 'nada sobra pra projetar: as parcelas já são transações');
+  // Sem occurrences não há o que agrupar.
+  const semOcor = [{ description: 'X', amount: -50, totalInstallments: 2, paidInstallments: 2 }];
+  eq(redistribuirSemMarcador(doBanco(), semOcor, HOJE).length, 0, 'plano sem occurrences é ignorado');
 }
 console.log('  ok');
 
 // ── 6. Bordas ────────────────────────────────────────────────────────────
 console.log('── 6. bordas ──');
 {
-  eq(redistribuirSemMarcador(null, PARCELAMENTOS, HOJE).length, 0, 'lista nula não quebra');
-  eq(redistribuirSemMarcador([null, undefined], PARCELAMENTOS, HOJE).length, 0, 'lista com buracos não quebra');
+  eq(redistribuirSemMarcador(null, PLANOS, HOJE).length, 0, 'lista nula não quebra');
+  eq(redistribuirSemMarcador([null, undefined], PLANOS, HOJE).length, 0, 'lista com buracos não quebra');
   eq(redistribuirSemMarcador(doBanco(), null, HOJE).length, 0, 'sem parcelamentos não quebra');
-  const semData = [tx('CHINOCA', 56.66, 'nao-e-data'), tx('CHINOCA', 56.67, 'nao-e-data')];
-  eq(redistribuirSemMarcador(semData, PARCELAMENTOS, HOJE).length, 0, 'data inválida não vira parcela');
+  eq(redistribuirSemMarcador(doBanco(), [], HOJE).length, 0, 'lista vazia não quebra');
+  const lixo = [{ description: 'X', totalInstallments: 1, paidInstallments: 1,
+    occurrences: ['chi-1', 'chi-2'] }];
+  eq(redistribuirSemMarcador(doBanco(), lixo, HOJE).length, 0, 'total 1 não é parcelamento');
 }
 console.log('  ok');
 
