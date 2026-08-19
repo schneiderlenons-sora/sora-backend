@@ -1,0 +1,87 @@
+# https://polp.com.br/docs/celcoin/credit-fixed-incomes/transactions
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/credit-fixed-incomes/{creditFixedIncome}/transactions
+Transações — Renda Fixa de Crédito
+Lista movimentações de um investimento de renda fixa de crédito.
+Observações
+Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 500 itens por página.
+fromCreatedAt string Filtra por created_at a partir desta data (ISO 8601). Opcional.
+toCreatedAt string Filtra por created_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromCreatedAt quando ambos forem enviados.
+fromUpdatedAt string Filtra por updated_at a partir desta data (ISO 8601). Opcional.
+toUpdatedAt string Filtra por updated_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromUpdatedAt quando ambos forem enviados.
+fromDate string Filtra por transaction_date a partir desta data (ISO 8601). Opcional.
+toDate string Filtra por transaction_date até esta data (ISO 8601). Opcional. Deve ser ≥ fromDate quando ambos forem enviados.
+Response Fields
+Field Type Description
+id string Identificador único da transação.
+credit_fixed_income_id string ID do investimento.
+type string Enum: CreditFixedIncomeMovementType (ENTRADA/SAIDA).
+transaction_type string Enum: CreditFixedIncomeTransactionType.
+transaction_type_additional_info string | null Informação adicional.
+transaction_date string Data da transação.
+transaction_quantity string Quantidade movimentada.
+remuneration_transaction_rate string | null Taxa de remuneração da movimentação (% a.a.).
+indexer_percentage string | null Percentual do indexador na transação (ex.: "100" para 100% do CDI).
+transaction_unit_price object Preço unitário { amount, currency }.
+transaction_gross_value object Valor bruto { amount, currency }.
+income_tax object IR { amount, currency }.
+financial_transaction_tax object IOF { amount, currency }.
+transaction_net_value object Valor líquido { amount, currency }.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Taxas de Remuneração (Renda Fixa)
+Investimentos de renda fixa de crédito (Debêntures, CRI, CRA) expõem campos que descrevem a rentabilidade esperada. A combinação de indexer (enum CreditFixedIncomeIndexer), post_fixed_indexer_percentage e pre_fixed_rate permite interpretar títulos indexados, híbridos e pré-fixados.
+Campos
+Campo Onde Descrição
+indexer remuneration.indexer Indexador de referência contratado na emissão (CDI, IPCA, PRE_FIXADO, etc.).
+post_fixed_indexer_percentage remuneration.post_fixed_indexer_percentage Percentual do indexador pós-fixado. Ex.: 100 para “100% do CDI”.
+pre_fixed_rate remuneration.pre_fixed_rate Taxa prefixada ou spread adicional sobre o indexador (em % a.a.).
+indexer_percentage transactions.indexer_percentage Equivalente ao percentual do indexador na movimentação.
+remuneration_transaction_rate transactions.remuneration_transaction_rate Taxa de remuneração registrada na transação.
+Exemplos de interpretação
+Rentabilidade indexer post_fixed_indexer_percentage pre_fixed_rate
+100% CDI + 5% CDI 100 5
+IPCA + 10% IPCA 100 10
+Pré-Fixado 16,76% PRE_FIXADO — 16.76
+12% A.A PRE_FIXADO — 12
+O enum RateType (LINEAR / EXPONENCIAL) descreve a forma de cálculo da taxa, não o indexador (CDI, IPCA, etc.).
+Campos contratuais em remuneration (raiz) e product.remuneration (legado): indexer, pre_fixed_rate e post_fixed_indexer_percentage.
+remuneration.indexer usa o enum CreditFixedIncomeIndexer.
+Títulos 100% pré-fixados: remuneration.indexer = PRE_FIXADO, remuneration.post_fixed_indexer_percentage nulo, taxa em remuneration.pre_fixed_rate.
+Indexados com spread (ex.: 100% CDI + 5%): percentual em remuneration.post_fixed_indexer_percentage, spread em remuneration.pre_fixed_rate.
+Enums Relacionados
+CreditFixedIncomeMovementType → type
+Value
+ENTRADA
+SAIDA
+CreditFixedIncomeTransactionType → transaction_type
+Value
+COMPRA
+VENDA
+CANCELAMENTO
+VENCIMENTO
+PAGAMENTO_JUROS
+AMORTIZACAO
+PREMIO
+TRANSFERENCIA_TITULARIDADE
+TRANSFERENCIA_CUSTODIA
+MULTA
+MORA
+OUTROS
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/credit-fixed-incomes/{creditFixedIncome}/transactions \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [ ... ],
+"links": { "first": null, "last": null, "prev": null, "next": "...?cursor=..." },
+"meta": { "path": "...", "per_page": 500, "next_cursor": "...", "prev_cursor": null }
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

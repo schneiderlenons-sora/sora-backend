@@ -1,0 +1,101 @@
+# https://polp.com.br/docs/celcoin/bills/show
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/bills/{bill}
+Obter Fatura
+Retorna uma fatura de cartão de crédito. Rate-limited — não use para polling.
+Observações
+Rate limit: 30 requisições/minuto por usuário autenticado (ou IP). Ver /docs/celcoin/rate-limits.
+Não faça polling nesta rota. O fluxo ideal é orientado a webhooks.
+Ao receber um evento de recurso (ex.: accounts, credit_cards), busque pelo index paginado do consentimento com query_parameters (ex.: GET /consents/{consent}/accounts?{query_parameters}).
+Ao receber *.transactions, liste as transações do recurso indicado em resource/resource_id com query_parameters.
+Use o show apenas pontualmente — quando precisar do recurso completo (reconciliação, debugging, etc.).
+Response Fields
+Field Type Description
+id string Identificador único da fatura.
+credit_card_id string ID do cartão.
+due_date string Data de vencimento.
+bill_closing_date string Data de fechamento da fatura.
+is_instalment boolean Indica se a fatura possui parcelamento.
+bill_minimum_amount object Valor mínimo { amount, currency }.
+bill_total_amount object Valor total { amount, currency }.
+payments array Pagamentos realizados. Ver seção Objetos Aninhados → payments[].
+finance_charges array Encargos financeiros. Ver seção Objetos Aninhados → finance_charges[].
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+amountobject
+Tipo compartilhado para valores monetários em toda a API.
+Field Type Description
+amount string Valor numérico em formato string (ex.: "1500.00").
+currency string Código ISO 4217 (ex.: "BRL").
+Exemplo
+TransactionAmountCOPY
+{
+"amount": "1500.00",
+"currency": "BRL"
+}
+payments[]object
+Pagamentos registrados na fatura.
+Field Type Description
+amount string Valor pago.
+currency string Moeda.
+paymentDate string Data do pagamento.
+valueType string Enum: CreditCardBillingValueType.
+paymentMode string Enum: CreditCardPaymentMode.
+Exemplo
+payments[]COPY
+{
+"amount": "1500.00",
+"currency": "BRL",
+"paymentDate": "2024-04-10",
+"valueType": "VALOR_PAGAMENTO_FATURA_REALIZADO",
+"paymentMode": "PIX"
+}
+finance_charges[]object
+Encargos financeiros da fatura.
+Field Type Description
+type string Enum: CreditCardFinanceChargeType.
+amount string Valor do encargo.
+currency string Moeda.
+additionalInfo string | null Informação adicional.
+Exemplo
+finance_charges[]COPY
+{
+"type": "JUROS_REMUNERATORIOS_ATRASO_PAGAMENTO_FATURA",
+"amount": "45.00",
+"currency": "BRL",
+"additionalInfo": null
+}
+Enums Relacionados
+CreditCardBillingValueType
+Campo payments[].valueType
+Value
+VALOR_PAGAMENTO_FATURA_PARCELADO
+VALOR_PAGAMENTO_FATURA_REALIZADO
+OUTRO_VALOR_PAGO_FATURA
+CreditCardPaymentMode
+Campo payments[].paymentMode
+Value
+DEBITO_CONTA_CORRENTE
+BOLETO_BANCARIO
+AVERBACAO_FOLHA
+PIX
+CreditCardFinanceChargeType
+Campo finance_charges[].type
+Value
+JUROS_REMUNERATORIOS_ATRASO_PAGAMENTO_FATURA
+MULTA_ATRASO_PAGAMENTO_FATURA
+JUROS_MORA_ATRASO_PAGAMENTO_FATURA
+IOF
+OUTROS
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/bills/{bill} \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{ ... }
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

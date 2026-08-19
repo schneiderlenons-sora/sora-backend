@@ -1,0 +1,82 @@
+# https://polp.com.br/docs/celcoin
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+← Provedores /Celcoin v2
+API Open Finance sob demanda
+A API Open Finance sob demanda da Polp (Celcoin v2) expõe dados Open Finance. O fluxo principal é criar um consentimento, redirecionar o usuário para autorização bancária e consultar contas, cartões, empréstimos, financiamentos e investimentos vinculados.
+O consentimento é concedido por período indeterminado — permanece válido até ser revogado (pela API, pelo usuário no banco ou pela instituição).
+Breaking change · resposta dos recursos
+Os campos de identification, contract e product passam a existir também na raiz do recurso (versão atual). Os objetos aninhados continuam disponíveis como legado por compatibilidade — prefira os campos na raiz em integrações novas. Campos de listagem brand_name / company_cnpj foram removidos; use institution do consentimento.
+Base URL
+https://api.polp.com.br/api/v2
+Fluxo de Integração
+GET /institutions — listar bancos disponíveis (público)
+POST /consents — criar consentimento com institution_id e produtos
+Redirecionar usuário para url_to_authenticate
+Aguardar status: AUTHORISED
+Consultar recursos via /consents/{consent}/accounts, etc.
+Receber eventos de recurso (accounts, credit_cards, …) e *.transactions via webhooks
+POST /consents/{consent}/recreate — recriar na Celcoin sem novo registro local (EXPIRED, REJECTED ou para renovar autorização). Ver rota
+DELETE /consents/{consent} — revogar o consentimento (fim do acesso)
+O consentimento não tem data de expiração fixa: vale por período indeterminado até a revogação. A periodicidade de cada recurso sincronizado depende do plano contratado. Ver frequência de atualização por recurso.
+execution_status · flags
+O consentimento retorna execution_status e flags em GET /consents e GET /consents/{consent}.
+PARTIAL_SUCCESS significa que os dados principais já estão disponíveis, mas houve um problema pontual ao gerar categoria (ERROR_PROCESSING_CATEGORIES), counterparty (ERROR_PROCESSING_COUNTERPARTIES) ou porque ao menos um recurso do consentimento não está com status AVAILABLE (PARTIALLY_UNAVAILABLE_RESOURCES). Isso não impede o uso do consentimento: continue consultando contas, cartões e transações normalmente.
+A Polp retenta o enriquecimento e a sincronização de recursos automaticamente. Quando concluir, as flags saem, execution_status volta para SUCCESS e um webhook de transações é enviado.
+Cartões · Recorrências · Parcelas · Contrapartes
+Após o sync de transações do cartão, a API deriva recorrências (assinaturas, sem charge_number) e parcelamentos (agrupados por descrição + total de parcelas + valor). Em Open Finance: charge_identificator é a parcela atual e charge_number o total.
+counterparty nas transações de conta e cartão traz { name, alias, tax_id, website_url, logo_url } e é preenchido assincronamente (CNPJ na conta; nome do estabelecimento no cartão). Pode vir null na primeira consulta.
+Investimentos
+Renda Fixa Bancária
+CDB, RDB, LCI, LCA
+Rentabilidade descrita por post_fixed_indexer_percentage e pre_fixed_rate em product.remuneration (termos contratuais). Ver regra completa com exemplos.
+Renda Fixa Crédito
+Debêntures, CRI, CRA
+Mesma lógica de taxas da renda fixa bancária, com campos adicionais de devedor e cupom em product. Ver documentação.
+Fundos · Tesouro Direto · Renda Variável
+Cada subcategoria possui endpoints de listagem e transações. O objeto product (Product Identification do Open Finance) é sincronizado por investimento e incluído na listagem após sync — null enquanto pendente.
+Fundos — nome, CNPJ do fundo, ISIN, classificação ANBIMA
+Tesouro Direto — ISIN, remuneração, cupom
+Renda Variável — ticker, ISIN, emissor
+O cronograma de sync expõe recursos *.product por investmentId. Ver cronograma.
+MCP (Model Context Protocol)
+A API Celcoin v2 também está disponível via MCP para agentes de IA. Consulte a documentação com todas as ferramentas, paginação por cursor, filtros de transação e exemplos de configuração.
+smart_toy Documentação MCP Celcoin
+Rate Limits
+Endpoints de show (consentimento e recursos) possuem limite de requisições por minuto. Consulte a tabela completa com escopo e valores.
+speed Ver Rate Limits Celcoin
+Limites Operacionais
+Limites regulatórios do Open Finance Brasil por CPF/CNPJ, endpoint e instituição. Reconectar a mesma conta várias vezes consome o teto mensal.
+rule Ver Limites Operacionais
+Changelog
+Novos campos, enums, flags e correções de comportamento da API Celcoin v2.
+history Ver Changelog
+Paginação
+Listagens retornam 15 itens por página (500 para transações). Paginação é cursor-based: use ?cursor=<token> com o next_cursor da resposta para avançar.
+Base URLCOPY
+https://api.polp.com.br/api/v2
+Authentication HeadersCOPY
+x-api-client: <your_client_id>
+x-api-secret: <your_client_secret>
+Example RequestCOPY
+curl https://api.polp.com.br/api/v2/consents \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+Paginated Response
+{
+"data": [...],
+"links": {
+"first": null,
+"last": null,
+"prev": null,
+"next": "https://api.polp.com.br/api/v2/consents?cursor=eyJpZCI6MTUsIl9wb2ludHNUb05leHRJdGVtcyI6dHJ1ZX0"
+},
+"meta": {
+"path": "https://api.polp.com.br/api/v2/consents",
+"per_page": 15,
+"next_cursor": "eyJpZCI6MTUsIl9wb2ludHNUb05leHRJdGVtcyI6dHJ1ZX0",
+"prev_cursor": null
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

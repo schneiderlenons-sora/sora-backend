@@ -1,0 +1,247 @@
+# https://polp.com.br/docs/celcoin/bills/transactions
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/bills/{bill}/transactions
+Transações da Fatura
+Lista transações lançadas em uma fatura específica.
+Observações
+Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 500 itens por página.
+fromCreatedAt string Filtra por created_at a partir desta data (ISO 8601). Opcional.
+toCreatedAt string Filtra por created_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromCreatedAt quando ambos forem enviados.
+fromUpdatedAt string Filtra por updated_at a partir desta data (ISO 8601). Opcional.
+toUpdatedAt string Filtra por updated_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromUpdatedAt quando ambos forem enviados.
+fromDate string Filtra por transaction_date_time a partir desta data (ISO 8601). Opcional.
+toDate string Filtra por transaction_date_time até esta data (ISO 8601). Opcional. Deve ser ≥ fromDate quando ambos forem enviados.
+Response Fields
+Field Type Description
+id string Identificador único da transação.
+credit_card_id string ID do cartão.
+identification_number string Número de identificação do cartão.
+transaction_name string Descrição da transação.
+credit_debit_type string Enum: CreditDebitIndicator.
+transaction_type string Enum: CreditCardTransactionType.
+brazilian_amount object Valor em reais { amount, currency }.
+amount object Valor original { amount, currency }.
+transaction_date_time string Data/hora da transação.
+bill_post_date string | null Data de lançamento na fatura.
+bill_id string | null ID da fatura vinculada.
+transactional_additional_info string | null Informação adicional.
+payment_type string | null Enum: CreditCardPaymentType.
+fee_type string | null Enum: CreditCardFeeType.
+fee_type_additional_info string | null Informação adicional da tarifa.
+other_credits_type string | null Enum: CreditCardOtherCreditType.
+other_credits_additional_info string | null Informação adicional de outros créditos.
+charge_identificator integer | null Número da parcela atual (1..N). Usado com charge_number para agrupar parcelamentos.
+charge_number integer | null Quantidade total de parcelas. Quando preenchido (> 1), a transação entra em installments (não em recurrings).
+payee_mcc integer | null MCC do estabelecimento.
+counterparty object | null Contraparte enriquecida { name, alias, tax_id, website_url, logo_url }.
+category_ref string | null Categoria da transação na Polp Taxonomy. Enum: TransactionCategory.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+amountobject
+Tipo compartilhado para valores monetários em toda a API.
+Field Type Description
+amount string Valor numérico em formato string (ex.: "1500.00").
+currency string Código ISO 4217 (ex.: "BRL").
+Exemplo
+TransactionAmountCOPY
+{
+"amount": "1500.00",
+"currency": "BRL"
+}
+counterpartyobject
+Contraparte enriquecida. Pode ser null até o job de enrichment concluir.
+Field Type Description
+name string | null Razão social / nome oficial.
+alias string | null Nome fantasia.
+tax_id string | null CNPJ (somente dígitos).
+website_url string | null Site do estabelecimento.
+logo_url string | null URL do logotipo.
+Exemplo
+counterpartyCOPY
+{
+"name": "NETFLIX ENTRETENIMENTO BRASIL LTDA.",
+"alias": "Netflix",
+"tax_id": "13487809000140",
+"website_url": "https://www.netflix.com",
+"logo_url": "https://img.logo.dev/netflix.com"
+}
+Enums Relacionados
+CreditCardTransactionType → transaction_type
+Value
+PAGAMENTO
+PAGAMENTO_FATURA
+TARIFA
+OPERACOES_CREDITO_CONTRATADAS_CARTAO
+ESTORNO
+CASHBACK
+OUTROS
+CreditDebitIndicator → credit_debit_type
+Value
+CREDITO
+DEBITO
+TransactionCategory → category_ref
+Value Label
+INCOME Receitas
+INCOME_CHILD_SUPPORT Pensão alimentícia recebida (determinada judicialmente)
+INCOME_CONTRACTOR Renda de trabalho autônomo ou freelance
+INCOME_DIVIDENDS Dividendos de investimentos
+INCOME_GIG_ECONOMY Renda de aplicativos e economia gig (Uber, 99, iFood etc.)
+INCOME_INTEREST_EARNED Juros recebidos de contas e poupança
+INCOME_LONG_TERM_DISABILITY Auxílio por incapacidade ou invalidez
+INCOME_MILITARY Renda militar e benefícios de veteranos
+INCOME_RENTAL Renda de aluguéis e locações
+INCOME_RETIREMENT_PENSION Aposentadoria e pensão (INSS e previdência)
+INCOME_SALARY Salário e ordenados
+INCOME_TAX_REFUND Restituição de imposto
+INCOME_UNEMPLOYMENT Seguro-desemprego e benefícios afins
+INCOME_OTHER Outras receitas
+TRANSFER_IN Transferências recebidas
+TRANSFER_IN_ACCOUNT_TRANSFER Transferência recebida entre contas próprias
+TRANSFER_IN_DEPOSIT Depósito recebido (dinheiro, cheque ou caixa eletrônico)
+TRANSFER_IN_INVESTMENT_AND_RETIREMENT_FUNDS Resgate de investimentos e previdência
+TRANSFER_IN_SAVINGS Resgate de poupança
+TRANSFER_IN_TRANSFER_IN_FROM_APPS Transferência recebida via apps (PIX, carteiras digitais)
+TRANSFER_IN_WIRE Transferência bancária recebida (TED/DOC)
+TRANSFER_IN_OTHER_TRANSFER_IN Outras transferências recebidas
+TRANSFER_OUT Transferências enviadas
+TRANSFER_OUT_ACCOUNT_TRANSFER Transferência enviada entre contas próprias
+TRANSFER_OUT_CRYPTO Transferência para corretoras de criptomoedas
+TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS Aporte em investimentos e previdência
+TRANSFER_OUT_SAVINGS Depósito em poupança
+TRANSFER_OUT_TRANSFER_OUT_FROM_APPS Transferência enviada via apps (PIX, carteiras digitais)
+TRANSFER_OUT_WIRE Transferência bancária enviada (TED/DOC)
+TRANSFER_OUT_WITHDRAWAL Saque
+TRANSFER_OUT_OTHER_TRANSFER_OUT Outras transferências enviadas
+LOAN_DISBURSEMENTS Empréstimos recebidos
+LOAN_DISBURSEMENTS_AUTO Liberação de financiamento de veículo
+LOAN_DISBURSEMENTS_CASH_ADVANCES Adiantamento de dinheiro e empréstimo rápido
+LOAN_DISBURSEMENTS_EWA Antecipação de salário
+LOAN_DISBURSEMENTS_MORTGAGE Liberação de financiamento imobiliário
+LOAN_DISBURSEMENTS_PERSONAL Liberação de empréstimo pessoal
+LOAN_DISBURSEMENTS_STUDENT Liberação de financiamento estudantil
+LOAN_DISBURSEMENTS_OTHER_DISBURSEMENT Outros empréstimos recebidos
+LOAN_PAYMENTS Pagamento de empréstimos
+LOAN_PAYMENTS_BNPL Pagamento de compra parcelada (compre agora, pague depois)
+LOAN_PAYMENTS_CAR_PAYMENT Parcela de financiamento de veículo
+LOAN_PAYMENTS_CASH_ADVANCES Pagamento de adiantamento de dinheiro
+LOAN_PAYMENTS_CREDIT_CARD_PAYMENT Pagamento de fatura de cartão de crédito
+LOAN_PAYMENTS_EWA Pagamento de antecipação de salário
+LOAN_PAYMENTS_MORTGAGE_PAYMENT Parcela de financiamento imobiliário
+LOAN_PAYMENTS_PERSONAL_LOAN_PAYMENT Parcela de empréstimo pessoal
+LOAN_PAYMENTS_STUDENT_LOAN_PAYMENT Parcela de financiamento estudantil
+LOAN_PAYMENTS_OTHER_PAYMENT Outros pagamentos de empréstimos
+BANK_FEES Tarifas bancárias
+BANK_FEES_ATM_FEES Tarifa de caixa eletrônico
+BANK_FEES_INSUFFICIENT_FUNDS Tarifa por saldo insuficiente
+BANK_FEES_INTEREST_CHARGE Cobrança de juros
+BANK_FEES_FOREIGN_TRANSACTION_FEES Tarifa de transação internacional (IOF)
+BANK_FEES_OVERDRAFT_FEES Tarifa de cheque especial
+BANK_FEES_LATE_FEES Multa por atraso
+BANK_FEES_CASH_ADVANCE Tarifa de saque com cartão de crédito
+BANK_FEES_OTHER_BANK_FEES Outras tarifas bancárias
+ENTERTAINMENT Entretenimento
+ENTERTAINMENT_CASINOS_AND_GAMBLING Cassinos e apostas
+ENTERTAINMENT_MUSIC_AND_AUDIO Música e áudio (streaming, shows)
+ENTERTAINMENT_SPORTING_EVENTS_AMUSEMENT_PARKS_AND_MUSEUMS Eventos esportivos, parques e museus
+ENTERTAINMENT_TV_AND_MOVIES TV e filmes (streaming, cinema)
+ENTERTAINMENT_VIDEO_GAMES Jogos eletrônicos
+ENTERTAINMENT_OTHER_ENTERTAINMENT Outros entretenimentos
+FOOD_AND_DRINK Alimentação e bebidas
+FOOD_AND_DRINK_BEER_WINE_AND_LIQUOR Bebidas alcoólicas
+FOOD_AND_DRINK_COFFEE Cafeterias
+FOOD_AND_DRINK_FAST_FOOD Fast food e lanches
+FOOD_AND_DRINK_GROCERIES Supermercado e mercearia
+FOOD_AND_DRINK_RESTAURANT Restaurantes
+FOOD_AND_DRINK_VENDING_MACHINES Máquinas de autoatendimento
+FOOD_AND_DRINK_OTHER_FOOD_AND_DRINK Outras despesas com alimentação
+GENERAL_MERCHANDISE Compras e mercadorias
+GENERAL_MERCHANDISE_BOOKSTORES_AND_NEWSSTANDS Livrarias e bancas
+GENERAL_MERCHANDISE_CLOTHING_AND_ACCESSORIES Roupas e acessórios
+GENERAL_MERCHANDISE_CONVENIENCE_STORES Lojas de conveniência
+GENERAL_MERCHANDISE_DEPARTMENT_STORES Lojas de departamento
+GENERAL_MERCHANDISE_DISCOUNT_STORES Lojas de desconto e variedades
+GENERAL_MERCHANDISE_ELECTRONICS Eletrônicos
+GENERAL_MERCHANDISE_GIFTS_AND_NOVELTIES Presentes e novidades
+GENERAL_MERCHANDISE_OFFICE_SUPPLIES Material de escritório
+GENERAL_MERCHANDISE_ONLINE_MARKETPLACES Marketplaces e compras online
+GENERAL_MERCHANDISE_PET_SUPPLIES Produtos para pets
+GENERAL_MERCHANDISE_SPORTING_GOODS Artigos esportivos
+GENERAL_MERCHANDISE_SUPERSTORES Hipermercados e atacarejos
+GENERAL_MERCHANDISE_TOBACCO_AND_VAPE Tabaco e cigarros eletrônicos
+GENERAL_MERCHANDISE_OTHER_GENERAL_MERCHANDISE Outras compras e mercadorias
+HOME_IMPROVEMENT Casa e reformas
+HOME_IMPROVEMENT_FURNITURE Móveis
+HOME_IMPROVEMENT_HARDWARE Materiais de construção e ferragens
+HOME_IMPROVEMENT_REPAIR_AND_MAINTENANCE Reparos e manutenção
+HOME_IMPROVEMENT_SECURITY Segurança residencial
+HOME_IMPROVEMENT_OTHER_HOME_IMPROVEMENT Outras despesas com a casa
+MEDICAL Saúde
+MEDICAL_DENTAL_CARE Dentista
+MEDICAL_EYE_CARE Oftalmologia e ótica
+MEDICAL_NURSING_CARE Cuidados de enfermagem e cuidadores
+MEDICAL_PHARMACIES_AND_SUPPLEMENTS Farmácias e suplementos
+MEDICAL_PRIMARY_CARE Consultas e atendimento médico
+MEDICAL_VETERINARY_SERVICES Serviços veterinários
+MEDICAL_OTHER_MEDICAL Outras despesas de saúde
+PERSONAL_CARE Cuidados pessoais
+PERSONAL_CARE_GYMS_AND_FITNESS_CENTERS Academias e centros de fitness
+PERSONAL_CARE_HAIR_AND_BEAUTY Cabelo e beleza
+PERSONAL_CARE_LAUNDRY_AND_DRY_CLEANING Lavanderia
+PERSONAL_CARE_OTHER_PERSONAL_CARE Outros cuidados pessoais
+GENERAL_SERVICES Serviços gerais
+GENERAL_SERVICES_ACCOUNTING_AND_FINANCIAL_PLANNING Contabilidade e planejamento financeiro
+GENERAL_SERVICES_AUTOMOTIVE Serviços automotivos
+GENERAL_SERVICES_CHILDCARE Creche e cuidado infantil
+GENERAL_SERVICES_CONSULTING_AND_LEGAL Consultoria e serviços jurídicos
+GENERAL_SERVICES_EDUCATION Educação (escola, faculdade, cursos)
+GENERAL_SERVICES_INSURANCE Seguros
+GENERAL_SERVICES_POSTAGE_AND_SHIPPING Correios e fretes
+GENERAL_SERVICES_STORAGE Armazenamento e guarda-móveis
+GENERAL_SERVICES_OTHER_GENERAL_SERVICES Outros serviços gerais
+GOVERNMENT_AND_NON_PROFIT Governo e doações
+GOVERNMENT_AND_NON_PROFIT_DONATIONS Doações e contribuições
+GOVERNMENT_AND_NON_PROFIT_GOVERNMENT_DEPARTMENTS_AND_AGENCIES Órgãos e taxas governamentais
+GOVERNMENT_AND_NON_PROFIT_TAX_PAYMENT Pagamento de impostos
+GOVERNMENT_AND_NON_PROFIT_OTHER_GOVERNMENT_AND_NON_PROFIT Outras despesas com governo e doações
+TRANSPORTATION Transporte
+TRANSPORTATION_BIKES_AND_SCOOTERS Bicicletas e patinetes
+TRANSPORTATION_GAS Combustível
+TRANSPORTATION_PARKING Estacionamento
+TRANSPORTATION_PUBLIC_TRANSIT Transporte público
+TRANSPORTATION_TAXIS_AND_RIDE_SHARES Táxi e aplicativos de transporte
+TRANSPORTATION_TOLLS Pedágios
+TRANSPORTATION_OTHER_TRANSPORTATION Outras despesas de transporte
+TRAVEL Viagens
+TRAVEL_FLIGHTS Passagens aéreas
+TRAVEL_LODGING Hospedagem
+TRAVEL_RENTAL_CARS Aluguel de carros
+TRAVEL_OTHER_TRAVEL Outras despesas de viagem
+RENT_AND_UTILITIES Aluguel e contas
+RENT_AND_UTILITIES_GAS_AND_ELECTRICITY Gás e energia elétrica
+RENT_AND_UTILITIES_INTERNET_AND_CABLE Internet e TV a cabo
+RENT_AND_UTILITIES_RENT Aluguel
+RENT_AND_UTILITIES_SEWAGE_AND_WASTE_MANAGEMENT Esgoto e coleta de lixo
+RENT_AND_UTILITIES_TELEPHONE Telefone
+RENT_AND_UTILITIES_WATER Água
+RENT_AND_UTILITIES_OTHER_UTILITIES Outras contas e serviços
+OTHER Outros
+OTHER_OTHER Não categorizado
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/bills/{bill}/transactions \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [ ... ],
+"links": { "first": null, "last": null, "prev": null, "next": "...?cursor=..." },
+"meta": { "path": "...", "per_page": 500, "next_cursor": "...", "prev_cursor": null }
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

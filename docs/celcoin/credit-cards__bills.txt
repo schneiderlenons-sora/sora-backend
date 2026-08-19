@@ -1,0 +1,108 @@
+# https://polp.com.br/docs/celcoin/credit-cards/bills
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/credit-cards/{creditCard}/bills
+Listar Faturas do Cartão
+Lista faturas de um cartão de crédito.
+Observações
+Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 15 itens por página.
+fromCreatedAt string Filtra por created_at a partir desta data (ISO 8601). Opcional.
+toCreatedAt string Filtra por created_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromCreatedAt quando ambos forem enviados.
+fromUpdatedAt string Filtra por updated_at a partir desta data (ISO 8601). Opcional.
+toUpdatedAt string Filtra por updated_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromUpdatedAt quando ambos forem enviados.
+Response Fields
+Field Type Description
+id string Identificador único da fatura.
+credit_card_id string ID do cartão.
+due_date string Data de vencimento.
+bill_closing_date string Data de fechamento da fatura.
+is_instalment boolean Indica se a fatura possui parcelamento.
+bill_minimum_amount object Valor mínimo { amount, currency }.
+bill_total_amount object Valor total { amount, currency }.
+payments array Pagamentos realizados. Ver seção Objetos Aninhados → payments[].
+finance_charges array Encargos financeiros. Ver seção Objetos Aninhados → finance_charges[].
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+amountobject
+Tipo compartilhado para valores monetários em toda a API.
+Field Type Description
+amount string Valor numérico em formato string (ex.: "1500.00").
+currency string Código ISO 4217 (ex.: "BRL").
+Exemplo
+TransactionAmountCOPY
+{
+"amount": "1500.00",
+"currency": "BRL"
+}
+payments[]object
+Pagamentos registrados na fatura.
+Field Type Description
+amount string Valor pago.
+currency string Moeda.
+paymentDate string Data do pagamento.
+valueType string Enum: CreditCardBillingValueType.
+paymentMode string Enum: CreditCardPaymentMode.
+Exemplo
+payments[]COPY
+{
+"amount": "1500.00",
+"currency": "BRL",
+"paymentDate": "2024-04-10",
+"valueType": "VALOR_PAGAMENTO_FATURA_REALIZADO",
+"paymentMode": "PIX"
+}
+finance_charges[]object
+Encargos financeiros da fatura.
+Field Type Description
+type string Enum: CreditCardFinanceChargeType.
+amount string Valor do encargo.
+currency string Moeda.
+additionalInfo string | null Informação adicional.
+Exemplo
+finance_charges[]COPY
+{
+"type": "JUROS_REMUNERATORIOS_ATRASO_PAGAMENTO_FATURA",
+"amount": "45.00",
+"currency": "BRL",
+"additionalInfo": null
+}
+Enums Relacionados
+CreditCardBillingValueType
+Campo payments[].valueType
+Value
+VALOR_PAGAMENTO_FATURA_PARCELADO
+VALOR_PAGAMENTO_FATURA_REALIZADO
+OUTRO_VALOR_PAGO_FATURA
+CreditCardPaymentMode
+Campo payments[].paymentMode
+Value
+DEBITO_CONTA_CORRENTE
+BOLETO_BANCARIO
+AVERBACAO_FOLHA
+PIX
+CreditCardFinanceChargeType
+Campo finance_charges[].type
+Value
+JUROS_REMUNERATORIOS_ATRASO_PAGAMENTO_FATURA
+MULTA_ATRASO_PAGAMENTO_FATURA
+JUROS_MORA_ATRASO_PAGAMENTO_FATURA
+IOF
+OUTROS
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/credit-cards/{creditCard}/bills \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [ ... ],
+"links": { "first": null, "last": null, "prev": null, "next": "...?cursor=..." },
+"meta": { "path": "...", "per_page": 15, "next_cursor": "...", "prev_cursor": null }
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

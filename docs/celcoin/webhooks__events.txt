@@ -1,0 +1,171 @@
+# https://polp.com.br/docs/celcoin/webhooks/events
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+Webhooks/Events
+Eventos de Webhook
+Eventos do enum CelcoinWebhookEvent (API v2). Base URL: https://api.polp.com.br/api/v2. Assine no Dashboard → Webhooks (provider Celcoin).
+Como consumir
+Payload: event, resource, resource_id, query_parameters?.
+Eventos de recurso (exceto bills): resource = consents → liste no consentimento com os filtros.
+Evento bills: resource = credit-cards → GET /credit-cards/{resource_id}/bills?{query_parameters}.
+Eventos *.transactions: resource é o path do recurso (kebab-case) → liste as transações.
+Evento consents: sem query_parameters → GET /consents/{resource_id}.
+Evento Tipo resource Consulta sugerida
+consents resource consents GET /consents/{resource_id}
+accounts resource consents GET /consents/{resource_id}/accounts?{query_parameters}
+accounts.transactions transactions accounts GET /accounts/{resource_id}/transactions?{query_parameters}
+credit_cards resource consents GET /consents/{resource_id}/credit-cards?{query_parameters}
+credit_cards.transactions transactions credit-cards GET /credit-cards/{resource_id}/transactions?{query_parameters}
+bills resource credit-cards GET /credit-cards/{resource_id}/bills?{query_parameters}
+bank_fixed_incomes resource consents GET /consents/{resource_id}/bank-fixed-incomes?{query_parameters}
+bank_fixed_incomes.transactions transactions bank-fixed-incomes GET /bank-fixed-incomes/{resource_id}/transactions?{query_parameters}
+credit_fixed_incomes resource consents GET /consents/{resource_id}/credit-fixed-incomes?{query_parameters}
+credit_fixed_incomes.transactions transactions credit-fixed-incomes GET /credit-fixed-incomes/{resource_id}/transactions?{query_parameters}
+funds resource consents GET /consents/{resource_id}/funds?{query_parameters}
+funds.transactions transactions funds GET /funds/{resource_id}/transactions?{query_parameters}
+treasure_titles resource consents GET /consents/{resource_id}/treasure-titles?{query_parameters}
+treasure_titles.transactions transactions treasure-titles GET /treasure-titles/{resource_id}/transactions?{query_parameters}
+variable_incomes resource consents GET /consents/{resource_id}/variable-incomes?{query_parameters}
+variable_incomes.transactions transactions variable-incomes GET /variable-incomes/{resource_id}/transactions?{query_parameters}
+loans resource consents GET /consents/{resource_id}/loans?{query_parameters}
+financings resource consents GET /consents/{resource_id}/financings?{query_parameters}
+Eventos de recurso
+consents
+Consentimentos sincronizados
+Consentimento Open Finance atualizado (ex.: status AUTHORISED, REJECTED, EXPIRED). Sem query_parameters — use o show.
+GET /consents/{resource_id}
+accounts
+Contas sincronizadas
+Contas bancárias do consentimento foram sincronizadas (identificação, saldo, limites).
+GET /consents/{resource_id}/accounts?{query_parameters}
+credit_cards
+Cartões de crédito sincronizados
+Cartões de crédito do consentimento foram sincronizados (identificação, limites).
+GET /consents/{resource_id}/credit-cards?{query_parameters}
+bills
+Faturas sincronizadas
+Faturas de um cartão de crédito foram sincronizadas. resource e resource_id apontam para o cartão (não para o consentimento).
+GET /credit-cards/{resource_id}/bills?{query_parameters}
+bank_fixed_incomes
+Investimentos de renda fixa bancária sincronizados
+Posições de renda fixa bancária (CDB, LCI, LCA, etc.) sincronizadas.
+GET /consents/{resource_id}/bank-fixed-incomes?{query_parameters}
+credit_fixed_incomes
+Investimentos de renda fixa de crédito sincronizados
+Posições de renda fixa de crédito (debêntures, CRI, CRA) sincronizadas.
+GET /consents/{resource_id}/credit-fixed-incomes?{query_parameters}
+funds
+Fundos de investimento sincronizados
+Fundos de investimento do consentimento foram sincronizados.
+GET /consents/{resource_id}/funds?{query_parameters}
+treasure_titles
+Títulos do tesouro sincronizados
+Títulos do Tesouro Direto do consentimento foram sincronizados.
+GET /consents/{resource_id}/treasure-titles?{query_parameters}
+variable_incomes
+Investimentos de renda variável sincronizados
+Posições de renda variável do consentimento foram sincronizadas.
+GET /consents/{resource_id}/variable-incomes?{query_parameters}
+loans
+Empréstimos sincronizados
+Contratos de empréstimo do consentimento foram sincronizados (contrato, garantias, parcelas, pagamentos).
+GET /consents/{resource_id}/loans?{query_parameters}
+financings
+Financiamentos sincronizados
+Contratos de financiamento do consentimento foram sincronizados.
+GET /consents/{resource_id}/financings?{query_parameters}
+Eventos de transações
+accounts.transactions
+Transações da conta sincronizadas
+Transações de uma conta foram criadas ou atualizadas.
+GET /accounts/{resource_id}/transactions?{query_parameters}
+credit_cards.transactions
+Transações do cartão sincronizadas
+Transações de um cartão de crédito foram criadas ou atualizadas.
+GET /credit-cards/{resource_id}/transactions?{query_parameters}
+bank_fixed_incomes.transactions
+Transações de renda fixa bancária sincronizadas
+Movimentações de um investimento de renda fixa bancária foram sincronizadas.
+GET /bank-fixed-incomes/{resource_id}/transactions?{query_parameters}
+credit_fixed_incomes.transactions
+Transações de renda fixa de crédito sincronizadas
+Movimentações de um investimento de renda fixa de crédito foram sincronizadas.
+GET /credit-fixed-incomes/{resource_id}/transactions?{query_parameters}
+funds.transactions
+Transações de fundo sincronizadas
+Movimentações de um fundo foram sincronizadas.
+GET /funds/{resource_id}/transactions?{query_parameters}
+treasure_titles.transactions
+Transações de título do tesouro sincronizadas
+Movimentações de um título do Tesouro foram sincronizadas.
+GET /treasure-titles/{resource_id}/transactions?{query_parameters}
+variable_incomes.transactions
+Transações de renda variável sincronizadas
+Movimentações de um investimento de renda variável foram sincronizadas.
+GET /variable-incomes/{resource_id}/transactions?{query_parameters}
+Exemplos de payload
+consents (sem query_parameters)
+{
+"event": "consents",
+"resource": "consents",
+"resource_id": "bb0e8400-e29b-41d4-a716-446655440006"
+}
+Em seguida chame:
+GET /api/v2/consents/bb0e8400-e29b-41d4-a716-446655440006
+accounts (recurso sincronizado)
+{
+"event": "accounts",
+"resource": "consents",
+"resource_id": "bb0e8400-e29b-41d4-a716-446655440006",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/consents/bb0e8400-e29b-41d4-a716-446655440006/accounts?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+accounts.transactions
+{
+"event": "accounts.transactions",
+"resource": "accounts",
+"resource_id": "550e8400-e29b-41d4-a716-446655440000",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/accounts/550e8400-e29b-41d4-a716-446655440000/transactions?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+bills (faturas do cartão)
+{
+"event": "bills",
+"resource": "credit-cards",
+"resource_id": "660e8400-e29b-41d4-a716-446655440001",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/credit-cards/660e8400-e29b-41d4-a716-446655440001/bills?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+credit_cards.transactions
+{
+"event": "credit_cards.transactions",
+"resource": "credit-cards",
+"resource_id": "660e8400-e29b-41d4-a716-446655440001",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/credit-cards/660e8400-e29b-41d4-a716-446655440001/transactions?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+loans
+{
+"event": "loans",
+"resource": "consents",
+"resource_id": "bb0e8400-e29b-41d4-a716-446655440006",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/consents/bb0e8400-e29b-41d4-a716-446655440006/loans?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+funds.transactions
+{
+"event": "funds.transactions",
+"resource": "funds",
+"resource_id": "880e8400-e29b-41d4-a716-446655440003",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/funds/880e8400-e29b-41d4-a716-446655440003/transactions?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

@@ -1,0 +1,235 @@
+# https://polp.com.br/docs/celcoin/credit-cards/show
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/credit-cards/{creditCard}
+Obter Cartão
+Retorna um cartão de crédito com identification, limits e simulated_bill_total_amount. Rate-limited — não use para polling.
+Observações
+Rate limit: 30 requisições/minuto por usuário autenticado (ou IP). Ver /docs/celcoin/rate-limits.
+Não faça polling nesta rota. O fluxo ideal é orientado a webhooks.
+Ao receber um evento de recurso (ex.: accounts, credit_cards), busque pelo index paginado do consentimento com query_parameters (ex.: GET /consents/{consent}/accounts?{query_parameters}).
+Ao receber *.transactions, liste as transações do recurso indicado em resource/resource_id com query_parameters.
+Use o show apenas pontualmente — quando precisar do recurso completo (reconciliação, debugging, etc.).
+payment_methods está na raiz. O objeto identification é legado — preferir os campos na raiz.
+identification e limits podem ser null se ainda não sincronizados.
+simulated_bill_total_amount: soma dos débitos sem fatura no ciclo atual (após o último bill_closing_date, até +31 dias). Null se o cartão não tiver faturas com data de fechamento.
+Response Fields
+Field Type Description
+id string Identificador único do cartão.
+consent_id string ID do consentimento vinculado.
+name string Nome do produto/cartão.
+credit_card_network string Bandeira. Enum: CreditCardNetwork.
+product_type string Tipo do produto. Enum: CreditCardProductType.
+product_additional_info string | null Informação adicional do produto.
+network_additional_info string | null Informação adicional da bandeira.
+payment_methods array Cartões associados (virtual/adicional/titular). Ver Objetos Aninhados → payment_methods[].
+identification legado object | null Legado — preferir os campos na raiz (name, payment_methods, etc.). Mantido por compatibilidade.
+limits array Limites do cartão. Ver seção Objetos Aninhados → limits[].
+simulated_bill_total_amount object | null Soma dos débitos sem fatura no ciclo atual (após o último bill_closing_date, até +31 dias). Formato { amount: number, currency: string }. Null quando o cartão não tem faturas com data de fechamento.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+amountobject
+Tipo compartilhado para valores monetários em toda a API.
+Field Type Description
+amount string Valor numérico em formato string (ex.: "1500.00").
+currency string Código ISO 4217 (ex.: "BRL").
+Exemplo
+TransactionAmountCOPY
+{
+"amount": "1500.00",
+"currency": "BRL"
+}
+identificationobject legado
+Legado — preferir os campos na raiz (name, payment_methods, etc.). Mantido por compatibilidade com clientes que leem identification.*
+Field Type Description
+name string Denominação/nome da conta de pagamento pós-paga.
+product_type string Categoria do cartão. Enum: CreditCardProductType.
+product_additional_info string | null Informação complementar quando product_type = OUTROS.
+credit_card_network string Bandeira do cartão. Enum: CreditCardNetwork.
+network_additional_info string | null Informação complementar quando credit_card_network = OUTRAS.
+payment_methods array Cartões associados (virtual/adicional/titular). Ver Objetos Aninhados → payment_methods[].
+Exemplo
+identificationCOPY
+{
+"name": "Cartão Universitário",
+"product_type": "GOLD",
+"product_additional_info": null,
+"credit_card_network": "VISA",
+"network_additional_info": null,
+"payment_methods": [
+{
+"identification_number": "4453",
+"is_multiple_credit_card": true
+}
+]
+}
+payment_methods[]object
+Cartões (virtual, adicional, titular) associados à conta consentida. Também disponível em identification.payment_methods (legado).
+Field Type Description
+identification_number string Últimos 4 dígitos (PF) ou identificador PJ do cartão.
+is_multiple_credit_card boolean Indica se o cartão possui função crédito e débito (múltiplo).
+Exemplo
+payment_methods[]COPY
+{
+"identification_number": "4453",
+"is_multiple_credit_card": true
+}
+limits[]object
+Array de limites do cartão. Cada item representa uma linha de crédito.
+Field Type Description
+consolidation_type string Enum: CreditCardConsolidationType.
+credit_line_limit_type string Enum: CreditCardLineLimitType.
+identification_number string Número de identificação do cartão.
+is_limit_flexible boolean Indica se o limite é flexível.
+used_amount object Valor utilizado { amount, currency }.
+limit_amount object Limite total { amount, currency }.
+available_amount object Limite disponível { amount, currency }.
+line_name string Enum: CreditCardLineName.
+customized_limit_amount object | null Limite customizado { amount, currency }.
+line_name_additional_info string | null Informação adicional da linha de crédito.
+Exemplo
+limits[]COPY
+{
+"consolidation_type": "INDIVIDUAL",
+"credit_line_limit_type": "LIMITE_CREDITO_TOTAL",
+"identification_number": "1234",
+"is_limit_flexible": false,
+"used_amount": {
+"amount": "1200.00",
+"currency": "BRL"
+},
+"limit_amount": {
+"amount": "5000.00",
+"currency": "BRL"
+},
+"available_amount": {
+"amount": "3800.00",
+"currency": "BRL"
+},
+"line_name": "CREDITO_A_VISTA",
+"customized_limit_amount": null,
+"line_name_additional_info": null
+}
+Enums Relacionados
+CreditCardNetwork → credit_card_network
+Value
+VISA
+MASTERCARD
+AMERICAN_EXPRESS
+DINERS_CLUB
+HIPERCARD
+BANDEIRA_PROPRIA
+CHEQUE_ELETRONICO
+ELO
+OUTRAS
+CreditCardProductType → product_type
+Value
+CLASSIC_NACIONAL
+CLASSIC_INTERNACIONAL
+GOLD
+PLATINUM
+INFINITE
+ELECTRON
+STANDARD_NACIONAL
+STANDARD_INTERNACIONAL
+ELETRONIC
+BLACK
+REDESHOP
+MAESTRO_MASTERCARD_MAESTRO
+GREEN
+BLUE
+BLUEBOX
+PROFISSIONAL_LIBERAL
+CHEQUE_ELETRONICO
+CORPORATIVO
+EMPRESARIAL
+COMPRAS
+BASICO_NACIONAL
+BASICO_INTERNACIONAL
+NANQUIM
+GRAFITE
+MAIS
+OUTROS
+CreditCardConsolidationType → limits[].consolidation_type
+Value
+CONSOLIDADO
+INDIVIDUAL
+CreditCardLineLimitType → limits[].credit_line_limit_type
+Value
+LIMITE_CREDITO_TOTAL
+LIMITE_CREDITO_MODALIDADE_OPERACAO
+CreditCardLineName → limits[].line_name
+Value
+CREDITO_A_VISTA
+CREDITO_PARCELADO
+SAQUE_CREDITO_BRASIL
+SAQUE_CREDITO_EXTERIOR
+EMPRESTIMO_CARTAO_CONSIGNADO
+OUTROS
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/credit-cards/{creditCard} \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"id": "660e8400-e29b-41d4-a716-446655440001",
+"consent_id": "550e8400-e29b-41d4-a716-446655440000",
+"name": "Cartão Universitário",
+"credit_card_network": "VISA",
+"product_type": "GOLD",
+"product_additional_info": null,
+"network_additional_info": null,
+"payment_methods": [
+{
+"identification_number": "4453",
+"is_multiple_credit_card": true
+}
+],
+"identification": {
+"name": "Cartão Universitário",
+"product_type": "GOLD",
+"product_additional_info": null,
+"credit_card_network": "VISA",
+"network_additional_info": null,
+"payment_methods": [
+{
+"identification_number": "4453",
+"is_multiple_credit_card": true
+}
+]
+},
+"limits": [
+{
+"consolidation_type": "INDIVIDUAL",
+"credit_line_limit_type": "LIMITE_CREDITO_TOTAL",
+"identification_number": "1234",
+"is_limit_flexible": false,
+"used_amount": {
+"amount": "1200.00",
+"currency": "BRL"
+},
+"limit_amount": {
+"amount": "5000.00",
+"currency": "BRL"
+},
+"available_amount": {
+"amount": "3800.00",
+"currency": "BRL"
+},
+"line_name": "CREDITO_A_VISTA",
+"customized_limit_amount": null,
+"line_name_additional_info": null
+}
+],
+"simulated_bill_total_amount": {
+"amount": 175.5,
+"currency": "BRL"
+},
+"created_at": "2024-01-15T00:00:00.000000Z",
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

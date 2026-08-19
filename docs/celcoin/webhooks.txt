@@ -1,0 +1,90 @@
+# https://polp.com.br/docs/celcoin/webhooks
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+Webhooks Celcoin (v2)
+A API v2 notifica sua aplicação quando recursos Open Finance são sincronizados. Configure endpoints no Dashboard → Webhooks (provider Celcoin) e assine os eventos desejados.
+Formato do payload
+Cada entrega HTTP contém um único objeto. Não há *.created / *.updated / *.sync nem campo changes. O fluxo é: receber o evento → consultar a listagem com query_parameters.
+Campos
+Field Type Description
+event string Nome do evento (valor do enum CelcoinWebhookEvent). Ex.: accounts, accounts.transactions, bills.
+resource string Âmbito do resource_id. Na maioria dos eventos de recurso: consents. Em bills: credit-cards. Em *.transactions: accounts, credit-cards, funds, etc. (kebab-case).
+resource_id string (uuid) ID do recurso. Em eventos de recurso (exceto bills): UUID do consentimento. Em bills e *.transactions: UUID do cartão/conta/investimento.
+query_parameters string Query string com fromCreatedAt, toCreatedAt, fromUpdatedAt e toUpdatedAt para buscar só o que mudou na janela da sync. Ausente no evento consents (atualização de status).
+Dois tipos de evento
+Recurso ( (accounts, credit_cards, loans, …) — sincronização no consentimento. Na maioria dos casos resource é consents e resource_id é o UUID do consentimento. Exceção: bills usa resource = credit-cards e o UUID do cartão.
+GET https://api.polp.com.br/api/v2/consents/{resource_id}/accounts?{query_parameters}GET https://api.polp.com.br/api/v2/credit-cards/{resource_id}/bills?{query_parameters}Transações (*.transactions) — transações/movimentações de um recurso específico. resource é o path kebab-case (accounts, credit-cards, funds, …) e resource_id é o UUID desse recurso.
+GET https://api.polp.com.br/api/v2/accounts/{resource_id}/transactions?{query_parameters}
+query_parameters
+Janela da sincronização, no formato de query string. Concatene na URL da listagem:
+fromCreatedAt=…&toCreatedAt=…&fromUpdatedAt=…&toUpdatedAt=…Filtra por created_at e updated_at (ISO 8601).
+Quando created e updated vêm juntos, a API combina com OR.
+Ausente no evento consents (use GET /consents/{id}).
+Empréstimos e financiamentos emitem só eventos de recurso (sem *.transactions).
+Exemplos de payload
+consents (sem query_parameters)
+{
+"event": "consents",
+"resource": "consents",
+"resource_id": "bb0e8400-e29b-41d4-a716-446655440006"
+}
+Em seguida chame:
+GET /api/v2/consents/bb0e8400-e29b-41d4-a716-446655440006
+accounts (recurso sincronizado)
+{
+"event": "accounts",
+"resource": "consents",
+"resource_id": "bb0e8400-e29b-41d4-a716-446655440006",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/consents/bb0e8400-e29b-41d4-a716-446655440006/accounts?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+accounts.transactions
+{
+"event": "accounts.transactions",
+"resource": "accounts",
+"resource_id": "550e8400-e29b-41d4-a716-446655440000",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/accounts/550e8400-e29b-41d4-a716-446655440000/transactions?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+bills (faturas do cartão)
+{
+"event": "bills",
+"resource": "credit-cards",
+"resource_id": "660e8400-e29b-41d4-a716-446655440001",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/credit-cards/660e8400-e29b-41d4-a716-446655440001/bills?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+credit_cards.transactions
+{
+"event": "credit_cards.transactions",
+"resource": "credit-cards",
+"resource_id": "660e8400-e29b-41d4-a716-446655440001",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/credit-cards/660e8400-e29b-41d4-a716-446655440001/transactions?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+loans
+{
+"event": "loans",
+"resource": "consents",
+"resource_id": "bb0e8400-e29b-41d4-a716-446655440006",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/consents/bb0e8400-e29b-41d4-a716-446655440006/loans?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+funds.transactions
+{
+"event": "funds.transactions",
+"resource": "funds",
+"resource_id": "880e8400-e29b-41d4-a716-446655440003",
+"query_parameters": "fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000"
+}
+Em seguida chame:
+GET /api/v2/funds/880e8400-e29b-41d4-a716-446655440003/transactions?fromCreatedAt=2026-07-17T13:00:00.000000&toCreatedAt=2026-07-17T13:00:05.000000&fromUpdatedAt=2026-07-17T13:00:00.000000&toUpdatedAt=2026-07-17T13:00:05.000000
+Ver referência completa de eventos arrow_forward
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

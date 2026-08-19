@@ -1,0 +1,398 @@
+# https://polp.com.br/docs/celcoin/consents/loans
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/consents/{consent}/loans
+Listar Empréstimos do Consentimento
+Lista contratos de empréstimo vinculados ao consentimento, incluindo dados do contrato (contract), garantias, parcelas e pagamentos.
+Observações
+Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
+Campos de contract estão na raiz. O objeto contract é legado — preferir os campos na raiz.
+contract, warranties, scheduled_instalments e payments são carregados via eager loading e podem ser null se ainda não sincronizados.
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 15 itens por página.
+fromCreatedAt string Filtra por created_at a partir desta data (ISO 8601). Opcional.
+toCreatedAt string Filtra por created_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromCreatedAt quando ambos forem enviados.
+fromUpdatedAt string Filtra por updated_at a partir desta data (ISO 8601). Opcional.
+toUpdatedAt string Filtra por updated_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromUpdatedAt quando ambos forem enviados.
+Response Fields
+Field Type Description
+id string Identificador único do empréstimo.
+consent_id string ID do consentimento vinculado.
+product_type string Enum: ContractProductType.
+product_sub_type string Enum: ContractProductSubType.
+product_sub_type_category string Enum: ContractProductSubTypeCategory.
+ipoc_code string Código IPOC do contrato.
+contract_number string | null Número do contrato na instituição.
+product_name string | null Nome da modalidade de crédito.
+contract_date string | null Data de contratação (YYYY-MM-DD).
+contract_amount string | null Valor contratado (sem taxas/tarifas).
+instalment_periodicity string | null Enum: InstalmentPeriodicity.
+cet string | null Custo Efetivo Total anual (ex.: 0.290000 = 29%).
+amortization_scheduled string | null Enum: AmortizationScheduled.
+interest_rates array | null Taxas de juros remuneratórios do contrato.
+contracted_fees array | null Tarifas pactuadas no contrato.
+contracted_finance_charges array | null Encargos pactuados no contrato.
+disbursement_dates string[] | null Datas de desembolso (YYYY-MM-DD).
+settlement_date string | null Data de liquidação do contrato.
+currency string | null Moeda do contrato (ISO 4217).
+due_date string | null Data do último vencimento.
+instalment_periodicity_additional_info string | null Complemento quando periodicidade = OUTROS.
+first_instalment_due_date string | null Vencimento da primeira parcela.
+has_insurance_contracted boolean | null Indica se há seguro contratado (obrigatório para CPC).
+amortization_scheduled_additional_info string | null Complemento quando amortização = OUTROS.
+cnpj_consignee string | null CNPJ do consignante (consignado).
+next_instalment_amount string | null Valor de face da próxima parcela.
+contract legado object | null Legado — preferir os campos do contrato na raiz. Mantido por compatibilidade.
+warranties array Garantias do contrato.
+scheduled_instalments object | null Parcelas programadas.
+payments object | null Pagamentos e saldo devedor.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+contractobject legado
+Legado — preferir os campos do contrato na raiz. Mantido por compatibilidade.
+Field Type Description
+contract_number string Número do contrato na instituição.
+ipoc_code string Código IPOC padronizado (DOC 3040).
+product_name string Nome da modalidade de crédito.
+product_type string Enum: ContractProductType.
+product_sub_type string Enum: ContractProductSubType.
+product_sub_type_category string Enum: ContractProductSubTypeCategory.
+contract_date string Data de contratação (YYYY-MM-DD).
+contract_amount string Valor contratado (sem taxas/tarifas).
+instalment_periodicity string Enum: InstalmentPeriodicity.
+cet string Custo Efetivo Total anual (ex.: 0.290000 = 29%).
+amortization_scheduled string Enum: AmortizationScheduled.
+interest_rates array Taxas de juros remuneratórios do contrato.
+contracted_fees array Tarifas pactuadas no contrato.
+contracted_finance_charges array Encargos pactuados no contrato.
+disbursement_dates string[] | null Datas de desembolso (YYYY-MM-DD).
+settlement_date string | null Data de liquidação do contrato.
+currency string | null Moeda do contrato (ISO 4217).
+due_date string | null Data do último vencimento.
+instalment_periodicity_additional_info string | null Complemento quando periodicidade = OUTROS.
+first_instalment_due_date string | null Vencimento da primeira parcela.
+has_insurance_contracted boolean | null Indica se há seguro contratado (obrigatório para CPC).
+amortization_scheduled_additional_info string | null Complemento quando amortização = OUTROS.
+cnpj_consignee string | null CNPJ do consignante (consignado).
+next_instalment_amount string | null Valor de face da próxima parcela.
+updated_at string Última atualização (ISO 8601).
+Exemplo
+contractCOPY
+{
+"contract_number": "1324926521496",
+"ipoc_code": "92792126019929279212650822221989319252576",
+"product_name": "Crédito Pessoal Consignado",
+"product_type": "EMPRESTIMOS",
+"product_sub_type": "CREDITO_PESSOAL_COM_CONSIGNACAO",
+"product_sub_type_category": "CONSIGNADO_SIAPE",
+"contract_date": "2018-01-05",
+"contract_amount": "50000.0000",
+"instalment_periodicity": "MENSAL",
+"cet": "0.290000",
+"amortization_scheduled": "PRICE",
+"interest_rates": [
+{
+"tax_type": "EFETIVA",
+"interest_rate_type": "SIMPLES",
+"tax_periodicity": "AA",
+"calculation": "21/252",
+"referential_rate_indexer_type": "PRE_FIXADO",
+"pre_fixed_rate": "0.150000"
+}
+],
+"contracted_fees": [
+{
+"fee_name": "Renovação de cadastro",
+"fee_code": "CADASTRO",
+"fee_charge_type": "UNICA",
+"fee_charge": "FIXO",
+"fee_amount": "50.0000"
+}
+],
+"contracted_finance_charges": [
+{
+"charge_type": "JUROS_REMUNERATORIOS_POR_ATRASO",
+"charge_rate": "0.010000"
+}
+],
+"disbursement_dates": [
+"2018-01-15"
+],
+"currency": "BRL",
+"due_date": "2028-01-15",
+"has_insurance_contracted": true,
+"cnpj_consignee": "60500998000135",
+"next_instalment_amount": "1250.0000"
+}
+warranties[]object
+Array de garantias vinculadas ao contrato.
+Field Type Description
+currency string Moeda da garantia.
+warranty_type string Enum: WarrantyType.
+warranty_sub_type string Enum: WarrantySubType.
+warranty_amount string Valor da garantia.
+Exemplo
+warranties[]COPY
+{
+"currency": "BRL",
+"warranty_type": "CESSAO_DIREITOS_CREDITORIOS",
+"warranty_sub_type": "ACOES_DEBENTURES",
+"warranty_amount": "50000.00"
+}
+scheduled_instalmentsobject
+Parcelas programadas do contrato.
+Field Type Description
+type_number_of_instalments string Enum: InstalmentPeriodType.
+total_number_of_instalments integer Total de parcelas.
+type_contract_remaining string Enum: InstalmentPeriodType.
+contract_remaining_number integer Parcelas restantes.
+paid_instalments integer Parcelas pagas.
+due_instalments integer Parcelas a vencer.
+past_due_instalments integer Parcelas vencidas.
+balloon_payments array Parcelas balão: [{ dueDate, amount: { amount, currency } }].
+Exemplo
+scheduled_instalmentsCOPY
+{
+"type_number_of_instalments": "MES",
+"total_number_of_instalments": 48,
+"type_contract_remaining": "MES",
+"contract_remaining_number": 36,
+"paid_instalments": 12,
+"due_instalments": 1,
+"past_due_instalments": 0,
+"balloon_payments": [
+{
+"dueDate": "2025-12-01",
+"amount": {
+"amount": "500.00",
+"currency": "BRL"
+}
+]
+}
+paymentsobject
+Pagamentos realizados e saldo devedor do contrato.
+Field Type Description
+paid_instalments integer Parcelas pagas.
+contract_outstanding_balance string Saldo devedor do contrato.
+last_updated_contract_outstanding_balance string Data da última atualização do saldo devedor.
+total_remaining_amount string Valor total restante.
+releases array Liberações/pagamentos: paymentId, isOverParcelPayment, paidDate, currency, paidAmount, instalmentId?, overParcel? (fees[], charges[]).
+Exemplo
+paymentsCOPY
+{
+"paid_instalments": 12,
+"contract_outstanding_balance": "45000.00",
+"last_updated_contract_outstanding_balance": "2024-04-15",
+"total_remaining_amount": "45000.00",
+"releases": [
+{
+"paymentId": "pay_001",
+"isOverParcelPayment": false,
+"paidDate": "2024-04-01",
+"currency": "BRL",
+"paidAmount": "1250.00",
+"instalmentId": "inst_012"
+}
+]
+}
+Enums Relacionados
+ContractProductType → product_type
+Value
+EMPRESTIMOS
+ContractProductSubType → product_sub_type
+Value
+HOME_EQUITY
+CHEQUE_ESPECIAL
+CONTA_GARANTIDA
+CAPITAL_GIRO_TETO_ROTATIVO
+CREDITO_PESSOAL_SEM_CONSIGNACAO
+CREDITO_PESSOAL_COM_CONSIGNACAO
+MICROCREDITO_PRODUTIVO_ORIENTADO
+CAPITAL_GIRO_PRAZO_VENCIMENTO_ATE_365_DIAS
+CAPITAL_GIRO_PRAZO_VENCIMENTO_SUPERIOR_365_DIAS
+ContractProductSubTypeCategory → product_sub_type_category
+Value
+CREDITO_PESSOAL_CLEAN
+CONSIGNADO_SIAPE
+OUTRO
+InstalmentPeriodicity → contract.instalment_periodicity
+Value
+SEM_PERIODICIDADE_REGULAR
+SEMANAL
+QUINZENAL
+MENSAL
+BIMESTRAL
+TRIMESTRAL
+SEMESTRAL
+ANUAL
+OUTROS
+AmortizationScheduled → contract.amortization_scheduled
+Value
+SAC
+PRICE
+SAM
+SEM_SISTEMA_AMORTIZACAO
+OUTROS
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/consents/{consent}/loans \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [
+{
+"id": "770e8400-e29b-41d4-a716-446655440002",
+"consent_id": "550e8400-e29b-41d4-a716-446655440000",
+"contract_number": "1324926521496",
+"ipoc_code": "92792126019929279212650822221989319252576",
+"product_name": "Crédito Pessoal Consignado",
+"product_type": "EMPRESTIMOS",
+"product_sub_type": "CREDITO_PESSOAL_COM_CONSIGNACAO",
+"product_sub_type_category": "CONSIGNADO_SIAPE",
+"contract_date": "2018-01-05",
+"contract_amount": "50000.0000",
+"instalment_periodicity": "MENSAL",
+"cet": "0.290000",
+"amortization_scheduled": "PRICE",
+"interest_rates": [
+{
+"tax_type": "EFETIVA",
+"interest_rate_type": "SIMPLES",
+"tax_periodicity": "AA",
+"calculation": "21/252",
+"referential_rate_indexer_type": "PRE_FIXADO",
+"pre_fixed_rate": "0.150000"
+}
+],
+"contracted_fees": [
+{
+"fee_name": "Renovação de cadastro",
+"fee_code": "CADASTRO",
+"fee_charge_type": "UNICA",
+"fee_charge": "FIXO",
+"fee_amount": "50.0000"
+}
+],
+"contracted_finance_charges": [
+{
+"charge_type": "JUROS_REMUNERATORIOS_POR_ATRASO",
+"charge_rate": "0.010000"
+}
+],
+"disbursement_dates": [
+"2018-01-15"
+],
+"currency": "BRL",
+"due_date": "2028-01-15",
+"has_insurance_contracted": true,
+"cnpj_consignee": "60500998000135",
+"next_instalment_amount": "1250.0000",
+"contract": {
+"contract_number": "1324926521496",
+"ipoc_code": "92792126019929279212650822221989319252576",
+"product_name": "Crédito Pessoal Consignado",
+"product_type": "EMPRESTIMOS",
+"product_sub_type": "CREDITO_PESSOAL_COM_CONSIGNACAO",
+"product_sub_type_category": "CONSIGNADO_SIAPE",
+"contract_date": "2018-01-05",
+"contract_amount": "50000.0000",
+"instalment_periodicity": "MENSAL",
+"cet": "0.290000",
+"amortization_scheduled": "PRICE",
+"interest_rates": [
+{
+"tax_type": "EFETIVA",
+"interest_rate_type": "SIMPLES",
+"tax_periodicity": "AA",
+"calculation": "21/252",
+"referential_rate_indexer_type": "PRE_FIXADO",
+"pre_fixed_rate": "0.150000"
+}
+],
+"contracted_fees": [
+{
+"fee_name": "Renovação de cadastro",
+"fee_code": "CADASTRO",
+"fee_charge_type": "UNICA",
+"fee_charge": "FIXO",
+"fee_amount": "50.0000"
+}
+],
+"contracted_finance_charges": [
+{
+"charge_type": "JUROS_REMUNERATORIOS_POR_ATRASO",
+"charge_rate": "0.010000"
+}
+],
+"disbursement_dates": [
+"2018-01-15"
+],
+"currency": "BRL",
+"due_date": "2028-01-15",
+"has_insurance_contracted": true,
+"cnpj_consignee": "60500998000135",
+"next_instalment_amount": "1250.0000"
+},
+"warranties": [
+{
+"currency": "BRL",
+"warranty_type": "CESSAO_DIREITOS_CREDITORIOS",
+"warranty_sub_type": "ACOES_DEBENTURES",
+"warranty_amount": "50000.00"
+}
+],
+"scheduled_instalments": {
+"type_number_of_instalments": "MES",
+"total_number_of_instalments": 48,
+"type_contract_remaining": "MES",
+"contract_remaining_number": 36,
+"paid_instalments": 12,
+"due_instalments": 1,
+"past_due_instalments": 0,
+"balloon_payments": [
+{
+"dueDate": "2025-12-01",
+"amount": {
+"amount": "500.00",
+"currency": "BRL"
+}
+]
+},
+"payments": {
+"paid_instalments": 12,
+"contract_outstanding_balance": "45000.00",
+"last_updated_contract_outstanding_balance": "2024-04-15",
+"total_remaining_amount": "45000.00",
+"releases": [
+{
+"paymentId": "pay_001",
+"isOverParcelPayment": false,
+"paidDate": "2024-04-01",
+"currency": "BRL",
+"paidAmount": "1250.00",
+"instalmentId": "inst_012"
+}
+]
+},
+"created_at": "2024-01-15T00:00:00.000000Z",
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+],
+"links": {
+"first": null,
+"last": null,
+"prev": null,
+"next": null
+},
+"meta": {
+"path": "https://api.polp.com.br/api/v2/consents/{consent}/loans",
+"per_page": 15,
+"next_cursor": null,
+"prev_cursor": null
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

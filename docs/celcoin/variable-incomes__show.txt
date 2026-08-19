@@ -1,0 +1,123 @@
+# https://polp.com.br/docs/celcoin/variable-incomes/show
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/variable-incomes/{variableIncome}
+Obter — Renda Variável
+Retorna um investimento de renda variável com product e balance. Rate-limited — não use para polling.
+Observações
+Rate limit: 30 requisições/minuto por usuário autenticado (ou IP). Ver /docs/celcoin/rate-limits.
+Não faça polling nesta rota. O fluxo ideal é orientado a webhooks.
+Ao receber um evento de recurso (ex.: accounts, credit_cards), busque pelo index paginado do consentimento com query_parameters (ex.: GET /consents/{consent}/accounts?{query_parameters}).
+Ao receber *.transactions, liste as transações do recurso indicado em resource/resource_id com query_parameters.
+Use o show apenas pontualmente — quando precisar do recurso completo (reconciliação, debugging, etc.).
+balance é carregado via eager loading e pode ser null se ainda não sincronizado.
+Campos de product passam a existir na raiz (versão atual). O objeto product aninhado é legado — preferir os campos na raiz, incluindo remuneration.
+product (legado) pode retornar null se o Product Identification ainda não foi sincronizado.
+Response Fields
+Field Type Description
+id string Identificador único do investimento (consolidado por ticker do lote padrão).
+consent_id string ID do consentimento vinculado.
+issuer_institution_cnpj_number string | null CNPJ da instituição emissora.
+isin_code string | null Código ISIN da emissão (ISO 6166).
+ticker string | null Código de negociação do ativo em bolsa (ex.: PETR4).
+product legado object | null Legado — preferir os campos do produto na raiz. Mantido por compatibilidade.
+balance object | null Saldo do investimento. Ver seção Objetos Aninhados → balance.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+amountobject
+Tipo compartilhado para valores monetários em toda a API.
+Field Type Description
+amount string Valor numérico em formato string (ex.: "1500.00").
+currency string Código ISO 4217 (ex.: "BRL").
+Exemplo
+TransactionAmountCOPY
+{
+"amount": "1500.00",
+"currency": "BRL"
+}
+balanceobject
+Posição do investimento de renda variável.
+Field Type Description
+reference_date string Data de referência.
+quantity string Quantidade de papéis.
+price_factor string Fator de preço.
+gross_amount object Valor bruto { amount, currency }.
+blocked_balance object Saldo bloqueado { amount, currency }.
+closing_price object Preço de fechamento { amount, currency }.
+updated_at string Última atualização (ISO 8601).
+Exemplo
+balanceCOPY
+{
+"reference_date": "2024-04-15",
+"quantity": "100.000000",
+"price_factor": "1.000000",
+"gross_amount": {
+"amount": "3500.00",
+"currency": "BRL"
+},
+"blocked_balance": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"closing_price": {
+"amount": "35.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+productobject legado
+Legado — preferir os campos do produto na raiz. Mantido por compatibilidade.
+Field Type Description
+issuer_institution_cnpj_number string | null CNPJ da instituição emissora. Obrigatório quando disponível na transmissora.
+isin_code string Código ISIN da emissão (ISO 6166).
+ticker string Código de negociação do ativo em bolsa (ex.: PETR4).
+updated_at string Última atualização (ISO 8601).
+Exemplo
+productCOPY
+{
+"issuer_institution_cnpj_number": "11225860000140",
+"isin_code": "BRPETRACNPR6",
+"ticker": "PETR4"
+}
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/variable-incomes/{variableIncome} \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"id": "92792126019929200000000000000000000000000",
+"consent_id": "550e8400-e29b-41d4-a716-446655440000",
+"issuer_institution_cnpj_number": "11225860000140",
+"isin_code": "BRPETRACNPR6",
+"ticker": "PETR4",
+"product": {
+"issuer_institution_cnpj_number": "11225860000140",
+"isin_code": "BRPETRACNPR6",
+"ticker": "PETR4"
+},
+"balance": {
+"reference_date": "2024-04-15",
+"quantity": "100.000000",
+"price_factor": "1.000000",
+"gross_amount": {
+"amount": "3500.00",
+"currency": "BRL"
+},
+"blocked_balance": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"closing_price": {
+"amount": "35.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+},
+"created_at": "2024-01-15T00:00:00.000000Z",
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

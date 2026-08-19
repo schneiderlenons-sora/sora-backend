@@ -1,0 +1,208 @@
+# https://polp.com.br/docs/celcoin/consents/accounts
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/consents/{consent}/accounts
+Listar Contas do Consentimento
+Lista contas bancárias vinculadas ao consentimento, incluindo identificação (identification), saldo (balance) e limite de cheque especial (overdraft_limit) quando sincronizados.
+Observações
+Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
+Campos de identification (subtype, currency, etc.) estão na raiz. O objeto identification é legado.
+identification, balance e overdraft_limit são carregados via eager loading e podem ser null se ainda não sincronizados.
+Se balance.has_reserved_balance = true, liste as caixinhas em GET /accounts/{account}/reserved-balances.
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 15 itens por página.
+fromCreatedAt string Filtra por created_at a partir desta data (ISO 8601). Opcional.
+toCreatedAt string Filtra por created_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromCreatedAt quando ambos forem enviados.
+fromUpdatedAt string Filtra por updated_at a partir desta data (ISO 8601). Opcional.
+toUpdatedAt string Filtra por updated_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromUpdatedAt quando ambos forem enviados.
+Response Fields
+Field Type Description
+id string Identificador único da conta.
+consent_id string ID do consentimento vinculado.
+number string Número da conta.
+branch_code string Código da agência.
+check_digit string Dígito verificador da conta.
+type string Tipo da conta. Enum: AccountType.
+compe_code string Código COMPE da instituição.
+subtype string | null Subtipo da conta. Enum: AccountSubType.
+currency string | null Moeda da conta (ISO 4217, ex.: BRL).
+identification legado object | null Legado — preferir os campos na raiz (number, subtype, currency, etc.). Mantido por compatibilidade.
+balance object | null Saldo da conta. Ver seção Objetos Aninhados.
+overdraft_limit object | null Limites de cheque especial. Ver seção Objetos Aninhados.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+amountobject
+Tipo compartilhado para valores monetários em toda a API.
+Field Type Description
+amount string Valor numérico em formato string (ex.: "1500.00").
+currency string Código ISO 4217 (ex.: "BRL").
+Exemplo
+TransactionAmountCOPY
+{
+"amount": "1500.00",
+"currency": "BRL"
+}
+identificationobject legado
+Legado — preferir os campos na raiz (number, subtype, currency, etc.). Mantido por compatibilidade com clientes que leem identification.*
+Field Type Description
+compe_code string Código COMPE da instituição (3 dígitos).
+branch_code string | null Código da agência. Obrigatório quando type ≠ CONTA_PAGAMENTO_PRE_PAGA.
+number string Número da conta.
+check_digit string | null Dígito verificador da conta.
+type string Tipo da conta. Enum: AccountType.
+subtype string Subtipo da conta. Enum: AccountSubType.
+currency string Moeda da conta (ISO 4217, ex.: BRL).
+Exemplo
+identificationCOPY
+{
+"compe_code": "341",
+"branch_code": "0001",
+"number": "12345",
+"check_digit": "6",
+"type": "CONTA_DEPOSITO_A_VISTA",
+"subtype": "INDIVIDUAL",
+"currency": "BRL"
+}
+balanceobject
+Saldo da conta. Retornado em listagens e detalhe quando sincronizado. Pode ser null se ainda não sincronizado.
+Field Type Description
+update_date_time string Data/hora da atualização do saldo.
+has_reserved_balance boolean Indica se o cliente possui reserva de saldo (caixinhas). Se true, consulte GET /accounts/{account}/reserved-balances. Inclui reservas ativas mesmo com saldo zerado.
+available_amount object Saldo disponível { amount, currency }. Não inclui cheque especial, investimentos automáticos nem reservas de saldo.
+blocked_amount object Saldo bloqueado { amount, currency }.
+automatically_invested_amount object Saldo investido automaticamente { amount, currency }.
+updated_at string Última atualização (ISO 8601).
+Exemplo
+balanceCOPY
+{
+"update_date_time": "2024-04-15T10:00:00.000000Z",
+"has_reserved_balance": true,
+"available_amount": {
+"amount": "1500.00",
+"currency": "BRL"
+},
+"blocked_amount": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"automatically_invested_amount": {
+"amount": "200.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+overdraft_limitobject
+Limites de cheque especial e adiantamento a depositante. Pode ser null se não disponível.
+Field Type Description
+overdraft_contracted_limit object Limite contratado de cheque especial { amount, currency }.
+overdraft_used_limit object Limite utilizado { amount, currency }.
+unarranged_overdraft_amount object Valor de adiantamento a depositante { amount, currency }.
+updated_at string Última atualização (ISO 8601).
+Exemplo
+overdraft_limitCOPY
+{
+"overdraft_contracted_limit": {
+"amount": "500.00",
+"currency": "BRL"
+},
+"overdraft_used_limit": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"unarranged_overdraft_amount": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+Enums Relacionados
+AccountType → type
+Value
+CONTA_DEPOSITO_A_VISTA
+CONTA_POUPANCA
+CONTA_PAGAMENTO_PRE_PAGA
+AccountSubType → identification.subtype
+Value
+INDIVIDUAL
+CONJUNTA_SIMPLES
+CONJUNTA_SOLIDARIA
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/consents/{consent}/accounts \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [
+{
+"id": "550e8400-e29b-41d4-a716-446655440001",
+"consent_id": "550e8400-e29b-41d4-a716-446655440000",
+"number": "12345",
+"branch_code": "0001",
+"check_digit": "6",
+"type": "CONTA_DEPOSITO_A_VISTA",
+"compe_code": "341",
+"subtype": "INDIVIDUAL",
+"currency": "BRL",
+"identification": {
+"compe_code": "341",
+"branch_code": "0001",
+"number": "12345",
+"check_digit": "6",
+"type": "CONTA_DEPOSITO_A_VISTA",
+"subtype": "INDIVIDUAL",
+"currency": "BRL"
+},
+"balance": {
+"update_date_time": "2024-04-15T10:00:00.000000Z",
+"has_reserved_balance": true,
+"available_amount": {
+"amount": "1500.00",
+"currency": "BRL"
+},
+"blocked_amount": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"automatically_invested_amount": {
+"amount": "200.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+},
+"overdraft_limit": {
+"overdraft_contracted_limit": {
+"amount": "500.00",
+"currency": "BRL"
+},
+"overdraft_used_limit": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"unarranged_overdraft_amount": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+},
+"created_at": "2024-01-15T00:00:00.000000Z",
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+],
+"links": {
+"first": null,
+"last": null,
+"prev": null,
+"next": null
+},
+"meta": {
+"path": "https://api.polp.com.br/api/v2/consents/{consent}/accounts",
+"per_page": 15,
+"next_cursor": null,
+"prev_cursor": null
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

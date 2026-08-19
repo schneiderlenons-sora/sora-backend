@@ -1,0 +1,56 @@
+# https://polp.com.br/docs/celcoin/credit-cards/recurrings
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/credit-cards/{creditCard}/recurrings
+Recorrências do Cartão
+Lista assinaturas e cobranças recorrentes detectadas nas transações do cartão (sem parcelas).
+Observações
+Derivado localmente após o sync de transações — não é um recurso Open Finance da instituição.
+Detecção determinística: agrupa por merchant normalizado (remove gateways tipo "Ifd*"), clusteriza valores por moeda (assinaturas internacionais usam o valor original, imune ao câmbio) e valida cadência mensal com no mínimo 3 meses cobrados.
+Exclui parcelamentos (charge_number > 1 ou payment_type A_PRAZO), tarifas/IOF, estornos e créditos.
+MCCs de consumo avulso (mercado, posto, estacionamento) exigem valor idêntico e cadência perfeita para evitar falsos positivos.
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 50 itens por página.
+Response Fields
+Field Type Description
+description string Nome normalizado da recorrência (ex.: netflix).
+averageAmount number Valor médio em BRL das ocorrências. Débito é negativo.
+currency string Moeda original da cobrança (ISO 4217). Assinaturas internacionais mantêm a moeda de origem (ex.: USD) mesmo com averageAmount em BRL.
+periodMonths integer | null Período detectado em meses (1 = mensal, 2, 3, 6 ou 12).
+expectedDay integer | null Dia do mês esperado para a cobrança (mediana das ocorrências).
+firstOccurrenceAt string | null Data (Y-m-d) da primeira ocorrência conhecida.
+lastOccurrenceAt string | null Data (Y-m-d) da última ocorrência conhecida.
+nextExpectedAt string | null Data (Y-m-d) prevista para a próxima cobrança (última + periodMonths).
+occurrences string[] IDs das transações do cartão que formam a recorrência.
+regularityScore number Score de regularidade entre 0 e 1 (confiança da detecção).
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/credit-cards/{creditCard}/recurrings \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [
+{
+"description": "Assinatura Streaming",
+"averageAmount": -39.9,
+"currency": "BRL",
+"periodMonths": 1,
+"expectedDay": 9,
+"firstOccurrenceAt": "2025-11-09",
+"lastOccurrenceAt": "2026-01-09",
+"nextExpectedAt": "2026-02-09",
+"occurrences": [
+"a8534c85-53ce-4f21-94d7-50e9d2ee4957",
+"05c693bf-c196-47ea-a28c-8251d6bb8a06",
+"ff9ed929-edc4-408c-a959-d51f79ab1814"
+],
+"regularityScore": 0.95
+}
+],
+"links": { "first": null, "last": null, "prev": null, "next": null },
+"meta": { "path": "...", "per_page": 50, "next_cursor": null, "prev_cursor": null }
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

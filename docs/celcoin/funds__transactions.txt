@@ -1,0 +1,61 @@
+# https://polp.com.br/docs/celcoin/funds/transactions
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/funds/{fund}/transactions
+Transações do Fundo
+Lista movimentações de um fundo de investimento.
+Observações
+Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 500 itens por página.
+fromCreatedAt string Filtra por created_at a partir desta data (ISO 8601). Opcional.
+toCreatedAt string Filtra por created_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromCreatedAt quando ambos forem enviados.
+fromUpdatedAt string Filtra por updated_at a partir desta data (ISO 8601). Opcional.
+toUpdatedAt string Filtra por updated_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromUpdatedAt quando ambos forem enviados.
+fromDate string Filtra por transaction_conversion_date a partir desta data (ISO 8601). Opcional.
+toDate string Filtra por transaction_conversion_date até esta data (ISO 8601). Opcional. Deve ser ≥ fromDate quando ambos forem enviados.
+Response Fields
+Field Type Description
+id string Identificador único da transação.
+fund_id string ID do fundo.
+type string Enum: FundMovementType.
+transaction_type string Enum: FundTransactionType.
+transaction_conversion_date string Data de conversão.
+transaction_quota_quantity string Quantidade de cotas.
+transaction_quota_price object Preço da cota { amount, currency }.
+transaction_value object Valor { amount, currency }.
+transaction_gross_value object Valor bruto { amount, currency }.
+income_tax object IR { amount, currency }.
+financial_transaction_tax object IOF { amount, currency }.
+transaction_exit_fee object Taxa de saída { amount, currency }.
+transaction_net_value object Valor líquido { amount, currency }.
+transaction_type_additional_info string | null Informação adicional.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Enums Relacionados
+FundMovementType → type
+Value
+ENTRADA
+SAIDA
+FundTransactionType → transaction_type
+Value
+AMORTIZACAO
+TRANSFERENCIA_COTAS
+APLICACAO
+RESGATE
+COME_COTAS
+OUTROS
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/funds/{fund}/transactions \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [ ... ],
+"links": { "first": null, "last": null, "prev": null, "next": "...?cursor=..." },
+"meta": { "path": "...", "per_page": 500, "next_cursor": "...", "prev_cursor": null }
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

@@ -1,0 +1,46 @@
+# https://polp.com.br/docs/celcoin/credit-cards/installments
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/credit-cards/{creditCard}/installments
+Parcelamentos do Cartão
+Lista compras parceladas detectadas via charge_identificator, charge_number e amount.
+Observações
+Derivado localmente após o sync de transações — não é um recurso Open Finance da instituição.
+Agrupa por description + charge_number (total) + purchased_at. charge_identificator ordena as occurrences.
+Só considera txs com charge_identificator e charge_number (> 1) e bill_post_date <= hoje.
+paidInstallments = maior charge_identificator observado (não len(occurrences)), para não subcontar quando o histórico da instituição está truncado.
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 50 itens por página.
+Response Fields
+Field Type Description
+description string Descrição limpa da compra parcelada.
+amount number Valor de cada parcela. Débito é negativo; crédito é positivo.
+totalInstallments integer Total de parcelas (charge_number).
+paidInstallments integer Maior charge_identificator entre as parcelas observadas (não o count de occurrences). Se o histórico estiver truncado e só existir a parcela 3/3, paidInstallments = 3.
+occurrences string[] IDs das transações do cartão, ordenadas por charge_identificator.
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/credit-cards/{creditCard}/installments \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [
+{
+"description": "LOJA XYZ",
+"amount": -150.0,
+"totalInstallments": 12,
+"paidInstallments": 3,
+"occurrences": [
+"a8534c85-53ce-4f21-94d7-50e9d2ee4957",
+"05c693bf-c196-47ea-a28c-8251d6bb8a06",
+"ff9ed929-edc4-408c-a959-d51f79ab1814"
+]
+}
+],
+"links": { "first": null, "last": null, "prev": null, "next": null },
+"meta": { "path": "...", "per_page": 50, "next_cursor": null, "prev_cursor": null }
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

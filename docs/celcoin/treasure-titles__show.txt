@@ -1,0 +1,220 @@
+# https://polp.com.br/docs/celcoin/treasure-titles/show
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/treasure-titles/{treasureTitle}
+Obter — Tesouro Direto
+Retorna um título do Tesouro Direto com product e balance. Rate-limited — não use para polling.
+Observações
+Rate limit: 30 requisições/minuto por usuário autenticado (ou IP). Ver /docs/celcoin/rate-limits.
+Não faça polling nesta rota. O fluxo ideal é orientado a webhooks.
+Ao receber um evento de recurso (ex.: accounts, credit_cards), busque pelo index paginado do consentimento com query_parameters (ex.: GET /consents/{consent}/accounts?{query_parameters}).
+Ao receber *.transactions, liste as transações do recurso indicado em resource/resource_id com query_parameters.
+Use o show apenas pontualmente — quando precisar do recurso completo (reconciliação, debugging, etc.).
+balance é carregado via eager loading e pode ser null se ainda não sincronizado.
+Campos de product passam a existir na raiz (versão atual). O objeto product aninhado é legado — preferir os campos na raiz, incluindo remuneration.
+product (legado) pode retornar null se o Product Identification ainda não foi sincronizado.
+Response Fields
+Field Type Description
+id string Identificador único do título.
+consent_id string ID do consentimento vinculado.
+isin_code string | null Código ISIN da emissão (ISO 6166).
+product_name string | null Nome do título conforme Tesouro Direto (ex.: Tesouro Selic 2025).
+due_date string | null Data de vencimento do título (YYYY-MM-DD).
+purchase_date string | null Data de aquisição pelo cliente (YYYY-MM-DD).
+voucher_payment_indicator string | null Enum: VoucherPaymentIndicator (SIM, NAO).
+voucher_payment_periodicity string | null Enum: VoucherPaymentPeriodicity.
+voucher_payment_periodicity_additional_info string | null Informação adicional da periodicidade de cupom.
+remuneration object | null Detalhes de remuneração do título. Ver seção Objetos Aninhados → remuneration.
+product legado object | null Legado — preferir os campos do produto na raiz (incluindo remuneration). Mantido por compatibilidade.
+balance object | null Saldo do título. Ver seção Objetos Aninhados → balance.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+amountobject
+Tipo compartilhado para valores monetários em toda a API.
+Field Type Description
+amount string Valor numérico em formato string (ex.: "1500.00").
+currency string Código ISO 4217 (ex.: "BRL").
+Exemplo
+TransactionAmountCOPY
+{
+"amount": "1500.00",
+"currency": "BRL"
+}
+balanceobject
+Posição do título do Tesouro Direto.
+Field Type Description
+reference_date_time string Data/hora de referência.
+quantity string Quantidade de títulos/cotas.
+updated_unit_price object Preço unitário atualizado { amount, currency }.
+gross_amount object Valor bruto { amount, currency }.
+net_amount object Valor líquido { amount, currency }.
+income_tax object IR { amount, currency }.
+financial_transaction_tax object IOF { amount, currency }.
+blocked_balance object Saldo bloqueado { amount, currency }.
+purchase_unit_price object Preço unitário de compra { amount, currency }.
+updated_at string Última atualização (ISO 8601).
+Exemplo
+balanceCOPY
+{
+"reference_date_time": "2024-04-15T10:00:00.000000Z",
+"quantity": "2.000000",
+"updated_unit_price": {
+"amount": "5200.00",
+"currency": "BRL"
+},
+"gross_amount": {
+"amount": "10400.00",
+"currency": "BRL"
+},
+"net_amount": {
+"amount": "10300.00",
+"currency": "BRL"
+},
+"income_tax": {
+"amount": "50.00",
+"currency": "BRL"
+},
+"financial_transaction_tax": {
+"amount": "50.00",
+"currency": "BRL"
+},
+"blocked_balance": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"purchase_unit_price": {
+"amount": "5000.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+productobject legado
+Legado — preferir os campos do produto na raiz (incluindo remuneration). Mantido por compatibilidade.
+Field Type Description
+isin_code string Código ISIN da emissão (ISO 6166).
+product_name string Nome do título conforme Tesouro Direto (ex.: Tesouro Selic 2025).
+due_date string Data de vencimento do título (YYYY-MM-DD).
+purchase_date string Data de aquisição pelo cliente (YYYY-MM-DD).
+voucher_payment_indicator string Enum: VoucherPaymentIndicator (SIM, NAO) — indicativo de pagamento de cupom.
+voucher_payment_periodicity string | null Enum: VoucherPaymentPeriodicity. Obrigatório quando voucher_payment_indicator = SIM.
+voucher_payment_periodicity_additional_info string | null Informação adicional da periodicidade de cupom. Obrigatório quando voucher_payment_periodicity = OUTROS.
+remuneration object Detalhes de remuneração do título. Ver seção Objetos Aninhados → remuneration.
+updated_at string Última atualização (ISO 8601).
+Exemplo
+productCOPY
+{
+"isin_code": "BRSTNCLF1R45",
+"product_name": "Tesouro Selic 2025",
+"due_date": "2025-03-01",
+"purchase_date": "2023-06-15",
+"voucher_payment_indicator": "NAO",
+"voucher_payment_periodicity": null,
+"voucher_payment_periodicity_additional_info": null,
+"remuneration": {
+"indexer": "SELIC",
+"rate_periodicity": "DIARIO",
+"calculation": "DIAS_UTEIS",
+"indexer_additional_info": null,
+"pre_fixed_rate": null,
+"post_fixed_indexer_percentage": "1.000000"
+}
+remunerationobject
+Remuneração contratada na aquisição do título do Tesouro Direto. Também disponível em product.remuneration (legado).
+Field Type Description
+indexer string Enum: TreasureTitleIndexer (CDI, SELIC, IPCA, PRE_FIXADO, etc.).
+rate_periodicity string Enum: RatePeriodicity (MENSAL, ANUAL, DIARIO, SEMESTRAL).
+calculation string Enum: Calculation (DIAS_UTEIS, DIAS_CORRIDOS).
+indexer_additional_info string | null Informação adicional do indexador. Obrigatório quando indexer = OUTROS.
+pre_fixed_rate string | null Taxa pré-fixada da aquisição. Obrigatório quando indexer = PRE_FIXADO ou em produto híbrido.
+post_fixed_indexer_percentage string | null Percentual do indexador pós-fixado. Obrigatório quando indexer ≠ PRE_FIXADO ou em produto híbrido.
+Exemplo
+remunerationCOPY
+{
+"indexer": "SELIC",
+"rate_periodicity": "DIARIO",
+"calculation": "DIAS_UTEIS",
+"indexer_additional_info": null,
+"pre_fixed_rate": null,
+"post_fixed_indexer_percentage": "1.000000"
+}
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/treasure-titles/{treasureTitle} \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"id": "92792126019929200000000000000000000000000",
+"consent_id": "550e8400-e29b-41d4-a716-446655440000",
+"isin_code": "BRSTNCLF1R45",
+"product_name": "Tesouro Selic 2025",
+"due_date": "2025-03-01",
+"purchase_date": "2023-06-15",
+"voucher_payment_indicator": "NAO",
+"voucher_payment_periodicity": null,
+"voucher_payment_periodicity_additional_info": null,
+"remuneration": {
+"indexer": "SELIC",
+"rate_periodicity": "DIARIO",
+"calculation": "DIAS_UTEIS",
+"indexer_additional_info": null,
+"pre_fixed_rate": null,
+"post_fixed_indexer_percentage": "1.000000"
+},
+"product": {
+"isin_code": "BRSTNCLF1R45",
+"product_name": "Tesouro Selic 2025",
+"due_date": "2025-03-01",
+"purchase_date": "2023-06-15",
+"voucher_payment_indicator": "NAO",
+"voucher_payment_periodicity": null,
+"voucher_payment_periodicity_additional_info": null,
+"remuneration": {
+"indexer": "SELIC",
+"rate_periodicity": "DIARIO",
+"calculation": "DIAS_UTEIS",
+"indexer_additional_info": null,
+"pre_fixed_rate": null,
+"post_fixed_indexer_percentage": "1.000000"
+}
+},
+"balance": {
+"reference_date_time": "2024-04-15T10:00:00.000000Z",
+"quantity": "2.000000",
+"updated_unit_price": {
+"amount": "5200.00",
+"currency": "BRL"
+},
+"gross_amount": {
+"amount": "10400.00",
+"currency": "BRL"
+},
+"net_amount": {
+"amount": "10300.00",
+"currency": "BRL"
+},
+"income_tax": {
+"amount": "50.00",
+"currency": "BRL"
+},
+"financial_transaction_tax": {
+"amount": "50.00",
+"currency": "BRL"
+},
+"blocked_balance": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"purchase_unit_price": {
+"amount": "5000.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+},
+"created_at": "2024-01-15T00:00:00.000000Z",
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

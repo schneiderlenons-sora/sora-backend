@@ -1,0 +1,111 @@
+# https://polp.com.br/docs/celcoin/accounts/reserved-balances
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/accounts/{account}/reserved-balances
+Saldos Reservados (Caixinhas)
+Lista reservas de saldo (caixinhas) da conta. Sincronizado quando balance.has_reserved_balance = true (recurso account.reserved_balances, ~8×/mês). Pode retornar lista vazia se o produto existe mas o cliente não tem reservas.
+Observações
+Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
+Não inclui reservas atreladas a investimentos do CPF/CNPJ — esses dados ficam nas APIs de Investimentos.
+Consulte balance.has_reserved_balance na conta antes de chamar este endpoint.
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 15 itens por página.
+fromCreatedAt string Filtra por created_at a partir desta data (ISO 8601). Opcional.
+toCreatedAt string Filtra por created_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromCreatedAt quando ambos forem enviados.
+fromUpdatedAt string Filtra por updated_at a partir desta data (ISO 8601). Opcional.
+toUpdatedAt string Filtra por updated_at até esta data (ISO 8601). Opcional. Deve ser ≥ fromUpdatedAt quando ambos forem enviados.
+Response Fields
+Field Type Description
+id integer Identificador interno da reserva.
+account_id string ID da conta vinculada.
+reserved_identification string UUID único da reserva no Open Finance.
+reserved_name string | null Nome dado pelo usuário à caixinha/reserva.
+available_amount array Saldos disponíveis na reserva. Cada item: { amount, currency, remuneration? }. Ver Objetos Aninhados.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+available_amount[]object
+Item de saldo disponível na reserva. Pode incluir remuneration quando a caixinha rende.
+Field Type Description
+amount string Valor disponível na reserva (2 a 4 casas decimais).
+currency string Moeda ISO-4217 (ex.: BRL).
+remuneration object | null Remuneração aplicada à reserva, quando houver. Ver Objetos Aninhados → remuneration.
+Exemplo
+available_amount[]COPY
+{
+"amount": "1000.0400",
+"currency": "BRL",
+"remuneration": {
+"rate_type": "LINEAR",
+"indexer": "CDI",
+"calculation": "DIAS_UTEIS",
+"rate_periodicity": "MENSAL",
+"pre_fixed_rate": null,
+"post_fixed_indexer_percentage": "0.300000",
+"indexer_additional_info": null
+}
+available_amount[].remunerationobject
+Remuneração aplicada à reserva de saldo (quando houver rendimento). Ausente em reservas sem rendimento.
+Field Type Description
+rate_type string Tipo da taxa. Enum: RateType (LINEAR, EXPONENCIAL).
+indexer string Indexador da remuneração. Enum: AccountReservedBalanceIndexer.
+calculation string Base de cálculo. Enum: Calculation (DIAS_UTEIS, DIAS_CORRIDOS).
+rate_periodicity string Periodicidade da taxa. Enum: RatePeriodicity (MENSAL, ANUAL, DIARIO, SEMESTRAL).
+pre_fixed_rate string | null Taxa pré-fixada (6 casas, ex.: 0.150000 = 15%). Obrigatório quando post_fixed_indexer_percentage não for informado.
+post_fixed_indexer_percentage string | null Percentual do indexador pós-fixado (6 casas). Obrigatório quando pre_fixed_rate não for informado.
+indexer_additional_info string | null Informação adicional do indexador. Obrigatório quando indexer = OUTROS.
+Exemplo
+remunerationCOPY
+{
+"rate_type": "LINEAR",
+"indexer": "CDI",
+"calculation": "DIAS_UTEIS",
+"rate_periodicity": "MENSAL",
+"pre_fixed_rate": null,
+"post_fixed_indexer_percentage": "0.300000",
+"indexer_additional_info": null
+}
+Enums Relacionados
+AccountReservedBalanceIndexer → available_amount[].remuneration.indexer
+Value
+CDI
+DI
+TR
+IPCA
+IGP_M
+IGP_DI
+INPC
+BCP
+TLC
+SELIC
+PRE_FIXADO
+OUTROS
+RateType → available_amount[].remuneration.rate_type
+Value
+LINEAR
+EXPONENCIAL
+Calculation → available_amount[].remuneration.calculation
+Value
+DIAS_UTEIS
+DIAS_CORRIDOS
+RatePeriodicity → available_amount[].remuneration.rate_periodicity
+Value
+MENSAL
+ANUAL
+DIARIO
+SEMESTRAL
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/accounts/{account}/reserved-balances \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [ ... ],
+"links": { "first": null, "last": null, "prev": null, "next": "...?cursor=..." },
+"meta": { "path": "...", "per_page": 15, "next_cursor": "...", "prev_cursor": null }
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

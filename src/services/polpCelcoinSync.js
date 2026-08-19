@@ -917,96 +917,6 @@ function parcelaDaTx(tx, descricao) {
 }
 
 /**
- * PARCELA SEM MARCADOR: o banco manda TODAS as parcelas na data da COMPRA.
- *
- * ⚠️ Medido na base: 8 dos 29 cartões de Open Finance nunca chegam com
- * `charge_identificator`/`charge_number` nas transações. Nesses o emissor não
- * deixa de mandar as parcelas — manda todas de uma vez, cada uma como
- * transação própria, todas datadas no dia da compra:
- *
- *   2026-06-20   56,66 · 56,66 · 56,67   CHINOCA        (3 parcelas)
- *   2026-07-14  140,00 · 139,99          PayU *ADIDAS   (2 parcelas)
- *   2026-08-03   79,86 ·  79,87          JIM.COM PROSED (2 parcelas)
- *
- * A fatura da COMPRA vinha inflada e as seguintes vazias: a fatura em aberto
- * saía R$ 1.376,33 contra R$ 1.596,17 no app do banco.
- *
- * ⚠️ O AGRUPAMENTO SAI DE `occurrences[]`, NÃO DE HEURÍSTICA. O doc de
- * `/credit-cards/{id}/installments` define: "occurrences: IDs das transações do
- * cartão, ORDENADAS POR charge_identificator". Ou seja, o próprio agregador já
- * diz exatamente quais transações formam a compra e em que ordem — não há o que
- * adivinhar por dia, valor ou centavo.
- *
- * ⚠️ E `purchasedAt` NÃO EXISTE NA RESPOSTA. Os campos documentados são só
- * description, amount, totalInstallments, paidInstallments e occurrences. Foi o
- * erro que me custou três tentativas: eu casava a compra pelo `purchasedAt`, que
- * vinha `undefined` em todo item, e aí NENHUM plano casava — o sintoma era
- * "sincronizei e a fatura não mudou".
- *
- * ⚠️ `paidInstallments` = MAIOR charge_identificator observado, não a contagem.
- * Com o histórico truncado (só a parcela 3/3 visível) ele vem 3 com uma
- * ocorrência só. Por isso a numeração é ancorada no FIM: a última ocorrência é a
- * parcela `paidInstallments` e conta-se pra trás. Numerar 1..N de frente jogaria
- * a parcela na fatura errada justamente no histórico incompleto.
- *
- * @returns {Array} as linhas que MUDARAM de data (pra corrigir o histórico)
- */
-function redistribuirSemMarcador(normalizadas, parcelamentos, hoje) {
-  const mudadas = [];
-  const linhas = (normalizadas || []).filter(Boolean);
-  if (!linhas.length || !Array.isArray(parcelamentos) || !parcelamentos.length) return mudadas;
-
-  const porId = new Map();
-  for (const t of linhas) if (t.externalId) porId.set(String(t.externalId), t);
-
-  for (const plano of parcelamentos) {
-    const total = Number(plano && (plano.totalInstallments != null
-      ? plano.totalInstallments : plano.total_installments)) || 0;
-    const ocor = plano && plano.occurrences;
-    if (!(total >= 2) || !Array.isArray(ocor) || ocor.length < 2) continue;
-
-    const achadas = ocor.map((id) => porId.get(String(id))).filter(Boolean);
-    // Só age com o conjunto que o agregador declarou. Faltando transação, a
-    // numeração pelo fim erraria — e quem cobre o resto é a projeção.
-    if (achadas.length !== ocor.length) continue;
-    // Já tem marcador? Então a redistribuição por "N/M" cuidou dela.
-    if (achadas.some((t) => t.parcelaTotal)) continue;
-    // Crédito/estorno não é parcela de compra.
-    if (achadas.some((t) => !t.ehGasto)) continue;
-
-    const ultima = Number(plano.paidInstallments != null
-      ? plano.paidInstallments : plano.paid_installments) || ocor.length;
-    const primeira = ultima - (ocor.length - 1);
-    if (!(primeira >= 1) || ultima > total) continue;
-
-    // ⚠️ A ÂNCORA É A 1ª OCORRÊNCIA, e ela NÃO é re-datada. Ela já está no dia
-    // certo (é a parcela que o banco cobrou junto com a compra) — recalcular a
-    // data dela só produziria ruído: `dataDaParcela` normaliza pro dia em São
-    // Paulo, e uma compra às 21h vira o dia anterior, mudando a linha sem
-    // mudar fatura nenhuma.
-    const ancora = achadas[0].data;
-    const grupo = grupoDaParcela(baseSemMarcador(achadas[0].descricao), total,
-      Math.abs(achadas[0].valor), ancora);
-
-    achadas.forEach((t, k) => {
-      t.parcelaNum = primeira + k;
-      t.parcelaTotal = total;
-      t.parcelaGrupo = grupo;
-      if (k === 0) return;                     // a âncora fica onde está
-      const data = dataDaParcela(ancora, k + 1);
-      if (!data || ymd(data) === ymd(t.data)) return;
-      t.dataAnterior = t.data;
-      t.data = data;
-      // Parcela que ainda não foi cobrada nasce NÃO paga — mesma regra da
-      // redistribuição por marcador.
-      t.pago = !(ymd(data) && ymd(data) > hoje);
-      mudadas.push(t);
-    });
-  }
-  return mudadas;
-}
-
-/**
  * Data em que a parcela N é cobrada = compra + (N−1) meses.
  * Clampa o dia em 28 e ancora ao meio-dia UTC — MESMA regra do parcelamento
  * manual (handlers/parcelas.js), pra compra parcelada digitada e importada
@@ -1170,6 +1080,8 @@ function normalizeTxCartao(tx, hoje) {
     // pago — ver CLAUDE.md). É o que faz ela contar como prevista, igual à
     // compra parcelada digitada à mão.
     pago: !(ymd(data) && ymd(data) > hoje),
+    // Quem consome: a reconciliação do histórico (ver reconciliarParcelas).
+    redistribuida,
     parcelaNum: p ? p.n : null,
     parcelaTotal: p ? p.total : null,
     parcelaGrupo: p && !ehTransferencia
@@ -1456,23 +1368,44 @@ async function upsertWallet(grupoId, userId, n, saldo) {
   return (nova && nova.nome) || nome;
 }
 
-/** Insere transações novas (dedup por of_tx_id). Devolve quantas entraram. */
 /**
- * Corrige a DATA das parcelas já importadas que a redistribuição realocou.
+ * RECONCILIA a data das parcelas JÁ IMPORTADAS.
  *
- * ⚠️ O sync nunca reescreve linha existente — de propósito, pra não apagar a
- * categoria que o usuário corrigiu à mão. Esta é uma exceção estreita e do
- * mesmo tipo da melhora de descrição logo abaixo: só toca `data` e os campos
- * de parcela, NUNCA categoria, valor ou observação. Sem ela o histórico
- * continua com as 3 parcelas empilhadas na fatura da compra, e a fatura
- * anterior segue inflada mesmo depois do conserto.
+ * ⚠️ ESTE É O CONSERTO DA FATURA DIVERGENTE, e a causa é banal: o cálculo
+ * sempre esteve certo, o histórico é que não era reescrito.
+ *
+ * A API manda `charge_identificator`/`charge_number` (doc de
+ * /credit-cards/{id}/transactions: "número da parcela atual" / "quantidade
+ * total"), `parcelaDaTx` lê, e `normalizeTxCartao` já desloca a parcela N pra
+ * compra + (N−1) meses. Medido no cartão do relato, com o payload VIVO:
+ *
+ *   CHINOCA 1/3   data crua 2026-06-20 → calculada 2026-06-20
+ *   CHINOCA 2/3   data crua 2026-06-20 → calculada 2026-07-20
+ *   CHINOCA 3/3   data crua 2026-06-20 → calculada 2026-08-20
+ *   PayU    2/2   data crua 2026-07-14 → calculada 2026-08-13
+ *   PROSED  2/2   data crua 2026-08-03 → calculada 2026-09-03
+ *
+ * Tudo certo. Só que essas linhas já existiam no banco com a data da COMPRA
+ * (importadas antes desse cálculo existir), e `inserirTransacoes` dedupa por
+ * `of_tx_id` — então a data certa nunca chegava à tabela. Resultado: a fatura
+ * da compra inflada e as seguintes vazias, para sempre. Fatura em aberto
+ * R$ 1.319,66 na Sora contra R$ 1.596,17 no app; a diferença eram exatamente
+ * as parcelas presas no passado.
+ *
+ * ⚠️ É EXCEÇÃO ESTREITA à regra de "o sync nunca reescreve linha existente".
+ * A regra existe pra não apagar a CATEGORIA que o usuário corrigiu à mão —
+ * aqui só `data`, `pago` e os campos de parcela são tocados. Categoria, valor
+ * e observação ficam intactos. Mesmo espírito da melhora de descrição abaixo.
  *
  * Tolerante em tudo: falhar aqui não pode derrubar o sync.
  */
-async function corrigirParcelasRedistribuidas(grupoId, linhas) {
+async function reconciliarParcelas(grupoId, normalizadas) {
   let corrigidas = 0;
-  for (const t of linhas || []) {
-    if (!t || !t.externalId || !t.data) continue;
+  // Só parcela que o sync DESLOCOU (2ª em diante). A 1ª fica na data da compra
+  // e não tem o que reconciliar.
+  const linhas = (normalizadas || []).filter((t) => t && t.redistribuida);
+  for (const t of linhas) {
+    if (!t.externalId || !t.data) continue;
     try {
       const { data: atual } = await supabase.from('transacoes')
         .select('id, data').eq('grupo_id', grupoId).eq('of_tx_id', t.externalId).maybeSingle();
@@ -1491,6 +1424,7 @@ async function corrigirParcelasRedistribuidas(grupoId, linhas) {
   return corrigidas;
 }
 
+/** Insere transações novas (dedup por of_tx_id). Devolve quantas entraram. */
 async function inserirTransacoes(grupoId, userId, walletNome, txs) {
   const validas = txs.filter(Boolean);
   if (!validas.length) return 0;
@@ -1866,25 +1800,18 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         const txs = await celcoin.listarTransacoesCartao(n.externalId, { fromDate });
         const normalizadas = txs.map((t) => normalizeTxCartao(t, hoje));
 
-        // ⚠️ PARCELAMENTOS ANTES DE INSERIR. Em cartão que não manda "N/M" (8
-        // dos 29 da base) o banco manda TODAS as parcelas com a data da COMPRA
-        // — sem isto elas caem inteiras na fatura da compra e as seguintes
-        // ficam vazias. Ver redistribuirSemMarcador.
         // `null` quando a leitura FALHA — diferente de [] ("não tem parcelamento").
-        // Com null nada é redistribuído E a projeção gravada fica intacta.
+        // Com null a projeção gravada fica intacta (ver gravarParcelasPrevistas).
         let parcelamentos = null;
         let parcelamentosErro = null;
         try { parcelamentos = await celcoin.listarParcelamentos(n.externalId, { estrito: true }); }
         catch (e) { parcelamentos = null; parcelamentosErro = e.message; }
-        const redistribuidas = redistribuirSemMarcador(normalizadas, parcelamentos, hoje);
 
         const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadas);
-        // O histórico já importado ficou na data errada. Corrigir a DATA de uma
-        // parcela não é reescrever o que o usuário editou (o que a regra de
-        // "nunca reescrever" protege é a CATEGORIA) — e sem isso a fatura
-        // anterior segue contando parcela que não é dela.
-        let parcelasCorrigidas = 0;
-        if (redistribuidas.length) parcelasCorrigidas = await corrigirParcelasRedistribuidas(grupoId, redistribuidas);
+        // ⚠️ O HISTÓRICO JÁ IMPORTADO FICOU NA DATA DA COMPRA. Ver
+        // reconciliarParcelas: sem isto a fatura do cliente nunca fecha com a
+        // do banco, por mais certo que o cálculo esteja.
+        const parcelasCorrigidas = await reconciliarParcelas(grupoId, normalizadas);
         novasTx += novas;
 
         // ⚠️ A fatura AINDA ABERTA quase nunca tem `bill_total_amount` — o banco
@@ -1995,8 +1922,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           // casou e o update falhou. Foi exatamente o que aconteceu.
           parcelamentos_lidos: parcelamentosErro ? `ERRO: ${parcelamentosErro}`
             : (parcelamentos ? parcelamentos.length : 0),
-          parcelas_realocadas: redistribuidas.length || undefined,
-          parcelas_corrigidas: parcelasCorrigidas || undefined,
+          parcelas_reconciliadas: parcelasCorrigidas || undefined,
           faturas_banco: faturasSalvas || undefined,
         });
       } catch (e) { relatorio.cartoes.push({ erro: e.message }); }
@@ -2064,7 +1990,6 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
 }
 
 module.exports = {
-  redistribuirSemMarcador,
   PROVIDER,
   sincronizarConsentimento,
   // expostos pra teste/diagnóstico (puros, sem banco)

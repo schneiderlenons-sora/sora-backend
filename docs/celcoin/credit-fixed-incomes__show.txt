@@ -1,0 +1,315 @@
+# https://polp.com.br/docs/celcoin/credit-fixed-incomes/show
+# baixado em 2026-08-19
+
+ownload Bruno Collection
+GET/credit-fixed-incomes/{creditFixedIncome}
+Obter — Renda Fixa Crédito
+Retorna um investimento de renda fixa de crédito com product e balance. Rate-limited — não use para polling.
+Observações
+Rate limit: 30 requisições/minuto por usuário autenticado (ou IP). Ver /docs/celcoin/rate-limits.
+Não faça polling nesta rota. O fluxo ideal é orientado a webhooks.
+Ao receber um evento de recurso (ex.: accounts, credit_cards), busque pelo index paginado do consentimento com query_parameters (ex.: GET /consents/{consent}/accounts?{query_parameters}).
+Ao receber *.transactions, liste as transações do recurso indicado em resource/resource_id com query_parameters.
+Use o show apenas pontualmente — quando precisar do recurso completo (reconciliação, debugging, etc.).
+balance é carregado via eager loading e pode ser null se ainda não sincronizado.
+Campos de product passam a existir na raiz (versão atual). O objeto product aninhado é legado — preferir os campos na raiz, incluindo remuneration.
+product (legado) pode retornar null se o Product Identification ainda não foi sincronizado.
+Response Fields
+Field Type Description
+id string Identificador único do investimento.
+consent_id string ID do consentimento vinculado.
+investment_type string Enum: CreditFixedIncomeInvestmentType (DEBENTURES, CRI, CRA).
+issuer_institution_cnpj_number string | null CNPJ da instituição emissora.
+isin_code string | null Código ISIN da emissão (ISO 6166).
+clearing_code string | null Código de registro do ativo na clearing.
+debtor_cnpj_number string | null CNPJ do devedor.
+debtor_name string | null Nome do devedor.
+tax_exempt_product string | null Enum: TaxExemptProduct (SIM, NAO).
+issue_unit_price object | null Preço unitário de emissão { amount, currency }.
+issue_date string | null Data de emissão do título (YYYY-MM-DD).
+due_date string | null Data de vencimento do título (YYYY-MM-DD).
+voucher_payment_indicator string | null Enum: VoucherPaymentIndicator (SIM, NAO).
+voucher_payment_periodicity string | null Enum: VoucherPaymentPeriodicity.
+voucher_payment_periodicity_additional_info string | null Informação adicional da periodicidade de cupom.
+purchase_date string | null Data de aquisição pelo cliente (YYYY-MM-DD).
+grace_period_date string | null Data limite do período de carência (YYYY-MM-DD).
+remuneration object | null Detalhes de remuneração do título. Ver seção Objetos Aninhados → remuneration.
+product legado object | null Legado — preferir os campos do produto na raiz (incluindo remuneration). Mantido por compatibilidade.
+balance object | null Saldo (inclui fine e late_payment). Ver seção Objetos Aninhados → balance.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Taxas de Remuneração (Renda Fixa)
+Investimentos de renda fixa de crédito (Debêntures, CRI, CRA) expõem campos que descrevem a rentabilidade esperada. A combinação de indexer (enum CreditFixedIncomeIndexer), post_fixed_indexer_percentage e pre_fixed_rate permite interpretar títulos indexados, híbridos e pré-fixados.
+Campos
+Campo Onde Descrição
+indexer remuneration.indexer Indexador de referência contratado na emissão (CDI, IPCA, PRE_FIXADO, etc.).
+post_fixed_indexer_percentage remuneration.post_fixed_indexer_percentage Percentual do indexador pós-fixado. Ex.: 100 para “100% do CDI”.
+pre_fixed_rate remuneration.pre_fixed_rate Taxa prefixada ou spread adicional sobre o indexador (em % a.a.).
+indexer_percentage transactions.indexer_percentage Equivalente ao percentual do indexador na movimentação.
+remuneration_transaction_rate transactions.remuneration_transaction_rate Taxa de remuneração registrada na transação.
+Exemplos de interpretação
+Rentabilidade indexer post_fixed_indexer_percentage pre_fixed_rate
+100% CDI + 5% CDI 100 5
+IPCA + 10% IPCA 100 10
+Pré-Fixado 16,76% PRE_FIXADO — 16.76
+12% A.A PRE_FIXADO — 12
+O enum RateType (LINEAR / EXPONENCIAL) descreve a forma de cálculo da taxa, não o indexador (CDI, IPCA, etc.).
+Campos contratuais em remuneration (raiz) e product.remuneration (legado): indexer, pre_fixed_rate e post_fixed_indexer_percentage.
+remuneration.indexer usa o enum CreditFixedIncomeIndexer.
+Títulos 100% pré-fixados: remuneration.indexer = PRE_FIXADO, remuneration.post_fixed_indexer_percentage nulo, taxa em remuneration.pre_fixed_rate.
+Indexados com spread (ex.: 100% CDI + 5%): percentual em remuneration.post_fixed_indexer_percentage, spread em remuneration.pre_fixed_rate.
+Objetos Aninhados
+Estrutura completa dos objetos referenciados nos campos acima. Valores monetários usam o tipo compartilhado { amount, currency }.
+amountobject
+Tipo compartilhado para valores monetários em toda a API.
+Field Type Description
+amount string Valor numérico em formato string (ex.: "1500.00").
+currency string Código ISO 4217 (ex.: "BRL").
+Exemplo
+TransactionAmountCOPY
+{
+"amount": "1500.00",
+"currency": "BRL"
+}
+balanceobject
+Posição do investimento de renda fixa de crédito (Debêntures, CRI, CRA). Inclui fine e late_payment. Termos de rentabilidade em product.remuneration.
+Field Type Description
+reference_date_time string Data/hora de referência.
+quantity string Quantidade de títulos/cotas.
+updated_unit_price object Preço unitário atualizado { amount, currency }.
+gross_amount object Valor bruto { amount, currency }.
+net_amount object Valor líquido { amount, currency }.
+income_tax object IR { amount, currency }.
+financial_transaction_tax object IOF { amount, currency }.
+blocked_balance object Saldo bloqueado { amount, currency }.
+purchase_unit_price object Preço unitário de compra { amount, currency }.
+updated_at string Última atualização (ISO 8601).
+fine object | null Multa { amount, currency }.
+late_payment object | null Mora { amount, currency }.
+Exemplo
+balanceCOPY
+{
+"reference_date_time": "2024-04-15T10:00:00.000000Z",
+"quantity": "5.000000",
+"updated_unit_price": {
+"amount": "1020.00",
+"currency": "BRL"
+},
+"gross_amount": {
+"amount": "5100.00",
+"currency": "BRL"
+},
+"net_amount": {
+"amount": "5000.00",
+"currency": "BRL"
+},
+"income_tax": {
+"amount": "50.00",
+"currency": "BRL"
+},
+"financial_transaction_tax": {
+"amount": "50.00",
+"currency": "BRL"
+},
+"blocked_balance": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"purchase_unit_price": {
+"amount": "1000.00",
+"currency": "BRL"
+},
+"fine": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"late_payment": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+productobject legado
+Legado — preferir os campos do produto na raiz (incluindo remuneration). Mantido por compatibilidade.
+Field Type Description
+issuer_institution_cnpj_number string | null CNPJ da instituição emissora.
+isin_code string | null Código ISIN da emissão (ISO 6166). Obrigatório quando clearing_code não informado.
+clearing_code string | null Código de registro do ativo na clearing. Obrigatório quando isin_code não informado.
+debtor_cnpj_number string | null CNPJ do devedor. Obrigatório para CRI e CRA quando disponível.
+debtor_name string | null Nome do devedor. Obrigatório para CRI e CRA quando disponível.
+tax_exempt_product string Enum: TaxExemptProduct (SIM, NAO) — indicador de produto incentivado.
+issue_unit_price object Preço unitário de emissão { amount, currency }.
+issue_date string Data de emissão do título (YYYY-MM-DD).
+due_date string Data de vencimento do título (YYYY-MM-DD).
+voucher_payment_indicator string Enum: VoucherPaymentIndicator (SIM, NAO) — indicativo de pagamento de cupom.
+voucher_payment_periodicity string | null Enum: VoucherPaymentPeriodicity. Obrigatório quando voucher_payment_indicator = SIM.
+voucher_payment_periodicity_additional_info string | null Informação adicional da periodicidade de cupom. Obrigatório quando voucher_payment_periodicity = OUTROS.
+purchase_date string Data de aquisição pelo cliente (YYYY-MM-DD).
+grace_period_date string | null Data limite do período de carência para resgate antecipado (YYYY-MM-DD).
+remuneration object Detalhes de remuneração do título. Ver seção Objetos Aninhados → remuneration.
+updated_at string Última atualização (ISO 8601).
+Exemplo
+productCOPY
+{
+"issuer_institution_cnpj_number": "11225860000140",
+"isin_code": "BRCST4CTF001",
+"clearing_code": null,
+"debtor_cnpj_number": "99887766000155",
+"debtor_name": "Empresa Devedora S.A.",
+"tax_exempt_product": "NAO",
+"issue_unit_price": {
+"amount": "1000.000004",
+"currency": "BRL"
+},
+"issue_date": "2023-02-16",
+"due_date": "2028-02-15",
+"voucher_payment_indicator": "SIM",
+"voucher_payment_periodicity": "SEMESTRAL",
+"voucher_payment_periodicity_additional_info": null,
+"purchase_date": "2023-02-15",
+"grace_period_date": "2023-08-16",
+"remuneration": {
+"indexer": "IPCA",
+"pre_fixed_rate": "0.100000",
+"post_fixed_indexer_percentage": "1.000000",
+"rate_type": "EXPONENCIAL",
+"rate_periodicity": "ANUAL",
+"calculation": "DIAS_UTEIS",
+"indexer_additional_info": null
+}
+remunerationobject
+Remuneração contratada na emissão do título de renda fixa de crédito. Também disponível em product.remuneration (legado).
+Field Type Description
+indexer string Enum: CreditFixedIncomeIndexer (CDI, IPCA, PRE_FIXADO, etc.). Campo obrigatório.
+pre_fixed_rate string | null Taxa pré-fixada de emissão. Obrigatório quando indexer = PRE_FIXADO ou em produto híbrido.
+post_fixed_indexer_percentage string | null Percentual do indexador pós-fixado. Obrigatório quando indexer ≠ PRE_FIXADO ou em produto híbrido.
+rate_type string | null Enum: RateType (LINEAR, EXPONENCIAL).
+rate_periodicity string | null Enum: RatePeriodicity (MENSAL, ANUAL, DIARIO, SEMESTRAL).
+calculation string | null Enum: Calculation (DIAS_UTEIS, DIAS_CORRIDOS).
+indexer_additional_info string | null Informação adicional do indexador. Obrigatório quando indexer = OUTROS.
+Exemplo
+remunerationCOPY
+{
+"indexer": "IPCA",
+"pre_fixed_rate": "0.100000",
+"post_fixed_indexer_percentage": "1.000000",
+"rate_type": "EXPONENCIAL",
+"rate_periodicity": "ANUAL",
+"calculation": "DIAS_UTEIS",
+"indexer_additional_info": null
+}
+Enums Relacionados
+CreditFixedIncomeInvestmentType → investment_type
+Value
+DEBENTURES
+CRI
+CRA
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/credit-fixed-incomes/{creditFixedIncome} \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"id": "92792126019929200000000000000000000000000",
+"consent_id": "550e8400-e29b-41d4-a716-446655440000",
+"investment_type": "DEBENTURES",
+"issuer_institution_cnpj_number": "11225860000140",
+"isin_code": "BRCST4CTF001",
+"clearing_code": null,
+"debtor_cnpj_number": "99887766000155",
+"debtor_name": "Empresa Devedora S.A.",
+"tax_exempt_product": "NAO",
+"issue_unit_price": {
+"amount": "1000.000004",
+"currency": "BRL"
+},
+"issue_date": "2023-02-16",
+"due_date": "2028-02-15",
+"voucher_payment_indicator": "SIM",
+"voucher_payment_periodicity": "SEMESTRAL",
+"voucher_payment_periodicity_additional_info": null,
+"purchase_date": "2023-02-15",
+"grace_period_date": "2023-08-16",
+"remuneration": {
+"indexer": "IPCA",
+"pre_fixed_rate": "0.100000",
+"post_fixed_indexer_percentage": "1.000000",
+"rate_type": "EXPONENCIAL",
+"rate_periodicity": "ANUAL",
+"calculation": "DIAS_UTEIS",
+"indexer_additional_info": null
+},
+"product": {
+"issuer_institution_cnpj_number": "11225860000140",
+"isin_code": "BRCST4CTF001",
+"clearing_code": null,
+"debtor_cnpj_number": "99887766000155",
+"debtor_name": "Empresa Devedora S.A.",
+"tax_exempt_product": "NAO",
+"issue_unit_price": {
+"amount": "1000.000004",
+"currency": "BRL"
+},
+"issue_date": "2023-02-16",
+"due_date": "2028-02-15",
+"voucher_payment_indicator": "SIM",
+"voucher_payment_periodicity": "SEMESTRAL",
+"voucher_payment_periodicity_additional_info": null,
+"purchase_date": "2023-02-15",
+"grace_period_date": "2023-08-16",
+"remuneration": {
+"indexer": "IPCA",
+"pre_fixed_rate": "0.100000",
+"post_fixed_indexer_percentage": "1.000000",
+"rate_type": "EXPONENCIAL",
+"rate_periodicity": "ANUAL",
+"calculation": "DIAS_UTEIS",
+"indexer_additional_info": null
+}
+},
+"balance": {
+"reference_date_time": "2024-04-15T10:00:00.000000Z",
+"quantity": "5.000000",
+"updated_unit_price": {
+"amount": "1020.00",
+"currency": "BRL"
+},
+"gross_amount": {
+"amount": "5100.00",
+"currency": "BRL"
+},
+"net_amount": {
+"amount": "5000.00",
+"currency": "BRL"
+},
+"income_tax": {
+"amount": "50.00",
+"currency": "BRL"
+},
+"financial_transaction_tax": {
+"amount": "50.00",
+"currency": "BRL"
+},
+"blocked_balance": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"purchase_unit_price": {
+"amount": "1000.00",
+"currency": "BRL"
+},
+"fine": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"late_payment": {
+"amount": "0.00",
+"currency": "BRL"
+},
+"updated_at": "2024-04-15T10:00:00.000000Z"
+},
+"created_at": "2024-01-15T00:00:00.000000Z",
+"updated_at": "2024-04-15T10:00:00.000000Z"
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus
