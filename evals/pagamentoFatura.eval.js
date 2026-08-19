@@ -42,6 +42,14 @@ console.log('── 1. detecta o pagamento ──');
     'Credit Card Payment',
     'Fatura do cartao',
     'Pag fatura',
+    // ⚠️ É COMO O ITAÚ ESCREVE — débito automático, não "pagamento". Caso real:
+    // entravam como gasto comum e contavam EM DOBRO (cada compra da fatura já
+    // foi categorizada uma a uma). Medido: 5 linhas, R$ 30.896,16 inflando os
+    // gastos de um cliente — R$ 13.123,09 num mês só.
+    'Débito automático FATURA ITAU PERSON MC BLACK',
+    'Débito automático FATURAITAU UNICLASS V',   // ← palavras GRUDADAS no extrato
+    'DEB AUT FATURA',
+    'Débito automático cartão de crédito',
   ];
   for (const d of sim) ok(ehPagamentoFaturaDescricao(d), `"${d}" deveria ser pagamento de fatura`);
 }
@@ -62,6 +70,17 @@ console.log('── 2. o que NÃO pode virar transferência ──');
     'Uber',
     'Recarga celular',
     '',
+    // ⚠️ DÉBITO AUTOMÁTICO DE VERDADE — plano de saúde, seguro, convênio. São
+    // gasto real e não podem sumir do relatório. Medido: 21 das 26 linhas com
+    // "débito automático" na base são desse tipo. É por isso que a regra exige
+    // fatura/cartão JUNTO, e não o "débito automático" sozinho.
+    'Débito automático AMIL ASSISTENCIA MEDICA',
+    'Débito automático - Icatu seguros',
+    'DEBITO AUTOM EMPRESAS CONVENIADAS  ICATU',
+    'Débito automático DEB AUTOR DA PL SAUD/DEN',
+    // Sem a palavra fatura/cartão não dá pra afirmar que é quitação — fica de
+    // fora de propósito (falso negativo é mais barato que esconder gasto).
+    'Débito automático ITAU MC 4547-0184',
   ];
   for (const d of nao) ok(!ehPagamentoFaturaDescricao(d), `"${d}" NÃO pode ser pagamento de fatura`);
   ok(!ehPagamentoFaturaDescricao(null), 'null não quebra');

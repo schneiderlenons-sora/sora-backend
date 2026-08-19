@@ -334,9 +334,25 @@ function ehPagamentoFatura(categoria) {
 // os bancos escrevem "Pagamento DE fatura", "Pagamento DA fatura" e
 // "Pagamento fatura". Faltar o "da" já deixou "Pagamento da fatura" passar.
 const PAGA = '(?:pagamento|pagto|pgto|pag)\\s+(?:d[aeo]s?\\s+)?';
+// ⚠️ DÉBITO AUTOMÁTICO também é forma de PAGAR — e é como o Itaú descreve a
+// quitação da fatura: "Débito automático FATURA ITAU PERSON MC BLACK". Sem
+// isto o pagamento entrava como gasto comum e contava EM DOBRO, já que cada
+// compra da fatura já foi categorizada uma a uma. Medido num cliente real:
+// 5 linhas, R$ 30.896,16 inflando os gastos — R$ 13.123,09 num mês só.
+//
+// ⚠️ `\\s*` antes de fatura/cart de propósito: o extrato do Itaú às vezes vem
+// com as palavras GRUDADAS ("Débito automático FATURAITAU UNICLASS V").
+const DEB_AUTO = '(?:debito|deb)\\s+(?:automatico|automat|autom|aut)\\.?\\s*(?:d[aeo]s?\\s+)?';
 const RE_PAGAMENTO_FATURA = new RegExp([
   `${PAGA}fatura`,
   `${PAGA}cart`,
+  // ⚠️ Continua exigindo fatura/cartão JUNTO — "Débito automático AMIL
+  // ASSISTENCIA MEDICA" e "Débito automático - Icatu seguros" são débito
+  // automático de verdade (plano de saúde, seguro) e NÃO podem virar
+  // transferência. Medido: 21 das 26 linhas com "débito automático" na base
+  // são desse tipo, e seguem intocadas.
+  `${DEB_AUTO}fatura`,
+  `${DEB_AUTO}cart`,
   'fatura\\s+(?:d[aeo]s?\\s+)?cart',
   'credit\\s*card\\s*payment',
 ].join('|'));
