@@ -219,13 +219,28 @@ function normalizeConta(acc, instituicao) {
   // API de investimentos.
   //
   // `blocked_amount` continua FORA: bloqueado não é gastável.
+  //
+  // ⚠️⚠️ MAS TEM EMISSOR QUE NÃO CUMPRE O CONTRATO. O Mercado Pago manda O
+  // MESMO DINHEIRO nos dois campos, e aí a soma DOBRA o saldo do cliente:
+  // painel R$ 4.414,32 contra R$ 2.207,16 no app. A aritmética não deixa outra
+  // leitura — se `disponível + aplicado = 4.414,32` e o certo é exatamente
+  // metade, então os dois campos valem 2.207,16 cada.
+  //
+  // O sinal é a IGUALDADE AO CENTAVO. Em conta de pagamento (o MP é uma) o
+  // saldo inteiro rende, então os dois campos coincidirem é ESTRUTURAL, não
+  // coincidência. E quando for coincidência de verdade, o erro é pro lado
+  // seguro: mostra o disponível, que é o comportamento de antes — nunca
+  // dinheiro que o cliente não tem.
   const disponivel = bal ? money(bal.available_amount) : null;
   const aplicado   = bal ? money(bal.automatically_invested_amount) : null;
+  const dobrado = disponivel != null && aplicado != null
+    && cent(disponivel) === cent(aplicado) && cent(aplicado) !== 0;
+  const somaAplicado = dobrado ? 0 : (aplicado || 0);
   // `null` só quando NADA veio — senão uma conta sem aplicação automática
   // apareceria como "ainda não sincronizada".
   const saldo = (disponivel == null && aplicado == null)
     ? null
-    : cent((disponivel || 0) + (aplicado || 0));
+    : cent((disponivel || 0) + somaAplicado);
 
   return {
     externalId: String(acc.id),

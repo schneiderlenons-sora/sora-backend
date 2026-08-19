@@ -327,6 +327,33 @@ console.log('── 6C. saldo com aplicação automática ──');
   eqc(simples.saldo, 850.30, 'conta sem aplicação automática segue igual');
   eqc(simples.extras.saldo_aplicado, null, 'sem aplicação o campo é null, não 0');
 
+  // ⚠️⚠️ E TEM EMISSOR QUE NÃO CUMPRE O CONTRATO. O Mercado Pago manda O MESMO
+  // DINHEIRO nos dois campos, e a soma DOBRAVA o saldo do cliente: painel
+  // R$ 4.414,32 contra R$ 2.207,16 no app. A aritmética não deixa outra
+  // leitura — se disponível + aplicado = 4.414,32 e o certo é exatamente
+  // metade, os dois campos valem 2.207,16 cada. O sinal é a igualdade AO
+  // CENTAVO: em conta de pagamento o saldo inteiro rende, então os dois
+  // coincidirem é estrutural, não coincidência.
+  const mp = S.normalizeConta(conta({
+    available_amount: brl('2207.16'),
+    automatically_invested_amount: brl('2207.16'),
+    blocked_amount: brl('0.00'),
+  }));
+  eqc(mp.saldo, 2207.16, 'campos iguais = mesmo dinheiro contado duas vezes, NÃO soma');
+  eqc(mp.extras.saldo_aplicado, 2207.16, 'mas a parcela aplicada continua informada');
+
+  // Um centavo de diferença já é dinheiro de verdade em dois lugares.
+  const quase = S.normalizeConta(conta({
+    available_amount: brl('100.00'), automatically_invested_amount: brl('100.01'),
+  }));
+  eqc(quase.saldo, 200.01, 'quase iguais NÃO é o mesmo dinheiro: soma');
+
+  // Zerado dos dois lados não pode virar "duplicado" e sumir com nada.
+  const zerado = S.normalizeConta(conta({
+    available_amount: brl('0.00'), automatically_invested_amount: brl('0.00'),
+  }));
+  eqc(zerado.saldo, 0, 'conta zerada segue zerada');
+
   // ⚠️ BLOQUEADO CONTINUA FORA: não é gastável.
   const comBloqueio = S.normalizeConta(conta({
     available_amount: brl('100.00'),
