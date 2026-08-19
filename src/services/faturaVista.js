@@ -76,10 +76,19 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
       typeof cartao.saldo === 'number' && cartao.saldo < 0
       && competencia === (competenciaDoSimulado(cartao, faturas) || competenciaAtual(cartao))
     ) {
-      fatura   = cent(-cartao.saldo);
+      // ⚠️ O simulado é a soma dos DÉBITOS sem fatura — e parcela a vencer não
+      // é débito ainda, então ela fica de fora dele também. Medido no Itaú de
+      // um cliente: simulado R$ 218,70 (= exatamente as transações do ciclo)
+      // contra R$ 706,08 no app do banco, faltando a parcela 5/9 de R$ 347,52.
+      // A fatura já fechada do mesmo cartão fecha ao centavo com a parcela
+      // somada, então o banco a cobra — só não a antecipa no simulado.
+      const prevS = deps.parcelasPrevistas
+        ? await deps.parcelasPrevistas(cartao.id, competencia) : null;
+      const extraS = prevS?.total || 0;
+      fatura   = cent(-cartao.saldo + extraS);
       pago     = 0;                          // simulado já é líquido de pagamentos
       restante = fatura;
-      fonte    = 'simulada';
+      fonte    = extraS ? 'simulada+previstas' : 'simulada';
     } else if (deps.parcelasPrevistas) {
       // ── 3. Nem publicada nem simulada (fatura futura): soma do ciclo mais as
       //      parcelas que só o banco conhece.
@@ -97,7 +106,7 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
   // `restante` sozinho nunca zera).
   const quitada = fonte === 'banco'
     ? (fatura > 0.01 && restante <= 0.01)
-    : fonte === 'simulada'
+    : fonte.startsWith('simulada')
       ? quitadaDepoisDoFechamento(pagamentos, fatura, st.ciclo)
       : (fatura > 0.01 && restante <= 0.01 && st.ciclo.fim < hojeSP());
 
@@ -106,7 +115,7 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
     fechada: st.ciclo.fim < hojeSP(),
     // `doBanco` = o número não saiu da nossa soma de transações. A tela usa
     // isso pra decidir se pode confiar no valor (e pra rotular a origem).
-    doBanco: fonte === 'banco' || fonte === 'simulada',
+    doBanco: fonte === 'banco' || fonte.startsWith('simulada'),
     fonte,
   };
 }

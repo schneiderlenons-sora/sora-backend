@@ -134,7 +134,10 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
       try {
         const comp = competenciaAtual(w);
         const st = await statusFatura(grupoId, w, comp);
-        const vista = await valorExibido(w, comp, st);
+        // A MESMA dep da rota de faturas: sem ela a agenda mostraria a fatura
+        // sem as parcelas que só o banco conhece, divergindo do painel.
+        const { lerPrevistas } = require('./parcelasPrevistas');
+        const vista = await valorExibido(w, comp, st, { parcelasPrevistas: lerPrevistas });
         valorFatura = vista.restante || null;
         quitada = !!vista.quitada;
       } catch { /* tolerante: o evento vale mesmo sem o valor */ }

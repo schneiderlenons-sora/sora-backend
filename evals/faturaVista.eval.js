@@ -79,7 +79,9 @@ console.log('── 2. simulado na competência certa ──');
   // do ciclo SEGUINTE = agosto. Esse é o caso real do Mercado Pago.
   const deps = {
     faturasBanco: async () => [{ competencia: '2026-07', total: 900, pago: 900, vencimento: '2026-07-13' }],
-    parcelasPrevistas: async () => ({ total: 276.52 }),
+    // Fiel à projeção real: fatura JÁ FECHADA (agosto, aqui) nunca tem parcela
+    // prevista — `projetar` só emite da competência atual pra frente.
+    parcelasPrevistas: async (_id, comp) => ({ total: comp === '2026-09' ? 276.52 : 0 }),
   };
 
   const ago = await valorExibido(CARTAO_OF, '2026-08', st(3190.81), deps);
@@ -97,6 +99,41 @@ console.log('── 2. simulado na competência certa ──');
   const jul = await valorExibido(CARTAO_OF, '2026-07', st(999), deps);
   eq(jul.fatura, 900, 'julho vem da fatura publicada');
   eq(jul.fonte, 'banco', 'fonte banco');
+}
+console.log('  ok');
+
+// ── 2B. O SIMULADO TAMBÉM não conhece a parcela a vencer ────────────────
+//
+// Caso real de um cliente (Itaú): a fatura EM ABERTO saía R$ 218,70 na Sora e
+// R$ 706,08 no app do banco. O simulado do banco vinha 218,70 — exatamente a
+// soma das transações do ciclo — porque parcela a vencer ainda não é "débito"
+// e fica de fora dele. Que o banco a cobra está provado na fatura JÁ FECHADA
+// do mesmo cartão: R$ 2.406,28 de transações + R$ 347,52 da parcela 4/9 =
+// R$ 2.753,80, o valor que o banco publicou. Então o simulado também soma.
+console.log('── 2B. simulado + parcela a vencer ──');
+{
+  const CARTAO_ITAU = { id: 'c-itau', of_conta_id: 'x', dia_fechamento: 4, dia_vencimento: 11, saldo: -218.70 };
+  const deps = {
+    faturasBanco: async () => [{ competencia: '2026-08', total: 2753.80, pago: 0, vencimento: '2026-08-11' }],
+    parcelasPrevistas: async (_id, comp) => ({ total: comp === '2026-09' ? 347.52 : 0 }),
+  };
+
+  const set = await valorExibido(CARTAO_ITAU, '2026-09', st(218.70), deps);
+  eq(set.fatura, 566.22, 'simulado (218,70) + a parcela 5/9 que só o banco conhece');
+  eq(set.fonte, 'simulada+previstas', 'a origem diz que houve soma');
+  ok(set.doBanco, 'continua sendo número do banco, não reconstrução nossa');
+
+  // Sem parcela nenhuma o comportamento é o de antes, byte a byte.
+  const semParcela = { faturasBanco: deps.faturasBanco, parcelasPrevistas: async () => ({ total: 0 }) };
+  const puro = await valorExibido(CARTAO_ITAU, '2026-09', st(218.70), semParcela);
+  eq(puro.fatura, 218.70, 'sem parcela prevista o simulado passa intacto');
+  eq(puro.fonte, 'simulada', 'e a origem volta a ser só simulada');
+
+  // A fatura publicada continua mandando — nunca somar por cima dela (o banco
+  // já cobrou a parcela dentro do total dele).
+  const ago = await valorExibido(CARTAO_ITAU, '2026-08', st(2406.28), deps);
+  eq(ago.fatura, 2753.80, 'fatura publicada não recebe soma de parcela');
+  eq(ago.fonte, 'banco', 'fonte banco');
 }
 console.log('  ok');
 

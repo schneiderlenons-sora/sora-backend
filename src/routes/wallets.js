@@ -15,20 +15,8 @@ const vistaDaFatura = (cartao, competencia, st) =>
   valorExibido(cartao, competencia, st, { parcelasPrevistas: parcelasPrevistasDe });
 
 // Parcelas a vencer projetadas pelo sync do Open Finance (migration 116).
-// Tolerante: enquanto a migration não rodar, devolve vazio e a tela some com o
-// bloco — nunca derruba a listagem de faturas.
-async function parcelasPrevistasDe(cartaoId, competencia) {
-  try {
-    const { data, error } = await supabase.from('of_parcelas_previstas')
-      .select('descricao, valor, parcela_num, parcela_total')
-      .eq('cartao_id', cartaoId).eq('competencia', competencia)
-      .order('valor', { ascending: false });
-    if (error) return { linhas: [], total: 0 };
-    const linhas = data || [];
-    const total = Math.round(linhas.reduce((s, p) => s + (Number(p.valor) || 0), 0) * 100) / 100;
-    return { linhas, total };
-  } catch { return { linhas: [], total: 0 }; }
-}
+// A leitura mora em services/parcelasPrevistas.js pra ser a MESMA da agenda.
+const { lerPrevistas: parcelasPrevistasDe } = require('../services/parcelasPrevistas');
 
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
 function variantesPhone(phone) {

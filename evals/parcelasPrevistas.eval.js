@@ -116,19 +116,71 @@ console.log('── 4. guiada por data, não por "pagas" ──');
   // é o campo que a Polp erra. Se a projeção olhasse `paidInstallments`,
   // essa parcela sumiria e a fatura sairia R$ 56,66 menor.
   const so = projetar([REAIS[0]], CARTAO, HOJE);
-  eq(so.length, 1, 'parcelamento "todo pago" ainda projeta a parcela futura');
-  eq(so[0].competencia, '2026-09', 'na competência certa');
-  eq(so[0].parcela, 3, 'é a 3ª parcela');
+  const set = so.find((x) => x.competencia === '2026-09');
+  ok(set, 'parcelamento "todo pago" ainda projeta a parcela futura');
+  eq(set.parcela, 3, 'é a 3ª parcela');
+  // Compra em 20/06 num cartão que fecha dia 8 → 1ª em julho, 2ª no ciclo em
+  // curso, 3ª em setembro. A do ciclo em curso é o que a §5 cobre.
+  eq(so.length, 2, 'projeta a do ciclo em curso e a futura — a 1ª já foi cobrada');
 }
 console.log('  ok');
 
-// ── 5. Nunca projeta no ciclo EM CURSO (contaria em dobro) ──────────────
-console.log('── 5. só competência futura ──');
+// ── 5. O CICLO EM CURSO: parcela entra, COMPRA não ──────────────────────
+//
+// ⚠️ Esta seção afirmava o contrário ("nada cai na competência atual — a compra
+// do ciclo em curso já veio pelo extrato"). A justificativa vale pra COMPRA,
+// não pra PARCELA, e a diferença apareceu na conta de um cliente do Itaú:
+// fatura em aberto R$ 218,70 na Sora × R$ 706,08 no app do banco, faltando a
+// parcela 5/9 de R$ 347,52 de uma compra de abril. Ela não é transação nenhuma
+// — só existe em `parcelamentos`. A prova de que o banco a cobra está na
+// fatura JÁ FECHADA do mesmo cartão: R$ 2.406,28 de transações + R$ 347,52 da
+// parcela 4/9 = R$ 2.753,80, exatamente o que o banco publicou.
+console.log('── 5. ciclo em curso: parcela entra, compra não ──');
 {
   const previstas = projetar(REAIS, CARTAO, HOJE);
-  ok(previstas.every((p) => p.competencia > '2026-08'),
-    'nada cai na competência atual — a compra do ciclo em curso já veio pelo extrato');
-  eq(daCompetencia(previstas, '2026-08').total, 0, 'agosto não recebe projeção');
+  ok(previstas.every((p) => p.competencia >= '2026-08'), 'nada cai em fatura já fechada');
+
+  // Prosed e ADIDAS foram COMPRADOS no ciclo em curso (03/08 e 14/07 → ambos
+  // na competência 2026-08): a parcela 1 deles chega pelo extrato.
+  const compraNoCiclo = previstas.filter((p) => p.competencia === '2026-08' && p.parcela === 1);
+  eq(compraNoCiclo.length, 0, 'a parcela 1 NUNCA é projetada na competência da compra');
+
+  // O Chinoca foi comprado em junho (3x) — a 3ª parcela cai justamente no ciclo
+  // em curso e é o tipo de linha que faltava.
+  const emCurso = daCompetencia(previstas, '2026-08');
+  eq(emCurso.total, 56.67, 'a parcela do meio do caminho entra no ciclo em curso');
+  eq(emCurso.linhas[0].parcela, 2, 'é a 2/3 do Chinoca (a 1ª já foi cobrada em julho)');
+  ok(emCurso.linhas[0].emCurso === true, 'linha do ciclo em curso vem marcada (dedup mais rígida)');
+
+  // ADIDAS 2/2 vence em setembro (compra 14/07 → 1ª em agosto): não pode
+  // aparecer no ciclo em curso.
+  ok(!emCurso.linhas.some((l) => /ADIDAS|ADI/i.test(l.descricao)), 'parcela futura não é antecipada');
+}
+console.log('  ok');
+
+// ── 5B. A dedup do ciclo em curso é mais rígida ─────────────────────────
+//
+// No ciclo em curso vale também transação SEM marcador: é a fatura que o
+// usuário olha todo dia, e inflá-la é o inverso do bug de origem. Já nas
+// competências futuras esse casamento por valor NÃO pode existir — lá qualquer
+// compra de valor parecido cancelaria uma parcela real.
+console.log('── 5B. dedup do ciclo em curso ──');
+{
+  const previstas = projetar(REAIS, CARTAO, HOJE);
+  const emCurso = previstas.find((p) => p.competencia === '2026-08');
+  const futura  = previstas.find((p) => p.competencia === '2026-09');
+
+  // Ciclo de 2026-08 num cartão que fecha dia 8: 09/07 → 08/08.
+  const dentro = [{ valor: 56.67, data: '2026-07-20T18:15:06+00:00' }];
+  const fora   = [{ valor: 56.67, data: '2026-08-20T18:15:06+00:00' }];
+
+  ok(jaEhTransacao(emCurso, dentro, CARTAO), 'transação sem marcador DENTRO do ciclo cancela a projeção');
+  eq(jaEhTransacao(emCurso, fora, CARTAO), false, 'a mesma transação FORA do ciclo não cancela');
+  eq(jaEhTransacao(emCurso, [{ valor: 56.60, data: '2026-07-20T18:15:06+00:00' }], CARTAO), false,
+    'no ciclo em curso a folga é de 1 centavo, não de R$ 1');
+  eq(jaEhTransacao(futura, dentro, CARTAO), false,
+    'em competência futura valor sozinho NUNCA cancela — só o marcador');
+  eq(jaEhTransacao(emCurso, dentro, null), false, 'sem cartão não dá pra saber o ciclo: não cancela');
 }
 console.log('  ok');
 
@@ -141,7 +193,9 @@ console.log('  ok');
 console.log('── 6. parcela que já é transação não é projetada ──');
 {
   const previstas = projetar(REAIS, CARTAO, HOJE);
-  const chinoca = previstas.find((p) => /CHINOCA/i.test(p.descricao));
+  // A 3/3, de setembro — a dedup por marcador vale em competência FUTURA
+  // (no ciclo em curso ela é mais rígida; ver §5B).
+  const chinoca = previstas.find((p) => /CHINOCA/i.test(p.descricao) && p.competencia === '2026-09');
 
   // O sync já lançou a 3/3 do Chinoca (cartão com marcador).
   const jaLancadas = [{ parcela_num: 3, parcela_total: 3, valor: 56.66 }];

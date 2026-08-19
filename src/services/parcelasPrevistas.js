@@ -40,7 +40,7 @@
 // que ainda não fechou, não prometem o centavo.
 // =============================================================================
 
-const { competenciaAtual, competenciaVizinha } = require('./cicloFatura');
+const { competenciaAtual, competenciaVizinha, cicloPorCompetencia } = require('./cicloFatura');
 
 const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
 const ymd = (d) => (d ? String(d).slice(0, 10) : null);
@@ -98,8 +98,21 @@ function deduplicar(lista) {
  * @param {string} hoje    'YYYY-MM-DD'
  * @returns {Array<{competencia, descricao, valor, parcela, total, assinatura}>}
  *
- * Só devolve competência ESTRITAMENTE futura. A parcela do ciclo em curso já
- * chegou pelo extrato — somar as duas fontes contaria em dobro.
+ * Devolve da competência ATUAL pra frente. O que nunca é projetado é a
+ * PARCELA 1 na competência dela: a compra em si sempre chega pelo extrato, e
+ * projetar por cima contaria em dobro.
+ *
+ * ⚠️ Antes isto excluía a competência atual inteira, com a justificativa de que
+ * "a compra do ciclo em curso já veio pelo extrato". A justificativa vale pra
+ * COMPRA (parcela 1), não pra PARCELA. Medido na conta de um cliente (Itaú, que
+ * também não manda o marcador "N/M"): a fatura em curso saía R$ 218,70 contra
+ * R$ 706,08 no app do banco, faltando a parcela 5/9 de R$ 347,52 — que não é
+ * transação nenhuma e só existe em `parcelamentos`. A fatura JÁ FECHADA do
+ * mesmo cartão prova a regra: transações R$ 2.406,28 + a parcela R$ 347,52 dão
+ * exatamente os R$ 2.753,80 que o banco publicou.
+ *
+ * As linhas do ciclo em curso saem marcadas com `emCurso`, porque a dedup
+ * delas é mais rígida (ver jaEhTransacao).
  */
 function projetar(lista, cartao, hoje) {
   if (!cartao || !cartao.dia_fechamento) return [];   // sem ciclo, sem projeção
@@ -114,9 +127,12 @@ function projetar(lista, cartao, hoje) {
 
     for (let n = 1; n <= c.totalParcelas; n++) {
       const comp = n === 1 ? compCompra : competenciaVizinha(cartao, compCompra, n - 1);
-      if (!(comp > atual)) continue;                  // já cobrada ou em curso
+      if (comp < atual) continue;                     // fatura já fechada
+      // A COMPRA sempre chega pelo extrato na competência dela.
+      if (comp === atual && n === 1) continue;
       out.push({
         competencia: comp,
+        emCurso:     comp === atual,
         descricao:   c.descricao,
         valor:       c.valorParcela,
         parcela:     n,
@@ -141,14 +157,34 @@ function projetar(lista, cartao, hoje) {
  *
  * Casa por parcela (n de N) + valor com folga de R$ 1 (a mesma folga da dedup:
  * a API informa a parcela nominal e o banco arredonda a última).
+ *
+ * ⚠️ NO CICLO EM CURSO a checagem é MAIS RÍGIDA (`emCurso`): vale também
+ * transação SEM marcador, desde que caia dentro do ciclo e bata no centavo.
+ * Sem isso, um banco que poste a parcela como linha comum faria a fatura EM
+ * ABERTO — a que o usuário olha todo dia — sair maior que a do banco. Nas
+ * competências futuras esse casamento por valor não existe de propósito: lá
+ * qualquer compra de valor parecido cancelaria uma parcela real.
  */
-function jaEhTransacao(linha, txsDoCartao) {
-  return (txsDoCartao || []).some((t) => {
+function jaEhTransacao(linha, txsDoCartao, cartao) {
+  const lista = txsDoCartao || [];
+  const porMarcador = lista.some((t) => {
     const total = Number(t && t.parcela_total);
     const num = Number(t && t.parcela_num);
     if (!total || !num) return false;
     if (total !== linha.total || num !== linha.parcela) return false;
     return Math.abs(Math.abs(Number(t.valor) || 0) - linha.valor) <= 1;
+  });
+  if (porMarcador) return true;
+  if (!linha || !linha.emCurso || !cartao || !cartao.dia_fechamento) return false;
+
+  let ciclo;
+  try { ciclo = cicloPorCompetencia(cartao, linha.competencia); } catch { return false; }
+  if (!ciclo) return false;
+  return lista.some((t) => {
+    if (!t) return false;
+    const d = String(t.data || '').slice(0, 10);
+    if (!(d >= ciclo.ini && d < ciclo.fimExcl)) return false;
+    return Math.abs(Math.abs(Number(t.valor) || 0) - linha.valor) <= 0.01;
   });
 }
 
@@ -177,7 +213,7 @@ async function gravarParcelasPrevistas(grupoId, cartao, parcelamentos, hoje, txs
     // Fora as que o sync já lançou como transação (ver jaEhTransacao) — senão a
     // mesma parcela contaria duas vezes em cartão que manda "N/M".
     const linhas = projetar(parcelamentos, cartao, hoje)
-      .filter((l) => !jaEhTransacao(l, txsDoCartao));
+      .filter((l) => !jaEhTransacao(l, txsDoCartao, cartao));
 
     const { error: errDel } = await supabase.from('of_parcelas_previstas')
       .delete().eq('cartao_id', cartao.id);
@@ -194,7 +230,28 @@ async function gravarParcelasPrevistas(grupoId, cartao, parcelamentos, hoje, txs
   } catch { return 0; }
 }
 
+/**
+ * Lê a projeção gravada (migration 116) de uma competência.
+ *
+ * Mora aqui pra ser a MESMA leitura em todo mundo que exibe fatura — a rota das
+ * faturas e o feed da agenda já divergiram por cada um ter a sua conta, que foi
+ * o motivo de `faturaVista` existir. Tolerante: sem a migration devolve vazio
+ * e a tela só some com o bloco.
+ */
+async function lerPrevistas(cartaoId, competencia) {
+  try {
+    const supabase = require('../db/supabase');
+    const { data, error } = await supabase.from('of_parcelas_previstas')
+      .select('descricao, valor, parcela_num, parcela_total')
+      .eq('cartao_id', cartaoId).eq('competencia', competencia)
+      .order('valor', { ascending: false });
+    if (error) return { linhas: [], total: 0 };
+    const linhas = data || [];
+    return { linhas, total: cent(linhas.reduce((s, p) => s + (Number(p.valor) || 0), 0)) };
+  } catch { return { linhas: [], total: 0 }; }
+}
+
 module.exports = {
   normalizar, deduplicar, projetar, daCompetencia, instante,
-  jaEhTransacao, gravarParcelasPrevistas,
+  jaEhTransacao, gravarParcelasPrevistas, lerPrevistas,
 };
