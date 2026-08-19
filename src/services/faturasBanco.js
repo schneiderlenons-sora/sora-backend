@@ -33,6 +33,34 @@ function pagoDaBill(bill) {
 }
 
 /**
+ * `payments[]` achatado, COM A DATA (migration 128).
+ *
+ * ⚠️ A data é o campo que decide a quem o pagamento pertence, e era jogado
+ * fora — `pagoDaBill` soma só o valor. Em parte dos emissores o `payments[]`
+ * de uma fatura são os pagamentos feitos DURANTE o ciclo dela, que quitam a
+ * ANTERIOR. Confirmado no EQI BLACK: a fatura que fechou em 15/08 informa um
+ * pagamento de R$ 4.359,17 feito em 20/07 — 26 dias antes de ela existir, e do
+ * tamanho exato da fatura de julho.
+ *
+ * Guardar não muda cálculo nenhum: é a medição que falta pra corrigir com
+ * segurança (as duas correções óbvias regridem — ver o cabeçalho da sql/128).
+ */
+function pagamentosDaBill(bill) {
+  const arr = bill && Array.isArray(bill.payments) ? bill.payments : [];
+  const linhas = arr.map((p) => {
+    const valor = Math.abs(money(p && p.amount !== undefined ? p.amount : p) || 0);
+    if (!valor) return null;
+    return {
+      valor: cent(valor),
+      data: ymd(p && (p.paymentDate || p.payment_date)) || null,
+      tipo: (p && (p.valueType || p.value_type)) || null,
+      modo: (p && (p.paymentMode || p.payment_mode)) || null,
+    };
+  }).filter(Boolean);
+  return linhas.length ? linhas : null;
+}
+
+/**
  * Achata uma fatura crua da Polp. `null` quando não dá pra usar.
  *
  * Sem `due_date` não há competência — e competência é a chave de tudo por
@@ -50,6 +78,8 @@ function normalizarBill(bill) {
     fechamento:   ymd(bill.bill_closing_date),
     total:        total == null ? null : cent(Math.abs(total)),
     pago:         pagoDaBill(bill),
+    // Só guardado (migration 128) — nenhum cálculo lê isto ainda.
+    pagamentos:   pagamentosDaBill(bill),
     minimo:       money(bill.bill_minimum_amount) == null ? null : cent(Math.abs(money(bill.bill_minimum_amount))),
     is_parcelada: bill.is_instalment === true,
   };
@@ -69,8 +99,17 @@ async function salvarFaturas(grupoId, cartaoId, bills) {
       .map((b) => ({ ...b, grupo_id: grupoId, cartao_id: cartaoId, atualizado_em: new Date().toISOString() }));
     if (!linhas.length) return 0;
     const supabase = require('../db/supabase');
-    const { error } = await supabase.from('of_faturas')
+    let { error } = await supabase.from('of_faturas')
       .upsert(linhas, { onConflict: 'cartao_id,of_bill_id' });
+    // ⚠️ Sem a migration 128 a coluna `pagamentos` não existe e o upsert INTEIRO
+    // falha — levando junto o total das faturas, que é o que a tela mostra.
+    // Mesma lição do `datas_manuais` no upsertWallet: tenta com tudo, repete
+    // sem o campo novo.
+    if (error) {
+      const semNovo = linhas.map(({ pagamentos, ...resto }) => resto);
+      ({ error } = await supabase.from('of_faturas')
+        .upsert(semNovo, { onConflict: 'cartao_id,of_bill_id' }));
+    }
     return error ? 0 : linhas.length;   // erro = migration 118 pendente
   } catch { return 0; }
 }
@@ -126,5 +165,5 @@ function competenciaDoSimulado(cartao, faturas) {
 
 module.exports = {
   normalizarBill, salvarFaturas, faturasDoCartao, faturaDaCompetencia,
-  competenciaDoSimulado, pagoDaBill, money, cent,
+  competenciaDoSimulado, pagoDaBill, pagamentosDaBill, money, cent,
 };
