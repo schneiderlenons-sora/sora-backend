@@ -688,6 +688,28 @@ async function diagnosticoCelcoin(req, res) {
       } catch (e) { item.tx_erro = e.message; }
       try {
         item.parcelamentos = await celcoin.listarParcelamentos(raw.id);
+
+        // ⚠️ SIMULA A REDISTRIBUIÇÃO com o dado VIVO da API + as transações que
+        // o sync importaria. Responde de uma vez as três perguntas que sobravam
+        // quando "a fatura continua errada depois do sync": a API devolveu
+        // plano? algum grupo casou? o que iria mudar de data?
+        try {
+          const todasTx = await celcoin.listarTransacoesCartao(raw.id, { max: 3 });
+          const norm = todasTx.map((t) => sync.normalizeTxCartao(t, hoje));
+          const movidas = sync.redistribuirSemMarcador(norm, item.parcelamentos, hoje);
+          item.redistribuicao = {
+            parcelamentos_lidos: (item.parcelamentos || []).length,
+            transacoes_sem_marcador: norm.filter((t) => t && t.ehGasto && !t.parcelaTotal).length,
+            realocadas: movidas.length,
+            detalhe: movidas.map((t) => ({
+              descricao: String(t.descricao || '').slice(0, 34),
+              valor: t.valor,
+              parcela: `${t.parcelaNum}/${t.parcelaTotal}`,
+              de: String(t.dataAnterior || '').slice(0, 10),
+              para: String(t.data || '').slice(0, 10),
+            })),
+          };
+        } catch (e) { item.redistribuicao = { erro: e.message }; }
         // Mede se a correção da Polp (ago/2026) pro parcelamento DUPLICADO
         // chegou, e o que a regra de ouro daria com o dado já deduplicado.
         // `duplicatas: 0` = corrigido. Comparar `com_regra_de_ouro` com o que

@@ -1892,8 +1892,9 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // `null` quando a leitura FALHA — diferente de [] ("não tem parcelamento").
         // Com null nada é redistribuído E a projeção gravada fica intacta.
         let parcelamentos = null;
+        let parcelamentosErro = null;
         try { parcelamentos = await celcoin.listarParcelamentos(n.externalId, { estrito: true }); }
-        catch { parcelamentos = null; }
+        catch (e) { parcelamentos = null; parcelamentosErro = e.message; }
         const redistribuidas = redistribuirSemMarcador(normalizadas, parcelamentos, hoje);
 
         const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadas);
@@ -1901,7 +1902,8 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // parcela não é reescrever o que o usuário editou (o que a regra de
         // "nunca reescrever" protege é a CATEGORIA) — e sem isso a fatura
         // anterior segue contando parcela que não é dela.
-        if (redistribuidas.length) await corrigirParcelasRedistribuidas(grupoId, redistribuidas);
+        let parcelasCorrigidas = 0;
+        if (redistribuidas.length) parcelasCorrigidas = await corrigirParcelasRedistribuidas(grupoId, redistribuidas);
         novasTx += novas;
 
         // ⚠️ A fatura AINDA ABERTA quase nunca tem `bill_total_amount` — o banco
@@ -2006,6 +2008,14 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           txs: txs.length, novas,
           pagamentos_fatura: pagamentosRegistrados || undefined,
           parcelas_previstas: parcelasProjetadas || undefined,
+          // ⚠️ Observabilidade da redistribuição. Sem estes três campos, "a
+          // fatura continua errada depois do sync" vira adivinhação: não dá pra
+          // saber se a API não devolveu plano, se devolveu e nada casou, ou se
+          // casou e o update falhou. Foi exatamente o que aconteceu.
+          parcelamentos_lidos: parcelamentosErro ? `ERRO: ${parcelamentosErro}`
+            : (parcelamentos ? parcelamentos.length : 0),
+          parcelas_realocadas: redistribuidas.length || undefined,
+          parcelas_corrigidas: parcelasCorrigidas || undefined,
           faturas_banco: faturasSalvas || undefined,
         });
       } catch (e) { relatorio.cartoes.push({ erro: e.message }); }
