@@ -77,6 +77,33 @@ router.get('/:phone', auth, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────
 // POST /api/dividas — cria nova dívida
 // ─────────────────────────────────────────────────────────────────
+/**
+ * Campos exclusivos do CONSÓRCIO (migration 125), só os que vieram no body.
+ *
+ * O que faz o consórcio ser diferente de um financiamento: existe uma CARTA DE
+ * CRÉDITO (dinheiro a receber, não só a pagar) e uma CONTEMPLAÇÃO que divide a
+ * vida da cota em antes e depois. Nenhum outro tipo de dívida tem isso.
+ *
+ * ⚠️ A taxa de administração NÃO tem campo próprio: `taxa_juros` já guarda uma
+ * taxa em % e ter duas colunas pro mesmo número daria divergência. O que muda
+ * é o RÓTULO na tela.
+ */
+function camposConsorcio(body = {}) {
+  const num = (v) => (v === '' || v == null ? null : parseFloat(v));
+  const txt = (v) => (String(v ?? '').trim() || null);
+  const out = {};
+  if (body.consorcio_credito      !== undefined) out.consorcio_credito      = num(body.consorcio_credito);
+  if (body.consorcio_lance        !== undefined) out.consorcio_lance        = num(body.consorcio_lance);
+  if (body.consorcio_grupo        !== undefined) out.consorcio_grupo        = txt(body.consorcio_grupo);
+  if (body.consorcio_cota         !== undefined) out.consorcio_cota         = txt(body.consorcio_cota);
+  if (body.consorcio_contemplado  !== undefined) out.consorcio_contemplado  = !!body.consorcio_contemplado;
+  if (body.consorcio_contemplado_em !== undefined) out.consorcio_contemplado_em = body.consorcio_contemplado_em || null;
+  return out;
+}
+
+/** A coluna do consórcio ainda não existe? (migration 125 pendente) */
+const faltaMigrationConsorcio = (erro) => /consorcio_/i.test(erro?.message || '');
+
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const {
@@ -84,6 +111,11 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       parcelas_total, parcelas_pagas, taxa_juros, indexador,
       dia_vencimento, data_inicio, observacao, imagem_url,
     } = req.body;
+
+    // Campos só do CONSÓRCIO (migration 125). Ficam num objeto à parte porque
+    // são removidos em bloco se a migration ainda não rodou — a dívida é criada
+    // sem eles em vez de falhar (mesma tolerância do `imagem_url`).
+    const extrasConsorcio = camposConsorcio(req.body);
 
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Título obrigatório.' });
     if (!valor_total || valor_total <= 0) return res.status(400).json({ erro: 'Valor total inválido.' });
@@ -110,12 +142,19 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       status:         (parcelas_total && parseInt(parcelas_pagas || 0, 10) >= parseInt(parcelas_total, 10)) ? 'quitada' : 'ativa',
     };
     if (imagem_url) payload.imagem_url = imagem_url;
+    Object.assign(payload, extrasConsorcio);
 
     // `imagem_url` é coluna nova (migration 088). Se ainda não rodou, remove e
     // tenta de novo (a dívida cria sem foto até migrar).
     let r = await supabase.from('dividas').insert(payload).select().single();
     if (r.error && 'imagem_url' in payload && /imagem_url|column/i.test(r.error.message || '')) {
       delete payload.imagem_url;
+      r = await supabase.from('dividas').insert(payload).select().single();
+    }
+    // Idem pros campos do consórcio (migration 125): sem eles a dívida ainda é
+    // criada — perder a carta inteira por causa de um campo extra seria pior.
+    if (r.error && faltaMigrationConsorcio(r.error)) {
+      for (const k of Object.keys(extrasConsorcio)) delete payload[k];
       r = await supabase.from('dividas').insert(payload).select().single();
     }
     // Fallback: CHECK ainda sem 'parcelamento' (migration 097 não rodou) → 'outro'.
@@ -140,6 +179,9 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
                      'nos_previstos'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+    // Campos do consórcio (migration 125) — ver `camposConsorcio`.
+    const extrasConsorcio = camposConsorcio(req.body);
+    Object.assign(patch, extrasConsorcio);
     patch.updated_at = new Date().toISOString();
 
     const upd = () => supabase.from('dividas').update(patch).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
@@ -147,6 +189,11 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (r.error && 'imagem_url' in patch && /imagem_url|column/i.test(r.error.message || '')) {
       delete patch.imagem_url; // migration 088 pendente
       r = await upd();
+    }
+    if (r.error && faltaMigrationConsorcio(r.error)) {
+      // Migration 125 pendente: salva o resto em vez de perder a edição toda.
+      for (const k of Object.keys(extrasConsorcio)) delete patch[k];
+      r = Object.keys(patch).length > 1 ? await upd() : r;
     }
     if (r.error) throw r.error;
     res.json(r.data);
