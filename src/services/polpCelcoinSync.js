@@ -1014,9 +1014,30 @@ function normalizeTxCartao(tx, hoje) {
   // marcá-la como transferência a apagaria do dashboard. Aqui é seguro porque
   // um CRÉDITO num cartão de crédito com essa descrição só pode ser a quitação
   // da fatura — cartão não recebe salário.
+  // ⚠️ CADA BANCO TEM A SUA FRASE, e nenhuma delas diz "fatura".
+  // Medido na base (1.037 créditos em carteira de cartão): 12 pagamentos de
+  // fatura entravam como estorno, R$ 35.516,30 abatendo fatura que já tinha
+  // sido paga por fora. A prova de que são quitação e não crédito: o valor
+  // BATE com o total de uma fatura publicada pelo banco —
+  //   · "PAGAMENTO DEBITO AUTOMATICO" (Itaú) ....... 4x, R$ 30.384,92
+  //   · "Obrigado pelo pagamento" (Visa Infinite) ... 3x, R$  2.188,71
+  //   · "Pagamento com saldo" (Itaú Click) .......... 3x, R$    917,77
+  //   · "PAGAMENTO ON LINE" (Gold) .................. 1x, R$  2.024,90
+  //   · "Pagamento recebido" (Nubank) ............... o caso de origem
+  //
+  // ⚠️ E O QUE NÃO PODE ENTRAR: "PAGAMENTO CASHBACK TAG" (R$ 5,00 todo mês
+  // num cartão da base) tem a palavra "pagamento" e NÃO é quitação — é
+  // cashback, ou seja, consumo que voltou, e tem de seguir ABATENDO a fatura.
+  // Por isso a lista é de FRASES INTEIRAS, não da palavra solta, e o cashback
+  // é barrado explicitamente.
+  const descNorm = String(descricao || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
   const ehPagamentoNoCartao = ehCredito
-    && /\bpagamento\s+recebido\b/.test(
-      String(descricao || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, ''));
+    && !/\bcashback\b/.test(descNorm)
+    && (/\bpagamento\s+recebido\b/.test(descNorm)
+      || /\bpagamento\b[\s\S]*\bdebito\s+automatico\b/.test(descNorm)
+      || /\bobrigado\s+pelo\s+pagamento\b/.test(descNorm)
+      || /\bpagamento\s+com\s+saldo\b/.test(descNorm)
+      || /\bpagamento\s+on\s*-?\s*line\b/.test(descNorm));
 
   const pagouFatura = tipoTx === 'PAGAMENTO_FATURA'
     || tx.category_ref === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT'

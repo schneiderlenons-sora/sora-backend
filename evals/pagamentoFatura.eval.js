@@ -203,6 +203,63 @@ console.log('── 4B. "Pagamento recebido" no cartão ──');
 }
 console.log('  ok');
 
+// ── 4C. CADA BANCO TEM A SUA FRASE ─────────────────────────────────────────
+//
+// A §4B cobriu o Nubank. Varrendo a base (1.037 créditos em carteira de
+// cartão) apareceram mais quatro redações, de quatro emissores, todas caindo
+// em Reembolso e ABATENDO fatura já paga — R$ 35.516,30 no total. A prova de
+// que são quitação e não crédito: o valor BATE com o total de uma fatura
+// publicada pelo banco.
+//
+// ⚠️ E a armadilha que define o formato da regra: "PAGAMENTO CASHBACK TAG"
+// (R$ 5,00 todo mês num cartão da base) tem a palavra "pagamento" e NÃO é
+// quitação. Procurar "pagamento" solto o transformaria em pagamento de fatura
+// e a fatura desse cliente subiria R$ 5,00 por mês, do nada. Por isso a regra
+// é de FRASES INTEIRAS, com o cashback barrado explicitamente.
+console.log('── 4C. as frases dos outros bancos ──');
+{
+  const hoje = '2026-08-19';
+  const credito = (nome, valor) => normalizeTxCartao({
+    id: 'tx-' + nome.replace(/W/g, '').slice(0, 8),
+    transaction_name: nome,
+    brazilian_amount: { amount: String(valor) },
+    credit_debit_type: 'CREDITO',
+    transaction_date_time: '2026-08-10T10:00:00Z',
+  }, hoje);
+
+  // Os quatro medidos, com o valor real de cada caso.
+  eq(credito('PAGAMENTO DEBITO AUTOMATICO', 13123.09).categoria, CATEGORIA_FATURA,
+    'Itaú: "PAGAMENTO DEBITO AUTOMATICO" (bate com a fatura publicada de 13.123,09)');
+  eq(credito('Obrigado pelo pagamento', 1182.21).categoria, CATEGORIA_FATURA,
+    'Visa Infinite: "Obrigado pelo pagamento"');
+  eq(credito('Pagamento com saldo', 307.83).categoria, CATEGORIA_FATURA,
+    'Itaú Click: "Pagamento com saldo"');
+  eq(credito('PAGAMENTO ON LINE', 2024.90).categoria, CATEGORIA_FATURA,
+    'Gold: "PAGAMENTO ON LINE"');
+
+  // ⚠️ O falso positivo que a regra existe pra evitar.
+  ok(credito('PAGAMENTO CASHBACK TAG', 5).categoria !== CATEGORIA_FATURA,
+    'CASHBACK tem "pagamento" e continua ABATENDO a fatura');
+  ok(credito('Pagamento Cashback', 5).categoria !== CATEGORIA_FATURA,
+    'e o cashback é barrado mesmo sem a palavra TAG');
+
+  // Os outros créditos da base seguem intocados.
+  ok(credito('DESCONTO NA FATURA - PO', 48.48).categoria !== CATEGORIA_FATURA,
+    'desconto na fatura é abatimento, não quitação');
+  ok(credito('CANCELAMENTO PARCIAL DE COMPRA - IFD', 11.99).categoria !== CATEGORIA_FATURA,
+    'cancelamento de compra continua abatendo');
+
+  // ⚠️ A frase só vale em CRÉDITO. O mesmo texto vindo como DÉBITO é cobrança.
+  const comoDebito = normalizeTxCartao({
+    id: 'tx-deb', transaction_name: 'PAGAMENTO DEBITO AUTOMATICO',
+    brazilian_amount: { amount: '100' }, credit_debit_type: 'DEBITO',
+    transaction_date_time: '2026-08-10T10:00:00Z',
+  }, hoje);
+  eq(comoDebito.ehGasto, true, 'a mesma frase em DÉBITO segue sendo gasto');
+  eq(comoDebito.transferencia, false, 'e não vira transferência');
+}
+console.log('  ok');
+
 // ── 5. Qual FATURA o pagamento quitou ──────────────────────────────────────
 //
 // Segunda metade do mesmo bug: o pagamento entrava como transação e parava aí.
