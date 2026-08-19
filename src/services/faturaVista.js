@@ -38,7 +38,7 @@
 // =============================================================================
 const { competenciaAtual, hojeSP } = require('./cicloFatura');
 const { pagamentosDaFatura, quitadaDepoisDoFechamento } = require('./faturaRollover');
-const { faturasDoCartao, competenciaDoSimulado } = require('./faturasBanco');
+const { faturasDoCartao, competenciaDoSimulado, pagoPorCompetencia } = require('./faturasBanco');
 
 const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
 
@@ -64,9 +64,19 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
     if (publicada && publicada.total != null) {
       // ── 1. O banco publicou esta fatura: usa o número dele, ponto.
       fatura   = cent(publicada.total);
-      pago     = cent(publicada.pago || 0);
+      // ⚠️ MAS O `pago` DELE NÃO É DESTA FATURA. O `payments[]` que o emissor
+      // pendura numa fatura é o que passou pela conta enquanto ela era a
+      // publicada — inclui pagamento de fatura anterior E de posterior. Medido:
+      // uma fatura de R$ 3,13 vinha com `pago` de R$ 2.812,41 (dois pagamentos
+      // de agosto pendurados na de julho); outra, fechada em 15/08, vinha com um
+      // pagamento datado de 20/07, 26 dias antes de ela existir.
+      // `pagoPorCompetencia` atribui cada pagamento pela DATA, com a mesma regra
+      // que `registrarPagamentosDoOF` já usa. Devolve null enquanto o cartão não
+      // tem as datas gravadas (migration 128 + um sync) — e aí fica tudo como era.
+      const porData = pagoPorCompetencia(cartao, faturas, competencia);
+      pago     = porData == null ? cent(publicada.pago || 0) : porData;
       restante = Math.max(0, cent(fatura - pago));
-      fonte    = 'banco';
+      fonte    = porData == null ? 'banco' : 'banco+datas';
     } else if (
       // ── 2. Ciclo ainda não publicado: o simulado vale, mas SÓ na competência
       //      a que ele se refere (a seguinte à última publicada). Sem fatura
@@ -104,7 +114,7 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
   // conhece — quitada é simplesmente "não sobrou nada". Nos outros casos vale
   // a regra do pagamento DEPOIS do fechamento (o simulado é líquido, então
   // `restante` sozinho nunca zera).
-  const quitada = fonte === 'banco'
+  const quitada = fonte.startsWith('banco')
     ? (fatura > 0.01 && restante <= 0.01)
     : fonte.startsWith('simulada')
       ? quitadaDepoisDoFechamento(pagamentos, fatura, st.ciclo)
@@ -115,7 +125,7 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
     fechada: st.ciclo.fim < hojeSP(),
     // `doBanco` = o número não saiu da nossa soma de transações. A tela usa
     // isso pra decidir se pode confiar no valor (e pra rotular a origem).
-    doBanco: fonte === 'banco' || fonte.startsWith('simulada'),
+    doBanco: fonte.startsWith('banco') || fonte.startsWith('simulada'),
     fonte,
   };
 }

@@ -38,7 +38,8 @@
     "eval:caixinhas": "node evals/caixinhas.eval.js",
     "eval:resgate": "node evals/resgateInvestimento.eval.js",
     "agentes:preview": "node scripts/preview-agentes.js",
-    "eval:reconciliar-parcelas": "node evals/reconciliarParcelas.eval.js"
+    "eval:reconciliar-parcelas": "node evals/reconciliarParcelas.eval.js",
+    "eval:pago-competencia": "node evals/pagoPorCompetencia.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

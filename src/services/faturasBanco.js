@@ -114,14 +114,67 @@ async function salvarFaturas(grupoId, cartaoId, bills) {
   } catch { return 0; }
 }
 
+/**
+ * Quanto foi pago numa competência, atribuindo cada pagamento pela sua DATA.
+ *
+ * ⚠️ O `payments[]` que o emissor pendura numa fatura NÃO é o conjunto de
+ * pagamentos daquela fatura — é o que passou pela conta enquanto ela era a
+ * fatura publicada. Medido com as datas na mão, os dois desvios existem:
+ *
+ *   Mercado Pago · fatura 2026-07 (fecha 12/07, vence 17/07, total R$ 3,13)
+ *     R$    3,13 @ 16/07  ← esta sim é dela
+ *     R$ 2.243,60 @ 03/08  ← é de agosto
+ *     R$   565,68 @ 09/08  ← é de agosto
+ *     `pago` somava os três: R$ 2.812,41 numa fatura de R$ 3,13.
+ *
+ *   Cartão EQI BLACK · fatura 2026-08 (fecha 15/08, total R$ 3.517,11)
+ *     R$ 4.359,17 @ 20/07  ← 26 dias ANTES de a fatura existir; é a de julho
+ *
+ * A atribuição usa `competenciaDoPagamento` — a fatura de vencimento mais
+ * próximo da data do pagamento —, a MESMA regra que `registrarPagamentosDoOF`
+ * já aplica nos pagamentos que viram transação. Uma regra só pros dois lados.
+ *
+ * Devolve `null` quando o cartão ainda não tem as datas gravadas (migration
+ * 128 + um sync): aí quem chama mantém exatamente o comportamento anterior.
+ */
+function pagoPorCompetencia(cartao, faturas, competencia) {
+  const comDatas = (faturas || []).filter((f) => f && Array.isArray(f.pagamentos) && f.pagamentos.length);
+  if (!comDatas.length) return null;                 // sem dado → não opina
+  if (!cartao || !cartao.dia_vencimento) return null; // sem ciclo não dá pra atribuir
+
+  const { competenciaDoPagamento } = require('./faturaRollover');
+  const vistos = new Set();
+  let total = 0;
+  for (const f of comDatas) {
+    for (const p of f.pagamentos) {
+      if (!p || !p.data || !p.valor) continue;
+      // O mesmo pagamento aparece pendurado em mais de uma fatura — sem isto
+      // ele seria contado uma vez por fatura em que o emissor o repetiu.
+      const chave = `${p.data}|${p.valor}`;
+      if (vistos.has(chave)) continue;
+      vistos.add(chave);
+      if (competenciaDoPagamento(cartao, p.data) === competencia) total += Number(p.valor) || 0;
+    }
+  }
+  return cent(total);
+}
+
 /** Faturas guardadas de um cartão, da mais antiga pra mais nova. */
 async function faturasDoCartao(cartaoId) {
   try {
     if (!cartaoId) return [];
     const supabase = require('../db/supabase');
-    const { data, error } = await supabase.from('of_faturas')
-      .select('of_bill_id, competencia, vencimento, fechamento, total, pago, minimo')
+    const COLS = 'of_bill_id, competencia, vencimento, fechamento, total, pago, minimo';
+    // ⚠️ `pagamentos` é da migration 128. Pedir uma coluna que não existe faz o
+    // select INTEIRO falhar — e sem faturas a tela perde o valor do banco. Por
+    // isso: tenta com ela, repete sem.
+    let { data, error } = await supabase.from('of_faturas')
+      .select(`${COLS}, pagamentos`)
       .eq('cartao_id', cartaoId).order('vencimento', { ascending: true });
+    if (error) {
+      ({ data, error } = await supabase.from('of_faturas')
+        .select(COLS).eq('cartao_id', cartaoId).order('vencimento', { ascending: true }));
+    }
     return error ? [] : (data || []);
   } catch { return []; }
 }
@@ -165,5 +218,5 @@ function competenciaDoSimulado(cartao, faturas) {
 
 module.exports = {
   normalizarBill, salvarFaturas, faturasDoCartao, faturaDaCompetencia,
-  competenciaDoSimulado, pagoDaBill, pagamentosDaBill, money, cent,
+  competenciaDoSimulado, pagoDaBill, pagamentosDaBill, pagoPorCompetencia, money, cent,
 };
