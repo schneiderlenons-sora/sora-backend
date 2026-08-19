@@ -456,13 +456,19 @@ async function diagnosticoCelcoin(req, res) {
   // somado ao cold start do Render free, estourava o limite de tempo da Vercel:
   // a URL do painel simplesmente não carregava. Aqui cai pra ~8 chamadas.
   const soCartoes = req.query.foco === 'cartoes' || req.query.foco === 'parcelamentos';
-  const out = { consentId: id, hoje, foco: soCartoes ? 'cartoes' : 'completo',
+  // ?foco=saldo — só as CONTAS, pra investigar divergência de saldo contra o
+  // app do banco. Mesma razão do foco=cartoes: o modo completo é lento demais
+  // pro par Vercel + Render free, e quem está investigando saldo não precisa
+  // de cartão, investimento nem empréstimo.
+  const soSaldo = req.query.foco === 'saldo';
+  const out = { consentId: id, hoje,
+                foco: soSaldo ? 'saldo' : soCartoes ? 'cartoes' : 'completo',
                 contas: [], cartoes: [], dividas: [], investimentos: [] };
 
   try { out.consentimento = await celcoin.getConsentimento(id); }
   catch (e) { out.consentimento_erro = e.message; }
 
-  if (!soCartoes) {
+  if (!soCartoes && !soSaldo) {
     try { out.sync_schedules = await celcoin.syncSchedules(id); }
     catch (e) { out.sync_schedules_erro = e.message; }
   }
@@ -472,6 +478,44 @@ async function diagnosticoCelcoin(req, res) {
     for (const raw of await celcoin.listarContas(id)) {
       const item = { normalizado: sync.normalizeConta(raw) };
       if (cru) item.cru = raw;
+
+      // ── DE ONDE VEM O SALDO ────────────────────────────────────────────
+      // Existe porque um cliente comparou o painel com o app do banco e os
+      // números não bateram (Sora R$ 1,00 × Itaú R$ 2.541,12). A doc da
+      // Celcoin diz que `available_amount` "não inclui cheque especial,
+      // investimentos automáticos nem reservas de saldo" — ou seja, o app do
+      // banco pode mostrar um número MAIOR de forma legítima.
+      //
+      // Sem esta decomposição a investigação vira adivinhação: a Sora guarda
+      // só o número final e não dá pra saber QUAL parcela explica a diferença.
+      // Aqui os campos aparecem lado a lado, com as somas já prontas.
+      try {
+        const b = raw.balance || null;
+        if (!b) {
+          item.saldo_detalhe = { erro: 'conta ainda sem balance (não sincronizou)' };
+        } else {
+          const n = (v) => sync.money(v) ?? 0;
+          const disponivel = n(b.available_amount);
+          const investido  = n(b.automatically_invested_amount);
+          const bloqueado  = n(b.blocked_amount);
+          const cent2 = (x) => Math.round(x * 100) / 100;
+          item.saldo_detalhe = {
+            usado_pela_sora: disponivel,          // é o que vira wallets.saldo
+            available_amount: disponivel,
+            automatically_invested_amount: investido,
+            blocked_amount: bloqueado,
+            has_reserved_balance: b.has_reserved_balance === true,
+            // As somas possíveis — respondem "qual delas bate com o app?".
+            soma_disponivel_mais_investido: cent2(disponivel + investido),
+            soma_tudo: cent2(disponivel + investido + bloqueado),
+            atualizado_em: b.update_date_time || b.updated_at || null,
+            leia_me: 'Compare com o saldo do app do banco. Batendo com '
+              + '`soma_disponivel_mais_investido`, a diferença é aplicação automática. '
+              + 'Se `has_reserved_balance` for true, há caixinhas fora dessas somas.',
+          };
+        }
+      } catch (e) { item.saldo_detalhe = { erro: e.message }; }
+
       try {
         const txs = await celcoin.listarTransacoesConta(raw.id, { max: 1 });
         item.total_tx_1a_pagina = txs.length;
@@ -483,7 +527,7 @@ async function diagnosticoCelcoin(req, res) {
   } catch (e) { out.contas_erro = e.message; }
 
   // CARTÕES — o ponto mais crítico (fatura, fechamento, vencimento, limite)
-  try {
+  if (!soSaldo) try {
     for (const raw of await celcoin.listarCartoes(id)) {
       const bills = await celcoin.listarFaturas(raw.id).catch(() => []);
       const n = sync.normalizeCartao(raw, bills, hoje);
@@ -631,7 +675,7 @@ async function diagnosticoCelcoin(req, res) {
   } catch (e) { out.cartoes_erro = e.message; }
 
   // EMPRÉSTIMOS / FINANCIAMENTOS → viram Dívidas
-  if (!soCartoes) for (const [kind, fn] of [['emprestimo', 'listarEmprestimos'], ['financiamento', 'listarFinanciamentos']]) {
+  if (!soCartoes && !soSaldo) for (const [kind, fn] of [["emprestimo", "listarEmprestimos"], ["financiamento", "listarFinanciamentos"]]) {
     try {
       for (const raw of await celcoin[fn](id)) {
         const item = { kind, normalizado: sync.normalizeDivida(raw, kind) };
@@ -643,7 +687,7 @@ async function diagnosticoCelcoin(req, res) {
 
   // INVESTIMENTOS (5 famílias) → viram linhas na aba Investimentos
   // (a mais cara do diagnóstico: 5 endpoints, cada um paginado)
-  if (!soCartoes) try {
+  if (!soCartoes && !soSaldo) try {
     for (const raw of await celcoin.listarInvestimentos(id)) {
       const item = { familia: raw.__familia, normalizado: sync.normalizeInvestimento(raw) };
       if (cru) item.cru = raw;
