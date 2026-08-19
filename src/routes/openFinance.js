@@ -641,6 +641,44 @@ async function diagnosticoCelcoin(req, res) {
           tx_sem_bill_id: todas.filter((t) => !t.bill_id).length,
           tx_total: todas.length,
         };
+
+        // ── Linha a linha do ciclo EM ABERTO + o que o sync faz com cada uma.
+        //
+        // É o instrumento pra "a fatura da Sora está R$ X menor que a do
+        // banco". Os contadores agregados diziam "7 lidas" enquanto a base
+        // tinha 6, e não havia como saber QUAL sumiu nem por quê — o que
+        // sobrava era palpite. Aqui a linha descartada aparece com o motivo.
+        item.ciclo_aberto = (() => {
+          const cartao = { dia_fechamento: n.extras.dia_fechamento, dia_vencimento: n.extras.dia_vencimento };
+          if (!cartao.dia_fechamento) return null;
+          const ciclo = cicloPorCompetencia(cartao, competenciaAtual(cartao, hoje));
+          const doCiclo = todas.filter((t) => dataDe(t) >= ciclo.ini && dataDe(t) < ciclo.fimExcl);
+          const linhas = doCiclo.map((t) => {
+            const importada = !!sync.normalizeTxCartao(t, hoje);
+            const status = String(t.completed_authorised_payment_type || '') || null;
+            return {
+              data: dataDe(t),
+              descricao: String(t.transaction_name || '').slice(0, 44),
+              valor: val(t),
+              credito: !ehGasto(t),
+              status,
+              importada,
+              motivo_do_descarte: importada ? null
+                : (status === 'LANCAMENTO_FUTURO' || status === 'TRANSACAO_PROCESSANDO')
+                  ? `status ${status} (nao efetivada)`
+                  : dataDe(t) > hoje ? 'data futura' : 'valor ausente ou outro filtro',
+            };
+          });
+          const soma = (arr) => Math.round(arr.reduce((s2, l) => s2 + (l.credito ? -l.valor : l.valor), 0) * 100) / 100;
+          const fora = linhas.filter((l) => !l.importada);
+          return {
+            periodo: `${ciclo.ini} a ${ciclo.fim}`,
+            linhas,
+            soma_importadas: soma(linhas.filter((l) => l.importada)),
+            descartadas: fora.length,
+            descartadas_somam: soma(fora),
+          };
+        })();
       } catch (e) { item.conferencia_erro = e.message; }
 
       if (!soCartoes) try {
