@@ -356,10 +356,21 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
     // É PROJEÇÃO (migration 116) — some e é regravada a cada sync. Só existe
     // pra competência FUTURA: na fatura em curso a compra já veio pelo extrato
     // e somar as duas fontes contaria em dobro.
+    // Leitura tolerante: sem a migration 118 devolve null e a tela cai no ciclo.
+    let billDaComp = null;
+    try {
+      const { data: pf } = await supabase.from('of_faturas')
+        .select('of_bill_id').eq('cartao_id', cartaoId).eq('competencia', competencia).maybeSingle();
+      billDaComp = pf ? pf.of_bill_id : null;
+    } catch { /* 118 pendente */ }
+
     const { linhas: previstas, total: totalPrevisto } = await parcelasPrevistasDe(cartaoId, competencia);
 
     res.json({
       ...st, ...vista, competencia, rollover,
+      // Fatura do EMISSOR nesta competência — o modal usa pra agrupar os
+      // lançamentos como o banco agrupa (pertenceAFatura, modo híbrido).
+      of_bill_id: billDaComp,
       parcelas_previstas: previstas, total_previsto: totalPrevisto,
     });
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -445,6 +456,14 @@ router.get('/faturas/:phone', auth, async (req, res) => {
       // Parcelas que o banco conhece e a Sora não (só em fatura FUTURA — ver
       // parcelasPrevistasDe). Entram como parcela SEPARADA do total: quem soma
       // as transações continua sendo `somarFatura`, intocado.
+      // Leitura tolerante: sem a 118 devolve vazio e a tela cai no ciclo.
+      let publicadaDaComp = null;
+      try {
+        const { data: pf } = await supabase.from('of_faturas')
+          .select('of_bill_id').eq('cartao_id', c.id).eq('competencia', competencia).maybeSingle();
+        publicadaDaComp = pf || null;
+      } catch { /* migration 118 pendente */ }
+
       const prev = await parcelasPrevistasDe(c.id, competencia);
 
       faturas.push({
@@ -452,6 +471,10 @@ router.get('/faturas/:phone', auth, async (req, res) => {
         competencia, ini: ciclo.ini, fim: ciclo.fim, fimExcl: ciclo.fimExcl,
         venc: ciclo.venc, label: ciclo.label, porCiclo: ciclo.porCiclo,
         of: ehOF, fatura, pago, restante, vencida, quitada, proxima,
+        // Fatura do EMISSOR nesta competência. É o que permite a tela agrupar
+        // os lançamentos como o banco agrupa, em vez de só pela data da compra
+        // (ver `pertenceAFatura` modo híbrido). Vem de of_faturas (118).
+        of_bill_id: publicadaDaComp ? publicadaDaComp.of_bill_id : null,
         fechada: ciclo.fim < hoje,
         parcelas_previstas: prev.linhas, total_previsto: prev.total,
         // Entra no card "Previstos do mês"? (migration 123). Sem a coluna,
