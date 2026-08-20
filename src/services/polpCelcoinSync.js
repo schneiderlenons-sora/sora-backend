@@ -1093,6 +1093,12 @@ function normalizeTxCartao(tx, hoje) {
     // sendo o dado mais confiável quando vem — mas vem em só ~14% das linhas,
     // por isso a redistribuição acima não pode depender dele.
     billId: tx.bill_id ? String(tx.bill_id) : null,
+    // ⚠️ A DATA EM QUE O BANCO LANÇOU a compra na fatura (migration 130). Não
+    // é a data da compra: uma compra do dia 04 processada dia 09 tem
+    // `bill_post_date` = 09, e é POR ELA que o emissor decide a fatura.
+    // Guardada à parte de propósito — `data` continua sendo a da COMPRA, que é
+    // a que o usuário reconhece e que o resto do painel usa.
+    billPostDate: tx.bill_post_date ? String(tx.bill_post_date).slice(0, 10) : null,
   };
 }
 
@@ -1369,6 +1375,38 @@ async function upsertWallet(grupoId, userId, n, saldo) {
 }
 
 /**
+ * BACKFILL da data de lançamento (migration 130).
+ *
+ * O sync não reescreve linha existente, então tudo que já foi importado ficou
+ * sem `of_bill_post_date` — e é justamente o histórico que a gente precisa pra
+ * medir e pra agrupar a fatura direito.
+ *
+ * ⚠️ É ADITIVO E SÓ ISSO: preenche onde está NULL e nunca sobrescreve. Não
+ * toca em data, categoria, valor nem em nada que o usuário possa ter mexido.
+ * Some sozinho quando o histórico estiver completo (não acha mais nulos).
+ *
+ * Tolerante: sem a migration, não faz nada e o sync segue igual.
+ */
+async function backfillBillPostDate(grupoId, normalizadas) {
+  const linhas = (normalizadas || []).filter((t) => t && t.externalId && t.billPostDate);
+  if (!linhas.length) return 0;
+  let n = 0;
+  for (const t of linhas) {
+    try {
+      const { data: atual, error } = await supabase.from('transacoes')
+        .select('id, of_bill_post_date')
+        .eq('grupo_id', grupoId).eq('of_tx_id', t.externalId).maybeSingle();
+      if (error) return n;                    // migration 130 pendente: para
+      if (!atual || atual.of_bill_post_date) continue;   // já tem, não mexe
+      const { error: e2 } = await supabase.from('transacoes')
+        .update({ of_bill_post_date: t.billPostDate }).eq('id', atual.id);
+      if (!e2) n++;
+    } catch { return n; }
+  }
+  return n;
+}
+
+/**
  * RECONCILIA a data das parcelas JÁ IMPORTADAS.
  *
  * ⚠️ ESTE É O CONSERTO DA FATURA DIVERGENTE, e a causa é banal: o cálculo
@@ -1487,6 +1525,7 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     of_tx_id: t.externalId,
     of_card: t.card || null,
     of_bill_id: t.billId || null,
+    of_bill_post_date: t.billPostDate || null,
     parcela_num: t.parcelaNum ?? null,
     parcela_total: t.parcelaTotal ?? null,
     parcela_grupo: t.parcelaGrupo ?? null,
@@ -1514,9 +1553,12 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
   // Colunas que podem não existir no ambiente (of_bill_id = migration 101,
   // parcela_* = migration 071). Se faltarem, reinsere sem elas em vez de
   // derrubar a sincronização inteira — são extras, não o dado principal.
-  const COLUNAS_OPCIONAIS = /of_bill_id|parcela_num|parcela_total|parcela_grupo/i;
+  // ⚠️ Colunas de migration: se alguma não existir, o insert INTEIRO falha e a
+  // importação perde o lote. Aqui o erro é reconhecido e o lote repetido sem
+  // elas. `of_bill_post_date` é a 130.
+  const COLUNAS_OPCIONAIS = /of_bill_id|of_bill_post_date|parcela_num|parcela_total|parcela_grupo/i;
   const semOpcionais = (r) => {
-    const { of_bill_id, parcela_num, parcela_total, parcela_grupo, ...resto } = r;
+    const { of_bill_id, of_bill_post_date, parcela_num, parcela_total, parcela_grupo, ...resto } = r;
     return resto;
   };
 
@@ -1812,6 +1854,9 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // reconciliarParcelas: sem isto a fatura do cliente nunca fecha com a
         // do banco, por mais certo que o cálculo esteja.
         const parcelasCorrigidas = await reconciliarParcelas(grupoId, normalizadas);
+        // Preenche a data de lançamento do emissor no histórico já importado
+        // (migration 130). Aditivo: só onde está null.
+        const bpdPreenchidas = await backfillBillPostDate(grupoId, normalizadas);
         novasTx += novas;
 
         // ⚠️ A fatura AINDA ABERTA quase nunca tem `bill_total_amount` — o banco
@@ -1923,6 +1968,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           parcelamentos_lidos: parcelamentosErro ? `ERRO: ${parcelamentosErro}`
             : (parcelamentos ? parcelamentos.length : 0),
           parcelas_reconciliadas: parcelasCorrigidas || undefined,
+          bill_post_date_preenchidas: bpdPreenchidas || undefined,
           faturas_banco: faturasSalvas || undefined,
         });
       } catch (e) { relatorio.cartoes.push({ erro: e.message }); }

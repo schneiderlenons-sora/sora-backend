@@ -47,11 +47,22 @@ const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
   let totFaturas = 0, totDivergentes = 0, totLinhas = 0, totDinheiro = 0;
   let aproximou = 0, afastou = 0, igual = 0;
   let hibAprox = 0, hibAfasta = 0, hibIgual = 0;
+  let postAprox = 0, postAfasta = 0, postIgual = 0;
+  let temPostDate = true;   // vira false se a 130 ainda não rodou
 
   for (const c of cartoes || []) {
-    const { data: txs } = await sb.from('transacoes')
-      .select('data, valor, tipo, transferencia, categoria, observacao, of_bill_id')
+    // ⚠️ Leitura tolerante: `of_bill_post_date` é da migration 130. Pedir uma
+    // coluna que não existe faz o select INTEIRO falhar e o script mede ZERO —
+    // foi o que aconteceu na primeira execução.
+    const COLS = 'data, valor, tipo, transferencia, categoria, observacao, of_bill_id';
+    let { data: txs, error: eTx } = await sb.from('transacoes')
+      .select(`${COLS}, of_bill_post_date`)
       .eq('grupo_id', c.grupo_id).ilike('carteira_nome', esc(c.nome));
+    if (eTx) {
+      temPostDate = false;
+      ({ data: txs } = await sb.from('transacoes').select(COLS)
+        .eq('grupo_id', c.grupo_id).ilike('carteira_nome', esc(c.nome)));
+    }
 
     const comBill = (txs || []).filter((t) => t.of_bill_id);
     if (!comBill.length || !c.dia_fechamento) {
@@ -99,10 +110,23 @@ const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
       //   linhas com of_bill_id == esta fatura  ∪  linhas SEM of_bill_id no ciclo
       const semBill = noCiclo.filter((t) => !t.of_bill_id);
       const somaHibrida = somarFatura([...doBanco, ...semBill]);
+
+      // ⭐ VARIANTE 3 — híbrido + `bill_post_date` (migration 130).
+      // O que sobra de erro no híbrido são as linhas SEM vínculo, que ainda são
+      // agrupadas pela data da COMPRA. `bill_post_date` é a data em que o
+      // emissor LANÇOU a compra na fatura — a que ele mesmo usa pra decidir.
+      // Só entra em quem tiver o campo; sem ele, cai na data da compra.
+      const noCicloPorPost = (txs || []).filter((t) => {
+        const d = String(t.of_bill_post_date || t.data).slice(0, 10);
+        return d >= ciclo.ini && d < ciclo.fimExcl;
+      });
+      const semBillPost = noCicloPorPost.filter((t) => !t.of_bill_id);
+      const somaPost = somarFatura([...doBanco, ...semBillPost]);
       const alvo = Number(f.total) || 0;
       const antes = Math.abs(cent(somaCiclo - alvo));
       const depois = Math.abs(cent(somaBanco - alvo));
       const depoisHib = Math.abs(cent(somaHibrida - alvo));
+      const depoisPost = Math.abs(cent(somaPost - alvo));
       if (alvo > 0) {
         if (depois < antes - 0.01) aproximou++;
         else if (depois > antes + 0.01) afastou++;
@@ -110,6 +134,9 @@ const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
         if (depoisHib < antes - 0.01) hibAprox++;
         else if (depoisHib > antes + 0.01) hibAfasta++;
         else hibIgual++;
+        if (depoisPost < antes - 0.01) postAprox++;
+        else if (depoisPost > antes + 0.01) postAfasta++;
+        else postIgual++;
       }
 
       linhasRelatorio.push({
@@ -123,7 +150,8 @@ const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
         saem: saem.length,
         dinheiro: cent(dinheiro),
         somaHibrida: cent(somaHibrida),
-        antes, depois, depoisHib,
+        somaPost: cent(somaPost),
+        antes, depois, depoisHib, depoisPost,
       });
     }
   }
@@ -141,6 +169,12 @@ const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
   console.log(`        aproximou ${aproximou} · igual ${igual} · AFASTOU ${afastou}`);
   console.log('  (B) HÍBRIDO — banco onde ele opinou, ciclo onde ele calou:');
   console.log(`        aproximou ${hibAprox} · igual ${hibIgual} · AFASTOU ${hibAfasta}`);
+  console.log('  (C) HÍBRIDO + bill_post_date (migration 130):');
+  if (!temPostDate) {
+    console.log('        (migration 130 ainda não rodou — sem dado pra medir)');
+  } else {
+    console.log(`        aproximou ${postAprox} · igual ${postIgual} · AFASTOU ${postAfasta}`);
+  }
 
   console.log('\n─── DETALHE POR FATURA ───');
   console.log('cliente                   cartão                comp     total banco   soma hoje     só banco     híbrido');
