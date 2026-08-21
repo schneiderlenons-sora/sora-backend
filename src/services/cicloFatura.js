@@ -151,8 +151,45 @@ function competenciaVizinha(cartao, competencia, delta) {
   return cicloPorFechamento(fY, (fM - 1) + delta, cartao.dia_fechamento, cartao.dia_vencimento).competencia;
 }
 
+/**
+ * QUAL DATA DECIDE A FATURA de uma transação.
+ *
+ * O banco NÃO agrupa pela data da compra: agrupa pela data em que ELE lançou
+ * a compra na fatura (`bill_post_date`, "Data de lançamento na fatura" na doc
+ * da Celcoin). Compra feita NO DIA DO FECHAMENTO e processada no dia seguinte
+ * entra na fatura NOVA — e é aí que a nossa conta divergia da do app.
+ *
+ * Caso real (cartão `gold`, fecha dia 7): quatro compras de 07/08 com
+ * `bill_post_date` 08/08. Pela data da compra caíam na fatura anterior; o
+ * banco as cobrou na atual.
+ *
+ * ⚠️ DUAS GUARDAS, e as duas são obrigatórias:
+ *
+ * 1. SÓ ATÉ 7 DIAS de diferença. Atraso de processamento é de DIAS — medido
+ *    na base: +1 dia domina (327 de 578 divergências). Diferença de semanas
+ *    não é atraso, é outra coisa, e mover a linha por causa dela seria chute.
+ *
+ * 2. NUNCA em parcela que NÓS redistribuímos (`parcela_num > 1`). Nessas, o
+ *    `bill_post_date` é o lançamento da compra ORIGINAL, não o daquela
+ *    parcela — medido: uma parcela nossa de 03/09 vinha com post_date 07/08,
+ *    27 dias ANTES. Sem esta guarda, toda parcela futura seria arrastada pra
+ *    fatura de hoje e o valor explodiria.
+ *
+ * Medido antes de ligar (26 cartões de Open Finance): 3 faturas ficam mais
+ * perto do valor que o próprio banco informa, 12 não mudam e NENHUMA piora.
+ * Em dois cartões o erro cai de R$ 134,17 → R$ 0,00 e de R$ 182,59 → R$ 5,00.
+ */
+function dataDaFatura(tx) {
+  const d = String((tx && tx.data) || '').slice(0, 10);
+  const p = tx && tx.of_bill_post_date ? String(tx.of_bill_post_date).slice(0, 10) : null;
+  if (!p || !d) return d;
+  if (Number(tx.parcela_num) > 1) return d;
+  const delta = Math.abs(Math.round((new Date(p) - new Date(d)) / 86400000));
+  return delta > 7 ? d : p;
+}
+
 module.exports = {
   TZ, hojeSP, ultimoDia, fechamentoDe, vencimentoApos,
   cicloPorFechamento, cicloMesCalendario,
-  competenciaAtual, cicloPorCompetencia, competenciaVizinha,
+  competenciaAtual, cicloPorCompetencia, competenciaVizinha, dataDaFatura,
 };

@@ -21,7 +21,7 @@
 // original já contou no mês dela). SEM juros (decisão de produto).
 // =============================================================================
 const supabase = require('../db/supabase');
-const { cicloPorCompetencia, competenciaVizinha } = require('./cicloFatura');
+const { cicloPorCompetencia, competenciaVizinha, dataDaFatura } = require('./cicloFatura');
 const { somarFatura } = require('./valorFatura');
 
 const TZ = 'America/Sao_Paulo';
@@ -43,12 +43,32 @@ function mesSeguinte(ym) {
 //
 // NÃO filtra `transferencia` no lado do Gasto: de propósito, pra o "Fatura
 // anterior" (rollover) entrar na soma da fatura seguinte.
+//
+// ⚠️ QUEM DECIDE A FATURA É `dataDaFatura`, NÃO O CAMPO `data`. O banco agrupa
+// pela data em que ELE lançou a compra (`bill_post_date`), então uma compra do
+// DIA DO FECHAMENTO processada no dia seguinte pertence à fatura nova. Ver o
+// helper em `cicloFatura.js` — inclusive as duas guardas contra arrastar
+// parcela redistribuída.
+//
+// ⚠️ POR ISSO A JANELA DA QUERY É MAIOR QUE O CICLO. Filtrar no SQL por
+// `data` entre `ini` e `fimExcl` nunca leria a linha de 07/08 que o banco
+// lançou em 08/08 — ela ficaria de fora antes de a regra ser aplicada. Os 8
+// dias de folga cobrem com sobra o teto de 7 do helper.
 async function somaFaturaCiclo(grupoId, cartaoNome, ciclo) {
+  const folga = (dia, n) => {
+    const d = new Date(`${dia}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
   const { data } = await supabase.from('transacoes')
-    .select('valor, tipo, categoria, transferencia')
+    .select('valor, tipo, categoria, transferencia, data, of_bill_post_date, parcela_num')
     .eq('grupo_id', grupoId).ilike('carteira_nome', cartaoNome)
-    .gte('data', ciclo.ini).lt('data', ciclo.fimExcl);
-  return somarFatura(data || []);
+    .gte('data', folga(ciclo.ini, -8)).lt('data', folga(ciclo.fimExcl, 8));
+  const doCiclo = (data || []).filter((t) => {
+    const d = dataDaFatura(t);
+    return d >= ciclo.ini && d < ciclo.fimExcl;
+  });
+  return somarFatura(doCiclo);
 }
 
 async function pagoDaFatura(cartaoId, ym) {
