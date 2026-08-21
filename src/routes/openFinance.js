@@ -689,16 +689,29 @@ async function diagnosticoCelcoin(req, res) {
       try {
         item.parcelamentos = await celcoin.listarParcelamentos(raw.id);
 
-        // ⚠️ SIMULA A REDISTRIBUIÇÃO com o dado VIVO da API + as transações que
-        // o sync importaria. Responde de uma vez as três perguntas que sobravam
-        // quando "a fatura continua errada depois do sync": a API devolveu
-        // plano? algum grupo casou? o que iria mudar de data?
+        // ⚠️ MEDE A REDISTRIBUIÇÃO com o dado VIVO da API. Responde as duas
+        // perguntas que sobram quando "a fatura continua errada depois do
+        // sync": a API devolveu plano, e quais ocorrências chegam SEM o
+        // marcador `charge_identificator`.
+        //
+        // O marcador é o que empurra a parcela N pra compra + (N−1) meses. Quem
+        // chega SEM ele fica na data da COMPRA — e as parcelas do mesmo plano
+        // se EMPILHAM no mesmo dia, sumindo das faturas seguintes. Medido no
+        // cartão `gold` da jeniffer.jls@: duas linhas de R$ 108,76 no mesmo
+        // 2026-05-21, ambas sem marcador, enquanto o banco cobra a terceira num
+        // ciclo posterior.
+        //
+        // ⚠️ NÃO voltar a chamar `sync.redistribuirSemMarcador` aqui: a função
+        // foi REMOVIDA. Ela nasceu de uma medição feita no NOSSO banco (que
+        // reflete linhas antigas) em vez de na API, e reconstruía a ordem das
+        // parcelas por `occurrences` — risco alto pra um problema inexistente.
+        // A chamada morta ficou pra trás e aparecia no JSON como
+        // `"redistribuicao": { "erro": "... is not a function" }`.
         try {
           const todasTx = await celcoin.listarTransacoesCartao(raw.id, { max: 3 });
           const norm = todasTx.map((t) => sync.normalizeTxCartao(t, hoje));
-          const movidas = sync.redistribuirSemMarcador(norm, item.parcelamentos, hoje);
-          // Por plano: o que o sync enxerga de cada ocorrência. Sem isto,
-          // "realocadas: 0" não diz QUAL guarda barrou.
+          // Por plano: o que o sync enxerga de cada ocorrência — é aqui que se
+          // vê QUAL guarda barrou a parcela.
           const porId = new Map();
           for (const t of norm) if (t && t.externalId) porId.set(String(t.externalId), t);
           const crus = new Map();
@@ -721,17 +734,25 @@ async function diagnosticoCelcoin(req, res) {
               };
             }),
           }));
+          // Gastos sem marcador, AGRUPADOS por descrição+valor+data. Grupo com
+          // 2+ linhas é o sintoma: parcelas do mesmo plano empilhadas no mesmo
+          // dia porque não veio `charge_identificator` pra separá-las.
+          const semMarcador = norm.filter((t) => t && t.ehGasto && !t.parcelaTotal);
+          const pilhas = new Map();
+          for (const t of semMarcador) {
+            const k = `${String(t.descricao || '').slice(0, 34)}|${t.valor}|${String(t.data).slice(0, 10)}`;
+            pilhas.set(k, (pilhas.get(k) || 0) + 1);
+          }
           item.redistribuicao = {
             parcelamentos_lidos: (item.parcelamentos || []).length,
-            transacoes_sem_marcador: norm.filter((t) => t && t.ehGasto && !t.parcelaTotal).length,
-            realocadas: movidas.length,
-            detalhe: movidas.map((t) => ({
-              descricao: String(t.descricao || '').slice(0, 34),
-              valor: t.valor,
-              parcela: `${t.parcelaNum}/${t.parcelaTotal}`,
-              de: String(t.dataAnterior || '').slice(0, 10),
-              para: String(t.data || '').slice(0, 10),
-            })),
+            transacoes_sem_marcador: semMarcador.length,
+            empilhadas: [...pilhas.entries()]
+              .filter(([, n]) => n > 1)
+              .map(([k, n]) => {
+                const [descricao, valor, data] = k.split('|');
+                return { descricao, valor: Number(valor), data, linhas: n };
+              })
+              .sort((a, b) => b.linhas - a.linhas),
           };
         } catch (e) { item.redistribuicao = { erro: e.message }; }
         // Mede se a correção da Polp (ago/2026) pro parcelamento DUPLICADO
