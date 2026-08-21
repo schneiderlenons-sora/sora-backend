@@ -917,6 +917,28 @@ function parcelaDaTx(tx, descricao) {
 }
 
 /**
+ * `bill_post_date` — a data em que o EMISSOR lançou a compra na fatura.
+ *
+ * ⚠️ VALIDA DE VERDADE, e não é preciosismo: o Mercado Pago manda um
+  * PLACEHOLDER nesse campo. Medido na primeira carga, 88 de 89 linhas de um
+ * cartão real vieram com ano 0001 — e foram gravadas como `0001-01-01`, que
+ * é pior que não ter nada: agrupar a fatura por essa data jogaria a linha
+ * inteira pra fora de qualquer ciclo.
+ *
+ * Por isso o corte é por ANO PLAUSÍVEL, não por "parece uma data". Cartão de
+ * crédito não tem lançamento antes de 2000, e o que vier fora disso é ruído
+ * do emissor — devolve null e a linha volta a ser agrupada pela data da
+ * compra, que é o comportamento de sempre.
+ */
+function dataDeLancamento(valor) {
+  const d = String(valor || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const ano = Number(d.slice(0, 4));
+  if (!(ano >= 2000 && ano <= 2100)) return null;
+  return d;
+}
+
+/**
  * Data em que a parcela N é cobrada = compra + (N−1) meses.
  * Clampa o dia em 28 e ancora ao meio-dia UTC — MESMA regra do parcelamento
  * manual (handlers/parcelas.js), pra compra parcelada digitada e importada
@@ -1098,7 +1120,7 @@ function normalizeTxCartao(tx, hoje) {
     // `bill_post_date` = 09, e é POR ELA que o emissor decide a fatura.
     // Guardada à parte de propósito — `data` continua sendo a da COMPRA, que é
     // a que o usuário reconhece e que o resto do painel usa.
-    billPostDate: tx.bill_post_date ? String(tx.bill_post_date).slice(0, 10) : null,
+    billPostDate: dataDeLancamento(tx.bill_post_date),
   };
 }
 
