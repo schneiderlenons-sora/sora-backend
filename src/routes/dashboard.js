@@ -12,6 +12,7 @@
 // chamadas antigas — então é impossível quebrar o painel.
 // ─────────────────────────────────────────────────────────────────────────
 const express  = require('express');
+const arquivadas = require('../services/arquivadas');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
@@ -40,6 +41,8 @@ async function listarTransacoes(grupoId, { mes, tipo, limit, ate }) {
   if (mes)  query = query.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
   if (ate)  query = query.lte('data', ate); // exclui lançamentos futuros (parcelas)
   if (tipo) query = query.eq('tipo', tipo);
+  // Arquivadas (migration 131) ficam de fora — igual à lista da aba Transações.
+  query = await arquivadas.filtrar(query, {});
 
   let { data, count, error } = await query;
   if (error) {
@@ -53,6 +56,7 @@ async function listarTransacoes(grupoId, { mes, tipo, limit, ate }) {
     if (mes)  q2 = q2.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
     if (ate)  q2 = q2.lte('data', ate);
     if (tipo) q2 = q2.eq('tipo', tipo);
+    q2 = await arquivadas.filtrar(q2, {});
     let r = await q2;
     if (r.error) { // último recurso: sem embed nenhum
       let q3 = supabase.from('transacoes').select('*', { count: 'exact' })
@@ -60,6 +64,7 @@ async function listarTransacoes(grupoId, { mes, tipo, limit, ate }) {
       if (mes)  q3 = q3.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
       if (ate)  q3 = q3.lte('data', ate);
       if (tipo) q3 = q3.eq('tipo', tipo);
+      q3 = await arquivadas.filtrar(q3, {});
       r = await q3;
     }
     data = r.data; count = r.count;

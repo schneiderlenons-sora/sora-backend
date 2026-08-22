@@ -32,6 +32,12 @@ async function calcularResumo({ grupoId, mes, criadoPorId } = {}) {
     .eq('grupo_id', grupoId)
     .gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
   if (criadoPorId) q = q.eq('criado_por', criadoPorId);
+  // ⚠️ ARQUIVADAS FICAM DE FORA (migration 131). Este é o ponto ÚNICO do
+  // resumo do painel E do dashboard, então filtrar aqui cobre os dois — e
+  // garante que o total exibido bata com a soma das linhas da lista, que
+  // também as esconde. Contar aqui e esconder lá seria o número mágico que
+  // custou semanas de investigação na fatura do cartão.
+  q = await require('./arquivadas').filtrar(q, {});
   const { data: rows } = await q;
 
   let receitas = 0, gastos = 0;

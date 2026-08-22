@@ -1,4 +1,5 @@
 const express  = require('express');
+const arquivadas = require('../services/arquivadas');
 const { ehPagamentoFatura } = require('../services/categorizar');
 const router   = express.Router();
 const supabase = require('../db/supabase');
@@ -106,6 +107,9 @@ router.get('/:phone', auth, async (req, res) => {
     const grupoId = user.grupo_ativo;
 
     const { mes, tipo, categoria, limit = 50, offset = 0, criado_por, criado_por_me, criado_por_phone, ate, bill_id } = req.query;
+    // Aba "Arquivadas" (migration 131): com ?arquivadas=1 devolve SÓ as que EU
+    // escondi. Sem o parâmetro, elas ficam de fora de tudo.
+    const verArquivadas = req.query.arquivadas === '1' || req.query.arquivadas === 'true';
 
     // Tenta com JOIN — se a FK não existir no schema, cai para SELECT * sem join
     let query = supabase.from('transacoes')
@@ -133,13 +137,17 @@ router.get('/:phone', auth, async (req, res) => {
       if (outro?.id) query = query.eq('criado_por', outro.id);
     }
 
+    query = await arquivadas.filtrar(query, {
+      userId: user.id, mostrar: verArquivadas ? 'minhas' : 'nenhuma',
+    });
+
     let { data, count, error } = await query;
     if (error) {
       // Fallback: mantém o criador com colunas seguras (sem preset/cor da
       // migration 048) pra o avatar do autor não sumir. Só cai pro '*' puro
       // se nem isso funcionar (FK ausente).
       console.warn('[transacoes] join fallback:', error.message);
-      const baseQ2 = (embed) => {
+      const baseQ2 = async (embed) => {
         let q = supabase.from('transacoes').select(embed, { count: 'exact' })
           .eq('grupo_id', grupoId)
           .order('data', { ascending: false })
@@ -149,6 +157,7 @@ router.get('/:phone', auth, async (req, res) => {
         if (ate)       q = q.lte('data', ate);
         if (tipo)      q = q.eq('tipo', tipo);
         if (categoria) q = q.eq('categoria', categoria);
+        q = await arquivadas.filtrar(q, { userId: user.id, mostrar: verArquivadas ? 'minhas' : 'nenhuma' });
         if (criado_por) q = q.eq('criado_por', criado_por);
         else if (criado_por_me === 'true') q = q.eq('criado_por', user.id);
         return q;
@@ -490,6 +499,43 @@ router.post('/antecipar-cartao', auth, exigirPermissao('admin', 'escrita'), asyn
 });
 
 // DELETE /api/transacoes/:id
+// PATCH /:id/arquivar — esconde (ou mostra de novo) uma transação.
+//
+// ⚠️ NÃO É EXCLUSÃO. A linha continua no banco, com valor e data — o que
+// muda é só a VISÃO. Em conta de Open Finance apagar seria pior que inútil:
+// o próximo sync traria a transação de volta, porque a dedup é por
+// `of_tx_id` e a linha teria sumido.
+//
+// ⚠️ QUEM ARQUIVA É QUEM VÊ. Guardamos o `user_id` porque a aba
+// "Arquivadas" é pessoal: some pros dois, reaparece só pra quem escondeu.
+router.patch('/:id/arquivar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const arquivar = req.body?.arquivar !== false;   // default: arquivar
+    const { data: tx } = await supabase.from('transacoes')
+      .select('id, arquivada_por').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+    if (!tx) return res.status(404).json({ erro: 'Transação não encontrada.' });
+
+    // ⚠️ Só quem arquivou desarquiva. Sem isto, o parceiro não veria a
+    // transação mas poderia trazê-la de volta chutando o id.
+    if (!arquivar && tx.arquivada_por && tx.arquivada_por !== req.userId) {
+      return res.status(403).json({ erro: 'Quem arquivou foi outra pessoa.' });
+    }
+
+    const { error } = await supabase.from('transacoes').update({
+      arquivada_por: arquivar ? req.userId : null,
+      arquivada_em: arquivar ? new Date().toISOString() : null,
+    }).eq('id', req.params.id).eq('grupo_id', req.grupoId);
+
+    if (error) {
+      // Coluna ausente = migration 131 pendente. Diz isso em vez de um erro cru.
+      if (/arquivada_por|column/i.test(error.message)) {
+        return res.status(503).json({ erro: 'Recurso ainda não liberado no banco (migration 131).' });
+      }
+      return res.status(500).json({ erro: error.message });
+    }
+    res.json({ ok: true, arquivada: arquivar });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
 router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     // Só a transação do próprio grupo (anti-IDOR)
