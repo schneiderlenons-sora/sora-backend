@@ -139,9 +139,18 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
 
     // Limite de conexões do plano. Checado ANTES de criar o consentimento: uma
     // conexão criada na Polp e recusada aqui viraria custo sem uso.
+    //
+    // ⚠️ CONTA POR USUÁRIO, NÃO POR GRUPO. A franquia vem de
+    // `acessoOpenFinance(userId)` — é do PLANO da pessoa. Contando por grupo,
+    // quem tivesse dois grupos (gestão compartilhada) ganhava a franquia
+    // inteira de novo em cada um: conectava o mesmo banco duas vezes, dava
+    // consentimento duas vezes e a Polp cobrava DUAS vezes de nós, porque lá a
+    // cobrança é por consentimento ativo. Medido numa conta real: a conexão
+    // ficou no grupo pessoal, o usuário trocou pro compartilhado, não a viu
+    // mais e ia reconectar.
     const limite = req.ofAcesso?.limite ?? 0;
     const { count } = await supabase.from('of_conexoes')
-      .select('id', { count: 'exact', head: true }).eq('grupo_id', req.grupoId);
+      .select('id', { count: 'exact', head: true }).eq('user_id', req.userId);
     if ((count || 0) >= limite) {
       return res.status(409).json({
         erro: 'limite_conexoes',
@@ -187,15 +196,49 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
   }
 });
 
-// Conexões do grupo ativo.
+// Conexões visíveis pra quem pergunta.
+//
+// ⚠️ A CONEXÃO SEGUE O DONO, NÃO SÓ O GRUPO. O consentimento é um acordo entre
+// a PESSOA e o banco dela — não pertence ao grupo. Antes isto filtrava só por
+// `grupo_id = grupoAtivo`, e quem entrava em gestão compartilhada via o Open
+// Finance "sumir": a conexão continuava viva e sincronizando no grupo pessoal,
+// mas invisível. O caminho natural dali era reconectar — segundo
+// consentimento, segunda cobrança da Polp, pelo MESMO banco.
+//
+// Então devolvemos:
+//   · as conexões DESTE grupo (as que o parceiro também vê), e
+//   · as MINHAS, feitas em qualquer grupo meu.
+//
+// `outro_grupo` diz pra tela avisar onde ela vive — sem isso a pessoa veria uma
+// conexão listada e nenhuma conta, o que confunde igual.
 router.get('/conexoes', auth, async (req, res) => {
   try {
     const grupoId = req.authUser?.grupoAtivo;
-    if (!grupoId) return res.json({ conexoes: [] });
+    const userId = req.authUser?.id;
+    if (!grupoId && !userId) return res.json({ conexoes: [] });
+
+    const filtros = [];
+    if (grupoId) filtros.push(`grupo_id.eq.${grupoId}`);
+    if (userId) filtros.push(`user_id.eq.${userId}`);
     const { data } = await supabase.from('of_conexoes')
-      .select('external_id, provider, instituicao, status, ultimo_erro, ultima_sync, created_at')
-      .eq('grupo_id', grupoId).order('created_at', { ascending: false });
-    res.json({ conexoes: data || [] });
+      .select('external_id, provider, instituicao, status, ultimo_erro, ultima_sync, created_at, grupo_id')
+      .or(filtros.join(',')).order('created_at', { ascending: false });
+
+    // Nome do grupo de origem, só das que estão fora daqui.
+    const fora = [...new Set((data || []).filter((c) => c.grupo_id && c.grupo_id !== grupoId).map((c) => c.grupo_id))];
+    const nomes = {};
+    if (fora.length) {
+      const { data: gs } = await supabase.from('grupos').select('id, nome').in('id', fora);
+      (gs || []).forEach((g) => { nomes[g.id] = g.nome; });
+    }
+
+    res.json({
+      conexoes: (data || []).map((c) => ({
+        ...c,
+        outro_grupo: !!(c.grupo_id && c.grupo_id !== grupoId),
+        grupo_nome: nomes[c.grupo_id] || null,
+      })),
+    });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
