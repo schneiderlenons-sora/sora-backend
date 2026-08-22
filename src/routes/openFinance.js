@@ -986,8 +986,23 @@ router.delete('/conexoes/:externalId', auth, exigirPermissao('admin', 'escrita')
 // chamada termina um movimento que tenha falhado no meio.
 router.post('/conexoes/:externalId/mover', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const destino = req.authUser?.grupoAtivo;
-    if (!destino) return res.status(400).json({ erro: 'Sem grupo ativo.' });
+    // Destino explícito no corpo, ou o grupo ativo. O corpo existe pra DAR A
+    // VOLTA sem trocar de grupo antes: quem trouxe o banco pro compartilhado e
+    // se arrependeu escolhe o pessoal na própria tela.
+    const destino = (req.body && req.body.grupo_id) || req.authUser?.grupoAtivo;
+    if (!destino) return res.status(400).json({ erro: 'Sem grupo de destino.' });
+
+    // ⚠️ SÓ PRA GRUPO DELE. Sem esta checagem, mandar um `grupo_id` qualquer no
+    // corpo empurraria as contas e o histórico pro grupo de um estranho.
+    if (destino !== req.authUser?.grupoAtivo) {
+      const { data: membro } = await supabase.from('grupo_membros')
+        .select('id').eq('grupo_id', destino).eq('user_id', req.authUser?.id).maybeSingle();
+      const { data: dono } = await supabase.from('grupos')
+        .select('dono_id').eq('id', destino).maybeSingle();
+      if (!membro && dono?.dono_id !== req.authUser?.id) {
+        return res.status(403).json({ erro: 'Você não participa desse grupo.' });
+      }
+    }
 
     const { data: cx } = await supabase.from('of_conexoes').select('*')
       .eq('external_id', req.params.externalId).maybeSingle();
