@@ -960,4 +960,123 @@ router.delete('/conexoes/:externalId', auth, exigirPermissao('admin', 'escrita')
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+
+// ── TRAZER UMA CONEXÃO (E OS DADOS DELA) PRO GRUPO ATUAL ────────────────────
+//
+// Existe porque a conexão fica no grupo em que foi criada. Quem conectou o
+// banco no grupo pessoal e depois passou a usar gestão compartilhada via o
+// Open Finance "sumir" — e o caminho natural dali era reconectar, que é um
+// SEGUNDO consentimento pelo mesmo banco, cobrado de novo pela Polp.
+//
+// ⚠️ É EXPLÍCITO, NÃO AUTOMÁTICO. Mover sozinho ao trocar de grupo exporia o
+// banco de uma pessoa aos outros membros no instante em que ela trocasse de
+// contexto — decisão de privacidade que o sistema não pode tomar pelo dono.
+//
+// ⚠️ SÓ O DONO DO CONSENTIMENTO MOVE. O consentimento é um acordo entre a
+// PESSOA e o banco dela; um admin do grupo não pode arrastar o banco de outro.
+//
+// ⚠️ QUAIS CARTEIRAS SÃO DESTA CONEXÃO: `wallets` não guarda vínculo com a
+// conexão que a criou — só `of_conta_id`. Então perguntamos ao PROVEDOR quais
+// contas e cartões pertencem a este consentimento e movemos só essas. Sem isso,
+// num grupo com duas conexões, mover uma arrastaria as carteiras da outra.
+// Se o provedor não responder, só seguimos quando o grupo de origem tem UMA
+// conexão — aí a atribuição é inequívoca. Caso contrário, recusa.
+//
+// Idempotente: procura as carteiras na origem E no destino, então repetir a
+// chamada termina um movimento que tenha falhado no meio.
+router.post('/conexoes/:externalId/mover', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const destino = req.authUser?.grupoAtivo;
+    if (!destino) return res.status(400).json({ erro: 'Sem grupo ativo.' });
+
+    const { data: cx } = await supabase.from('of_conexoes').select('*')
+      .eq('external_id', req.params.externalId).maybeSingle();
+    if (!cx) return res.status(404).json({ erro: 'Conexão não encontrada.' });
+    if (cx.user_id && cx.user_id !== req.authUser?.id) {
+      return res.status(403).json({
+        erro: 'nao_e_dono',
+        mensagem: 'Só quem conectou este banco pode movê-lo — o consentimento é pessoal.',
+      });
+    }
+    const origem = cx.grupo_id;
+    if (origem === destino) return res.json({ ok: true, jaEstava: true, movidas: 0 });
+
+    // 1. Contas/cartões DESTE consentimento, segundo o provedor.
+    let idsDoConsent = null;
+    try {
+      if (cx.provider === 'polp-celcoin') {
+        const celcoin = require('../services/polpCelcoin');
+        const [contas, cartoes] = await Promise.all([
+          celcoin.listarContas(cx.external_id).catch(() => []),
+          celcoin.listarCartoes(cx.external_id).catch(() => []),
+        ]);
+        const ids = [...(contas || []), ...(cartoes || [])].map((x) => String(x.id)).filter(Boolean);
+        if (ids.length) idsDoConsent = new Set(ids);
+      }
+    } catch { /* cai no fallback abaixo */ }
+
+    if (!idsDoConsent) {
+      const { count } = await supabase.from('of_conexoes')
+        .select('id', { count: 'exact', head: true }).eq('grupo_id', origem);
+      if ((count || 0) > 1) {
+        return res.status(409).json({
+          erro: 'ambiguo',
+          mensagem: 'Não consegui confirmar com o banco quais contas são desta conexão, e o grupo '
+            + 'de origem tem mais de uma. Tente de novo em alguns minutos.',
+        });
+      }
+    }
+
+    // 2. Carteiras a mover — na origem E no destino (idempotência).
+    const { data: candidatas } = await supabase.from('wallets')
+      .select('id, nome, of_conta_id').in('grupo_id', [origem, destino]).not('of_conta_id', 'is', null);
+    const minhas = (candidatas || []).filter((w) => !idsDoConsent || idsDoConsent.has(String(w.of_conta_id)));
+    if (!minhas.length) return res.json({ ok: true, movidas: 0, aviso: 'Nenhuma conta encontrada pra esta conexão.' });
+
+    // 3. Colisão de nome no destino. `wallets` tem unique (grupo_id, nome) e as
+    //    transações apontam pra carteira POR NOME — renomear no meio do caminho
+    //    deixaria histórico órfão. Melhor recusar e explicar.
+    const nomes = [...new Set(minhas.map((w) => w.nome))];
+    const idsMinhas = new Set(minhas.map((w) => w.id));
+    const { data: jaLa } = await supabase.from('wallets')
+      .select('id, nome').eq('grupo_id', destino).in('nome', nomes);
+    const conflito = (jaLa || []).filter((w) => !idsMinhas.has(w.id)).map((w) => w.nome);
+    if (conflito.length) {
+      return res.status(409).json({
+        erro: 'nome_duplicado',
+        nomes: conflito,
+        mensagem: `O grupo atual já tem uma conta chamada "${conflito[0]}". Renomeie uma das duas `
+          + 'antes de trazer o banco pra cá.',
+      });
+    }
+
+    // 4. Move. Carteiras primeiro (é a âncora), conexão por ÚLTIMO — se algo
+    //    falhar no meio, o sync continua escrevendo na origem e dá pra repetir.
+    const walletIds = [...idsMinhas];
+    const contaIds = minhas.map((w) => String(w.of_conta_id));
+    const passos = [];
+    const mover = async (tabela, coluna, valores) => {
+      if (!valores.length) return;
+      const { error, count } = await supabase.from(tabela)
+        .update({ grupo_id: destino }, { count: 'exact' })
+        .eq('grupo_id', origem).in(coluna, valores);
+      passos.push({ tabela, movidas: error ? 0 : (count || 0), erro: error ? error.message.slice(0, 80) : null });
+    };
+
+    await mover('wallets', 'id', walletIds);
+    await mover('transacoes', 'carteira_nome', nomes);
+    await mover('recorrencias', 'carteira', nomes);
+    for (const t of ['pagamentos_fatura', 'of_faturas', 'of_parcelas_previstas', 'fatura_rollover']) {
+      await mover(t, 'cartao_id', walletIds);
+    }
+    await mover('of_caixinhas', 'of_conta_id', contaIds);
+
+    const { error: eCx } = await supabase.from('of_conexoes')
+      .update({ grupo_id: destino }).eq('id', cx.id);
+    if (eCx) return res.status(500).json({ erro: `As contas foram movidas, mas a conexão não: ${eCx.message}` });
+
+    res.json({ ok: true, contas: minhas.length, de: origem, para: destino, passos });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 module.exports = router;
