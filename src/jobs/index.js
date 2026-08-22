@@ -80,6 +80,51 @@ async function phoneDoUser(userId, grupoId) {
   return grupoId ? phoneDono(grupoId) : null;
 }
 
+// ⚠️ TODOS OS MEMBROS DO GRUPO, não só o dono.
+//
+// BUG QUE ISTO CORRIGE: os avisos de dinheiro (conta fixa vencendo, dívida,
+// fatura, limite estourado) saíam sempre pro `grupos.dono_id`. Em gestão
+// compartilhada o parceiro tinha WhatsApp vinculado e NUNCA recebia nada —
+// medido: 2 pessoas em produção nessa situação. O Grow já tinha sido corrigido
+// (o lembrete vai pro `user_id` dono da linha); a parte financeira ficou pra trás.
+//
+// Devolve `{ id, phone, lembretes_dividas }` de quem tem WhatsApp. O dono entra
+// mesmo sem linha em `grupo_membros` — os 130 grupos "Pessoal" criados pelo
+// trigger não têm nenhuma.
+//
+// ⚠️ NÃO USAR EM AVISO QUE ESPERA RESPOSTA. Onde o cron cria um
+// `transacoes_pendentes` (o rollover da fatura pergunta "quer rolar?"), mandar
+// pros dois criaria duas conversas pendentes pro mesmo cartão e a resposta de
+// um sobrescreveria a do outro. Lá continua só o dono, de propósito.
+async function membrosDoGrupo(grupoId) {
+  if (!grupoId) return [];
+  const ids = new Set();
+  const { data: g } = await supabase.from('grupos').select('dono_id').eq('id', grupoId).maybeSingle();
+  if (g?.dono_id) ids.add(g.dono_id);
+  const { data: ms } = await supabase.from('grupo_membros').select('user_id').eq('grupo_id', grupoId);
+  (ms || []).forEach((m) => { if (m.user_id) ids.add(m.user_id); });
+  if (!ids.size) return [];
+  const { data: us } = await supabase.from('users')
+    .select('id, phone, lembretes_dividas').in('id', [...ids]);
+  return (us || []).filter((u) => u.phone);
+}
+
+/**
+ * Manda uma cópia INFORMATIVA pros outros membros do grupo (todos menos
+ * `exceto`), respeitando o kill-switch de cada um.
+ *
+ * ⚠️ É pra aviso que já foi entregue de forma ACIONÁVEL a uma pessoa. Serve
+ * exatamente pro caso em que o aviso principal cria um pendente e por isso não
+ * pode ser duplicado — o parceiro fica sabendo do fato sem receber a pergunta.
+ */
+async function avisarOutrosMembros(grupoId, exceto, texto, agente = {}) {
+  for (const m of await membrosDoGrupo(grupoId)) {
+    if (m.id === exceto) continue;
+    if (!(await avisosLigados(m.id))) continue;
+    await lembrete(m.phone, texto, null, { id: 'sardinha', ...agente });
+  }
+}
+
 // Busca o dono do grupo (id + phone) — preciso do id pra criar pendentes.
 async function donoDoGrupo(grupoId) {
   const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', grupoId).single();
@@ -178,6 +223,16 @@ async function processarFaturas() {
         titulo: `💳 *Fatura do ${c.nome} fechou*`,
         ciclo, total, dono, cartao: c, competencia,
       });
+      // ⚠️ CÓPIA INFORMATIVA PROS DEMAIS MEMBROS. O aviso acima é ACIONÁVEL —
+      // o `avisarFatura` cria um pendente ("com qual conta quer pagar?"). Mandar
+      // aquele pros dois abriria duas conversas pro mesmo cartão e a resposta de
+      // um sobrescreveria a do outro. Então o dono do cartão recebe a pergunta e
+      // o parceiro recebe só a notícia — que é o que faltava: numa gestão
+      // compartilhada ele não sabia nem que a fatura tinha fechado.
+      await avisarOutrosMembros(c.grupo_id, dono.id,
+        `💳 *Fatura do ${c.nome} fechou*\n💵 Total: R$ ${total.toFixed(2)}`
+        + `\n📅 Vence em ${ciclo.venc.split('-').reverse().slice(0, 2).join('/')}`,
+        { aviso: 'fatura', seed: c.id });
       await supabase.from('wallets').update({ ultimo_aviso_fechamento: hojeStr }).eq('id', c.id);
     } else if (vence) {
       // "Vence hoje" é responsabilidade do BRIEFING matinal (que lista o que
@@ -943,17 +998,25 @@ cron.schedule('0 9 * * *', async () => {
 
     if (!mensagem) continue;
 
-    // Busca o telefone do dono e checa se ele tem lembretes_dividas ligado
-    const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', d.grupo_id).single();
-    if (!grupo) continue;
-    const { data: user } = await supabase.from('users').select('phone, lembretes_dividas').eq('id', grupo.dono_id).single();
-    if (!user?.phone || user.lembretes_dividas === false) continue;
-    if (!(await avisosLigados(grupo.dono_id))) continue; // kill-switch
-    // "Vence hoje" é do briefing matinal — se ligado, não duplica aqui (só
-    // antecedência de 3 dias e atraso seguem no cron). Briefing off → manda.
-    if (venceHoje && await briefingLigado(grupo.dono_id)) continue;
-
-    await lembrete(user.phone, mensagem, null, { id: 'don-baleone', aviso: 'dividas', seed: d.id });
+    // ⚠️ TODOS OS MEMBROS, não só o dono — a dívida é do GRUPO, e o parceiro
+    // também precisa saber que ela vence. Cada um decide por si: os toggles
+    // (`lembretes_dividas`, kill-switch, briefing) são checados POR PESSOA,
+    // então quem desligou continua sem receber.
+    const membros = await membrosDoGrupo(d.grupo_id);
+    let enviou = false;
+    for (const m of membros) {
+      if (m.lembretes_dividas === false) continue;
+      if (!(await avisosLigados(m.id))) continue; // kill-switch
+      // "Vence hoje" é do briefing matinal — se ligado, não duplica aqui (só
+      // antecedência de 3 dias e atraso seguem no cron). Briefing off → manda.
+      if (venceHoje && await briefingLigado(m.id)) continue;
+      await lembrete(m.phone, mensagem, null, { id: 'don-baleone', aviso: 'dividas', seed: d.id });
+      enviou = true;
+    }
+    // ⚠️ A marca de "já avisei hoje" é da DÍVIDA, não da pessoa: só grava se
+    // alguém recebeu. Gravar mesmo sem envio (todos com aviso desligado)
+    // queimaria o lembrete do dia pra quem ligasse o toggle depois.
+    if (!enviou) continue;
     await supabase.from('dividas').update({ ultimo_lembrete_em: hojeStr }).eq('id', d.id);
   }
   console.log('✅ Lembretes de dívidas processados.');
