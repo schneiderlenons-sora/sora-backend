@@ -22,15 +22,27 @@
 // =============================================================================
 const supabase = require('../db/supabase');
 
-// ⚠️ SONDA COM CACHE. Filtrar por coluna que não existe faz o Supabase falhar o
-// SELECT INTEIRO e devolver vazio — a lista de transações sumiria pra todo
-// mundo enquanto a migration 131 não rodasse. Então perguntamos uma vez se a
-// coluna existe e, enquanto não existir, o filtro é no-op.
+// ⚠️ SONDA. Filtrar por coluna que não existe faz o Supabase falhar o SELECT
+// INTEIRO e devolver vazio — a lista de transações sumiria pra todo mundo
+// enquanto a migration 131 não rodasse. Por isso perguntamos antes.
+//
+// ⚠️ O "NÃO" TEM VALIDADE, O "SIM" NÃO. Cachear o negativo pra sempre foi um
+// bug real: o servidor subiu ANTES da migration, sondou, guardou "não existe" e
+// nunca mais perguntou — a pessoa rodava a 131, arquivava a transação (gravava
+// certo no banco!) e ela voltava a aparecer, porque a leitura seguia sem filtro
+// até alguém reiniciar o Render.
+//
+// Coluna não desaparece, então o "sim" pode ser eterno. O "não" é reconferido a
+// cada minuto: depois da migration o recurso liga sozinho, sem deploy.
+const TTL_NEGATIVO = 60 * 1000;
 let _suportado = null;
+let _checadoEm = 0;
 async function suportado() {
-  if (_suportado !== null) return _suportado;
+  if (_suportado === true) return true;
+  if (_suportado === false && Date.now() - _checadoEm < TTL_NEGATIVO) return false;
   const { error } = await supabase.from('transacoes').select('arquivada_por').limit(1);
   _suportado = !error;
+  _checadoEm = Date.now();
   if (!_suportado) console.warn('[arquivadas] coluna ausente — migration 131 pendente; filtro desligado');
   return _suportado;
 }
