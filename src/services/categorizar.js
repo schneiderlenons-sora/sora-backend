@@ -289,8 +289,35 @@ function mapearCategoriaPluggy(pluggyCat) {
 }
 
 // Decisão final: descrição (mesma engine do OFX) → categoria do Pluggy → 'Outros'.
-function categorizar({ descricao, pluggyCategoria } = {}) {
-  return categorizarDescricao(descricao) || mapearCategoriaPluggy(pluggyCategoria) || 'Outros';
+// Categorias que só fazem sentido como ENTRADA → o par de saída.
+const SO_RECEITA = { PIX: 'Pix enviado' };
+
+/**
+ * Corrige a categoria pela DIREÇÃO do lançamento.
+ *
+ * O motor de palavras-chave olha só a descrição, e "Pix enviado" e "Pix
+ * recebido" casam na mesma regra → os dois caíam em `PIX`, que na taxonomia é
+ * categoria de RECEITA. Um Pix que SAI ficava com categoria de entrada.
+ *
+ * O dinheiro nunca sumiu: Transações e Relatórios somam por `tipo`, então a
+ * saída sempre contou como despesa. Quem escondia era a aba CATEGORIAS, que
+ * lista as categorias de despesa e não achava `PIX` entre elas. Medido: 1.106
+ * lançamentos de Gasto com essa categoria na base, e `PIX` é de receita nos
+ * 141 grupos — não era caso isolado.
+ *
+ * ⚠️ O DESTINO PRECISA EXISTIR NA TAXONOMIA. O campo `categoria` é texto
+ * livre, e um nome que não é categoria cadastrada some da aba do mesmo jeito —
+ * seria trocar um bug pelo outro. `Pix enviado` é criada pela migration 132 em
+ * todos os grupos, pendurada em Financeiro.
+ */
+function ajustarPorDirecao(categoria, ehGasto) {
+  if (!ehGasto || !categoria) return categoria;
+  return SO_RECEITA[categoria] || categoria;
+}
+
+function categorizar({ descricao, pluggyCategoria, ehGasto } = {}) {
+  const cat = categorizarDescricao(descricao) || mapearCategoriaPluggy(pluggyCategoria) || 'Outros';
+  return ajustarPorDirecao(cat, ehGasto);
 }
 
 // ── Pagamento de fatura do cartão ───────────────────────────────────────────
@@ -364,6 +391,7 @@ function ehPagamentoFaturaDescricao(descricao, categoriaExterna) {
 }
 
 module.exports = {
+  ajustarPorDirecao,
   categorizar, categorizarDescricao, mapearCategoriaPluggy,
   CATEGORIA_FATURA, CATEGORIA_FATURA_LEGADO, CATEGORIA_ESTORNO,
   ehPagamentoFatura, ehPagamentoFaturaDescricao,

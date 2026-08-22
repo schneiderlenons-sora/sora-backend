@@ -158,7 +158,14 @@ const MAPA_CATEGORIA_CELCOIN = {
   GOVERNMENT_AND_NON_PROFIT_DONATIONS: 'Doações',
 };
 
-function categoriaDe(descricao, categoryRef) {
+// ⚠️ `ehGasto` NÃO é opcional na prática: sem ele o Pix enviado volta a
+// receber a categoria de receita. Ver `ajustarPorDirecao`.
+function categoriaDe(descricao, categoryRef, ehGasto) {
+  const { ajustarPorDirecao } = require('./categorizar');
+  return ajustarPorDirecao(categoriaBruta(descricao, categoryRef), ehGasto);
+}
+
+function categoriaBruta(descricao, categoryRef) {
   // 1) descrição (motor local — reconhece marca brasileira)
   const porDesc = categorizarDescricao(descricao);
   if (porDesc) return porDesc;
@@ -854,7 +861,7 @@ function normalizeTxConta(tx) {
     descricao,
     categoria: ehTransferencia
       ? (pagouFatura ? CATEGORIA_FATURA : 'Transferências')
-      : categoriaDe(descricao, ref),
+      : categoriaDe(descricao, ref, ehGasto),
     data: tx.transaction_date_time || tx.created_at,
     transferencia: ehTransferencia,
     card: null,
@@ -1095,7 +1102,7 @@ function normalizeTxCartao(tx, hoje) {
     descricao,
     categoria: pagouFatura ? CATEGORIA_FATURA
       : creditoAjuste ? CATEGORIA_ESTORNO
-        : categoriaDe(descricao, tx.category_ref),
+        : categoriaDe(descricao, tx.category_ref, !ehCredito),
     data,
     transferencia: ehTransferencia,
     // Parcela que ainda não foi cobrada nasce NÃO paga (o resto do cartão nasce
