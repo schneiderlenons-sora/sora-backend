@@ -101,7 +101,7 @@ router.get('/diag', async (req, res) => {
             seed: 'teste-agentes',
           })
         : { coreAgente: `Teste do agente ${AGENTES[id].nome} — ainda sem voz própria (fase 4), mas template e foto já funcionam.` };
-      const tpl = templateAgente(id, vestida.coreAgente || vestida.core);
+      const tpl = templateAgente(id, vestida.coreAgente || vestida.core, avisoId);
       if (!tpl) { resultados.push({ agente: id, ok: false, motivo: 'AGENTES_TEMPLATE desligado ou sem core' }); continue; }
       const ok = await wa.enviarTemplate(NUMERO_DONO, tpl.name, tpl.params, 'pt_BR', tpl.opts);
       resultados.push({

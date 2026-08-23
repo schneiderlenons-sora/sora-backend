@@ -350,7 +350,7 @@ async function avisarDuplicadas(grupoId, fallbackPhone) {
     const vestida = falar('detetive-watson', 'duplicadas', { texto, core, seed: grupoId });
     await enviarProativo(phone, {
       texto: vestida.texto,
-      template: templateAgente('detetive-watson', vestida.coreAgente) || undefined,
+      template: templateAgente('detetive-watson', vestida.coreAgente, 'duplicadas') || undefined,
     });
     return novos.length;
   } catch { return 0; }   // aviso é efeito colateral: nunca derruba o sync

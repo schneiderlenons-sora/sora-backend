@@ -242,6 +242,44 @@ function falar(agenteId, avisoId, { texto = '', core = '', seed } = {}) {
 }
 
 /**
+ * Título do aviso — o {{1}} do template `agente_aviso`.
+ *
+ * ⚠️ ISTO NÃO PRECISA DE APROVAÇÃO DA META. O corpo do template é fixo
+ * ("🐋 Recado da tripulação: {{1}}") e mudá-lo exige submeter modelo novo,
+ * mas o CONTEÚDO do {{1}} é nosso. Antes ia só o nome do agente, então todo
+ * aviso chegava igual: "Recado da tripulação: Loki". Agora o assunto vem
+ * junto e a pessoa sabe do que se trata antes de abrir.
+ *
+ * Cada chave é `agente.aviso`, as MESMAS de VOZES — se a voz existe, o
+ * título existe. Sem entrada, cai no nome do agente (comportamento antigo).
+ */
+const TITULO_AVISO = {
+  'sardinha.recorrencias':     'Conta fixa vencendo',
+  'sardinha.lembretes':        'Lembrete',
+  'sardinha.parcelas':         'Parcela vencendo',
+  'sardinha.fatura':           'Fatura do cartão',
+  'don-baleone.dividas':       'Dívida vencendo',
+  'don-baleone.limite':        'Limite de gasto',
+  'detetive-watson.duplicadas':'Cobrança repetida',
+  'sora.resumo-semanal':       'Resumo da semana',
+  'sora.resumo-mensal':        'Fechamento do mês',
+  'loki.briefing':             'Sua agenda de hoje',
+  'loki.habitos':              'Hábitos de hoje',
+  'loki.compromissos':         'Compromisso chegando',
+  'loki.manutencoes':          'Manutenção da casa',
+  'dr-house.medicamentos':     'Hora do remédio',
+  'dr-house.consultas':        'Consulta marcada',
+};
+
+/** `Assunto · Agente` — o assunto primeiro, que é o que a pessoa lê antes de
+ *  decidir se abre. Sem título cadastrado, só o nome (como era). */
+function tituloDe(agenteId, avisoId) {
+  const agente = AGENTES[agenteId];
+  const t = TITULO_AVISO[`${agenteId}.${avisoId}`];
+  if (!agente) return t || '';
+  return t ? `${t} · ${agente.nome}` : agente.nome;
+}
+/**
  * Template com a foto e o nome do agente, pro envio FORA da janela de 24h.
  *
  * Devolve `null` quando a fase 3 está desligada ou o agente é desconhecido —
@@ -250,13 +288,13 @@ function falar(agenteId, avisoId, { texto = '', core = '', seed } = {}) {
  * @param {string} agenteId
  * @param {string} core  recado em UMA linha, já sem o nome do agente
  */
-function templateAgente(agenteId, core) {
+function templateAgente(agenteId, core, avisoId) {
   const agente = AGENTES[agenteId];
   if (!TEMPLATE_LIGADO || !agente || !core) return null;
   return {
     name: TPL_AGENTE,
-    // {{1}} nome do agente · {{2}} o recado na voz dele
-    params: [agente.nome, String(core).replace(/\s*[\r\n\t]+\s*/g, ' ').trim().slice(0, MAX_CORE)],
+    // {{1}} ASSUNTO · agente  ·  {{2}} o recado na voz dele
+    params: [tituloDe(agenteId, avisoId), String(core).replace(/\s*[\r\n\t]+\s*/g, ' ').trim().slice(0, MAX_CORE)],
     // A Meta EXIGE o parâmetro de header em todo envio quando o template tem
     // cabeçalho de mídia — senão recusa e o aviso não chega. Agente sem arte
     // usa a capa da Sora (ver `arte` no catálogo).
@@ -281,5 +319,6 @@ function templateAgente(agenteId, core) {
 const temVoz = (agenteId, avisoId) => !!VOZES[`${agenteId}.${avisoId}`];
 
 module.exports = {
+  tituloDe,
   falar, temVoz, templateAgente, AGENTES, VOZES, VOZ_LIGADA, TEMPLATE_LIGADO,
 };

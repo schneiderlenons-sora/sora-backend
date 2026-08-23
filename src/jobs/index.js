@@ -32,7 +32,7 @@ const lembrete = async (phone, texto, core, agente) => {
   // Fase 3: fora da janela de 24h o aviso vai no template do AGENTE — a foto
   // dele no cabeçalho e o nome no {{1}}. `null` quando a fase está desligada.
   const tplAgente = agente
-    ? templateAgente(agente.id, vestida.coreAgente || core || texto)
+    ? templateAgente(agente.id, vestida.coreAgente || core || texto, agente.aviso)
     : null;
 
   // O template 'lembretes_gerais' tem cabeçalho de IMAGEM → a Meta EXIGE a capa
@@ -856,9 +856,21 @@ cron.schedule('*/15 * * * *', async () => {
     const txt =
       `Sua agenda de hoje (${dataFmt}):\n\n${linhas.join('\n')}\n\n` +
       `Tenha um ótimo dia! 💜`;
-    // Param {{2}} do template em LINHA ÚNICA — a Meta rejeita \n no parâmetro (era
-    // por isso que o briefing não chegava). Junta os eventos com " · ".
-    const resumo = oneLine(linhas.join('  ·  ')).slice(0, 900);
+    // ⚠️ O param {{2}} do template é UMA LINHA — a Meta rejeita quebra de
+    // linha ali (era por isso que o briefing não chegava). Fora da janela de
+    // 24h só existe template, então NÃO dá pra separar os itens nesse envio:
+    // é limite da API, não escolha nossa. Dentro da janela vai o `txt` acima,
+    // com um item por linha.
+    //
+    // ⚠️ A versão inline é montada À PARTE, não é o join da lista vertical.
+    // Lá o marcador de item faz sentido; em linha corrida ele vira ruído — a
+    // pessoa recebia "📌 • Ir na agência · 🧾 • Fecha fatura". Aqui o
+    // marcador some e a hora entra só quando existe.
+    const resumo = oneLine(eventos.map((e) => {
+      const h = e.hora ? `${e.hora} ` : '';
+      const val = e.valor != null ? ` (R$ ${Number(e.valor).toFixed(2)})` : '';
+      return `${EMOJI_AGENDA[e.source] || '•'} ${h}${e.titulo}${val}`;
+    }).join('  ·  ')).slice(0, 900);
     // O BRIEFING É DO LOKI — ele é o dono da agenda (compromissos, hábitos,
     // manutenções já são a voz dele). `falar()` veste o texto rico e o `core`
     // (fora da janela de 24h) na personalidade dele; `templateAgente('loki', …)`
@@ -869,7 +881,7 @@ cron.schedule('*/15 * * * *', async () => {
     const vestida = falar('loki', 'briefing', { texto: txt, core: resumo, seed: u.id });
     await enviarProativo(u.phone, {
       texto: vestida.texto,
-      template: templateAgente('loki', vestida.coreAgente || resumo) || {
+      template: templateAgente('loki', vestida.coreAgente || resumo, 'briefing') || {
         name: 'briefing_matinal',
         params: [(u.name || 'tudo bem').split(' ')[0], resumo],
         opts: { headerImage: CAPA },
@@ -1411,7 +1423,7 @@ cron.schedule('*/15 * * * *', async () => {
           // O `agente_aviso` leva a MANCHETE inteira (que o template
           // `resumo_semanal` não tem onde encaixar) e a cara do Sora. Se a
           // fase 3 estiver desligada, cai no template aprovado de sempre.
-          template: templateAgente('sora', vestida.coreAgente) || {
+          template: templateAgente('sora', vestida.coreAgente, 'resumo-semanal') || {
             name: 'resumo_semanal',
             // corpo: {{1}} nome · {{2}} gasto · {{3}} recebido | cabeçalho IMAGE = capa
             params: [primeiroNome, brl(atual.gastos), brl(atual.receitas)],
@@ -1466,7 +1478,7 @@ cron.schedule('*/15 * * * *', async () => {
         const primeiroNome = (u.name || 'tudo bem').split(' ')[0];
         await enviarProativo(u.phone, {
           texto: vestida.texto,
-          template: templateAgente('sora', vestida.coreAgente) || {
+          template: templateAgente('sora', vestida.coreAgente, 'resumo-mensal') || {
             name: 'resumo_mensal',
             params: [primeiroNome, mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
             opts: { headerImage: CAPA }, // cabeçalho IMAGE = capa
