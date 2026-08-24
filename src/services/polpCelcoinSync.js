@@ -362,7 +362,10 @@ function usoConhecido(card, bills) {
   const vals = (Array.isArray(bills) ? bills : [])
     .map((b) => money(b && b.bill_total_amount))
     .filter((v) => v != null);
-  const sim = faturaSimulada(card);
+  // A fatura EM CURSO também é gasto conhecido. Depois do breaking change de
+  // 24/08/2026 ela chega em `limits[].unbilled_amount`; o campo antigo fica de
+  // reserva pra payload velho.
+  const sim = unbilledDoCartao(card) ?? faturaSimulada(card);
   if (sim != null) vals.push(sim);
   return vals.length ? Math.max(...vals) : null;
 }
@@ -481,6 +484,48 @@ function faturaSimulada(fonte) {
   const n = money(v);
   // Zero é resposta VÁLIDA (fatura quitada) — só descarta o que não veio.
   return n == null ? null : Math.max(0, n);
+}
+
+/**
+ * Fatura em curso pelo campo NOVO da Celcoin — `unbilled_amount`.
+ *
+ * ⚠️ BREAKING CHANGE DA POLP EM 24/08/2026: `simulated_bill_total_amount` foi
+ * REMOVIDO da raiz do cartão (e das faturas — sumiu de todos os 35 docs). No
+ * lugar, cada item de `limits[]` ganhou `unbilled_amount`, definido como "soma
+ * do `brazilian_amount` das transações com `bill_id` null e `bill_post_date`
+ * posterior a `bill_closing_date + 1 mês`, filtradas pelo
+ * `identification_number` daquele limite".
+ *
+ * Ou seja: o valor deixou de ser do CARTÃO e passou a ser por PLÁSTICO
+ * (titular, adicional, virtual). Sem esta função o `faturaSimulada` devolveria
+ * null pra todo mundo e a fonte nº 2 do `faturaVista` morreria calada — o
+ * painel cairia no fallback de somar transações, que é justamente o que erra
+ * quando falta lançamento.
+ *
+ * ⚠️ SOMA POR `identification_number` DISTINTO, não linha a linha. O mesmo
+ * plástico aparece em mais de uma linha de `limits[]` (uma por modalidade), e
+ * somar cada linha contaria o mesmo cartão duas vezes — no cartão medido são
+ * duas linhas idênticas por plástico. Linhas sem `identification_number`
+ * colapsam numa chave só, pra nunca inflar.
+ *
+ * ⚠️ `null` ≠ `0`. A doc diz que o campo vem null quando o cartão não tem
+ * fatura com data de fechamento; virar R$ 0,00 ali é a mentira de "fatura
+ * zerada" que já custou um diagnóstico inteiro. Só devolve número quando ao
+ * menos uma linha respondeu.
+ */
+function unbilledDoCartao(card) {
+  const arr = Array.isArray(card && card.limits) ? card.limits : [];
+  const porPlastico = new Map();
+  for (const l of arr) {
+    if (!l) continue;
+    const v = money(l.unbilled_amount != null ? l.unbilled_amount : l.unbilledAmount);
+    if (v == null) continue;
+    const chave = l.identification_number != null ? String(l.identification_number) : '__sem_id';
+    if (!porPlastico.has(chave)) porPlastico.set(chave, v);
+  }
+  if (!porPlastico.size) return null;
+  const total = [...porPlastico.values()].reduce((s, v) => s + v, 0);
+  return Math.max(0, cent(total));
 }
 
 /**
@@ -795,7 +840,12 @@ function normalizeCartao(card, bills, hoje) {
   //
   // Procuro na fatura aberta E no cartão: sem fatura publicada (o caso do MP)
   // só o cartão pode trazer. Ausente = `null` e tudo segue como antes.
-  const simulada = faturaSimulada(aberta) ?? faturaSimulada(card);
+  //
+  // ⚠️ ORDEM: o `unbilled_amount` vem PRIMEIRO porque é o contrato ATUAL da
+  // Celcoin (24/08/2026); o `simulated_bill_total_amount` foi removido na mesma
+  // data e só continua sendo lido pra não quebrar payload antigo em cache ou
+  // eventual endpoint que ainda o devolva.
+  const simulada = unbilledDoCartao(card) ?? faturaSimulada(aberta) ?? faturaSimulada(card);
   const faturaRestante = simulada != null ? simulada : publicadaRestante;
 
   return {
@@ -2169,7 +2219,7 @@ module.exports = {
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
-  faturaSimulada,
+  faturaSimulada, unbilledDoCartao,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };

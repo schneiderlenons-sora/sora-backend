@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/credit-fixed-incomes/transactions
-# baixado em 2026-08-19
+# baixado em 2026-08-24
 
 ownload Bruno Collection
 GET/credit-fixed-incomes/{creditFixedIncome}/transactions

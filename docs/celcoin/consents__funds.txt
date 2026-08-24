@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/consents/funds
-# baixado em 2026-08-19
+# baixado em 2026-08-24
 
 ownload Bruno Collection
 GET/consents/{consent}/funds

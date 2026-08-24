@@ -164,6 +164,66 @@ console.log('── 4. fatura simulada ──');
 }
 console.log('  ok');
 
+// ── 4B. unbilled_amount — o SUBSTITUTO (breaking change de 24/08/2026) ──────
+// A Polp REMOVEU `simulated_bill_total_amount` da raiz do cartão (sumiu dos 35
+// docs, inclusive das faturas) e pôs `unbilled_amount` dentro de cada item de
+// `limits[]`, calculado por `identification_number` — ou seja, por PLÁSTICO.
+// Sem ler o campo novo, a fonte nº 2 do faturaVista morreria calada e todo
+// cartão cairia no fallback de somar transações, que é o que erra quando falta
+// lançamento.
+console.log('── 4B. unbilled_amount (campo novo) ──');
+{
+  const { unbilledDoCartao } = require('../src/services/polpCelcoinSync');
+
+  eq(unbilledDoCartao({ limits: [{ identification_number: '4351', unbilled_amount: { amount: 175.5 } }] }),
+    175.5, 'lê o campo dentro de limits[]');
+  eq(unbilledDoCartao({}), null, 'sem limits devolve null');
+  eq(unbilledDoCartao({ limits: [] }), null, 'limits vazio devolve null');
+  eq(unbilledDoCartao({ limits: [{ identification_number: '4351' }] }), null,
+    'linha SEM o campo devolve null — "nao veio" nunca pode virar R$ 0,00');
+  eq(unbilledDoCartao({ limits: [{ identification_number: '4351', unbilled_amount: { amount: 0 } }] }), 0,
+    'ZERO e resposta valida (nada lancado ainda no ciclo)');
+
+  // ⚠️ SOMA POR PLÁSTICO DISTINTO. Dois cartões (titular + adicional) somam;
+  // duas linhas do MESMO plástico (uma por modalidade) contam UMA vez.
+  eq(unbilledDoCartao({ limits: [
+    { identification_number: '4351', unbilled_amount: { amount: 100 } },
+    { identification_number: '6967', unbilled_amount: { amount: 75.5 } },
+  ] }), 175.5, 'plasticos diferentes SOMAM');
+
+  eq(unbilledDoCartao({ limits: [
+    { identification_number: '4351', credit_line_limit_type: 'LIMITE_CREDITO_TOTAL', unbilled_amount: { amount: 100 } },
+    { identification_number: '4351', credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', unbilled_amount: { amount: 100 } },
+  ] }), 100, 'o MESMO plastico em duas modalidades NAO conta duas vezes');
+
+  // Sem identificação tudo colapsa numa chave — melhor faltar do que inflar a
+  // fatura da pessoa.
+  eq(unbilledDoCartao({ limits: [
+    { unbilled_amount: { amount: 100 } },
+    { unbilled_amount: { amount: 100 } },
+  ] }), 100, 'linhas sem identification_number nao inflam o total');
+
+  // Ponta a ponta: o cartão só com o campo NOVO tem de produzir a fatura certa.
+  const cartaoNovo = { id: 'nu', identification: { name: 'gold' }, limits: [
+    { identification_number: '4351', credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO',
+      limit_amount: { amount: 10050 }, customized_limit_amount: { amount: 6050 },
+      used_amount: { amount: 3155.8 }, available_amount: { amount: 2894.1976 },
+      unbilled_amount: { amount: 900 } },
+    { identification_number: '6967', credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO',
+      limit_amount: { amount: 10050 }, customized_limit_amount: { amount: 6050 },
+      used_amount: { amount: 3155.8 }, available_amount: { amount: 2894.1976 },
+      unbilled_amount: { amount: 874.84 } },
+  ] };
+  const billsNu = [{ id: 'b1', bill_closing_date: '2026-08-03', due_date: '2026-08-10',
+    bill_total_amount: { amount: 1303.06 }, payments: [{ amount: { amount: 1303.06 } }] }];
+  const nu = normalizeCartao(cartaoNovo, billsNu, '2026-08-24');
+  eq(nu.faturaSimulada, 1774.84, 'os dois plasticos somam a fatura do banco');
+  eq(nu.saldoFatura, -1774.84, 'e vira o saldo negativo gravado na wallet');
+  // O limite continua saindo pela regra própria — um não contamina o outro.
+  eq(nu.extras.limite, 6050, 'o teto efetivo segue independente do unbilled');
+}
+console.log('  ok');
+
 // ── 5. Dia de fechamento/vencimento acompanha MUDANÇA do banco ────────────
 console.log('── 5. datas seguem o banco quando ele muda ──');
 {

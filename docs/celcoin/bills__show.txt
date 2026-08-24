@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/bills/show
-# baixado em 2026-08-19
+# baixado em 2026-08-24
 
 ownload Bruno Collection
 GET/bills/{bill}
@@ -38,7 +38,7 @@ TransactionAmountCOPY
 "currency": "BRL"
 }
 payments[]object
-Pagamentos registrados na fatura.
+Pagamentos registrados na fatura. Um pagamento fica atrelado à fatura que fechar em seguida a ele — inclusive pagamentos avulsos feitos antes do fechamento (ex.: para liberação de limite), que entram na fatura seguinte junto com o pagamento do ciclo. Exceção: pagamento avulso para liberação de limite feito após o fechamento é reportado só na fatura seguinte, quando ela de fato fechar; até lá, aparece apenas em GET /transactions e /transactions-current.
 Field Type Description
 amount string Valor pago.
 currency string Moeda.

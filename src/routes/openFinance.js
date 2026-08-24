@@ -579,9 +579,18 @@ async function diagnosticoCelcoin(req, res) {
         // ↓ o teste que importa: `fatura.restante` tem de bater com o app do banco
         conferir: {
           fatura_que_a_sora_vai_mostrar: n.faturaAberta ? n.faturaAberta.restante : null,
-          // ⭐ campo NOVO da Polp (ago/2026): a fatura em andamento, já líquida
-          // de pagamentos. Se este bater com o app do banco, ele vira a fonte.
+          // ⭐ A fatura em andamento. Desde o breaking change de 24/08/2026 ela
+          // vem de `limits[].unbilled_amount` (somado por plástico); o
+          // `simulated_bill_total_amount` foi removido da API.
           fatura_simulada: n.faturaSimulada,
+          // Cada plástico separado — é o que permite conferir se a soma por
+          // `identification_number` está certa quando o total diverge do banco.
+          unbilled_por_plastico: (raw.limits || []).map((l) => ({
+            plastico: l && l.identification_number,
+            tipo: l && l.credit_line_limit_type,
+            unbilled: sync.money(l && l.unbilled_amount),
+          })),
+          unbilled_somado: sync.unbilledDoCartao(raw),
           saldo_gravado_na_wallet: n.saldoFatura,
           limite: n.extras.limite,
           fecha_dia: n.extras.dia_fechamento,

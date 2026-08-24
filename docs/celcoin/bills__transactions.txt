@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/bills/transactions
-# baixado em 2026-08-19
+# baixado em 2026-08-24
 
 ownload Bruno Collection
 GET/bills/{bill}/transactions
@@ -7,6 +7,8 @@ Transações da Fatura
 Lista transações lançadas em uma fatura específica.
 Observações
 Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
+bill_forecast_date pode vir null aqui para lançamentos que a Polp só sincronizou por esta rota (fatura já fechada), sem antes passar pela sincronização geral de /credit-cards/{creditCard}/transactions.
+transaction_type pode ser null em caso extremo em que o Banco Central não envia o campo.
 Query Parameters
 Field Type Description
 cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 500 itens por página.
@@ -23,12 +25,13 @@ credit_card_id string ID do cartão.
 identification_number string Número de identificação do cartão.
 transaction_name string Descrição da transação.
 credit_debit_type string Enum: CreditDebitIndicator.
-transaction_type string Enum: CreditCardTransactionType.
+transaction_type string | null Enum: CreditCardTransactionType. Pode ser null em caso extremo em que o Banco Central não envia o tipo da transação.
 brazilian_amount object Valor em reais { amount, currency }.
 amount object Valor original { amount, currency }.
 transaction_date_time string Data/hora da transação.
-bill_post_date string | null Data de lançamento na fatura.
-bill_id string | null ID da fatura vinculada.
+bill_post_date string Data de lançamento na fatura (AAAA-MM-DD). Sempre preenchida — enquanto a transação não foi lançada em nenhuma fatura, a Celcoin envia a data-sentinela "0001-01-01" (repassada como está, sem conversão para null). Use bill_forecast_date para saber o mês/ano de faturamento antes desse lançamento.
+bill_forecast_date string Mês/ano de faturamento (AAAA-MM), sempre preenchido. Em transação já lançada numa fatura (fechada ou aberta), é o mês/ano dessa fatura. Sem fatura ainda (bill_post_date = "0001-01-01") — incluindo parcelas futuras e lançamentos agendados —, projeta o mês/ano em que a transação será faturada. Presente também em transações com transaction_type PAGAMENTO_FATURA (o pagamento também é refletido em GET /bills/{bill} → payments[]).
+bill_id string | null ID da fatura vinculada. Null enquanto a transação não é lançada em uma fatura; imutável depois de atribuído — uma sincronização posterior sem billId não desfaz o vínculo.
 transactional_additional_info string | null Informação adicional.
 payment_type string | null Enum: CreditCardPaymentType.
 fee_type string | null Enum: CreditCardFeeType.
