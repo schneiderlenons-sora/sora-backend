@@ -323,27 +323,114 @@ const BANDEIRA = {
   AMERICAN_EXPRESS: 'Amex', DINERS_CLUB: 'Diners',
 };
 
+// ── LIMITE DO CARTÃO ───────────────────────────────────────────────────────
 /**
+ * VISÃO GERAL do grupo abaixo (`usoConhecido`, `limitePorModalidade`,
+ * `tetoEfetivo` e `limiteTotalDoCartao`).
+ *
  * Limite TOTAL do cartão. `limits[]` traz uma linha por modalidade
  * (CREDITO_A_VISTA, CREDITO_PARCELADO, SAQUE_*) e por consolidação
  * (CONSOLIDADO/INDIVIDUAL). O limite do cartão é o LIMITE_CREDITO_TOTAL;
  * preferimos CONSOLIDADO quando existe (é o teto do cartão inteiro).
  *
- * ⚠️ SEM `LIMITE_CREDITO_TOTAL`, DEVOLVE null — NÃO "o maior que houver".
+ * ⚠️ SEM `LIMITE_CREDITO_TOTAL` existe um SEGUNDO caminho, mas ele NÃO é "o
+ * maior `limit_amount` que houver" — ver `limitePorModalidade` logo abaixo.
  *
- * O fallback antigo pegava o maior `limit_amount` da lista, e isso produziu um
- * número claramente errado num Nubank real: o cartão mandou UMA única linha,
+ * O fallback antigo era esse "maior que houver", e produziu um número
+ * claramente errado num Nubank real: o cartão mandou UMA única linha,
  * `LIMITE_CREDITO_MODALIDADE_OPERACAO` / `line_name: OUTROS` /
  * `line_name_additional_info: "Limite Nupay"`, com limite R$ 300,45. O painel
  * passou a exibir "limite R$ 300,45 · usado R$ 300,45 (100%)" num cartão cuja
  * fatura daquele mês foi R$ 2.293,71 — ou seja, uma sub-modalidade do NuPay
  * virou o teto do cartão inteiro.
  *
- * `MODALIDADE_OPERACAO` é, por definição, o limite de UMA modalidade (NuPay,
- * saque, parcelado) — nunca o do cartão. Preferir "não sei" a um teto falso:
- * limite errado contamina a barra de uso e o alerta de limite estourado.
+ * A regra que ficou no lugar dele é estreita e tem uma trava aritmética: o
+ * candidato é recusado se for menor do que a fatura do próprio cartão. Preferir
+ * "não sei" a um teto falso continua valendo — limite errado contamina a barra
+ * de uso e o alerta de limite estourado.
  */
-function limiteTotalDoCartao(limits) {
+
+/**
+ * Maior gasto CONHECIDO do cartão — a régua da trava anti-sublimite.
+ *
+ * ⚠️ NÃO usa `used_amount` de propósito. No caso do "Limite Nupay" ele vinha
+ * IGUAL ao sublimite (300,45 usado de 300,45 de teto), então comparar um com o
+ * outro não separa nada. Quem denuncia o sublimite é a FATURA, que vem de
+ * outra fonte: as bills publicadas e a simulada.
+ */
+function usoConhecido(card, bills) {
+  const vals = (Array.isArray(bills) ? bills : [])
+    .map((b) => money(b && b.bill_total_amount))
+    .filter((v) => v != null);
+  const sim = faturaSimulada(card);
+  if (sim != null) vals.push(sim);
+  return vals.length ? Math.max(...vals) : null;
+}
+
+/**
+ * Candidato quando o emissor NÃO publica `LIMITE_CREDITO_TOTAL`.
+ *
+ * Medido em ago/2026: dos 29 cartões de Open Finance da base, os 10 que estão
+ * sob conexão Nubank não recebem NENHUMA linha `LIMITE_CREDITO_TOTAL` — só
+ * `MODALIDADE_OPERACAO`. BRB, Inter, BTG e Mercado Pago mandam o total normal.
+ * Recusar tudo que não fosse TOTAL deixava 72% dos cartões sem limite nenhum.
+ *
+ * Duas travas, e é a segunda que impede a volta do bug do NuPay:
+ *  1. Todas as linhas de modalidade têm de CONCORDAR no teto. Se divergem, são
+ *     sublimites de modalidades diferentes (saque, parcelado…) e nenhuma delas
+ *     é o teto do cartão.
+ *  2. O teto não pode ser MENOR do que o que já se gastou no cartão. Limite
+ *     total abaixo da própria fatura é impossível — foi exatamente assim que o
+ *     "Limite Nupay" de R$ 300,45 virou o teto de um cartão cuja fatura do mês
+ *     era R$ 2.293,71.
+ */
+function limitePorModalidade(arr, usoRef) {
+  const mods = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_MODALIDADE_OPERACAO');
+  if (!mods.length) return null;
+
+  const tetos = new Set(mods.map((l) => String(money(l.limit_amount))));
+  if (tetos.size !== 1) return null;                    // trava 1
+
+  const teto = money(mods[0].limit_amount);
+  if (teto == null || teto <= 0) return null;
+  // trava 2 — ⚠️ SEM RÉGUA TAMBÉM NÃO ADOTA (`usoRef == null`). Cartão sem
+  // nenhuma fatura publicada nem simulada é justamente aquele sobre o qual
+  // menos sabemos; adotar ali seria reabrir o bug do NuPay no caso mais cego.
+  if (usoRef == null || teto < usoRef) return null;
+
+  return mods[0];
+}
+
+/**
+ * Qual dos dois tetos a pessoa REALMENTE tem.
+ *
+ * O banco manda os dois: `limit_amount` é o que ele CONCEDEU e
+ * `customized_limit_amount` é o que o cliente DEIXOU ativo. Confirmado com a
+ * titular de um Nubank real: o app dela mostra 10.050 concedidos e 6.050
+ * configurados por ela.
+ *
+ * ⚠️ O desempate NÃO é preferência nossa — é o `available_amount` do próprio
+ * banco. Vale o teto que satisfaz `teto − usado = disponível`, porque é ele
+ * que faz a barra do painel bater com a tela do app. Nesse cartão:
+ *    6.050,00 − 3.155,80 = 2.894,20  ✅ = available_amount
+ *   10.050,00 − 3.155,80 = 6.894,20  ❌ mostraria R$ 4.000 de limite que ela
+ *                                       não pode gastar — e erra pro lado que
+ *                                       faz alguém passar o cartão achando que cabe.
+ */
+function tetoEfetivo(l, usado, disponivel) {
+  const concedido   = money(l.limit_amount);
+  const configurado = money(l.customized_limit_amount);
+  if (disponivel != null && usado != null) {
+    // Tolerância de R$ 1: o banco arredonda (mandou 2894.1976 pra 2894,20) e
+    // os dois candidatos distam milhares, então não há como confundi-los.
+    const bate = (v) => v != null && Math.abs((v - usado) - disponivel) <= 1;
+    if (bate(configurado)) return configurado;
+    if (bate(concedido))   return concedido;
+  }
+  return configurado ?? concedido;
+}
+
+function limiteTotalDoCartao(limits, usoRef = null) {
   // `respondeu` separa "o banco disse que não tem limite total" de "o banco
   // ainda não sincronizou os limites" (a doc avisa: `limits` pode vir null).
   // É o que permite LIMPAR um limite errado sem apagar um limite bom quando a
@@ -354,12 +441,15 @@ function limiteTotalDoCartao(limits) {
   const escolhido =
     totais.find((l) => l.consolidation_type === 'CONSOLIDADO') ||
     totais[0] ||
+    limitePorModalidade(arr, usoRef) ||
     null;
   if (!escolhido) return { limite: null, usado: null, disponivel: null, respondeu };
+  const usado = money(escolhido.used_amount);
+  const disponivel = money(escolhido.available_amount);
   return {
-    limite: money(escolhido.limit_amount),
-    usado: money(escolhido.used_amount),
-    disponivel: money(escolhido.available_amount),
+    limite: tetoEfetivo(escolhido, usado, disponivel),
+    usado,
+    disponivel,
     respondeu,
   };
 }
@@ -669,7 +759,11 @@ function analisarParcelamentos(lista) {
 function normalizeCartao(card, bills, hoje) {
   const ident = card.identification || {};
   const nome = (ident.name || card.name || card.brand_name || 'Cartão').toString().trim().slice(0, 60);
-  const { limite, usado, disponivel, respondeu: limiteRespondeu } = limiteTotalDoCartao(card.limits);
+  // ⚠️ `usoConhecido` é a régua da trava anti-sublimite (ver limitePorModalidade):
+  // um teto menor do que a fatura do próprio cartão é impossível e não pode ser
+  // adotado. Por isso o limite precisa das `bills`, não só de `card.limits`.
+  const { limite, usado, disponivel, respondeu: limiteRespondeu } =
+    limiteTotalDoCartao(card.limits, usoConhecido(card, bills));
   const aberta = escolherFaturaAberta(bills, hoje);
   // O VALOR só sai de uma fatura de fato aberta. A DATA (dia_fechamento/
   // dia_vencimento) usa a MODA entre as faturas conhecidas (diaMaisFrequente),

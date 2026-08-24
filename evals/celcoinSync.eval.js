@@ -74,6 +74,69 @@ const soNupay = S.limiteTotalDoCartao([
 ok(soNupay.limite === null,
   `só MODALIDADE_OPERACAO (NuPay) NÃO pode virar limite do cartão — veio ${JSON.stringify(soNupay)}`);
 ok(soNupay.usado === null, 'e nem o "usado" da modalidade vira o usado do cartão');
+
+// ── 4B. MODALIDADE VIRA limite quando passa nas duas travas (ago/2026) ──────
+//
+// ⚠️ MEDIDO: dos 29 cartões de OF da base, os 10 sob conexão Nubank não
+// recebem NENHUMA linha LIMITE_CREDITO_TOTAL — 72% dos cartões ficavam sem
+// limite nenhum. BRB/Inter/BTG/Mercado Pago mandam o total normalmente.
+//
+// Payload REAL do cartão da cliente: duas linhas iguais (uma por cartão),
+// rotuladas "Limite saque nacional e saque internacional", com valores que são
+// do cartão inteiro. Confirmado com a titular: 10.050 concedidos pelo banco,
+// 6.050 configurados por ela.
+const modOk = [
+  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'INDIVIDUAL',
+    identification_number: '4351', line_name: 'OUTROS',
+    line_name_additional_info: 'Limite saque nacional e saque internacional',
+    limit_amount: { amount: '10050.0000' }, customized_limit_amount: { amount: '6050.0000' },
+    used_amount: { amount: '3155.80' }, available_amount: { amount: '2894.1976' } },
+  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'INDIVIDUAL',
+    identification_number: '6967', line_name: 'OUTROS',
+    line_name_additional_info: 'Limite saque nacional e saque internacional',
+    limit_amount: { amount: '10050.0000' }, customized_limit_amount: { amount: '6050.0000' },
+    used_amount: { amount: '3155.80' }, available_amount: { amount: '2894.1976' } },
+];
+const ana = S.limiteTotalDoCartao(modOk, 1717.03);   // maior fatura publicada dela
+// ⚠️ 6.050 e NÃO 10.050: é o `customized` que satisfaz teto − usado =
+// disponível (6050 − 3155,80 = 2894,20 = available_amount). Com 10.050 a barra
+// diria R$ 6.894,20 livres onde o banco diz R$ 2.894,20 — R$ 4.000 de limite
+// fantasma, e pro lado que faz alguém passar o cartão achando que cabe.
+ok(ana.limite === 6050,
+  `teto efetivo tem de ser o CONFIGURADO (6050), veio ${JSON.stringify(ana)}`);
+ok(ana.usado === 3155.8, 'usado vem da mesma linha');
+ok(Math.abs((ana.limite - ana.usado) - ana.disponivel) <= 1,
+  'a subtração da tela tem de bater com o available_amount do banco');
+
+// ── 4C. As duas travas, uma a uma ───────────────────────────────────────────
+// Trava 2 COM régua: o NuPay passa a ser recusado pela ARITMÉTICA, não só por
+// ser modalidade — teto (300,45) menor que a fatura (2.293,71) é impossível.
+ok(S.limiteTotalDoCartao([
+  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'INDIVIDUAL',
+    limit_amount: { amount: '300.4500' }, used_amount: { amount: '300.45' },
+    available_amount: { amount: '0.00' } },
+], 2293.71).limite === null, 'teto MENOR que a fatura do cartão é impossível → null');
+
+// ⚠️ SEM RÉGUA TAMBÉM NÃO ADOTA. Cartão sem fatura publicada nem simulada é o
+// caso mais cego, e adotar ali reabriria o NuPay por outra porta.
+ok(S.limiteTotalDoCartao(modOk, null).limite === null,
+  'sem fatura conhecida pra conferir, não adota limite de modalidade');
+
+// Trava 1: modalidades que DISCORDAM do teto são sublimites de verdade.
+ok(S.limiteTotalDoCartao([
+  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', limit_amount: { amount: '10050.00' },
+    used_amount: { amount: '10.00' }, available_amount: { amount: '10040.00' } },
+  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', limit_amount: { amount: '999.00' },
+    used_amount: { amount: '10.00' }, available_amount: { amount: '989.00' } },
+], 500).limite === null, 'modalidades com tetos divergentes → null');
+
+// LIMITE_CREDITO_TOTAL continua tendo precedência sobre qualquer modalidade.
+ok(S.limiteTotalDoCartao([
+  ...modOk,
+  { credit_line_limit_type: 'LIMITE_CREDITO_TOTAL', consolidation_type: 'CONSOLIDADO',
+    limit_amount: { amount: '7000.00' }, used_amount: { amount: '1000.00' },
+    available_amount: { amount: '6000.00' } },
+], 1717.03).limite === 7000, 'LIMITE_CREDITO_TOTAL ganha da modalidade');
 console.log('  ok');
 
 // ── 5. Fatura em aberto = próximo vencimento ≥ hoje ────────────────────────
