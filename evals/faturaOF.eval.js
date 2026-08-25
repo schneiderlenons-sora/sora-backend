@@ -208,19 +208,52 @@ console.log('── 4B. unbilled_amount (campo novo) ──');
     { identification_number: '4351', credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO',
       limit_amount: { amount: 10050 }, customized_limit_amount: { amount: 6050 },
       used_amount: { amount: 3155.8 }, available_amount: { amount: 2894.1976 },
-      unbilled_amount: { amount: 900 } },
+      // ⚠️ Valores REAIS do payload: o plástico 4351 vem ZERADO e todo o
+      // "ainda sem fatura" está no 6967. Zero é resposta válida, não ausência.
+      unbilled_amount: { amount: 0 } },
     { identification_number: '6967', credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO',
       limit_amount: { amount: 10050 }, customized_limit_amount: { amount: 6050 },
       used_amount: { amount: 3155.8 }, available_amount: { amount: 2894.1976 },
-      unbilled_amount: { amount: 874.84 } },
+      unbilled_amount: { amount: 1381.16 } },
   ] };
   const billsNu = [{ id: 'b1', bill_closing_date: '2026-08-03', due_date: '2026-08-10',
     bill_total_amount: { amount: 1303.06 }, payments: [{ amount: { amount: 1303.06 } }] }];
-  const nu = normalizeCartao(cartaoNovo, billsNu, '2026-08-24');
-  eq(nu.faturaSimulada, 1774.84, 'os dois plasticos somam a fatura do banco');
-  eq(nu.saldoFatura, -1774.84, 'e vira o saldo negativo gravado na wallet');
+  // ⚠️⚠️ O `unbilled_amount` NÃO É A FATURA — é o SUBTRAENDO dela.
+  //
+  // Foi o erro que custou dois dias. Eu troquei `simulated_bill_total_amount`
+  // por `unbilled_amount` e EXIBI o campo novo direto: deu R$ 1.381,16 onde o
+  // banco mostrava R$ 1.774,64. A doc define o campo como "soma das transações
+  // com `bill_id` NULL" — o que ocupa limite e ainda não entrou em fatura
+  // nenhuma. Isso é exatamente a "parcela a vencer" da REGRA DE OURO:
+  //
+  //     fatura = used_amount − unbilled_amount
+  //
+  // Payload REAL da cliente (of-debug de 25/08/2026), conferido contra o app
+  // do Nubank dela. `used_amount` vem IGUAL nas duas linhas (é card-level);
+  // `unbilled_amount` vem POR PLÁSTICO e por isso é somado.
+  const nu = normalizeCartao(cartaoNovo, billsNu, '2026-08-25');
+  eq(nu.limiteUsado, 3155.8, 'used_amount lido do limite');
+  eq(unbilledDoCartao(cartaoNovo), 1381.16, 'unbilled somado por plástico');
+  eq(nu.faturaSimulada, 1774.64, 'FATURA = used − unbilled (o número do app do banco)');
+  eq(nu.saldoFatura, -1774.64, 'e vira o saldo negativo gravado na wallet');
+  // ⚠️ A regressão a impedir: exibir o unbilled cru como se fosse a fatura.
+  ok(nu.faturaSimulada !== 1381.16, 'NUNCA exibir o unbilled cru como fatura');
+  // Nem o limite usado sozinho — esse é o erro simétrico, pro outro lado.
+  ok(nu.faturaSimulada !== 3155.8, 'nem o limite usado sozinho');
   // O limite continua saindo pela regra própria — um não contamina o outro.
   eq(nu.extras.limite, 6050, 'o teto efetivo segue independente do unbilled');
+
+  // Sem `unbilled` não dá pra aplicar a regra: cai no legado, não inventa.
+  const semUnb = JSON.parse(JSON.stringify(cartaoNovo));
+  semUnb.limits.forEach((l) => { delete l.unbilled_amount; });
+  eq(normalizeCartao(semUnb, billsNu, '2026-08-25').faturaSimulada, null,
+    'sem unbilled_amount não há regra de ouro — devolve null em vez de chutar');
+
+  // Unbilled MAIOR que o usado (dado inconsistente) não pode virar negativo.
+  const absurdo = JSON.parse(JSON.stringify(cartaoNovo));
+  absurdo.limits[0].unbilled_amount = { amount: 99999 };
+  ok((normalizeCartao(absurdo, billsNu, '2026-08-25').faturaSimulada || 0) >= 0,
+    'unbilled maior que o usado não produz fatura negativa');
 }
 console.log('  ok');
 

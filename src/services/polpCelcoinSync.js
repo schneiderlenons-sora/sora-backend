@@ -362,10 +362,10 @@ function usoConhecido(card, bills) {
   const vals = (Array.isArray(bills) ? bills : [])
     .map((b) => money(b && b.bill_total_amount))
     .filter((v) => v != null);
-  // A fatura EM CURSO também é gasto conhecido. Depois do breaking change de
-  // 24/08/2026 ela chega em `limits[].unbilled_amount`; o campo antigo fica de
-  // reserva pra payload velho.
-  const sim = unbilledDoCartao(card) ?? faturaSimulada(card);
+  // ⚠️ NÃO usa `unbilled_amount` como régua. Ele não é a fatura — é o que ainda
+  // não entrou em fatura (ver `faturaPorLimite`). Como régua serviria como piso,
+  // mas as faturas publicadas já dão um piso melhor e sem ambiguidade.
+  const sim = faturaSimulada(card);
   if (sim != null) vals.push(sim);
   return vals.length ? Math.max(...vals) : null;
 }
@@ -633,6 +633,20 @@ function diaMaisFrequente(bills, campo) {
  *
  * Somar as transações importadas NÃO resolve: as parcelas que compõem a fatura
  * aberta só chegam quando ela é publicada. Por isso a soma sai sempre a MENOS.
+ *
+ * ⚠️ ATÉ AGO/2026 ESTA REGRA NÃO FECHAVA no trilho Celcoin, e o CLAUDE.md
+ * registrava isso como limitação: faltava um número confiável pras "parcelas a
+ * vencer". Transação com data futura vinha ZERO (a Celcoin manda toda parcela
+ * com a data da COMPRA) e o endpoint `parcelamentos` vinha duplicado. Sem
+ * subtraendo, a fatura tinha de sair da soma das transações — que erra a menos.
+ *
+ * O `unbilled_amount` (breaking change de 24/08/2026) É esse subtraendo: por
+ * definição da doc, "transações com `bill_id` null", ou seja, o que ocupa
+ * limite e ainda NÃO está em fatura nenhuma. Medido no cartão da cliente:
+ *
+ *     used_amount 3.155,80 − unbilled_amount 1.381,16 = 1.774,64
+ *
+ * que é exatamente, no centavo, a fatura que o app do Nubank mostrava.
  */
 function faturaPorLimite(usado, futuras) {
   if (usado == null) return null;
@@ -841,11 +855,28 @@ function normalizeCartao(card, bills, hoje) {
   // Procuro na fatura aberta E no cartão: sem fatura publicada (o caso do MP)
   // só o cartão pode trazer. Ausente = `null` e tudo segue como antes.
   //
-  // ⚠️ ORDEM: o `unbilled_amount` vem PRIMEIRO porque é o contrato ATUAL da
-  // Celcoin (24/08/2026); o `simulated_bill_total_amount` foi removido na mesma
-  // data e só continua sendo lido pra não quebrar payload antigo em cache ou
-  // eventual endpoint que ainda o devolva.
-  const simulada = unbilledDoCartao(card) ?? faturaSimulada(aberta) ?? faturaSimulada(card);
+  // ⚠️ O `unbilled_amount` NÃO É A FATURA — é o SUBTRAENDO dela.
+  //
+  // Foi o erro que custou dois dias: eu li o breaking change de 24/08/2026,
+  // troquei `simulated_bill_total_amount` por `unbilled_amount` e exibi o campo
+  // novo direto, como se fosse o valor da fatura. Deu R$ 1.381,16 onde o banco
+  // mostrava R$ 1.774,64.
+  //
+  // A doc define o campo como "soma das transações com `bill_id` NULL" — ou
+  // seja, o que ocupa limite e ainda NÃO entrou em fatura nenhuma. Isso é
+  // justamente a "parcela a vencer" que a REGRA DE OURO manda descontar:
+  //
+  //     fatura = used_amount − unbilled_amount
+  //     3.155,80 − 1.381,16 = 1.774,64   ← o número do app do Nubank, no centavo
+  //
+  // `usado` sai de `limiteTotalDoCartao` (é card-level: vem igual em todas as
+  // linhas de limits[]); o `unbilled` é POR PLÁSTICO e por isso é somado.
+  const unbilled = unbilledDoCartao(card);
+  const simulada = (unbilled != null && usado != null)
+    ? faturaPorLimite(usado, unbilled)
+    // Sem um dos dois não dá pra aplicar a regra de ouro. O campo legado fica
+    // de reserva pra payload antigo em cache; ausente = null e nada muda.
+    : (faturaSimulada(aberta) ?? faturaSimulada(card));
   const faturaRestante = simulada != null ? simulada : publicadaRestante;
 
   return {
