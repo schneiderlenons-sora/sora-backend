@@ -86,6 +86,18 @@ async function processarRecuperacaoSignup(limite = 50) {
     .is('plano_intervalo', null)            // nunca teve assinatura ativa (≠ cancelou)
     .not('phone', 'is', null)
     .is('recuperacao_signup_em', null)      // ainda não recebeu
+    // ⚠️ E NÃO recebeu a recuperação de PAGAMENTO RECUSADO. São campanhas
+    // diferentes que não se enxergavam: quem tentava pagar e tinha o cartão
+    // negado levava o aviso disso e, ~1h30 depois, entrava aqui de novo como
+    // "abandonou o cadastro" — dois recados sobre o MESMO problema.
+    // Medido em 25/08/2026: 2 pessoas receberam 3 mensagens por causa disto
+    // (ex.: recusa 04:30 → abandono 06:00 → escalada 3 dias depois). São
+    // poucos, mas é exatamente o tipo de acúmulo que já derrubou a recuperação
+    // inteira por spam uma vez.
+    //
+    // Guardar só aqui basta: `processarRecuperacaoSignup2` exige
+    // `recuperacao_signup_em` preenchido, então bloquear o 1º corta o 2º junto.
+    .is('recuperacao_enviada_em', null)
     .lte('created_at', ate)
     .gte('created_at', desde)
     .order('created_at', { ascending: false })
