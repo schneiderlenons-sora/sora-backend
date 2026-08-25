@@ -907,9 +907,111 @@ function analisarParcelamentos(lista) {
   };
 }
 
-function normalizeCartao(card, bills, hoje) {
+/**
+ * Nome do cartão: `"<Banco> Crédito"`.
+ *
+ * O emissor manda o nome COMERCIAL do produto — o Nubank chama de "gold" e
+ * "platinum", o Itaú de "UNICLASS MULTIPLO BLACK PONTOS". Três problemas:
+ * ninguém reconhece de relance de que banco é; dois cartões de bancos
+ * diferentes podem se chamar igual ("gold"); e o casador de logo do painel
+ * (`marcaDe`, em components/ui/IconeMarca.tsx) procura o nome do banco DENTRO
+ * do nome da carteira — "gold" não casa com nada, "Nubank Crédito" casa com
+ * `/brands/nubank.png`.
+ *
+ * É a MESMA regra que `normalizeConta` já usa há tempos ("Nubank", "Nubank
+ * Poupança"); o cartão é que tinha ficado de fora.
+ *
+ * ⚠️ A instituição vem do CONSENTIMENTO (`of_conexoes.instituicao`), não do
+ * payload do cartão: `brand_name` vem vazio em boa parte dos cartões, do mesmo
+ * jeito que vinha nas contas. Sem instituição nenhuma, preserva o nome do
+ * emissor — melhor "gold" do que "Cartão", que não identifica nada.
+ */
+
+// Palavras do nome do produto que NÃO distinguem um cartão de outro: bandeira
+// e nível. Dois cartões do mesmo banco chamados "gold" e "platinum" não dizem
+// nada ao dono; "Personnalité" e "Uniclass" dizem tudo.
+//
+// ⚠️ NÃO entram aqui: `prime`, `personnalite`, `uniclass`, `click`, `eqi`,
+// `empresarial`, `corporativo`. Essas são SEGMENTOS do banco — jogar fora
+// faria dois cartões diferentes virarem o mesmo nome.
+const RUIDO_CARTAO = new Set([
+  'visa', 'mastercard', 'master', 'mc', 'elo', 'amex', 'american', 'express',
+  'hipercard', 'diners', 'gold', 'platinum', 'plat', 'black', 'classic',
+  'classico', 'infinite', 'signature', 'internacional', 'nacional', 'standard',
+  'multiplo', 'cartao', 'credito', 'pontos', 'basico', 'de', 'do', 'da',
+  // 'of' e' o sufixo que NOS mesmos poriamos pra desempatar nome duplicado
+  // ("Mercado Pago (OF)"). Sem isto ele vazava pro nome novo: "Mercado Pago OF".
+  'of',
+]);
+
+// Sufixos de titularidade que o consentimento carrega e que não são o nome do
+// banco: a instituição do Bradesco vem "Bradesco Pessoa Física", e o cartão
+// sairia "Bradesco Pessoa Física Crédito".
+const SUFIXO_INSTITUICAO = /\s+(pessoa\s+f[ií]sica|pessoa\s+jur[ií]dica|banking|s\.?a\.?|pf|pj)$/i;
+
+const semAcento = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+/**
+ * Caixa de exibição do pedaço distintivo, trabalhando no token ORIGINAL (com
+ * acento) e não na versão normalizada usada pra comparar.
+ *
+ * ⚠️ Sigla curta fica em CAIXA ALTA: "Cartão EQI BLACK" tem de virar "BTG EQI",
+ * não "BTG Eqi". Nome comprido em caixa alta vira Título ("PERSONNALITE" →
+ * "Personnalite"), que é como a pessoa lê.
+ */
+function caixaDeExibicao(token) {
+  if (token.length <= 3 && token === token.toUpperCase()) return token;
+  return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+}
+
+/**
+ * Nome do cartão: `"<Banco> <Produto>"`, ou `"<Banco> Crédito"` quando o
+ * produto não distingue nada.
+ *
+ * O emissor manda o nome COMERCIAL — o Nubank chama de "gold" e "platinum", o
+ * Itaú de "UNICLASS MULTIPLO BLACK PONTOS". Três problemas: ninguém reconhece
+ * de que banco é; dois bancos diferentes usam o mesmo nome ("gold"); e o
+ * casador de logo do painel (`marcaDe`, em components/ui/IconeMarca.tsx)
+ * procura o nome do banco DENTRO do nome da carteira — "gold" não casa com
+ * nada, "Nubank Crédito" casa com `/brands/nubank.png`.
+ *
+ * ⚠️ O PRODUTO SÓ SAI SE FOR RUÍDO. Medido nos cartões reais: três clientes
+ * têm 2 ou 3 cartões Itaú, e jogar o produto fora faria todos virarem "Itaú
+ * Crédito" — indistinguíveis para o dono E na lista de transações, que casa
+ * por NOME. "Personnalité" e "Uniclass" ficam; "gold" e "VISA INFINITE" saem.
+ *
+ * ⚠️ A instituição vem do CONSENTIMENTO, não do payload do cartão:
+ * `brand_name` vem vazio em boa parte deles, do mesmo jeito que vinha nas
+ * contas. Sem instituição, preserva o nome do emissor — melhor "gold" do que
+ * "Cartão", que não identifica nada.
+ */
+function nomeDoCartao(card, instituicao) {
   const ident = card.identification || {};
-  const nome = (ident.name || card.name || card.brand_name || 'Cartão').toString().trim().slice(0, 60);
+  const produtoCru = (ident.name || card.name || '').toString().trim();
+  const banco = (instituicao || card.brand_name || '')
+    .toString().trim().replace(SUFIXO_INSTITUICAO, '').trim();
+
+  if (!banco) return produtoCru.slice(0, 60) || 'Cartão';
+
+  // Tira do produto o que é ruído e o que repete o próprio banco ("Nubank
+  // pessoal" viraria "Nubank Nubank pessoal").
+  // Compara sem acento e em minúsculas, mas EXIBE o token original — senão
+  // "Cartão EQI BLACK" viraria "Eqi" e a sigla se perde.
+  const doBanco = new Set(semAcento(banco).toLowerCase().split(/\s+/));
+  const distintivo = produtoCru
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((tok) => {
+      const chave = semAcento(tok).toLowerCase();
+      return chave && !RUIDO_CARTAO.has(chave) && !doBanco.has(chave);
+    })
+    .map(caixaDeExibicao).join(' ');
+
+  return (distintivo ? `${banco} ${distintivo}` : `${banco} Crédito`).slice(0, 60);
+}
+
+function normalizeCartao(card, bills, hoje, instituicao) {
+  const ident = card.identification || {};
+  const nome = nomeDoCartao(card, instituicao);
   // ⚠️ `usoConhecido` é a régua da trava anti-sublimite (ver limitePorModalidade):
   // um teto menor do que a fatura do próprio cartão é impossível e não pode ser
   // adotado. Por isso o limite precisa das `bills`, não só de `card.limits`.
@@ -1577,7 +1679,10 @@ function normalizeInvestimento(inv) {
 // ── Upserts na Sora ─────────────────────────────────────────────────────────
 
 /** Cria/atualiza a wallet da conta ou cartão. Devolve o NOME (chave das transações). */
-async function upsertWallet(grupoId, userId, n, saldo) {
+// ⚠️ `consentId` (migration 133): sem ele, num grupo com 2+ bancos conectados
+// não há como saber de QUE banco é a carteira — e foi isso que impediu 16 dos
+// 29 cartões de receberem o nome "<Banco> Crédito".
+async function upsertWallet(grupoId, userId, n, saldo, consentId) {
   const nome = (n.nome || 'Conta').toString().trim().slice(0, 60);
 
   // Campos em que `null` é RESPOSTA, não ausência de dado — precisam ser
@@ -1657,6 +1762,11 @@ async function upsertWallet(grupoId, userId, n, saldo) {
     // dele a cada sync não era.
     if (extras.limite == null && ja.limite != null) delete extras.limite;
 
+    // Backfill natural: carteira antiga aprende de qual consentimento veio na
+    // primeira sincronização depois da migration 133. A do grupo com um banco
+    // só a SQL já preencheu; esta pega as de grupo multi-banco.
+    if (consentId && !ja.of_consent_id) extras.of_consent_id = consentId;
+
     await atualizar(ja.id);
     return ja.nome;
   }
@@ -1664,7 +1774,7 @@ async function upsertWallet(grupoId, userId, n, saldo) {
   const { data: mesmoNome } = await supabase.from('wallets')
     .select('id, nome').eq('grupo_id', grupoId).ilike('nome', nome).is('of_conta_id', null).maybeSingle();
   if (mesmoNome) {
-    const vinculo = { of_conta_id: n.externalId, of_provider: PROVIDER };
+    const vinculo = { of_conta_id: n.externalId, of_provider: PROVIDER, ...(consentId ? { of_consent_id: consentId } : {}) };
     const { error } = await supabase.from('wallets')
       .update({ tipo: n.tipo, ...vinculo, ...patchSaldo, ...extras }).eq('id', mesmoNome.id);
     if (error) {
@@ -1675,19 +1785,30 @@ async function upsertWallet(grupoId, userId, n, saldo) {
   }
   const row = {
     grupo_id: grupoId, nome, tipo: n.tipo, saldo: saldo ?? 0,
-    of_conta_id: n.externalId, of_provider: PROVIDER, ...extras,
+    of_conta_id: n.externalId, of_provider: PROVIDER,
+    ...(consentId ? { of_consent_id: consentId } : {}), ...extras,
   };
   if (userId) row.criado_por = userId;
   let { data: nova, error } = await supabase.from('wallets').insert(row).select('nome').single();
   if (error) {
-    // Nome duplicado no grupo → sufixa. Se falhar de novo, tenta sem os extras
-    // (coluna que a migration ainda não criou não pode derrubar o sync).
+    // Nome duplicado no grupo → desempata. Se falhar de novo, tenta sem os
+    // extras (coluna que a migration ainda não criou não pode derrubar o sync).
+    //
+    // ⚠️ Com o cartão passando a se chamar "<Banco> Crédito", DOIS cartões do
+    // mesmo banco colidem por construção — antes cada um vinha com o nome
+    // comercial do emissor ("gold" × "platinum") e a colisão era rara. Os
+    // últimos 4 dígitos desempatam de um jeito que a pessoa reconhece; "(OF)"
+    // não diz nada e deixa os dois indistinguíveis na lista de transações, que
+    // casa por NOME.
+    const desempate = ((n.extras && n.extras.ultimos4)
+      ? `${nome} ${n.extras.ultimos4}`
+      : `${nome} (OF)`).slice(0, 60);
     ({ data: nova, error } = await supabase.from('wallets')
-      .insert({ ...row, nome: `${nome} (OF)`.slice(0, 60) }).select('nome').single());
+      .insert({ ...row, nome: desempate }).select('nome').single());
     if (error) {
       const { grupo_id, criado_por, tipo, saldo: s, of_conta_id, of_provider } = row;
       ({ data: nova } = await supabase.from('wallets')
-        .insert({ grupo_id, criado_por, nome: `${nome} (OF)`.slice(0, 60), tipo, saldo: s, of_conta_id, of_provider })
+        .insert({ grupo_id, criado_por, nome: desempate, tipo, saldo: s, of_conta_id, of_provider })
         .select('nome').single());
     }
   }
@@ -2119,7 +2240,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     for (const raw of await celcoin.listarContas(consentId)) {
       try {
         const n = normalizeConta(raw, conexao.instituicao);
-        const walletNome = await upsertWallet(grupoId, userId, n, n.saldo);
+        const walletNome = await upsertWallet(grupoId, userId, n, n.saldo, consentId);
         const txs = await celcoin.listarTransacoesConta(n.externalId, { fromDate });
         const novas = await inserirTransacoes(grupoId, userId, walletNome, txs.map(normalizeTxConta));
         novasTx += novas;
@@ -2156,8 +2277,8 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     for (const raw of await celcoin.listarCartoes(consentId)) {
       try {
         const bills = await celcoin.listarFaturas(raw.id);
-        const n = normalizeCartao(raw, bills, hoje);
-        const walletNome = await upsertWallet(grupoId, userId, n, n.saldoFatura);
+        const n = normalizeCartao(raw, bills, hoje, conexao.instituicao);
+        const walletNome = await upsertWallet(grupoId, userId, n, n.saldoFatura, consentId);
 
         const txs = await celcoin.listarTransacoesCartao(n.externalId, { fromDate });
         const normalizadas = txs.map((t) => normalizeTxCartao(t, hoje));
@@ -2234,7 +2355,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           if (estimada != null) {
             const pago = n.faturaAberta ? n.faturaAberta.pago : 0;
             const restante = Math.max(0, cent(estimada - pago));
-            await upsertWallet(grupoId, userId, n, -restante);
+            await upsertWallet(grupoId, userId, n, -restante, consentId);
             relatorio.avisos.push(
               `${walletNome}: banco não publicou o total da fatura em aberto — somada por ${fonte} = R$ ${restante.toFixed(2)}` +
               ` · limite usado informado pelo emissor: ${n.limiteUsado == null ? 'não informado' : `R$ ${Number(n.limiteUsado).toFixed(2)}`}` +
@@ -2366,7 +2487,7 @@ module.exports = {
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
-  faturaSimulada, unbilledDoCartao, usadoDoCartao, usoConhecido,
+  faturaSimulada, unbilledDoCartao, usadoDoCartao, usoConhecido, nomeDoCartao,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };
