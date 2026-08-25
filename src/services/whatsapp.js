@@ -154,7 +154,31 @@ async function enviarLink(phone, { message, image, linkUrl, title, linkDescripti
 // Fora da janela só template aprovado passa. bodyParams preenchem {{1}}, {{2}}…
 // do corpo; opts.urlButtonParam preenche o sufixo dinâmico de um botão de URL.
 // Ver o catálogo do que criar na Meta em docs/MIGRACAO-WHATSAPP-TEMPLATES.md.
-async function enviarTemplate(phone, name, bodyParams = [], lang = 'pt_BR', opts = {}) {
+/**
+ * A falha PROVA que a mensagem não saiu?
+ *
+ * ⚠️ ISTO EXISTE PRA NÃO DUPLICAR ENVIO. Quem tem uma cadeia de modelos de
+ * reserva (ver `lembrete` em jobs/index.js) só pode tentar o próximo quando o
+ * anterior comprovadamente NÃO foi entregue. A família 132xxx é a Meta
+ * recusando o MODELO — não existe, não aprovado, pausado, nº de parâmetros
+ * errado, parâmetro com quebra de linha. Nesses casos nada foi enviado e um
+ * modelo diferente pode passar.
+ *
+ * Qualquer outra falha (timeout, 5xx, rate limit, queda de rede) é AMBÍGUA: a
+ * Meta pode ter aceitado a mensagem e só a resposta ter se perdido. Insistir
+ * ali manda a MESMA coisa duas vezes.
+ */
+const ehFalhaDeModelo = (code) => {
+  const n = Number(code);
+  return Number.isFinite(n) && n >= 132000 && n <= 132999;
+};
+
+/**
+ * Igual ao `enviarTemplate`, mas devolve o motivo da falha em vez de só
+ * `false`. Serve a quem precisa decidir se vale tentar outro modelo.
+ * @returns {{ok: boolean, code: number|null, falhaDeModelo: boolean}}
+ */
+async function enviarTemplateDetalhado(phone, name, bodyParams = [], lang = 'pt_BR', opts = {}) {
   try {
     const components = [];
     // Cabeçalho: imagem (ex.: capa) OU texto com variável — a Meta só permite um
@@ -179,8 +203,17 @@ async function enviarTemplate(phone, name, bodyParams = [], lang = 'pt_BR', opts
     const template = { name, language: { code: lang } };
     if (components.length) template.components = components;
     await postMessage({ to: to(phone), type: 'template', template });
-    return true;
-  } catch {/* já logado em postMessage */ return false; }
+    return { ok: true, code: null, falhaDeModelo: false };
+  } catch (e) {                       // já logado em postMessage
+    const code = e && e.response && e.response.data && e.response.data.error
+      ? e.response.data.error.code : null;
+    return { ok: false, code: code ?? null, falhaDeModelo: ehFalhaDeModelo(code) };
+  }
+}
+
+/** Contrato antigo (booleano) — usado por todo mundo que não tem cadeia de reserva. */
+async function enviarTemplate(phone, name, bodyParams = [], lang = 'pt_BR', opts = {}) {
+  return (await enviarTemplateDetalhado(phone, name, bodyParams, lang, opts)).ok;
 }
 
 // ── Download de mídia recebida (áudio/imagem) ────────────────────────────────
@@ -199,4 +232,4 @@ async function baixarMidia(mediaId) {
   }
 }
 
-module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink, enviarBotaoLink, baixarMidia, enviarTemplate, uploadImagemDataUri, getLastSendError };
+module.exports = { enviarTexto, enviarMenu, enviarImagem, enviarLink, enviarBotaoLink, baixarMidia, enviarTemplate, enviarTemplateDetalhado, ehFalhaDeModelo, uploadImagemDataUri, getLastSendError };

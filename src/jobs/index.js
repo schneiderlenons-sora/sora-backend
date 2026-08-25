@@ -4,7 +4,7 @@ const supabase  = require('../db/supabase');
 const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { avisosLigados, briefingLigado } = require('../services/avisos');
-const { enviarProativo, provedor } = require('../services/proativo');
+const { enviarProativo, enviarProativoDetalhado, provedor } = require('../services/proativo');
 const { falar, templateAgente, templateDoAviso, templateLista, aberturaDe } = require('../agentes');
 const yahooFinance    = require('yahoo-finance2').default;
 
@@ -75,9 +75,23 @@ const lembrete = async (phone, texto, core, agente) => {
   if (provedor() !== 'meta') {
     return enviarProativo(phone, { texto: vestida.texto, template: fila[fila.length - 1] });
   }
+
+  // ⚠️ A REGRA QUE IMPEDE ENVIO DUPLICADO: só passa pro próximo modelo quando a
+  // falha PROVA que nada saiu — a família 132xxx, que é a Meta recusando o
+  // modelo (não existe, não aprovado, pausado, nº de parâmetros errado).
+  //
+  // Qualquer outra falha é AMBÍGUA. Timeout, 5xx e rate limit acontecem DEPOIS
+  // que a Meta já aceitou a mensagem com frequência suficiente pra importar:
+  // insistir ali entrega o mesmo aviso duas vezes, e com 4 modelos na fila
+  // seriam até 4 cópias. Diante da dúvida, para — um aviso que falta é MUITO
+  // menos grave do que quatro iguais no WhatsApp do cliente.
   for (const template of fila) {
-    const entregue = await enviarProativo(phone, { texto: vestida.texto, template });
-    if (entregue) return entregue;
+    const r = await enviarProativoDetalhado(phone, { texto: vestida.texto, template });
+    if (r.ok) return true;
+    if (!r.falhaDeModelo) {
+      console.warn(`[lembrete] parei a fila em "${template.name}" (code ${r.code}) — falha ambígua, não repito o envio`);
+      return false;
+    }
   }
   return false;
 };
@@ -1724,3 +1738,7 @@ cron.schedule('*/30 * * * *', async () => {
   catch (e) { console.log('💸 Recuperação de cadastro (2º) falhou:', e.message); }
 });
 console.log(`   • A cada 30min — recuperação de cadastro sem pagamento (1º + 2º lembrete) ${process.env.RECUPERACAO_ATIVA === '1' ? '' : '(DESATIVADA)'}`);
+
+// Exportado SÓ pra teste (evals/lembreteFila.eval.js). O arquivo registra crons
+// ao ser exigido, então o eval stuba `node-cron` antes de importar.
+module.exports = { lembrete };
