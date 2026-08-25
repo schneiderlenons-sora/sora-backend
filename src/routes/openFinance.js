@@ -574,6 +574,12 @@ async function diagnosticoCelcoin(req, res) {
     for (const raw of await celcoin.listarCartoes(id)) {
       const bills = await celcoin.listarFaturas(raw.id).catch(() => []);
       const n = sync.normalizeCartao(raw, bills, hoje);
+      // ⚠️ DECLARADO AQUI, ANTES DE QUALQUER USO. Já esteve declarado lá
+      // embaixo (no bloco `conferencia`) enquanto era lido aqui em cima: `const`
+      // fica em TDZ até a linha da declaração, então a rota inteira estourava
+      // "lim is not defined" e o diagnóstico devolvia `cartoes: []` — ou seja, a
+      // ferramenta de investigar quebrava calada bem quando era necessária.
+      const lim = sync.limiteTotalDoCartao(raw.limits, sync.usoConhecido(raw, bills));
       const item = {
         normalizado: n,
         // ↓ o teste que importa: `fatura.restante` tem de bater com o app do banco
@@ -654,7 +660,7 @@ async function diagnosticoCelcoin(req, res) {
       // garimpar somas até bater com o app do banco — que é chute com dinheiro.
       // Compare `limite_usado` e cada candidata com o valor que o banco mostra.
       try {
-        const lim = sync.limiteTotalDoCartao(raw.limits, sync.usoConhecido(raw, bills));
+        // `lim` ja foi calculado no topo do laco (ver o aviso de TDZ la em cima).
         const todas = await celcoin.listarTransacoesCartao(raw.id, { max: 3 });
         const val = (t) => Math.abs(sync.money(t.brazilian_amount) ?? sync.money(t.amount) ?? 0);
         const ehGasto = (t) => (t.credit_debit_type || '').toString().toUpperCase() !== 'CREDITO';
