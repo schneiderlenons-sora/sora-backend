@@ -528,6 +528,33 @@ function faturaSimulada(fonte) {
  * fatura com data de fechamento; virar R$ 0,00 ali é a mentira de "fatura
  * zerada" que já custou um diagnóstico inteiro. Só devolve número quando ao
  * menos uma linha respondeu.
+ *
+ * ⚠️⚠️ A SOMA É PROVISÓRIA — A PRÓPRIA POLP DESACONSELHA (25/08/2026).
+ *
+ * Resposta deles, textual: "não recomendamos assumir que a soma de todos os
+ * unbilled_amount das linhas seja necessariamente o valor correto do cartão
+ * como um todo, justamente por causa desses sub-limites". E completam que não
+ * recebem do banco, de forma clara, o limite total do cartão, e que ainda
+ * estão ajustando como interpretar essas linhas "para evitar somar linhas que
+ * podem representar limites específicos e acabar duplicando ou distorcendo o
+ * unbilled_amount".
+ *
+ * POR QUE A SOMA CONTINUA AQUI ASSIM MESMO: nos dois cartões que hoje fecham
+ * no centavo com o app do banco (um Nubank e um Mercado Pago), só UMA linha
+ * tem `unbilled_amount` diferente de zero — a soma nunca chega a somar nada de
+ * fato. Trocar a regra agora seria calibrá-la no cartão que NÃO fecha e
+ * arriscar os dois que fecham.
+ *
+ * O caso que expõe o problema (Nubank final 3456): duas modalidades reais,
+ * "saque nacional e internacional" (unbilled 108,76) e "Limite Pix no Crédito"
+ * (unbilled 2.036,49 com teto de 204,34 — dez vezes o próprio limite da
+ * linha). Somando dá 2.145,25, e a fatura do banco exigiria 2.342,17. Ali a
+ * regra de ouro nem roda, porque `usadoDoCartao` recusa quando as linhas
+ * divergem no `used_amount`.
+ *
+ * PENDENTE: a Polp vai voltar com a interpretação correta. Quando vier,
+ * trocar esta agregação — e conferir os DOIS cartões que já fecham antes de
+ * subir, não só o que está errado.
  */
 /**
  * `used_amount` do CARTÃO, lido DIRETO de `limits[]`.
