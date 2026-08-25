@@ -122,13 +122,28 @@ ok(S.limiteTotalDoCartao([
 ok(S.limiteTotalDoCartao(modOk, null).limite === null,
   'sem fatura conhecida pra conferir, não adota limite de modalidade');
 
-// Trava 1: modalidades que DISCORDAM do teto são sublimites de verdade.
-ok(S.limiteTotalDoCartao([
-  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', limit_amount: { amount: '10050.00' },
-    used_amount: { amount: '10.00' }, available_amount: { amount: '10040.00' } },
-  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', limit_amount: { amount: '999.00' },
-    used_amount: { amount: '10.00' }, available_amount: { amount: '989.00' } },
-], 500).limite === null, 'modalidades com tetos divergentes → null');
+// ⚠️ MODALIDADES COM TETOS DIFERENTES SÃO O CASO NORMAL, NÃO UM DEFEITO.
+//
+// Aqui existiu uma trava que exigia que TODAS as linhas concordassem no teto —
+// generalizada de um cartão em que as duas eram idênticas por acaso (uma por
+// plástico). A doc é explícita: "cada item representa uma LINHA DE CRÉDITO", e
+// o enum `line_name` tem CREDITO_A_VISTA, CREDITO_PARCELADO, SAQUE_CREDITO_*,
+// EMPRESTIMO_CARTAO_CONSIGNADO e OUTROS. Elas SÃO pra ser diferentes.
+//
+// A trava recusava todo Nubank que manda compra e saque com tetos distintos —
+// e foi assim que um cartão real ficou sem limite mesmo com o dado chegando.
+// Vale o MAIOR: nenhuma modalidade pode exceder o limite do cartão inteiro.
+const modDiferentes = [
+  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', line_name: 'CREDITO_A_VISTA',
+    limit_amount: { amount: '5000.00' }, used_amount: { amount: '900.00' }, available_amount: { amount: '4100.00' } },
+  { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', line_name: 'SAQUE_CREDITO_BRASIL',
+    limit_amount: { amount: '1000.00' }, used_amount: { amount: '0.00' }, available_amount: { amount: '1000.00' } },
+];
+ok(S.limiteTotalDoCartao(modDiferentes, 900).limite === 5000,
+  `compra 5000 + saque 1000 → vale o MAIOR (veio ${JSON.stringify(S.limiteTotalDoCartao(modDiferentes, 900).limite)})`);
+// A ordem em que o banco manda não pode mudar a resposta.
+ok(S.limiteTotalDoCartao([...modDiferentes].reverse(), 900).limite === 5000,
+  'a ordem das linhas não muda o resultado');
 
 // LIMITE_CREDITO_TOTAL continua tendo precedência sobre qualquer modalidade.
 ok(S.limiteTotalDoCartao([

@@ -383,14 +383,25 @@ function usoConhecido(card, bills) {
  * `MODALIDADE_OPERACAO`. BRB, Inter, BTG e Mercado Pago mandam o total normal.
  * Recusar tudo que não fosse TOTAL deixava 72% dos cartões sem limite nenhum.
  *
- * Duas travas, e é a segunda que impede a volta do bug do NuPay:
- *  1. Todas as linhas de modalidade têm de CONCORDAR no teto. Se divergem, são
- *     sublimites de modalidades diferentes (saque, parcelado…) e nenhuma delas
- *     é o teto do cartão.
- *  2. O teto não pode ser MENOR do que o que já se gastou no cartão. Limite
- *     total abaixo da própria fatura é impossível — foi exatamente assim que o
- *     "Limite Nupay" de R$ 300,45 virou o teto de um cartão cuja fatura do mês
- *     era R$ 2.293,71.
+ * Pega o MAIOR teto entre as modalidades e confere se ele é plausível.
+ *
+ * ⚠️ AQUI HOUVE UMA TRAVA ERRADA, removida em 25/08/2026: eu exigia que TODAS
+ * as linhas tivessem o MESMO `limit_amount`, generalizando de um cartão em que
+ * as duas eram idênticas por acaso (uma por plástico). A doc é explícita —
+ * "cada item representa uma LINHA DE CRÉDITO", e o enum `line_name` lista
+ * CREDITO_A_VISTA, CREDITO_PARCELADO, SAQUE_CREDITO_BRASIL,
+ * SAQUE_CREDITO_EXTERIOR, EMPRESTIMO_CARTAO_CONSIGNADO e OUTROS. Elas SÃO pra
+ * ser diferentes. Exigir concordância recusava todo cartão que manda compra e
+ * saque com tetos distintos — o caso normal.
+ *
+ * O teto do CARTÃO é pelo menos o da maior modalidade: nenhuma linha pode
+ * exceder o limite do cartão inteiro.
+ *
+ * A TRAVA QUE FICA, e a única que impede a volta do bug do NuPay: o teto não
+ * pode ser MENOR do que o que já se gastou no cartão. Limite total abaixo da
+ * própria fatura é impossível — foi exatamente assim que o "Limite Nupay" de
+ * R$ 300,45 virou o teto de um cartão cuja fatura do mês era R$ 2.293,71. É
+ * essa conferência que o antigo "pega o maior" não tinha.
  */
 function limitePorModalidade(arr, usoRef, diag) {
   const anota = (motivo) => { if (diag) diag.motivo = motivo; return null; };
@@ -398,13 +409,13 @@ function limitePorModalidade(arr, usoRef, diag) {
   const mods = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_MODALIDADE_OPERACAO');
   if (!mods.length) return anota('nenhuma linha de modalidade em limits[]');
 
-  const tetos = new Set(mods.map((l) => String(money(l.limit_amount))));
-  if (tetos.size !== 1) {                               // trava 1
-    return anota(`linhas de modalidade DISCORDAM do teto (${[...tetos].join(' × ')})`);
-  }
+  const ordenadas = mods
+    .map((l) => ({ l, teto: money(l.limit_amount) }))
+    .filter((x) => x.teto != null && x.teto > 0)
+    .sort((a, b) => b.teto - a.teto);
+  if (!ordenadas.length) return anota('nenhuma linha de modalidade com teto > 0');
 
-  const teto = money(mods[0].limit_amount);
-  if (teto == null || teto <= 0) return anota(`teto ausente ou <= 0 (${teto})`);
+  const { l: escolhida, teto } = ordenadas[0];
   // trava 2 — ⚠️ SEM RÉGUA TAMBÉM NÃO ADOTA (`usoRef == null`). Cartão sobre o
   // qual não sabemos nada do gasto é o caso mais cego; adotar ali reabriria o
   // bug do NuPay por outra porta.
@@ -412,7 +423,7 @@ function limitePorModalidade(arr, usoRef, diag) {
   if (teto < usoRef) return anota(`teto ${teto} MENOR que o gasto conhecido ${usoRef} — impossível`);
 
   if (diag) diag.motivo = null;
-  return mods[0];
+  return escolhida;
 }
 
 /**
