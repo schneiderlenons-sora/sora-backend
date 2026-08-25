@@ -592,6 +592,11 @@ async function diagnosticoCelcoin(req, res) {
           })),
           unbilled_somado: sync.unbilledDoCartao(raw),
           saldo_gravado_na_wallet: n.saldoFatura,
+          // POR QUE o limite não foi adotado. Sem isto, "não veio limite" era
+          // indistinguível de "veio e uma trava recusou", e a investigação
+          // virava adivinhação.
+          limite_motivo: lim.motivo || null,
+          limite_regua_de_gasto: lim.usoRef ?? sync.usoConhecido(raw, bills),
           limite: n.extras.limite,
           fecha_dia: n.extras.dia_fechamento,
           vence_dia: n.extras.dia_vencimento,
@@ -649,7 +654,7 @@ async function diagnosticoCelcoin(req, res) {
       // garimpar somas até bater com o app do banco — que é chute com dinheiro.
       // Compare `limite_usado` e cada candidata com o valor que o banco mostra.
       try {
-        const lim = sync.limiteTotalDoCartao(raw.limits);
+        const lim = sync.limiteTotalDoCartao(raw.limits, sync.usoConhecido(raw, bills));
         const todas = await celcoin.listarTransacoesCartao(raw.id, { max: 3 });
         const val = (t) => Math.abs(sync.money(t.brazilian_amount) ?? sync.money(t.amount) ?? 0);
         const ehGasto = (t) => (t.credit_debit_type || '').toString().toUpperCase() !== 'CREDITO';

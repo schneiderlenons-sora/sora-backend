@@ -362,10 +362,15 @@ function usoConhecido(card, bills) {
   const vals = (Array.isArray(bills) ? bills : [])
     .map((b) => money(b && b.bill_total_amount))
     .filter((v) => v != null);
-  // ⚠️ NÃO usa `unbilled_amount` como régua. Ele não é a fatura — é o que ainda
-  // não entrou em fatura (ver `faturaPorLimite`). Como régua serviria como piso,
-  // mas as faturas publicadas já dão um piso melhor e sem ambiguidade.
-  const sim = faturaSimulada(card);
+  // ⚠️ O `unbilled_amount` NÃO é a fatura (ver `faturaPorLimite`), mas É gasto
+  // real: dinheiro que já ocupa limite e ainda não entrou em fatura nenhuma.
+  // Como PISO da régua ele vale, e é o único piso que existe num cartão que o
+  // emissor ainda não publicou fatura — justamente o caso mais comum logo
+  // depois de conectar. Tirá-lo daqui fazia a trava recusar o limite desses
+  // cartões por falta de régua, e o limite não aparecia.
+  const unb = unbilledDoCartao(card);
+  if (unb != null) vals.push(unb);
+  const sim = faturaSimulada(card);          // legado, pra payload antigo
   if (sim != null) vals.push(sim);
   return vals.length ? Math.max(...vals) : null;
 }
@@ -387,20 +392,26 @@ function usoConhecido(card, bills) {
  *     "Limite Nupay" de R$ 300,45 virou o teto de um cartão cuja fatura do mês
  *     era R$ 2.293,71.
  */
-function limitePorModalidade(arr, usoRef) {
+function limitePorModalidade(arr, usoRef, diag) {
+  const anota = (motivo) => { if (diag) diag.motivo = motivo; return null; };
+
   const mods = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_MODALIDADE_OPERACAO');
-  if (!mods.length) return null;
+  if (!mods.length) return anota('nenhuma linha de modalidade em limits[]');
 
   const tetos = new Set(mods.map((l) => String(money(l.limit_amount))));
-  if (tetos.size !== 1) return null;                    // trava 1
+  if (tetos.size !== 1) {                               // trava 1
+    return anota(`linhas de modalidade DISCORDAM do teto (${[...tetos].join(' × ')})`);
+  }
 
   const teto = money(mods[0].limit_amount);
-  if (teto == null || teto <= 0) return null;
-  // trava 2 — ⚠️ SEM RÉGUA TAMBÉM NÃO ADOTA (`usoRef == null`). Cartão sem
-  // nenhuma fatura publicada nem simulada é justamente aquele sobre o qual
-  // menos sabemos; adotar ali seria reabrir o bug do NuPay no caso mais cego.
-  if (usoRef == null || teto < usoRef) return null;
+  if (teto == null || teto <= 0) return anota(`teto ausente ou <= 0 (${teto})`);
+  // trava 2 — ⚠️ SEM RÉGUA TAMBÉM NÃO ADOTA (`usoRef == null`). Cartão sobre o
+  // qual não sabemos nada do gasto é o caso mais cego; adotar ali reabriria o
+  // bug do NuPay por outra porta.
+  if (usoRef == null) return anota('sem régua de gasto conhecido pra conferir o teto');
+  if (teto < usoRef) return anota(`teto ${teto} MENOR que o gasto conhecido ${usoRef} — impossível`);
 
+  if (diag) diag.motivo = null;
   return mods[0];
 }
 
@@ -441,12 +452,17 @@ function limiteTotalDoCartao(limits, usoRef = null) {
   const respondeu = Array.isArray(limits) && limits.length > 0;
   const arr = Array.isArray(limits) ? limits : [];
   const totais = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_TOTAL');
+  // `motivo` explica a RECUSA no diagnóstico. Sem ele, "limite não veio" era
+  // indistinguível de "limite recusado por trava" e a investigação virava
+  // adivinhação — foi o que aconteceu quando um Nubank sincronizou sem limite.
+  const diag = { motivo: 'limits[] vazio ou ausente' };
   const escolhido =
     totais.find((l) => l.consolidation_type === 'CONSOLIDADO') ||
     totais[0] ||
-    limitePorModalidade(arr, usoRef) ||
+    limitePorModalidade(arr, usoRef, diag) ||
     null;
-  if (!escolhido) return { limite: null, usado: null, disponivel: null, respondeu };
+  if (totais.length) diag.motivo = null;
+  if (!escolhido) return { limite: null, usado: null, disponivel: null, respondeu, motivo: diag.motivo, usoRef };
   const usado = money(escolhido.used_amount);
   const disponivel = money(escolhido.available_amount);
   return {
@@ -2270,7 +2286,7 @@ module.exports = {
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
-  faturaSimulada, unbilledDoCartao,
+  faturaSimulada, unbilledDoCartao, usoConhecido,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };
