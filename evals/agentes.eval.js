@@ -25,19 +25,21 @@ const falhas = [];
 const ok = (c, m) => { if (!c) falhas.push(m); };
 
 // ── 1. Desligado = regressão zero ───────────────────────────────────────
-// Roda o módulo num processo limpo, sem a env, e confere que nada muda.
+// Roda o módulo num processo limpo COM o interruptor em 0 e confere que nada
+// muda. ⚠️ Antes bastava apagar a env, porque a voz era opt-in; desde ago/2026
+// ela nasce ligada (ver o caso 8) e só `=0` desliga.
 console.log('── 1. voz desligada não muda nada ──');
 {
   const { execFileSync } = require('child_process');
   const saida = execFileSync(process.execPath, ['-e', `
-    delete process.env.AGENTES_VOZ;
+    process.env.AGENTES_VOZ = '0';
     const { falar } = require('${require('path').resolve(__dirname, '../src/agentes').replace(/\\/g, '\\\\')}');
     const r = falar('don-baleone', 'dividas', { texto: 'ORIGINAL', core: 'CORE' });
     process.stdout.write(JSON.stringify(r));
   `], { encoding: 'utf8' });
   const r = JSON.parse(saida);
-  ok(r.texto === 'ORIGINAL', `sem AGENTES_VOZ o texto sai intacto (veio "${r.texto}")`);
-  ok(r.core === 'CORE', `sem AGENTES_VOZ o core sai intacto (veio "${r.core}")`);
+  ok(r.texto === 'ORIGINAL', `com AGENTES_VOZ=0 o texto sai intacto (veio "${r.texto}")`);
+  ok(r.core === 'CORE', `com AGENTES_VOZ=0 o core sai intacto (veio "${r.core}")`);
 }
 console.log('  ok');
 
@@ -189,17 +191,89 @@ console.log('── 7. template do agente ──');
 }
 console.log('  ok');
 
-// ── 8. Fase 3 desligada = template do agente nem aparece ────────────────
-console.log('── 8. fase 3 desligada ──');
+// ── 8. Interruptor de emergência ────────────────────────────────────────
+//
+// ⚠️ O PADRÃO INVERTEU em ago/2026. Voz e templates nasceram opt-in (`=== '1'`)
+// porque a arte dos agentes ainda não estava publicada, e URL de imagem com 404
+// faz a Meta recusar a mensagem inteira. Hoje as 8 capas respondem 200 e cada
+// aviso tem modelo próprio — o texto fixo do modelo JÁ É a voz do agente, então
+// nascer desligado deixaria a mensagem sem a personalidade que o modelo assume.
+//
+// O que este caso trava é a SAÍDA DE EMERGÊNCIA: `=0` continua desligando tudo
+// sem precisar de deploy.
+console.log('── 8. interruptor de emergência (=0) ──');
 {
   const { execFileSync } = require('child_process');
   const mod = require('path').resolve(__dirname, '../src/agentes').replace(/\\/g, '\\\\');
-  const saida = execFileSync(process.execPath, ['-e', `
-    delete process.env.AGENTES_TEMPLATE;
-    const { templateAgente } = require('${mod}');
-    process.stdout.write(JSON.stringify(templateAgente('don-baleone', 'recado')));
+  const rodar = (env, expr) => execFileSync(process.execPath, ['-e', `
+    ${env}
+    const A = require('${mod}');
+    process.stdout.write(JSON.stringify(${expr}));
   `], { encoding: 'utf8' });
-  ok(saida === 'null', `sem AGENTES_TEMPLATE não monta template do agente (veio ${saida})`);
+
+  const semTpl = rodar("process.env.AGENTES_TEMPLATE = '0';",
+    "A.templateDoAviso('loki', 'habitos', ['a', 'b', 'c'])");
+  ok(semTpl === 'null', `AGENTES_TEMPLATE=0 não monta template dedicado (veio ${semTpl})`);
+
+  const semLista = rodar("process.env.AGENTES_TEMPLATE = '0';",
+    "A.templateLista('loki', 'briefing', { assunto: 'x', itens: ['a'] })");
+  ok(semLista === 'null', `AGENTES_TEMPLATE=0 também desliga a família de listas (veio ${semLista})`);
+
+  const semVoz = rodar("process.env.AGENTES_VOZ = '0';",
+    "A.falar('don-baleone', 'dividas', { texto: 'ORIGINAL', core: 'CORE' }).texto");
+  ok(semVoz === '"ORIGINAL"', `AGENTES_VOZ=0 devolve o texto intacto (veio ${semVoz})`);
+
+  // ⚠️ A abertura NÃO obedece à flag de voz: nos modelos novos ela é um CAMPO
+  // do corpo, e parâmetro vazio faz a Meta recusar o envio inteiro.
+  const abre = rodar("process.env.AGENTES_VOZ = '0';",
+    "A.aberturaDe('don-baleone', 'dividas', 'x')");
+  ok(abre.length > 4, `abertura existe mesmo com a voz desligada (veio ${abre})`);
+
+  // E os padrões, sem env nenhuma, são LIGADOS.
+  const padrao = rodar('', "!!A.templateDoAviso('loki', 'habitos', ['a', 'b', 'c'])");
+  ok(padrao === 'true', `sem env, o template dedicado nasce LIGADO (veio ${padrao})`);
+}
+console.log('  ok');
+
+// ── 9. Pareamento voz × modelo ──────────────────────────────────────────
+//
+// É o que quebra em silêncio: agente novo com fala e sem modelo cai no
+// `lembretes_gerais` pra sempre, e ninguém percebe porque a mensagem CHEGA.
+console.log('── 9. pareamento voz × modelo ──');
+{
+  const { VOZES, TEMPLATE_AVISO, templateDoAviso, templateLista } = require('../src/agentes');
+  // `loki.briefing` é a exceção declarada: lista de tamanho variável, atendida
+  // pela família `agente_lista_N` em vez de um modelo fixo.
+  const semModelo = Object.keys(VOZES)
+    .filter((k) => k !== 'loki.briefing' && !TEMPLATE_AVISO[k]);
+  ok(!semModelo.length, `avisos com voz e SEM modelo dedicado: ${semModelo.join(', ')}`);
+
+  const semVozes = Object.keys(TEMPLATE_AVISO).filter((k) => !VOZES[k]);
+  ok(!semVozes.length, `modelos sem fala cadastrada: ${semVozes.join(', ')}`);
+
+  // ⚠️ Campo vazio = a Meta recusa a MENSAGEM INTEIRA, não só o campo. Preferir
+  // `null` (e cair no lembretes_gerais) a mandar e ver o aviso sumir.
+  ok(templateDoAviso('loki', 'habitos', ['abre', '', 'lista']) === null,
+    'campo vazio derruba o modelo em vez de ser enviado');
+  ok(templateDoAviso('loki', 'habitos', ['abre', '   ', 'lista']) === null,
+    'campo só com espaço conta como vazio');
+
+  // Parâmetro NUNCA pode levar quebra de linha nem tab.
+  const limpo = templateDoAviso('loki', 'habitos', ['a\nb', 'c\td', 'e    f']);
+  ok(limpo.params.every((p) => !/[\r\n\t]/.test(p) && !/ {4,}/.test(p)),
+    `parâmetros higienizados (veio ${JSON.stringify(limpo.params)})`);
+
+  // A família de listas escolhe o modelo pela QUANTIDADE de itens.
+  for (let n = 1; n <= 5; n++) {
+    const t = templateLista('loki', 'briefing', { assunto: 'x', itens: Array(n).fill('i'), seed: 's' });
+    ok(t.name === `agente_lista_${n}`, `${n} item(ns) → agente_lista_${n} (veio ${t.name})`);
+    ok(t.params.length === n + 2, `e manda ${n + 2} parâmetros (assunto + abertura + ${n})`);
+  }
+  // Acima do teto, a última linha vira "…e mais N" — nada some em silêncio.
+  const cheio = templateLista('loki', 'briefing', { assunto: 'x', itens: Array(9).fill('i'), seed: 's' });
+  ok(cheio.name === 'agente_lista_5', 'mais de 5 itens usa o maior modelo');
+  ok(/e mais 5/.test(cheio.params[cheio.params.length - 1]),
+    `e avisa quantos sobraram (veio "${cheio.params[cheio.params.length - 1]}")`);
 }
 console.log('  ok');
 

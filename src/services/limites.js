@@ -26,11 +26,14 @@ function limpaCat(s) {
 
 // ── Template `limite_atingido` ───────────────────────────────────────────────
 //
-// APROVADO na Meta em 31/07/2026 · categoria UTILIDADE · pt_BR.
-// A saudação aprovada é "Eaí, {{1}}!" (não "Oi") — o corpo é do template, o
-// código só manda os 5 parâmetros:
-//   {{1}} primeiro nome · {{2}} alvo do limite · {{3}} percentual
+// Categoria UTILIDADE · pt_BR. Continua com 5 parâmetros, mas o corpo foi
+// REESCRITO em ago/2026 pra voz do Don Baleone (cabeçalho com a foto dele,
+// tratamento por "Chefe", campos um por linha):
+//   {{1}} abertura do agente · {{2}} alvo do limite · {{3}} percentual
 //   {{4}} gasto · {{5}} teto
+//
+// ⚠️ O {{1}} deixou de ser o primeiro nome. Mandar o nome ali agora o colocaria
+// no lugar da fala do agente.
 //
 // Categoria UTILIDADE porque é aviso sobre a conta do próprio usuário, com os
 // números dele, disparado por um gasto que ele registrou — não vende nada.
@@ -54,12 +57,16 @@ const ALVO_GERAL = 'gasto geral';
 const brl = (v) => 'R$ ' + new Intl.NumberFormat('pt-BR',
   { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v) || 0);
 
-function templateLimite(nome, alvo, pct, gasto, teto) {
-  const primeiro = String(nome || '').trim().split(/\s+/)[0] || 'tudo bem';
+function templateLimite(nome, alvo, pct, gasto, teto, seed) {
+  const { aberturaDe, capaDe } = require('../agentes');
   return {
     name: TPL_LIMITE_NOME,
     params: [
-      primeiro.slice(0, 60),
+      // ⚠️ {{1}} MUDOU na remodelagem de ago/2026: era o primeiro nome do
+      // usuário e passou a ser a ABERTURA sorteada do Don Baleone. O corpo
+      // aprovado agora trata por "Chefe", que é a voz dele — o nome sumiu do
+      // modelo, então mandá-lo aqui apareceria no lugar da fala.
+      aberturaDe('don-baleone', 'limite', seed),
       String(alvo || ALVO_GERAL).slice(0, 60),
       // `Math.round(NaN)` é NaN e sairia "NaN%" na cara do cliente — um teto
       // zerado ou um valor sujo bastam pra chegar aqui.
@@ -67,9 +74,10 @@ function templateLimite(nome, alvo, pct, gasto, teto) {
       brl(gasto),
       brl(teto),
     ],
-    // Sem cabeçalho de imagem: é aviso rápido, não peça de marketing — header
-    // de mídia atrasa o envio e exigiria a capa em toda chamada.
-    opts: {},
+    // O modelo passou a ter cabeçalho de IMAGEM (a foto do Don Baleone), e a
+    // Meta EXIGE o parâmetro de header em todo envio quando ele existe — sem
+    // isto o alerta é recusado e some sem log de negócio.
+    opts: { headerImage: capaDe('don-baleone') },
   };
 }
 
@@ -109,7 +117,7 @@ async function avisarGrupo(grupoId, fallbackPhone, msg, template) {
       const vestida = falar('don-baleone', 'limite', { texto: msg, seed: d.phone });
       await enviarProativo(d.phone, {
         texto: vestida.texto,
-        template: typeof template === 'function' ? template(d.nome) : template,
+        template: typeof template === 'function' ? template(d.nome, d.phone) : template,
       });
     } catch { /* um destino que falha não pode parar os outros */ }
   }
@@ -165,7 +173,7 @@ async function verificarLimite(grupoId, phone, user) {
         await avisarGrupo(grupoId, phone,
           `⚠️ *Limite de ${limite.categoria}*: os gastos chegaram a *${pct.toFixed(0)}%* do teto do mês.\n` +
           `Teto: ${brl(limite.limite_mensal)} | Gasto atual: ${brl(total)}`,
-          (nome) => templateLimite(nome, alvo, pct, total, limite.limite_mensal));
+          (nome, seed) => templateLimite(nome, alvo, pct, total, limite.limite_mensal, seed));
 
         await supabase.from('category_limits')
           .update({ alerta_enviado: true }).eq('id', limite.id);
@@ -201,7 +209,7 @@ async function verificarLimiteGeral(grupoId, phone, user, mesRef, gastos) {
   await avisarGrupo(grupoId, phone,
     `🚨 *Limite geral do mês*: os gastos chegaram a *${pct.toFixed(0)}%* da meta.\n` +
     `Meta: ${brl(meta)} | Gasto total: ${brl(total)}`,
-    (nome) => templateLimite(nome, ALVO_GERAL, pct, total, meta));
+    (nome, seed) => templateLimite(nome, ALVO_GERAL, pct, total, meta, seed));
 
   // Marca como avisado neste mês (defensivo: coluna pode não existir ainda).
   try {

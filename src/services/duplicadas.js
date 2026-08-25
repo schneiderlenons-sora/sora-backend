@@ -348,10 +348,20 @@ async function avisarDuplicadas(grupoId, fallbackPhone) {
       + `${brl(novos[0].transacoes[0].valor)} (${explicar(novos[0])}). Abra o painel pra decidir qual fica.`;
 
     const vestida = falar('detetive-watson', 'duplicadas', { texto, core, seed: grupoId });
-    await enviarProativo(phone, {
-      texto: vestida.texto,
-      template: templateAgente('detetive-watson', vestida.coreAgente, 'duplicadas') || undefined,
-    });
+    // {{1}} abertura · {{2}} quantidade · {{3}} o valor · {{4}} a prova · {{5}} sobra + chamada
+    const { aberturaDe, templateDoAviso } = require('../agentes');
+    const primeiro = novos[0].transacoes[0];
+    const sobraParam = novos.length > 1 ? `…e mais ${novos.length - 1}. ` : '';
+    const tpl = templateDoAviso('detetive-watson', 'duplicadas', [
+      aberturaDe('detetive-watson', 'duplicadas', grupoId),
+      `${novos.length} cobrança${novos.length === 1 ? '' : 's'} repetida${novos.length === 1 ? '' : 's'}`,
+      `${brl(primeiro.valor)} · ${String(primeiro.observacao || primeiro.categoria || 'Lançamento').slice(0, 40)}`,
+      explicar(novos[0]),
+      // ⚠️ Nunca vazio: sem sobra vai só a chamada. Parâmetro vazio faz a Meta
+      // recusar a mensagem inteira.
+      `${sobraParam}Abra o painel pra decidir qual fica.`,
+    ]);
+    await enviarProativo(phone, { texto: vestida.texto, template: tpl || undefined });
     return novos.length;
   } catch { return 0; }   // aviso é efeito colateral: nunca derruba o sync
 }

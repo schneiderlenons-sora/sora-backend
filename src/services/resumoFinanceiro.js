@@ -264,7 +264,7 @@ function montarCorpoMensal({ mesNome, atual, anterior, metaMensal, insight, grow
 }
 
 module.exports = {
-  resumoPeriodo, gerarInsight, fmtGrow, linhasGrow,
+  resumoPeriodo, gerarInsight, fmtGrow, linhasGrow, deltaGastos,
   montarCorpoSemanal, montarCorpoMensal,
   TITULO_SEMANAL, TITULO_MENSAL, CTA,
   fallbackInsight, // exposto pra teste — é a rede de segurança quando a IA falha

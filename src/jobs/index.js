@@ -5,7 +5,7 @@ const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageir
 const { criarPendente } = require('../services/pendentes');
 const { avisosLigados, briefingLigado } = require('../services/avisos');
 const { enviarProativo, provedor } = require('../services/proativo');
-const { falar, templateAgente } = require('../agentes');
+const { falar, templateAgente, templateDoAviso, templateLista, aberturaDe } = require('../agentes');
 const yahooFinance    = require('yahoo-finance2').default;
 
 // Gera ID curto de 6 caracteres
@@ -29,34 +29,71 @@ const lembrete = async (phone, texto, core, agente) => {
     ? falar(agente.id, agente.aviso, { texto, core, seed: agente.seed })
     : { texto, core };
 
-  // Fase 3: fora da janela de 24h o aviso vai no template do AGENTE — a foto
-  // dele no cabeçalho e o nome no {{1}}. `null` quando a fase está desligada.
-  const tplAgente = agente
-    ? templateAgente(agente.id, vestida.coreAgente || core || texto, agente.aviso)
-    : null;
+  // ── CADEIA DE TEMPLATES, do mais bonito pro mais garantido ────────────────
+  //
+  // Fora da janela de 24h só existe template, então o aviso precisa de mais de
+  // uma saída: modelo em análise na Meta, imagem com 404 ou parâmetro recusado
+  // fazem o envio falhar, e um aviso financeiro não pode simplesmente sumir.
+  //
+  // 1. `lista`  → família `agente_lista_N` (um item por linha).
+  // 2. `campos` → modelo DEDICADO daquele aviso (campos estruturados).
+  // 3. `tplReserva` → modelo antigo específico, quando existe (ex.: o
+  //    `briefing_matinal`, que ainda entrega tudo em linha corrida).
+  // 4. `lembretes_gerais` → o recado inteiro num parâmetro só. Nunca sai da
+  //    lista: é ele que garante que o aviso chega, ainda que sem enfeite.
+  //
+  // ⚠️ Sem `campos`/`lista` nem se tenta o modelo novo — não há como preencher
+  // os {{n}} estruturados. É o que mantém funcionando os avisos que ainda não
+  // têm modelo próprio (versículo do dia, cópia informativa pro parceiro,
+  // oferta de pagar fatura).
+  const candidatos = [];
+  if (agente) {
+    if (agente.lista) {
+      candidatos.push(templateLista(agente.id, agente.aviso, { ...agente.lista, seed: agente.seed }));
+    }
+    if (agente.campos) {
+      candidatos.push(templateDoAviso(agente.id, agente.aviso, agente.campos));
+    }
+    if (agente.tplReserva) candidatos.push(agente.tplReserva);
+  }
 
-  // O template 'lembretes_gerais' tem cabeçalho de IMAGEM → a Meta EXIGE a capa
-  // no header em todo envio (senão rejeita e o lembrete não chega). `CAPA` é
+  // O 'lembretes_gerais' tem cabeçalho de IMAGEM → a Meta EXIGE a capa no
+  // header em todo envio (senão rejeita e o lembrete não chega). `CAPA` é
   // resolvido em tempo de chamada (o cron dispara após o módulo carregar).
-  const tplPadrao = {
+  candidatos.push({
     name: 'lembretes_gerais',
     params: [oneLine(vestida.core || vestida.texto)],
     opts: { headerImage: CAPA },
-  };
+  });
 
-  // Se o `agente_aviso` ainda não estiver aprovado (ou a imagem der 404), o
-  // envio falha e caímos no template de sempre: o aviso NUNCA deixa de chegar
-  // por causa da capa bonita. Mesmo padrão já usado no `recorrencias_hoje`.
-  //
-  // ⚠️ Só tenta a 1ª via no provider 'meta'. Fora dele o `enviarProativo`
-  // ignora o template e manda o TEXTO — que retorna `undefined` (o
-  // `enviarTexto` não devolve nada). Aí o "não entregou" seria falso e a
-  // pessoa receberia a MESMA mensagem duas vezes.
-  if (tplAgente && provedor() === 'meta') {
-    const entregue = await enviarProativo(phone, { texto: vestida.texto, template: tplAgente });
+  const fila = candidatos.filter(Boolean);
+
+  // ⚠️ Só vale tentar mais de um no provider 'meta'. Fora dele o
+  // `enviarProativo` ignora o template e manda o TEXTO — que retorna
+  // `undefined` (o `enviarTexto` não devolve nada). Aí o "não entregou" seria
+  // falso e a pessoa receberia a MESMA mensagem duas vezes.
+  if (provedor() !== 'meta') {
+    return enviarProativo(phone, { texto: vestida.texto, template: fila[fila.length - 1] });
+  }
+  for (const template of fila) {
+    const entregue = await enviarProativo(phone, { texto: vestida.texto, template });
     if (entregue) return entregue;
   }
-  return enviarProativo(phone, { texto: vestida.texto, template: tplPadrao });
+  return false;
+};
+
+/**
+ * Uma linha só com o que o Sora Grow rendeu no período, pro parâmetro extra
+ * dos modelos `resumo_*_grow`.
+ *
+ * ⚠️ Devolve `''` (não `'—'`) quando a pessoa não usa nenhuma aba do Grow. É
+ * o que faz `templateDoAviso` recusar o modelo `_grow` e cair no irmão sem
+ * essa linha: parâmetro vazio derruba o envio inteiro na Meta, e inventar um
+ * texto de enchimento seria pior do que não ter a linha.
+ */
+const linhaGrow = (grow, periodo) => {
+  const { linhasGrow } = require('../services/resumoFinanceiro');
+  return oneLine((linhasGrow(grow, periodo) || []).join(' · ')).replace(/\*/g, '');
 };
 
 // Formata valor em BRL pros params de template (ex.: "R$ 1.240,00").
@@ -455,13 +492,19 @@ cron.schedule('0 * * * *', async () => {
       // (texto fixo bonito + botão "Abrir transações"); {{1}} = só a LISTA. Se
       // ainda não foi aprovado na Meta, o envio falha e caímos no `lembretes_gerais`
       // (core). Assim dá pra subir antes da aprovação e ele "liga" ao aprovar.
-      let entregue = false;
-      if (confirmar.length && provedor() === 'meta') {
-        entregue = await enviarProativo(phone, {
-          template: { name: 'recorrencias_hoje', params: [listaParam], opts: { headerImage: CAPA } },
-        });
-      }
-      if (!entregue) await lembrete(phone, txt, core, { id: 'sardinha', aviso: 'recorrencias', seed: phone });
+      // Um item POR LINHA via `agente_lista_N`. O `recorrencias_hoje` saiu:
+      // ele só existia porque o modelo genérico não tinha onde encaixar a
+      // lista, e a instrução de confirmar valor cabe no próprio item.
+      const itensRec = [
+        ...lancados.map((it) => `✅ ${it.descricao} — ${brl(it.valor)} (já lancei)`),
+        ...aguardando.map((it) => `🔗 ${it.descricao} — cerca de ${brl(it.valor)} (o banco confirma)`),
+        ...soLembrete.map((it) => `🔔 ${it.descricao} — ${brl(it.valor)}`),
+        ...confirmar.map((it) => `💡 ${it.descricao} — estimei ${brl(it.valor)}, responda "confirmar ${it.descricao.toLowerCase()} <valor>"`),
+      ];
+      await lembrete(phone, txt, core, {
+        id: 'sardinha', aviso: 'recorrencias', seed: phone,
+        lista: { assunto: 'Contas fixas de hoje', itens: itensRec },
+      });
     }
   }
 
@@ -484,7 +527,18 @@ cron.schedule('0 * * * *', async () => {
       const core =
         `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} *${lem.descricao}* — R$ ${(lem.valor||0).toFixed(2)}\n` +
         `Vencimento: ${new Date(lem.data_vencimento).toLocaleDateString('pt-BR')}`;
-      await lembrete(phone, txt, core, { id: 'sardinha', aviso: 'lembretes', seed: lem.id });
+      await lembrete(phone, txt, core, {
+        id: 'sardinha', aviso: 'lembretes', seed: lem.id,
+        // {{1}} assunto · {{2}} abertura · {{3}} item · {{4}} valor · {{5}} prazo · {{6}} ação
+        campos: [
+          'Lembrete',
+          aberturaDe('sardinha', 'lembretes', lem.id),
+          `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} — ${lem.descricao}`,
+          brl(lem.valor || 0),
+          `Vence em ${new Date(lem.data_vencimento).toLocaleDateString('pt-BR')}`,
+          'Você me pediu pra avisar disso.',
+        ],
+      });
     }
     await supabase.from('lembretes').update({ enviado: true }).eq('id', lem.id);
   }
@@ -509,7 +563,17 @@ cron.schedule('0 * * * *', async () => {
         `📦 *Parcela vence hoje:* ${p.descricao} — ${p.parcelas_pagas + 1}/${p.total_parcelas}\n` +
         `💵 R$ ${p.valor_parcela.toFixed(2)} no cartão *${p.carteira}*\n` +
         `Pra pagar, responda: "pagar parcela da ${p.descricao}"`;
-      await lembrete(phone, txt, core, { id: 'sardinha', aviso: 'parcelas', seed: p.id || p.descricao });
+      await lembrete(phone, txt, core, {
+        id: 'sardinha', aviso: 'parcelas', seed: p.id || p.descricao,
+        campos: [
+          'Parcela vencendo',
+          aberturaDe('sardinha', 'parcelas', p.id || p.descricao),
+          `${p.descricao} — parcela ${p.parcelas_pagas + 1} de ${p.total_parcelas} · cartão ${p.carteira}`,
+          brl(p.valor_parcela),
+          'Vence hoje',
+          `Pra pagar, responda: pagar parcela da ${p.descricao}`,
+        ],
+      });
     }
   }
 
@@ -582,7 +646,18 @@ cron.schedule('* * * * *', async () => {
         `Quando tomar, responda *tomei ${med.nome}* pra eu marcar.${estoqueAviso}`;
       await lembrete(user.phone, txt,
         `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''} — quando tomar, responda *tomei ${med.nome}*.${estoqueAviso}`,
-        { id: 'dr-house', aviso: 'medicamentos', seed: med.id });
+        {
+          id: 'dr-house', aviso: 'medicamentos', seed: med.id,
+          // ⚠️ {{3}} carrega horário + estoque: o aviso de estoque é opcional
+          // e não pode virar parâmetro próprio (vazio derruba o envio).
+          campos: [
+            aberturaDe('dr-house', 'medicamentos', med.id),
+            `${med.nome}${med.dosagem ? ` ${med.dosagem}` : ''}`,
+            `${h}${med.estoque_atual != null && med.estoque_atual <= (med.estoque_alerta || 5)
+              ? ` · ⚠️ estoque baixo: ${med.estoque_atual} restantes` : ''}`,
+            `tomei ${med.nome}`,
+          ],
+        });
       lembretesMedHoje.add(key);
       console.log(`💊 Lembrete med enviado: ${med.nome} → ${user.phone}`);
     }
@@ -637,7 +712,7 @@ cron.schedule('*/15 * * * *', async () => {
     await supabase.from('users').update({ habito_lembrete_ultimo: sp.dataStr }).eq('id', u.id);
 
     const { data: habitos } = await supabase.from('habitos')
-      .select('id, dias_semana').eq('user_id', u.id).eq('ativo', true);
+      .select('id, nome, dias_semana').eq('user_id', u.id).eq('ativo', true);
     const doDia = (habitos || []).filter(h => (h.dias_semana || [1,2,3,4,5,6,7]).includes(sp.diaSemana));
     if (!doDia.length) continue; // nada programado pra hoje
 
@@ -652,9 +727,20 @@ cron.schedule('*/15 * * * *', async () => {
       `Você ainda tem *${pendentes}* hábito${pendentes === 1 ? '' : 's'} pra marcar hoje. Bora fechar o dia? 💪\n\n` +
       `Responda *fiz todos* que eu marco todos de uma vez — ou abra o painel:\n` +
       `🌐 https://www.forsora.com/grow/habitos`;
+    // QUAIS faltam, não só quantos — o dado já estava na consulta e não era usado.
+    const nomesPendentes = doDia.filter((h) => !feitos.has(h.id))
+      .map((h) => h.nome).filter(Boolean).slice(0, 8).join(' · ');
     await lembrete(u.phone, txt,
       `🎯 Você ainda tem *${pendentes}* hábito${pendentes === 1 ? '' : 's'} pra marcar hoje. Bora fechar o dia? 💪 Responda *fiz todos* que eu marco tudo.`,
-      { id: 'loki', aviso: 'habitos', seed: u.id });
+      {
+        id: 'loki', aviso: 'habitos', seed: u.id,
+        // {{1}} abertura · {{2}} quantidade · {{3}} quais são
+        campos: [
+          aberturaDe('loki', 'habitos', u.id),
+          `${pendentes} hábito${pendentes === 1 ? '' : 's'}`,
+          nomesPendentes || `${pendentes} pendente${pendentes === 1 ? '' : 's'}`,
+        ],
+      });
     console.log(`🎯 Lembrete de hábitos → ${u.phone} (${pendentes} pendentes)`);
   }
 });
@@ -735,7 +821,16 @@ cron.schedule('0 9 * * *', async () => {
       `Quando fizer, responda *fiz a manutenção ${m.nome}* que eu marco e reprogramo a próxima.`;
     await lembrete(phone, txt,
       `🔧 *Manutenção: ${m.icone || ''} ${m.nome}* — ${m.ultima_data ? `venceu ${quando}` : 'ainda não registrada'}. Quando fizer, responda *fiz a manutenção ${m.nome}*.`,
-      { id: 'loki', aviso: 'manutencoes', seed: m.id });
+      {
+        id: 'loki', aviso: 'manutencoes', seed: m.id,
+        // {{1}} abertura · {{2}} o que é · {{3}} situação · {{4}} comando
+        campos: [
+          aberturaDe('loki', 'manutencoes', m.id),
+          m.nome,
+          m.ultima_data ? `Venceu ${quando}` : 'Ainda não registrada',
+          `fiz a manutenção ${m.nome}`,
+        ],
+      });
     await supabase.from('manutencoes').update({ lembrete_ultimo: hojeStr }).eq('id', m.id);
     console.log(`🔧 Lembrete manutenção → ${phone}: ${m.nome}`);
   }
@@ -807,7 +902,16 @@ cron.schedule('*/15 * * * *', async () => {
       `Ver agenda: 🌐 https://www.forsora.com/grow/agenda`;
     await lembrete(phone, txt,
       `📅 *${c.titulo}* — ${quando}${c.local ? ` · 📍 ${c.local}` : ''}`,
-      { id: 'loki', aviso: 'compromissos', seed: c.id });
+      {
+        id: 'loki', aviso: 'compromissos', seed: c.id,
+        // ⚠️ {{3}} junta QUANDO + ONDE de propósito: o local é opcional, e
+        // parâmetro vazio faz a Meta recusar a mensagem inteira.
+        campos: [
+          aberturaDe('loki', 'compromissos', c.id),
+          c.titulo,
+          `${quando.charAt(0).toUpperCase()}${quando.slice(1)}${c.local ? ` · ${c.local}` : ''}`,
+        ],
+      });
     console.log(`📅 Lembrete compromisso → ${phone}: ${c.titulo}`);
   }
 });
@@ -878,10 +982,18 @@ cron.schedule('*/15 * * * *', async () => {
     // (`falar('sora', …)` + `templateAgente('sora', …)`): sem AGENTES_TEMPLATE
     // ligado, ou sem `core`, cai pro `briefing_matinal` de sempre — nunca fica
     // mudo.
-    const vestida = falar('loki', 'briefing', { texto: txt, core: resumo, seed: u.id });
-    await enviarProativo(u.phone, {
-      texto: vestida.texto,
-      template: templateAgente('loki', vestida.coreAgente || resumo, 'briefing') || {
+    // Um item POR LINHA via `agente_lista_N`. A versão em linha corrida
+    // (`resumo`) vira a reserva no `briefing_matinal`, e o `lembretes_gerais`
+    // fecha a cadeia — ver o helper `lembrete`.
+    const itensLista = eventos.map((e) => {
+      const h = e.hora ? `${e.hora} ` : '';
+      const val = e.valor != null ? ` (${brl(e.valor)})` : '';
+      return `${EMOJI_AGENDA[e.source] || '•'} ${h}${e.titulo}${val}`;
+    });
+    await lembrete(u.phone, txt, resumo, {
+      id: 'loki', aviso: 'briefing', seed: u.id,
+      lista: { assunto: `Sua agenda de hoje (${dataFmt})`, itens: itensLista },
+      tplReserva: {
         name: 'briefing_matinal',
         params: [(u.name || 'tudo bem').split(' ')[0], resumo],
         opts: { headerImage: CAPA },
@@ -923,7 +1035,15 @@ cron.schedule('0 9 * * *', async () => {
     const txt = partes.join('\n');
     await lembrete(user.phone, txt,
       `📅 *Consulta amanhã:* ${c.especialidade || c.profissional || 'Consulta'}${c.hora ? ` às ${c.hora.slice(0,5)}` : ''}${c.local ? ` · 📍 ${c.local}` : ''}`,
-      { id: 'dr-house', aviso: 'consultas', seed: c.id });
+      {
+        id: 'dr-house', aviso: 'consultas', seed: c.id,
+        campos: [
+          'Consulta amanhã',
+          aberturaDe('dr-house', 'consultas', c.id),
+          [c.especialidade, c.profissional].filter(Boolean).join(' — ') || 'Consulta',
+          `Amanhã${c.hora ? ` às ${c.hora.slice(0, 5)}` : ''}${c.local ? ` · ${c.local}` : ''}`,
+        ],
+      });
   }
 
   // Retornos médicos pra próximos 7 dias (avisa só uma vez quando faltar exatamente 7d)
@@ -938,7 +1058,15 @@ cron.schedule('0 9 * * *', async () => {
     const txt = `📆 *Retorno em 7 dias*\n\nSeu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana.\nQuer agendar pelo painel?`;
     await lembrete(user.phone, txt,
       `📆 *Retorno em 7 dias:* seu retorno com ${r.especialidade || r.profissional || 'profissional'} é em uma semana. Quer agendar?`,
-      { id: 'dr-house', aviso: 'consultas', seed: r.id });
+      {
+        id: 'dr-house', aviso: 'consultas', seed: r.id,
+        campos: [
+          'Retorno em 7 dias',
+          aberturaDe('dr-house', 'consultas', r.id),
+          [r.especialidade, r.profissional].filter(Boolean).join(' — ') || 'Retorno',
+          'Em uma semana — quer agendar?',
+        ],
+      });
   }
   console.log('✅ Lembretes de consultas processados.');
 });
@@ -983,11 +1111,34 @@ cron.schedule('0 9 * * *', async () => {
     // Janelas: 3 dias antes, no dia, ou atrasada (>=1 dia depois do venc do mês passado)
     let mensagem = null;
     let venceHoje = false;
+    // Campos do template `baleone_divida` — montados no MESMO ramo da mensagem
+    // pra assunto, prazo e ação nunca discordarem do texto rico.
+    // {{1}} assunto · {{2}} abertura · {{3}} dívida · {{4}} parcela · {{5}} prazo · {{6}} ação
+    let camposDivida = null;
+    const tituloDivida = `${d.titulo}${d.credor ? ` (${d.credor})` : ''}`;
+    // ⚠️ Sem valor de parcela o parâmetro ficaria VAZIO e a Meta recusaria o
+    // envio inteiro — por isso a frase de reserva, nunca string vazia.
+    const parcelaDivida = d.valor_parcela ? brl(d.valor_parcela) : 'sem valor de parcela';
+    const acaoDivida = `Pra pagar, responda: pagar divida ${d.titulo}${d.valor_parcela ? ` ${d.valor_parcela.toFixed(2)}` : ''}`;
     if (diffDias === 3) {
       mensagem = `🔔 *Lembrete de dívida*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : ''}\n📅 Vence em *3 dias* (dia ${d.dia_vencimento})\n\nPara pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*\nPra parar de receber: *cancelar lembrete divida ${d.titulo}*`;
+      camposDivida = [
+        'Dívida vence em 3 dias',
+        aberturaDe('don-baleone', 'dividas', d.id),
+        tituloDivida, parcelaDivida,
+        `Vence dia ${d.dia_vencimento} — daqui a 3 dias`,
+        acaoDivida,
+      ];
     } else if (diffDias === 0) {
       venceHoje = true; // o "vence hoje" é do briefing; aqui só se briefing off (ver abaixo)
       mensagem = `🚨 *VENCE HOJE*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : 'sem valor de parcela'}\n\nNão esqueça! Para pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*`;
+      camposDivida = [
+        'Dívida vence hoje',
+        aberturaDe('don-baleone', 'dividas', d.id),
+        tituloDivida, parcelaDivida,
+        `Vence hoje (dia ${d.dia_vencimento})`,
+        acaoDivida,
+      ];
     } else {
       // Atrasada: o vencimento DESTE mês já passou e não houve pagamento desde
       // então. Mesma aritmética do resto (clampa mês curto) e o pagamento sai
@@ -1001,6 +1152,13 @@ cron.schedule('0 9 * * *', async () => {
           // Avisa só uma vez por semana
           if (diasAtraso === 1 || diasAtraso === 7 || diasAtraso === 15 || diasAtraso === 30) {
             mensagem = `⚠️ *DÍVIDA EM ATRASO*\n\n📌 *${d.titulo}*\n📅 Vencimento era dia ${d.dia_vencimento} (${diasAtraso} dia${diasAtraso > 1 ? 's' : ''} atrás)\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : ''}\n\nO atraso costuma vir com juros — quanto antes melhor.`;
+            camposDivida = [
+              'Dívida em atraso',
+              aberturaDe('don-baleone', 'dividas', d.id),
+              tituloDivida, parcelaDivida,
+              `Venceu dia ${d.dia_vencimento} — há ${diasAtraso} dia${diasAtraso > 1 ? 's' : ''}`,
+              acaoDivida,
+            ];
             // Marca status em_atraso
             await supabase.from('dividas').update({ status: 'em_atraso' }).eq('id', d.id);
           }
@@ -1022,7 +1180,10 @@ cron.schedule('0 9 * * *', async () => {
       // "Vence hoje" é do briefing matinal — se ligado, não duplica aqui (só
       // antecedência de 3 dias e atraso seguem no cron). Briefing off → manda.
       if (venceHoje && await briefingLigado(m.id)) continue;
-      await lembrete(m.phone, mensagem, null, { id: 'don-baleone', aviso: 'dividas', seed: d.id });
+      await lembrete(m.phone, mensagem, null, {
+        id: 'don-baleone', aviso: 'dividas', seed: d.id,
+        campos: camposDivida,
+      });
       enviou = true;
     }
     // ⚠️ A marca de "já avisei hoje" é da DÍVIDA, não da pessoa: só grava se
@@ -1343,7 +1504,7 @@ cron.schedule('0 13 * * *', async () => {
 // ─────────────────────────────────────────────────────────────────
 const {
   resumoPeriodo, gerarInsight, montarCorpoSemanal, montarCorpoMensal,
-  TITULO_SEMANAL, TITULO_MENSAL, CTA,
+  TITULO_SEMANAL, TITULO_MENSAL, CTA, deltaGastos,
 } = require('../services/resumoFinanceiro');
 const { coletarGrow } = require('../services/coletoresGrow');
 const APP_URL_RESUMO = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
@@ -1423,12 +1584,26 @@ cron.schedule('*/15 * * * *', async () => {
           // O `agente_aviso` leva a MANCHETE inteira (que o template
           // `resumo_semanal` não tem onde encaixar) e a cara do Sora. Se a
           // fase 3 estiver desligada, cai no template aprovado de sempre.
-          template: templateAgente('sora', vestida.coreAgente, 'resumo-semanal') || {
-            name: 'resumo_semanal',
-            // corpo: {{1}} nome · {{2}} gasto · {{3}} recebido | cabeçalho IMAGE = capa
-            params: [primeiroNome, brl(atual.gastos), brl(atual.receitas)],
-            opts: { headerImage: CAPA },
-          },
+          // {{1}} nome · {{2}} manchete · {{3}} frase · {{4}} gastos · {{5}} receitas
+          // {{6}} saldo · {{7}} maior categoria · [{{8}} Grow, só no modelo _grow]
+          template: (() => {
+            const topo = atual.topCats && atual.topCats[0];
+            const base = [
+              primeiroNome,
+              insight.titulo,
+              insight.frase,
+              brl(atual.gastos) + deltaGastos(atual.gastos, anterior.gastos, 'vs semana passada'),
+              brl(atual.receitas),
+              brl(atual.saldo),
+              // ⚠️ Semana só de receitas deixaria o parâmetro VAZIO e a Meta
+              // recusaria a mensagem inteira.
+              topo ? `${topo[0]} (${brl(topo[1])})` : 'sem gastos no período',
+            ];
+            const gLinha = linhaGrow(grow, 'semana');
+            return (gLinha && templateDoAviso('sora', 'resumo-semanal', [...base, gLinha], 'resumo_semanal_grow'))
+              || templateDoAviso('sora', 'resumo-semanal', base)
+              || { name: 'resumo_semanal', params: [primeiroNome, brl(atual.gastos), brl(atual.receitas)], opts: { headerImage: CAPA } };
+          })(),
         });
         enviados++;
       } catch { /* tolerante por usuário */ }
@@ -1478,11 +1653,27 @@ cron.schedule('*/15 * * * *', async () => {
         const primeiroNome = (u.name || 'tudo bem').split(' ')[0];
         await enviarProativo(u.phone, {
           texto: vestida.texto,
-          template: templateAgente('sora', vestida.coreAgente, 'resumo-mensal') || {
-            name: 'resumo_mensal',
-            params: [primeiroNome, mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)],
-            opts: { headerImage: CAPA }, // cabeçalho IMAGE = capa
-          },
+          // {{1}} nome · {{2}} mês · {{3}} manchete · {{4}} frase · {{5}} gastos
+          // {{6}} receitas · {{7}} saldo · {{8}} onde o dinheiro foi
+          // [{{9}} Grow, só no modelo _grow]
+          template: (() => {
+            // ⚠️ O limite geral entra JUNTO das categorias, não como parâmetro
+            // próprio: quem não configurou meta mandaria um campo vazio.
+            const cats = (atual.topCats || []).slice(0, 3)
+              .map(([nome, val]) => `${nome} ${brl(val)}`).join(' · ');
+            const meta = u.meta_mensal > 0
+              ? `🎯 Limite: ${Math.round((atual.gastos / u.meta_mensal) * 100)}% usado` : '';
+            const base = [
+              primeiroNome, mesNome, insight.titulo, insight.frase,
+              brl(atual.gastos) + deltaGastos(atual.gastos, anterior.gastos, 'vs mês anterior'),
+              brl(atual.receitas), brl(atual.saldo),
+              [cats, meta].filter(Boolean).join(' · ') || 'sem gastos no período',
+            ];
+            const gLinha = linhaGrow(grow, 'mes');
+            return (gLinha && templateDoAviso('sora', 'resumo-mensal', [...base, gLinha], 'resumo_mensal_grow'))
+              || templateDoAviso('sora', 'resumo-mensal', base)
+              || { name: 'resumo_mensal', params: [primeiroNome, mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)], opts: { headerImage: CAPA } };
+          })(),
         });
         enviados++;
       } catch { /* tolerante por usuário */ }

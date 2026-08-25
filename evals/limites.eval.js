@@ -66,14 +66,38 @@ console.log('── 3. números ──');
 }
 console.log('  ok');
 
-// ── 4. Nome do destinatário ────────────────────────────────────────────────
-console.log('── 4. saudação ──');
+// ── 4. Abertura do Don Baleone (o {{1}}) ───────────────────────────────────
+//
+// ⚠️ O {{1}} MUDOU em ago/2026. Era o primeiro nome do usuário ("Eaí, Lenon!");
+// o corpo reescrito trata por "Chefe", que é a voz do agente, e o slot passou a
+// receber a ABERTURA sorteada. Mandar o nome ali agora o colocaria no lugar da
+// fala — sairia "Lenon" solto onde deveria estar a frase dele.
+console.log('── 4. abertura do agente ──');
 {
-  eq(templateLimite('Lenon Schneider Silva', 'x', 1, 1, 1).params[0], 'Lenon', 'só o primeiro nome');
-  eq(templateLimite('', 'x', 1, 1, 1).params[0], 'tudo bem', 'sem nome → "Oi, tudo bem!"');
-  eq(templateLimite(null, 'x', 1, 1, 1).params[0], 'tudo bem', 'null não quebra');
-  eq(templateLimite('   ', 'x', 1, 1, 1).params[0], 'tudo bem', 'só espaços conta como sem nome');
-  ok(templateLimite('A'.repeat(120), 'x', 1, 1, 1).params[0].length <= 60, 'nome truncado');
+  const { VOZES } = require('../src/agentes');
+  const aberturas = VOZES['don-baleone.limite'].abre;
+
+  const p = templateLimite('Lenon Schneider Silva', 'x', 1, 1, 1, 'seed-a').params;
+  ok(aberturas.includes(p[0]), `{{1}} é uma abertura do Don Baleone (veio "${p[0]}")`);
+  ok(!p[0].includes('Lenon'), 'o nome do usuário NÃO vai mais no {{1}}');
+
+  // Mesma pessoa = mesma fala; sem isso o aviso mudaria de tom entre a tentativa
+  // do template e a do fallback.
+  eq(templateLimite('X', 'x', 1, 1, 1, 'seed-a').params[0],
+     templateLimite('Y', 'x', 1, 1, 1, 'seed-a').params[0], 'mesma seed = mesma abertura');
+
+  // Nome ausente não influencia mais nada — e nenhum parâmetro pode sair vazio,
+  // senão a Meta recusa a mensagem inteira.
+  for (const nome of ['', null, '   ']) {
+    const q = templateLimite(nome, 'x', 1, 1, 1, 'seed-b').params;
+    ok(aberturas.includes(q[0]), `sem nome ainda sai a abertura (veio "${q[0]}")`);
+    ok(q.every((v) => String(v).trim().length > 0), 'nenhum parâmetro sai vazio');
+  }
+
+  // O cabeçalho de imagem virou OBRIGATÓRIO: o modelo passou a ter header de
+  // mídia, e sem o parâmetro a Meta recusa o envio.
+  ok(/agentes\/whatsapp\/don-baleone\.png/.test(templateLimite('A', 'x', 1, 1, 1).opts.headerImage || ''),
+    'manda a capa do Don Baleone no cabeçalho');
 }
 console.log('  ok');
 

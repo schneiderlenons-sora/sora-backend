@@ -18,7 +18,14 @@
 // agente e de aviso são os MESMOS nos dois lados.
 // =============================================================================
 
-const VOZ_LIGADA = process.env.AGENTES_VOZ === '1';
+// ⚠️ LIGADOS POR PADRÃO desde a remodelagem dos templates (ago/2026). Antes era
+// opt-in (`=== '1'`) porque a arte dos agentes ainda não estava em produção e
+// URL de imagem com 404 faz a Meta RECUSAR a mensagem inteira. As 8 capas já
+// respondem 200 em forsora.com/agentes/whatsapp/, e agora cada aviso tem
+// template PRÓPRIO — o texto fixo do modelo já é a voz do agente, então manter
+// a voz desligada deixaria a mensagem in-window sem a personalidade que a
+// out-of-window tem. Escape hatch: `AGENTES_VOZ=0` / `AGENTES_TEMPLATE=0`.
+const VOZ_LIGADA = process.env.AGENTES_VOZ !== '0';
 
 // ── Template com a CARA do agente (fase 3) ──────────────────────────────────
 // A imagem do cabeçalho é parâmetro de ENVIO, não fica presa no template
@@ -29,7 +36,7 @@ const VOZ_LIGADA = process.env.AGENTES_VOZ === '1';
 // ⚠️ SÓ LIGAR DEPOIS QUE O FRONTEND ESTIVER EM PRODUÇÃO: a Meta busca a imagem
 // pela URL pública, e os arquivos vivem em `public/agentes/` do painel. Com o
 // branch ainda não mergeado, a URL dá 404 e a Meta recusa a mensagem inteira.
-const TEMPLATE_LIGADO = process.env.AGENTES_TEMPLATE === '1';
+const TEMPLATE_LIGADO = process.env.AGENTES_TEMPLATE !== '0';
 const TPL_AGENTE = process.env.WHATSAPP_TPL_AGENTE || 'agente_aviso';
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.forsora.com').replace(/\/$/, '');
 
@@ -279,6 +286,119 @@ function tituloDe(agenteId, avisoId) {
   if (!agente) return t || '';
   return t ? `${t} · ${agente.nome}` : agente.nome;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEMPLATES POR AVISO (ago/2026)
+//
+// Antes UM template (`agente_aviso`) servia os 15 avisos: dois parâmetros, o
+// recado inteiro achatado numa linha só. Tudo chegava com a mesma cara e sem
+// espaçamento, porque a Meta REJEITA quebra de linha dentro de parâmetro — as
+// quebras têm de estar no corpo FIXO do modelo, e um corpo genérico não podia
+// ter campos.
+//
+// Agora cada aviso tem o seu, com os campos estruturados um por linha e a voz
+// do agente no texto fixo. `agente_aviso` fica obsoleto.
+// ─────────────────────────────────────────────────────────────────────────────
+const TEMPLATE_AVISO = {
+  // O Sardinha usa UM modelo pros quatro avisos dele: todos têm a mesma forma
+  // (uma coisa, um valor, um prazo, uma ação), só muda o assunto no {{1}}.
+  'sardinha.recorrencias':      'sardinha_conta_vence',
+  'sardinha.lembretes':         'sardinha_conta_vence',
+  'sardinha.parcelas':          'sardinha_conta_vence',
+  'sardinha.fatura':            'sardinha_conta_vence',
+  'don-baleone.dividas':        'baleone_divida',
+  'don-baleone.limite':         'limite_atingido',
+  'loki.habitos':               'loki_habitos',
+  'loki.compromissos':          'loki_compromisso',
+  'loki.manutencoes':           'loki_manutencao',
+  'dr-house.medicamentos':      'house_remedio',
+  'dr-house.consultas':         'house_consulta',
+  'detetive-watson.duplicadas': 'watson_repetido',
+  'sora.resumo-semanal':        'resumo_semanal',
+  'sora.resumo-mensal':         'resumo_mensal',
+  // `loki.briefing` NÃO entra aqui: é lista de tamanho variável e usa a família
+  // `agente_lista_N` (ver `templateLista`).
+};
+
+/**
+ * Higieniza um parâmetro de template.
+ *
+ * ⚠️ A Cloud API recusa parâmetro com `\n`, tab ou 4+ espaços seguidos, e
+ * recusa parâmetro VAZIO. Qualquer um desses derruba a mensagem inteira, não
+ * só o campo — por isso a limpeza é obrigatória e o vazio vira `''` pra quem
+ * chama detectar e desistir do template.
+ */
+const param = (v) => String(v == null ? '' : v)
+  .replace(/\s*[\r\n\t]+\s*/g, ' ')
+  .replace(/ {4,}/g, '   ')
+  .trim()
+  .slice(0, MAX_CORE);
+
+/** Capa do agente pro cabeçalho de imagem (ver `arte`/`capaVersao` no catálogo). */
+function capaDe(agenteId) {
+  const agente = AGENTES[agenteId];
+  if (!agente || !agente.arte) return process.env.SORA_CAPA_URL || `${APP_URL}/sora-capa.png`;
+  return `${APP_URL}/agentes/whatsapp/${agenteId}.png${agente.capaVersao ? `?v=${agente.capaVersao}` : ''}`;
+}
+
+/**
+ * A abertura sorteada do agente — o parâmetro de "voz" dos templates novos.
+ *
+ * ⚠️ NÃO olha `VOZ_LIGADA` de propósito. Nos modelos novos a abertura é um
+ * CAMPO OBRIGATÓRIO do corpo; mandar vazio faz a Meta recusar o envio. A flag
+ * controla o texto rico in-window, não a existência do parâmetro.
+ */
+function aberturaDe(agenteId, avisoId, seed) {
+  const voz = VOZES[`${agenteId}.${avisoId}`];
+  if (!voz || !voz.abre.length) return 'Passando pra te avisar:';
+  return escolher(voz.abre, seed == null ? null : `${agenteId}.${avisoId}.${seed}`);
+}
+
+/**
+ * Monta o template DEDICADO de um aviso.
+ *
+ * @param {string[]} campos  os {{n}} na ordem do corpo aprovado na Meta
+ * @returns `null` quando não há modelo, a fase está desligada, ou algum campo
+ *          ficou vazio — e aí quem chama cai no `lembretes_gerais`. Preferimos
+ *          o aviso feio ao aviso que não chega.
+ */
+function templateDoAviso(agenteId, avisoId, campos, nomeForcado) {
+  const agente = AGENTES[agenteId];
+  const name = nomeForcado || TEMPLATE_AVISO[`${agenteId}.${avisoId}`];
+  if (!TEMPLATE_LIGADO || !agente || !name || !Array.isArray(campos) || !campos.length) return null;
+  const params = campos.map(param);
+  if (params.some((p) => !p)) return null;
+  return { name, params, opts: { headerImage: capaDe(agenteId) } };
+}
+
+/**
+ * Família `agente_lista_N` — o briefing do Loki, as recorrências do dia do
+ * Sardinha e a lista do Watson.
+ *
+ * ⚠️ UM MODELO POR QUANTIDADE DE ITENS. É limite da Meta, não escolha: como o
+ * parâmetro não aceita quebra de linha, a única forma de ter um item por linha
+ * é ter uma variável por linha — e parâmetro vazio derruba o envio, então não
+ * dá pra ter um modelo de 5 e mandar 2.
+ *
+ * Acima de `MAX_LISTA` a última linha vira "…e mais N", pra não perder item em
+ * silêncio.
+ */
+const MAX_LISTA = 5;
+
+function templateLista(agenteId, avisoId, { assunto, itens, seed }) {
+  const lista = (itens || []).map(param).filter(Boolean);
+  if (!lista.length) return null;
+
+  const mostra = lista.length > MAX_LISTA
+    ? [...lista.slice(0, MAX_LISTA - 1), `…e mais ${lista.length - (MAX_LISTA - 1)}`]
+    : lista;
+
+  return templateDoAviso(
+    agenteId, avisoId,
+    [assunto, aberturaDe(agenteId, avisoId, seed), ...mostra],
+    `agente_lista_${mostra.length}`,
+  );
+}
 /**
  * Template com a foto e o nome do agente, pro envio FORA da janela de 24h.
  *
@@ -319,6 +439,7 @@ function templateAgente(agenteId, core, avisoId) {
 const temVoz = (agenteId, avisoId) => !!VOZES[`${agenteId}.${avisoId}`];
 
 module.exports = {
-  tituloDe,
+  tituloDe, aberturaDe, templateDoAviso, templateLista, capaDe, param,
+  TEMPLATE_AVISO, MAX_LISTA,
   falar, temVoz, templateAgente, AGENTES, VOZES, VOZ_LIGADA, TEMPLATE_LIGADO,
 };
