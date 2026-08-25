@@ -529,8 +529,57 @@ function faturaSimulada(fonte) {
  * zerada" que já custou um diagnóstico inteiro. Só devolve número quando ao
  * menos uma linha respondeu.
  */
+/**
+ * `used_amount` do CARTÃO, lido DIRETO de `limits[]`.
+ *
+ * ⚠️ POR QUE NÃO REUSAR O `usado` QUE SAI DO `limiteTotalDoCartao`: aquele vem
+ * da linha que venceu a disputa do TETO, e adotar um teto é decisão de
+ * EXIBIÇÃO (não mostrar limite falso — ver o caso do "Limite Nupay"). O
+ * `used_amount` é um FATO do banco. Amarrar um no outro deixou o Mercado Pago
+ * SEM FATURA: como o teto dele é recusado pela trava, `usado` vinha null, a
+ * regra de ouro não rodava, e a fatura caía na soma das transações — que sai a
+ * menos quando há parcelamento. Medido: 1.925,68 contra 2.325,30 do banco.
+ *
+ * ⚠️ SÓ DEVOLVE QUANDO TODAS AS LINHAS CONCORDAM. Nos payloads reais o
+ * `used_amount` vem IGUAL em toda linha de `limits[]` — é do cartão inteiro,
+ * não da modalidade. Quando divergem não há como saber qual é o do cartão, e
+ * escolher uma produz o absurdo que apareceu na tela de um cliente: "limite
+ * R$ 4.750 · usado R$ 4.836,77", com o teto de uma linha e o usado de outra.
+ * Preferir não calcular a calcular errado.
+ */
+function usadoDoCartao(card) {
+  const arr = Array.isArray(card && card.limits) ? card.limits : [];
+
+  // Se o emissor publica a linha do CARTÃO INTEIRO, o `used_amount` dela é o do
+  // cartão por definição — não precisa de consenso com as modalidades, que
+  // podem legitimamente ter usados diferentes. Sem este ramo, todo cartão com
+  // TOTAL + modalidades perderia a regra de ouro que já funciona hoje.
+  const totais = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_TOTAL');
+  const doTotal = totais.find((l) => l.consolidation_type === 'CONSOLIDADO') || totais[0] || null;
+  if (doTotal) {
+    const v = money(doTotal.used_amount);
+    if (v != null) return cent(v);
+  }
+
+  const vals = arr.map((l) => money(l && l.used_amount)).filter((v) => v != null);
+  if (!vals.length) return null;
+  return new Set(vals.map((v) => cent(v))).size === 1 ? cent(vals[0]) : null;
+}
+
 function unbilledDoCartao(card) {
   const arr = Array.isArray(card && card.limits) ? card.limits : [];
+
+  // Simétrico ao `usadoDoCartao`: existindo a linha do CARTÃO INTEIRO, o
+  // `unbilled_amount` dela é o do cartão. Sem este ramo o resultado dependia da
+  // ORDEM em que o banco manda as linhas (as sem `identification_number`
+  // colapsam na primeira), o que é frágil demais pra um número de dinheiro.
+  const totais = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_TOTAL');
+  const doTotal = totais.find((l) => l.consolidation_type === 'CONSOLIDADO') || totais[0] || null;
+  if (doTotal) {
+    const v = money(doTotal.unbilled_amount != null ? doTotal.unbilled_amount : doTotal.unbilledAmount);
+    if (v != null) return Math.max(0, cent(v));
+  }
+
   const porPlastico = new Map();
   for (const l of arr) {
     if (!l) continue;
@@ -888,8 +937,12 @@ function normalizeCartao(card, bills, hoje) {
   // `usado` sai de `limiteTotalDoCartao` (é card-level: vem igual em todas as
   // linhas de limits[]); o `unbilled` é POR PLÁSTICO e por isso é somado.
   const unbilled = unbilledDoCartao(card);
-  const simulada = (unbilled != null && usado != null)
-    ? faturaPorLimite(usado, unbilled)
+  // ⚠️ `usadoDoCartao` lê `used_amount` DIRETO de limits[], sem depender de o
+  // teto ter sido adotado. Usar o `usado` do `limiteTotalDoCartao` amarrava a
+  // fatura a uma decisão de exibição e deixava o Mercado Pago sem fatura.
+  const usadoReal = usadoDoCartao(card);
+  const simulada = (unbilled != null && usadoReal != null)
+    ? faturaPorLimite(usadoReal, unbilled)
     // Sem um dos dois não dá pra aplicar a regra de ouro. O campo legado fica
     // de reserva pra payload antigo em cache; ausente = null e nada muda.
     : (faturaSimulada(aberta) ?? faturaSimulada(card));
@@ -2286,7 +2339,7 @@ module.exports = {
   normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
-  faturaSimulada, unbilledDoCartao, usoConhecido,
+  faturaSimulada, unbilledDoCartao, usadoDoCartao, usoConhecido,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };
