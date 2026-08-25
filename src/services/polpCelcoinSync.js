@@ -1541,6 +1541,26 @@ async function upsertWallet(grupoId, userId, n, saldo) {
       delete extras.dia_fechamento;
       delete extras.dia_vencimento;
     }
+
+    // ⚠️ NUNCA APAGA UM LIMITE QUE JÁ EXISTE. O sync escrevia `limite = null`
+    // sempre que o banco respondia sobre limites SEM publicar um
+    // `LIMITE_CREDITO_TOTAL` — e é exatamente o caso do Mercado Pago. Resultado:
+    // o usuário editava o limite à mão, salvava, e o sync seguinte zerava. Como
+    // ele roda por webhook, a edição sumia em minutos e parecia que "não salva".
+    // Medido em 25/08/2026: 15 dos 29 cartões de OF estavam com limite nulo, 3
+    // deles Mercado Pago.
+    //
+    // O null-write nasceu pra LIMPAR um teto falso (o "Limite Nupay" de R$
+    // 300,45 que virou limite de um cartão com fatura de R$ 2.293,71). Essa
+    // proteção não depende mais dele: hoje a trava anti-sublimite recusa o
+    // candidato na origem (ver `limitePorModalidade`), então o teto falso nem
+    // chega a ser gravado.
+    //
+    // Preço consciente: um limite errado gravado ANTES daquela trava não se
+    // limpa sozinho. É reversível pelo usuário em dois toques; perder a edição
+    // dele a cada sync não era.
+    if (extras.limite == null && ja.limite != null) delete extras.limite;
+
     await atualizar(ja.id);
     return ja.nome;
   }
