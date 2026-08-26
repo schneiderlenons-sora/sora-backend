@@ -33,6 +33,32 @@ function casa(texto, kw) {
 // da marca (nesta certa + logo no painel). Senão, keyword → subcategoria óbvia
 // ou categoria-pai. Ordem: MAIS específico → genérico.
 const REGRAS = [
+  // ── PREFIXO DE ADQUIRENTE — antes de TUDO ────────────────────────────────
+  //
+  // `IFD*` é o descritor que o iFood carimba na fatura ("IFD*NOME DA LOJA").
+  // É um sinal ESTRUTURAL — quem cobrou foi o iFood, ponto — e por isso vale
+  // mais que qualquer palavra achada no nome do restaurante.
+  //
+  // ⚠️ ESTÁ NO TOPO, e não no bloco de Delivery lá embaixo, por duas razões
+  // medidas na base:
+  //   1. Sem isto quem decidia era o nome da LOJA: "IFD*SAGUACU PIZZARIA"
+  //      virava Restaurante, "IFD*KAKA LANCHES" virava Lanches e o resto caía
+  //      em Outros. Medido: 73 lançamentos, R$ 4.431,65, espalhados por 11
+  //      categorias — e a categoria iFood, que existe justamente pra dar esse
+  //      total, ficava com 4.
+  //   2. A regra de Transferências casa `'ted '` por SUBSTRING, então
+  //      "IFD*UNITED FOODS" viraria Transferência antes de chegar no Delivery.
+  //
+  // ⚠️ Consequência ACEITA: pedido de FARMÁCIA pelo iFood ("IFD*RAIA
+  // DROGASIL") passa a contar como iFood, não Farmácia. É o preço de o total
+  // do iFood ser confiável — sem ele o limite de iFood não significa nada. O
+  // nome da loja continua visível na descrição.
+  //
+  // Medido na base inteira: 75 descrições têm o token `ifd` e as 75 são iFood.
+  // Falso positivo zero. Como 'ifd' tem 3 letras, `casa()` já exige palavra
+  // inteira — "ifd" preso dentro de outra palavra não casa.
+  { cat: 'iFood',          kws: ['ifd'] },
+
   // ── Encomendas / Compras (marcas) — antes de tudo ──
   // "amazon prime" é streaming, não marketplace → checa ANTES de 'amazon'.
   { cat: 'Prime Video',    kws: ['amazon prime', 'prime video', 'primevideo'] },
@@ -43,7 +69,11 @@ const REGRAS = [
   { cat: 'TikTok Shop',    kws: ['tiktok shop', 'tiktok', 'tik tok'] },
   { cat: 'Shein',          kws: ['shein'] },
   { cat: 'Nike',           kws: ['nike'] },
-  { cat: 'Adidas',         kws: ['adidas'] },
+  // 'payu adi': o PayU é gateway de MUITA loja, então 'payu' sozinho não diz
+  // nada — mas o campo do adquirente corta em 22 caracteres e a Adidas chega
+  // truncada ("PayU        *ADI"). Exigir as duas palavras JUNTAS é o que
+  // separa a Adidas de qualquer outro lojista do PayU.
+  { cat: 'Adidas',         kws: ['adidas', 'payu adi'] },
   { cat: 'Encomendas',     kws: ['magazine luiza', 'magalu', 'americanas', 'casas bahia', 'submarino', 'kabum', 'pichau', 'terabyte', 'temu', 'wish', 'enjoei', 'pontofrio', 'ponto frio', 'fastshop', 'fast shop', 'shopify'] },
 
   // ── Assinatura da Sora (EC*SORA no extrato) — antes do genérico ──

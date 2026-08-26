@@ -19,9 +19,47 @@ const supabase = require('../db/supabase');
 const { enviarProativo } = require('../services/proativo');
 
 // Nome de categoria pra comparação: sem emoji, sem acento, minúsculo.
+//
+// ⚠️ `Extended_Pictographic`, NUNCA `\p{Emoji}`: a classe `Emoji` inclui os
+// dígitos 0-9, e com ela a categoria "99" (o app de corrida) vira string vazia
+// e passa a colidir com toda transação sem categoria. O painel usava
+// `\p{Emoji}` e tinha exatamente esse buraco.
+// ⚠️ Os invisíveis (U+FE0F seletor de variação, U+200D ZWJ, U+20E3 keycap)
+// entram na conta: `Extended_Pictographic` limpa o ↩ de "↩️ Reembolso" e DEIXA
+// o U+FE0F, que `trim()` não tira por não ser espaço. A chave saía
+// "️ reembolso" e nunca casava com a transação gravada como "Reembolso" —
+// o gasto não subia pro pai e um limite nessa categoria ficava cego pra sempre.
+// Hoje nenhum `nome` da taxonomia tem emoji colado (eles vivem em `icone`), mas
+// `transacoes.categoria` é texto livre e já recebeu '💳 Fatura' assim.
+// Achado pelo eval do porte TS, não por reclamação de cliente.
 function limpaCat(s) {
-  return (s || '').replace(/\p{Extended_Pictographic}/gu, '').toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  return (s || '').replace(/[\p{Extended_Pictographic}\uFE0F\u200D\u20E3]/gu, '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+/**
+ * Nomes que entram na conta do limite de `categoria`: ela mesma + as filhas
+ * diretas, já normalizados por `limpaCat`.
+ *
+ * ⚠️ FONTE ÚNICA. O painel espelha isto em sora-frontend/lib/limite-categoria.ts
+ * e o eval de lá compara contra ESTA função. A regra vivia inline aqui dentro e
+ * o painel tinha a própria versão, sem as filhas: o alerta do WhatsApp disparava
+ * por um total que a tela jurava não existir (medido numa conta real: 88% do
+ * gasto do mês invisível na aba Limites).
+ *
+ * ⚠️ UM NÍVEL SÓ — a taxonomia tem dois. E limite em SUBcategoria soma só ela:
+ * quem põe teto em "Mercado Livre" quer o teto do Mercado Livre, não o de
+ * Encomendas inteiro.
+ */
+function nomesDoLimite(categoria, cats) {
+  const chave = limpaCat(categoria);
+  const nomes = new Set([chave]);
+  const cat = (cats || []).find((c) => limpaCat(c.nome) === chave);
+  if (cat) {
+    (cats || []).filter((c) => c.parent_id === cat.id)
+      .forEach((c) => nomes.add(limpaCat(c.nome)));
+  }
+  return [...nomes];
 }
 
 // ── Template `limite_atingido` ───────────────────────────────────────────────
@@ -112,15 +150,29 @@ async function avisarGrupo(grupoId, fallbackPhone, msg, template) {
   // texto original intacto (ver src/agentes).
   const { falar } = require('../agentes');
 
+  // ⚠️ DEVOLVE SE ALGUÉM RECEBEU. O chamador marca `alerta_enviado` com base
+  // nisto. Antes esta função não devolvia nada e a flag era gravada de
+  // qualquer jeito: bastava a Meta recusar o template (imagem de cabeçalho
+  // fora do ar, modelo em análise) pra o aviso do mês ser dado como entregue
+  // e nunca mais ser tentado. O limite estourava em silêncio — que é
+  // exatamente o que este serviço existe pra impedir.
+  let algumEnviado = false;
+
   for (const d of destinos) {
     try {
       const vestida = falar('don-baleone', 'limite', { texto: msg, seed: d.phone });
-      await enviarProativo(d.phone, {
+      const r = await enviarProativo(d.phone, {
         texto: vestida.texto,
         template: typeof template === 'function' ? template(d.nome, d.phone) : template,
       });
+      if (r !== false) algumEnviado = true;
     } catch { /* um destino que falha não pode parar os outros */ }
   }
+
+  // "Pelo menos UM" e não "todos": se um membro recebeu, repetir o mês inteiro
+  // ia encher a caixa dele até o outro destino voltar a funcionar.
+  if (!algumEnviado) console.warn('[limites] nenhum destino recebeu o alerta — não vou marcar como avisado');
+  return algumEnviado;
 }
 
 /**
@@ -158,10 +210,7 @@ async function verificarLimite(grupoId, phone, user) {
     for (const limite of limites) {
       if (limite.ativo === false || !limite.limite_mensal || limite.alerta_enviado) continue;
 
-      const chave = limpaCat(limite.categoria);
-      const nomes = new Set([chave]);
-      const cat = (cats || []).find((c) => limpaCat(c.nome) === chave);
-      if (cat) (cats || []).filter((c) => c.parent_id === cat.id).forEach((c) => nomes.add(limpaCat(c.nome)));
+      const nomes = new Set(nomesDoLimite(limite.categoria, cats));
 
       const total = (gastos || [])
         .filter((g) => nomes.has(limpaCat(g.categoria)))
@@ -170,13 +219,17 @@ async function verificarLimite(grupoId, phone, user) {
       const pct = (total / limite.limite_mensal) * 100;
       if (pct >= (limite.percentual_alerta || 80)) {
         const alvo = String(limite.categoria || '').replace(/\p{Extended_Pictographic}/gu, '').trim();
-        await avisarGrupo(grupoId, phone,
+        const enviado = await avisarGrupo(grupoId, phone,
           `⚠️ *Limite de ${limite.categoria}*: os gastos chegaram a *${pct.toFixed(0)}%* do teto do mês.\n` +
           `Teto: ${brl(limite.limite_mensal)} | Gasto atual: ${brl(total)}`,
           (nome, seed) => templateLimite(nome, alvo, pct, total, limite.limite_mensal, seed));
 
-        await supabase.from('category_limits')
-          .update({ alerta_enviado: true }).eq('id', limite.id);
+        // Só marca se saiu de verdade — senão o aviso do mês morre num envio
+        // que falhou e o teto estoura calado. A próxima escrita tenta de novo.
+        if (enviado) {
+          await supabase.from('category_limits')
+            .update({ alerta_enviado: true }).eq('id', limite.id);
+        }
       }
     }
   }
@@ -206,10 +259,12 @@ async function verificarLimiteGeral(grupoId, phone, user, mesRef, gastos) {
   const pct = (total / meta) * 100;
   if (pct < pctAlerta) return;
 
-  await avisarGrupo(grupoId, phone,
+  const enviado = await avisarGrupo(grupoId, phone,
     `🚨 *Limite geral do mês*: os gastos chegaram a *${pct.toFixed(0)}%* da meta.\n` +
     `Meta: ${brl(meta)} | Gasto total: ${brl(total)}`,
     (nome, seed) => templateLimite(nome, ALVO_GERAL, pct, total, meta, seed));
+
+  if (!enviado) return; // não queima o aviso do mês num envio que falhou
 
   // Marca como avisado neste mês (defensivo: coluna pode não existir ainda).
   try {
@@ -233,5 +288,5 @@ function verificarLimiteEmBackground(grupoId, phone, user) {
 
 module.exports = {
   verificarLimite, verificarLimiteEmBackground, avisarGrupo,
-  templateLimite, ALVO_GERAL, limpaCat,
+  templateLimite, ALVO_GERAL, limpaCat, nomesDoLimite,
 };
