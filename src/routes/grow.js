@@ -379,13 +379,21 @@ router.get('/tarefas/:phone', auth, requireGrow, async (req, res) => {
 
 router.post('/tarefas', auth, requireGrow, async (req, res) => {
   try {
-    const { titulo, descricao, prioridade, data_vencimento, recorrente, projeto_id, tags, status_kanban } = req.body;
+    const { titulo, descricao, prioridade, data_vencimento, recorrente,
+            frequencia_recorrencia, categoria, projeto_id, tags, status_kanban } = req.body;
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Titulo obrigatorio' });
     const { data } = await supabase.from('tarefas').insert({
       grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, titulo: titulo.trim(), descricao,
       prioridade: prioridade || 'media',
       data_vencimento: data_vencimento || null,
-      recorrente: !!recorrente, projeto_id: projeto_id || null,
+      recorrente: !!recorrente,
+      // ⚠️ Frequência só existe quando é recorrente. Pendurada numa tarefa
+      // avulsa, a tela mostraria "toda semana" em algo que acontece uma vez.
+      frequencia_recorrencia: recorrente ? (frequencia_recorrencia || 'semanal') : null,
+      // Antes só o WhatsApp gravava categoria (o handler dava UPDATE depois do
+      // insert). Aceitando aqui, o painel grava junto, numa chamada só.
+      categoria: categoria || null,
+      projeto_id: projeto_id || null,
       tags: tags || null, status_kanban: status_kanban || 'a_fazer',
       criado_por: req.userRow.id,
     }).select().single();
@@ -395,10 +403,19 @@ router.post('/tarefas', auth, requireGrow, async (req, res) => {
 
 router.put('/tarefas/:id', auth, requireGrow, async (req, res) => {
   try {
-    const allowed = ['titulo','descricao','concluida','prioridade','data_vencimento','projeto_id','tags','status_kanban'];
+    // ⚠️ `recorrente`, `frequencia_recorrencia` e `categoria` FALTAVAM aqui.
+    // As colunas existem desde sempre e o POST já aceitava `recorrente`, mas o
+    // PUT descartava calado: editar uma tarefa recorrente pelo painel não tinha
+    // como ligar/desligar a repetição, e corrigir a categoria que a IA errou
+    // era impossível fora do banco.
+    const allowed = ['titulo','descricao','concluida','prioridade','data_vencimento',
+                     'recorrente','frequencia_recorrencia','categoria','projeto_id','tags','status_kanban'];
     const patch = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     if ('concluida' in req.body && req.body.concluida === true) patch.status_kanban = 'concluida';
+    // Desligar a recorrência tem de limpar a frequência junto — senão fica um
+    // "semanal" órfão que reaparece se alguém religar o toggle.
+    if (patch.recorrente === false) patch.frequencia_recorrencia = null;
     const { data } = await supabase.from('tarefas').update(patch).eq('id', req.params.id).select().single();
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }

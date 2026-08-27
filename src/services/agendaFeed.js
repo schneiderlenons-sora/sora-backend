@@ -178,6 +178,39 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
     }
   } catch {}
 
+  // 6B. Tarefas com prazo.
+  //
+  // ⚠️ TAREFA É SEMPRE PRIVADA — filtra por `user_id`, nunca por `grupo_id`.
+  // Diferente de Casa/Manutenções, ela não tem toggle de compartilhamento (é a
+  // regra registrada em "Privacidade do Grow em grupos"): num casal, a lista de
+  // tarefas de um não pode vazar pra agenda do outro.
+  //
+  // Só entra tarefa NÃO concluída — a agenda é sobre o que ainda vai acontecer;
+  // tarefa feita virando evento entulharia o dia com o que já saiu do caminho.
+  //
+  // Prioridade dá a cor, porque é o que a pessoa usa pra decidir a ordem do dia.
+  try {
+    if (userId) {
+      const CORES_PRI = { urgente: '#ef4444', alta: '#f97316', media: '#eab308', baixa: '#22c55e' };
+      const { data } = await supabase.from('tarefas')
+        .select('id, titulo, prioridade, data_vencimento, projeto_id, projetos(nome, cor, icone)')
+        .eq('user_id', userId)
+        .eq('concluida', false)
+        .not('data_vencimento', 'is', null)
+        .gte('data_vencimento', deStr).lte('data_vencimento', ateStr);
+      for (const t of data || []) {
+        eventos.push({
+          id: `tar-${t.id}`, source: 'tarefa',
+          titulo: `Tarefa: ${t.titulo}`,
+          data: String(t.data_vencimento).slice(0, 10), hora: null,
+          cor: CORES_PRI[t.prioridade] || CORES_PRI.media,
+          deeplink: '/grow/tarefas', editavel: false,
+          raw: { prioridade: t.prioridade, projeto: t.projetos?.nome || null },
+        });
+      }
+    }
+  } catch {}
+
   // 7. Contas do NEGÓCIO (saída pendente com vencimento) — multi-empresa.
   //    Escopo pelas empresas do grupo. `valor` vai em REAIS porque é a
   //    convenção do feed, mas a tabela guarda em centavos → /100.
