@@ -1372,11 +1372,19 @@ cron.schedule('0 3 * * *', async () => {
 cron.schedule('59 23 * * *', async () => {
   console.log('💰 Salvando snapshot de patrimônio...');
 
-  // Busca grupos com plano Black
+  // ⚠️ NÃO É SÓ "BLACK". O filtro era `.eq('plano', 'black')` — e o Black foi
+  // DESCONTINUADO em 2026, com todas as features anexadas ao Premium. Desde
+  // então o snapshot só rodava pros pouquíssimos black legados, e todo mundo
+  // que abre a aba Investimentos ficava com o gráfico de Evolução vazio pra
+  // sempre. Medido antes de corrigir: 1 grupo entrava, 70 deveriam — 13 deles
+  // com investimento de verdade.
+  //
+  // A lista espelha o `exigirPlano` da rota de investimentos: quem consegue
+  // ABRIR a aba precisa ter histórico pra ver nela.
   const { data: users } = await supabase
     .from('users')
     .select('grupo_ativo')
-    .eq('plano', 'black')
+    .in('plano', ['kit', 'premium', 'black'])
     .not('grupo_ativo', 'is', null);
 
   const gruposVistos = new Set();
@@ -1407,11 +1415,24 @@ cron.schedule('59 23 * * *', async () => {
       ? ((patrimonioTotal - anterior.patrimonio_total) / anterior.patrimonio_total) * 100
       : 0;
 
-    await supabase.from('patrimonio_historico').insert({
-      grupo_id:             u.grupo_ativo,
-      patrimonio_total:     patrimonioTotal,
-      rentabilidade_periodo: rentabilidade
-    });
+    // ⚠️ `investido` GUARDA SÓ A CARTEIRA (migration 140). O gráfico vive na
+    // aba Investimentos, logo abaixo do card "Patrimônio total", que soma só
+    // investimentos — desenhar ali a soma com o saldo das contas faria o número
+    // grande dizer uma coisa e a linha embaixo dele, outra.
+    // `patrimonio_total` segue somando as contas, pra não quebrar quem já lê.
+    const linha = {
+      grupo_id:              u.grupo_ativo,
+      patrimonio_total:      patrimonioTotal,
+      rentabilidade_periodo: rentabilidade,
+      investido:             totalInv,
+    };
+    const { error } = await supabase.from('patrimonio_historico').insert(linha);
+    // Migration 140 pendente: grava sem a coluna nova em vez de perder o ponto
+    // do dia (a mesma lição do `datas_manuais`).
+    if (error && /investido/i.test(error.message || '')) {
+      delete linha.investido;
+      await supabase.from('patrimonio_historico').insert(linha);
+    }
   }
   console.log('✅ Snapshots salvos.');
 });

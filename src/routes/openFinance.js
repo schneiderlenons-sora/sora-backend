@@ -504,20 +504,27 @@ async function diagnosticoCelcoin(req, res) {
   // pro par Vercel + Render free, e quem está investigando saldo não precisa
   // de cartão, investimento nem empréstimo.
   const soSaldo = req.query.foco === 'saldo';
+  // ?foco=investimentos — as 5 famílias MAIS as movimentações de cada papel com
+  // saldo. Existe porque `/{familia}/{id}/transactions` é a fonte da aba
+  // Aportes e do card de proventos, e quando ela volta vazia não dá pra saber
+  // se o emissor não tem histórico, se o endpoint recusou, ou se o id está
+  // errado. Sem cartão, sem conta, sem empréstimo: só o que decide essa tela.
+  const soInvestimentos = req.query.foco === 'investimentos';
   const out = { consentId: id, hoje,
-                foco: soSaldo ? 'saldo' : soCartoes ? 'cartoes' : 'completo',
+                foco: soInvestimentos ? 'investimentos'
+                    : soSaldo ? 'saldo' : soCartoes ? 'cartoes' : 'completo',
                 contas: [], cartoes: [], dividas: [], investimentos: [] };
 
   try { out.consentimento = await celcoin.getConsentimento(id); }
   catch (e) { out.consentimento_erro = e.message; }
 
-  if (!soCartoes && !soSaldo) {
+  if (!soCartoes && !soSaldo && !soInvestimentos) {
     try { out.sync_schedules = await celcoin.syncSchedules(id); }
     catch (e) { out.sync_schedules_erro = e.message; }
   }
 
   // CONTAS
-  if (!soCartoes) try {
+  if (!soCartoes && !soInvestimentos) try {
     for (const raw of await celcoin.listarContas(id)) {
       const item = { normalizado: sync.normalizeConta(raw) };
       if (cru) item.cru = raw;
@@ -570,7 +577,7 @@ async function diagnosticoCelcoin(req, res) {
   } catch (e) { out.contas_erro = e.message; }
 
   // CARTÕES — o ponto mais crítico (fatura, fechamento, vencimento, limite)
-  if (!soSaldo) try {
+  if (!soSaldo && !soInvestimentos) try {
     for (const raw of await celcoin.listarCartoes(id)) {
       const bills = await celcoin.listarFaturas(raw.id).catch(() => []);
       const n = sync.normalizeCartao(raw, bills, hoje);
@@ -843,7 +850,7 @@ async function diagnosticoCelcoin(req, res) {
   } catch (e) { out.cartoes_erro = e.message; }
 
   // EMPRÉSTIMOS / FINANCIAMENTOS → viram Dívidas
-  if (!soCartoes && !soSaldo) for (const [kind, fn] of [["emprestimo", "listarEmprestimos"], ["financiamento", "listarFinanciamentos"]]) {
+  if (!soCartoes && !soSaldo && !soInvestimentos) for (const [kind, fn] of [["emprestimo", "listarEmprestimos"], ["financiamento", "listarFinanciamentos"]]) {
     try {
       for (const raw of await celcoin[fn](id)) {
         const item = { kind, normalizado: sync.normalizeDivida(raw, kind) };
@@ -857,8 +864,24 @@ async function diagnosticoCelcoin(req, res) {
   // (a mais cara do diagnóstico: 5 endpoints, cada um paginado)
   if (!soCartoes && !soSaldo) try {
     for (const raw of await celcoin.listarInvestimentos(id)) {
-      const item = { familia: raw.__familia, normalizado: sync.normalizeInvestimento(raw) };
+      const n = sync.normalizeInvestimento(raw);
+      const item = { familia: raw.__familia, path: raw.__path, of_id: String(raw.id), normalizado: n };
       if (cru) item.cru = raw;
+
+      // MOVIMENTAÇÕES (só no foco=investimentos): é UMA chamada por papel, e
+      // no modo completo isso somaria dezenas — o que já estourou o tempo da
+      // Vercel antes. Só os que têm saldo, mesma regra do sync.
+      if (soInvestimentos && (n.valor_atual || 0) > 0.005) {
+        try {
+          const movs = await celcoin.listarTransacoesInvestimento(raw.__path, String(raw.id), { max: 2 });
+          item.movimentos_qtd = movs.length;
+          // Amostra pequena: o diagnóstico é pra descobrir SE vem e em que
+          // formato, não pra despejar o extrato inteiro na resposta.
+          item.movimentos_amostra = movs.slice(0, 3).map((m) => ({
+            cru: m, normalizado: sync.normalizeMovimento(m),
+          }));
+        } catch (e) { item.movimentos_erro = e.message; }
+      }
       out.investimentos.push(item);
     }
   } catch (e) { out.investimentos_erro = e.message; }

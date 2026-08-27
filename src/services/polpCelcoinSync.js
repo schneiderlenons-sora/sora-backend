@@ -2301,6 +2301,49 @@ async function upsertInvestimento(grupoId, n) {
 }
 
 /**
+ * Grava a foto do patrimônio do dia (migration 140).
+ *
+ * ⚠️ UM PONTO POR DIA. O sync pode rodar várias vezes — cron, botão
+ * "Atualizar", reconexão. Um ponto por execução faria a linha virar serrote
+ * sobre um valor que mal mudou, e o gráfico contaria uma volatilidade que não
+ * existe. Se já existe ponto de hoje, ele é ATUALIZADO.
+ */
+async function fotografarPatrimonio(grupoId) {
+  const { data: invs } = await supabase.from('investimentos')
+    .select('valor_atual').eq('grupo_id', grupoId);
+  const investido = (invs || []).reduce((s, i) => s + (Number(i.valor_atual) || 0), 0);
+  // Sem investimento nenhum não há série pra desenhar — gravar zero criaria uma
+  // linha rente ao chão pra quem nunca investiu.
+  if (!(investido > 0)) return;
+
+  const { data: wallets } = await supabase.from('wallets')
+    .select('saldo, tipo').eq('grupo_id', grupoId);
+  // Cartão fica de fora: o `saldo` dele é fatura (dívida), não patrimônio.
+  const emConta = (wallets || [])
+    .filter(w => w.tipo !== 'Crédito')
+    .reduce((s, w) => s + (Number(w.saldo) || 0), 0);
+
+  const hoje = hojeSP();
+  const { data: doDia } = await supabase.from('patrimonio_historico')
+    .select('id').eq('grupo_id', grupoId)
+    .gte('data', `${hoje}T00:00:00`).lte('data', `${hoje}T23:59:59`)
+    .limit(1).maybeSingle();
+
+  const linha = { patrimonio_total: investido + emConta, investido };
+  const alvo = doDia
+    ? supabase.from('patrimonio_historico').update(linha).eq('id', doDia.id)
+    : supabase.from('patrimonio_historico').insert({ grupo_id: grupoId, ...linha, rentabilidade_periodo: 0 });
+
+  const { error } = await alvo;
+  // Migration 140 pendente: repete sem a coluna nova em vez de perder o ponto.
+  if (error && /investido/i.test(error.message || '')) {
+    delete linha.investido;
+    if (doDia) await supabase.from('patrimonio_historico').update(linha).eq('id', doDia.id);
+    else await supabase.from('patrimonio_historico').insert({ grupo_id: grupoId, ...linha, rentabilidade_periodo: 0 });
+  }
+}
+
+/**
  * Busca e grava as movimentações de UM investimento (migration 139).
  *
  * ⚠️ NUNCA APAGA E REGRAVA. Diferente das parcelas previstas — que são
@@ -2672,6 +2715,16 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         }
       } catch (e) { relatorio.investimentos.push({ erro: e.message }); }
     }
+
+    // 5C. FOTO DO PATRIMÔNIO. O cron diário já grava isso, mas ele roda uma vez
+    // por dia: quem acabou de conectar o banco esperaria até a meia-noite pra
+    // ver o primeiro ponto do gráfico. Aqui o ponto nasce no mesmo instante em
+    // que os valores chegam.
+    //
+    // ⚠️ UM PONTO POR DIA, por grupo. Sem isso, quem sincroniza cinco vezes
+    // numa tarde criaria cinco pontos no mesmo dia e a linha viraria serrote
+    // sobre um valor que mal mudou.
+    try { await fotografarPatrimonio(grupoId); } catch { /* nunca derruba o sync */ }
 
     await supabase.from('of_conexoes').update({
       status: 'updated', ultima_sync: new Date().toISOString(), ultimo_erro: null,
