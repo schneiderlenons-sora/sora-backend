@@ -114,6 +114,34 @@ function deduplicar(lista) {
  * As linhas do ciclo em curso saem marcadas com `emCurso`, porque a dedup
  * delas é mais rígida (ver jaEhTransacao).
  */
+/**
+ * A fatura em que a COMPRA caiu.
+ *
+ * ⚠️ NÃO É `competenciaAtual(cartao, dataDaCompra)`. Aquela devolve a primeira
+ * fatura a VENCER a partir da data — e entre o FECHAMENTO e o VENCIMENTO essas
+ * duas coisas são faturas diferentes. A fatura que já fechou ainda não venceu,
+ * então ela ganha; mas a compra de hoje entra na SEGUINTE.
+ *
+ * Bug real (ago/2026), no cartão de uma cliente que fecha dia 3 e vence dia 10:
+ * compra "Morandeturismoe" em 09/05, 5x. `competenciaAtual('2026-05-09')` deu
+ * 2026-05, cujo ciclo é 04/04→03/05 — a compra de 09/05 nem está dentro dele.
+ * Com isso TODA a escada de parcelas nasceu um ciclo adiantada e a 5/5 foi
+ * projetada em setembro, o MESMO ciclo em que a 4/5 já tinha entrado pelo
+ * extrato. Duas parcelas da mesma compra na mesma fatura, R$ 161,38 inflando
+ * o valor exibido.
+ *
+ * ⚠️ Só morde quem compra entre o dia do fechamento e o do vencimento (dias 4
+ * a 10 naquele cartão) — por isso a compra da CVC, feita dia 23, saiu certa e
+ * o defeito passou despercebido.
+ */
+function competenciaDaCompra(cartao, compraEm) {
+  const comp = competenciaAtual(cartao, compraEm);
+  const ciclo = cicloPorCompetencia(cartao, comp);
+  // Fora do ciclo só pode ser PRA FRENTE: `competenciaAtual` nunca devolve
+  // fatura já vencida.
+  return compraEm >= ciclo.fimExcl ? competenciaVizinha(cartao, comp, 1) : comp;
+}
+
 function projetar(lista, cartao, hoje) {
   if (!cartao || !cartao.dia_fechamento) return [];   // sem ciclo, sem projeção
   const atual = competenciaAtual(cartao, hoje);
@@ -123,7 +151,7 @@ function projetar(lista, cartao, hoje) {
     const compraEm = ymd(c.compradoEm);
     if (!compraEm) continue;
     // Competência da 1ª parcela = a fatura em que a COMPRA caiu.
-    const compCompra = competenciaAtual(cartao, compraEm);
+    const compCompra = competenciaDaCompra(cartao, compraEm);
 
     for (let n = 1; n <= c.totalParcelas; n++) {
       const comp = n === 1 ? compCompra : competenciaVizinha(cartao, compCompra, n - 1);
@@ -292,5 +320,6 @@ async function lerPrevistas(cartaoId, competencia) {
 
 module.exports = {
   normalizar, deduplicar, projetar, daCompetencia, instante,
+  competenciaDaCompra,
   jaEhTransacao, gravarParcelasPrevistas, lerPrevistas,
 };

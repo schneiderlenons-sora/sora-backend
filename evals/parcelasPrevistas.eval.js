@@ -14,7 +14,7 @@
 //
 // Rodar:  npm run eval:parcelas-previstas
 // =============================================================================
-const { deduplicar, projetar, daCompetencia, jaEhTransacao } = require('../src/services/parcelasPrevistas');
+const { deduplicar, projetar, daCompetencia, jaEhTransacao, competenciaDaCompra } = require('../src/services/parcelasPrevistas');
 
 const falhas = [];
 const ok = (c, m) => { if (!c) falhas.push(m); };
@@ -231,6 +231,62 @@ console.log('── 7. bordas ──');
     purchasedAt: '2026-11-20T10:00:00Z' }];
   const p = projetar(fimDeAno, CARTAO, '2026-11-25');
   eq(p.map((x) => x.competencia).join(','), '2027-01,2027-02', 'projeção atravessa a virada do ano');
+}
+console.log('  ok');
+
+// ── §6. A COMPRA ENTRE O FECHAMENTO E O VENCIMENTO ──────────────────────
+//
+// Bug real (ago/2026), cartão que fecha dia 3 e vence dia 10. A escada de
+// parcelas nascia de `competenciaAtual(cartao, dataDaCompra)` — que devolve a
+// primeira fatura a VENCER a partir da data, não a que CONTÉM a data. Entre o
+// fechamento e o vencimento essas duas são faturas DIFERENTES: a que fechou
+// ainda não venceu, então ela ganhava, e a escada inteira nascia um ciclo
+// adiantada.
+//
+// Consequência medida: "Morandeturismoe", compra 09/05 em 5x. A parcela 4/5
+// entrou pelo extrato no ciclo de setembro; a 5/5 foi PROJETADA no mesmo ciclo
+// de setembro. Duas parcelas da mesma compra na mesma fatura — R$ 161,38
+// inflando o valor exibido.
+console.log('── 6. compra na janela fechamento→vencimento ──');
+{
+  const ANA = { dia_fechamento: 3, dia_vencimento: 10 };
+
+  // 09/05 está DEPOIS do fechamento (03/05) e ANTES do vencimento (10/05).
+  eq(competenciaDaCompra(ANA, '2026-05-09'), '2026-06',
+    'compra dia 9 (fecha 3, vence 10) entra na fatura de JUNHO');
+  // Fora da janela nada muda — é o que provou que o defeito passava batido.
+  eq(competenciaDaCompra(ANA, '2026-01-23'), '2026-02',
+    'compra dia 23 continua igual');
+  // As bordas.
+  eq(competenciaDaCompra(ANA, '2026-05-03'), '2026-05', 'dia do fechamento fecha na do mês');
+  eq(competenciaDaCompra(ANA, '2026-05-04'), '2026-06', 'dia seguinte já é a próxima');
+  eq(competenciaDaCompra(ANA, '2026-05-10'), '2026-06', 'dia do vencimento é da próxima');
+  eq(competenciaDaCompra(ANA, '2026-05-11'), '2026-06', 'depois do vencimento, idem');
+
+  // A escada inteira do caso real: 4/5 no extrato de setembro, 5/5 em OUTUBRO.
+  const morande = [{ description: 'Morandeturismoe', amount: -161.38, totalInstallments: 5,
+    purchasedAt: '2026-05-09T05:06:17Z' }];
+  const p = projetar(morande, ANA, '2026-08-26');
+  const comps = p.map((x) => `${x.parcela}/${x.total}@${x.competencia}`).join(' ');
+  eq(comps, '4/5@2026-09 5/5@2026-10', 'a escada anda um ciclo (antes: 5/5 caía em setembro)');
+
+  // O ponto que originou tudo: a 5/5 NÃO pode dividir a fatura com a 4/5.
+  const setembro = p.filter((x) => x.competencia === '2026-09');
+  eq(setembro.length, 1, 'setembro recebe UMA parcela desta compra, não duas');
+  eq(setembro[0].parcela, 4, 'e é a 4/5 — a que o extrato realmente traz');
+
+  // E é `jaEhTransacao` que tira a 4/5 antes de gravar, porque ela JÁ chegou
+  // pelo extrato (R$ 161,34 em 08/08; a API informa a parcela nominal de
+  // R$ 161,38, daí a tolerância de R$ 1).
+  // A transação real traz o marcador "4/5" (é assim que ela está no banco), e
+  // é por ele que a dedup casa — a rota por VALOR tolera só 1 centavo e aqui a
+  // diferença é de 4.
+  const extrato = [{ data: '2026-08-08', valor: 161.34, observacao: 'MorandeTurismoE 4/5',
+    parcela_num: 4, parcela_total: 5 }];
+  ok(jaEhTransacao(setembro[0], extrato, ANA),
+    'a 4/5 é descartada por já existir como transação');
+  ok(!jaEhTransacao(p.find((x) => x.parcela === 5), extrato, ANA),
+    'a 5/5 sobrevive — ela não existe no extrato');
 }
 console.log('  ok');
 
