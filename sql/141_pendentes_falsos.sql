@@ -32,11 +32,22 @@
 -- Medido: 31 recorrências em `nao_lancar`, 42 transações `[Previsto]` na base,
 -- 1 órfã (R$ 200,00).
 --
--- ⚠️ ELA JÁ TINHA SIDO MARCADA COMO PAGA na tela, e o PUT reconcilia o saldo:
--- marcar um Recebimento como pago soma o valor na carteira. Por isso a limpeza
--- DESFAZ o efeito no saldo antes de apagar a linha — apagar sem desfazer
--- deixaria a conta R$ 200 acima do app do banco, que foi exatamente a
--- divergência relatada.
+-- ⚠️⚠️ ERRO QUE ESTA MIGRATION JÁ COMETEU — NÃO REPETIR ⚠️⚠️
+--
+-- A primeira versão daqui "desfazia" o saldo: como marcar um Recebimento como
+-- pago SOMA o valor na carteira (o PUT reconcilia), eu subtraí de volta antes
+-- de apagar a linha. Parecia certo e estava ERRADO.
+--
+-- A carteira era do OPEN FINANCE. O saldo dela vem do BANCO e é sobrescrito a
+-- cada sync — o +200 do clique acidental já tinha sido lavado horas antes. Ou
+-- seja, subtraí 200 de um saldo que já estava CORRETO, e a conta do usuário
+-- passou a mostrar R$ 2.888,41 contra R$ 3.088,41 no app do banco. O bloco foi
+-- removido e o saldo, devolvido à mão.
+--
+-- REGRA QUE FICA: **nunca ajustar `wallets.saldo` de carteira com
+-- `of_conta_id`**. Ali o banco é a fonte da verdade; qualquer correção nossa
+-- ou é apagada no próximo sync (inofensiva) ou cria divergência (foi o caso).
+-- Corrigir transação nunca deve implicar corrigir saldo de conta conectada.
 --
 -- Idempotente.
 -- =====================================================================
@@ -51,30 +62,13 @@ update public.transacoes t
    and t.pago = false
    and t.data::date <= (now() at time zone 'America/Sao_Paulo')::date;
 
--- ── B) desfaz o saldo das [Previsto] órfãs que foram marcadas como pagas ──
--- Recebimento pago somou na carteira; Gasto pago subtraiu. Desfaz na direção
--- oposta, e SÓ pras linhas que serão apagadas logo abaixo.
-with orfas as (
-  select t.id, t.grupo_id, t.carteira_nome, t.valor, t.tipo
-    from public.transacoes t
-    join public.recorrencias r
-      on r.grupo_id = t.grupo_id
-     and r.modo_lancamento = 'nao_lancar'
-     and t.observacao = '[Previsto] ' || r.descricao
-   where t.pago = true
-),
-ajuste as (
-  select o.grupo_id, o.carteira_nome,
-         sum(case when o.tipo = 'Gasto' then o.valor else -o.valor end) as delta
-    from orfas o group by 1, 2
-)
-update public.wallets w
-   set saldo = coalesce(w.saldo, 0) + a.delta
-  from ajuste a
- where w.grupo_id = a.grupo_id
-   and lower(btrim(w.nome)) = lower(btrim(a.carteira_nome));
-
--- ── B2) apaga as órfãs (pagas ou não) ─────────────────────────────────
+-- ── B) apaga as órfãs (pagas ou não) ──────────────────────────────────
+--
+-- ⚠️ SEM MEXER NO SALDO. Ver o aviso no cabeçalho: a versão anterior tentava
+-- "desfazer" o efeito da baixa acidental e acabou tirando R$ 200 de uma conta
+-- de Open Finance cujo saldo já estava certo. Se a conta é conectada, o
+-- próximo sync já resolve; se é manual, a diferença é de centavos e mexer
+-- automaticamente no saldo de alguém é risco maior que o erro.
 delete from public.transacoes t
  using public.recorrencias r
  where r.grupo_id = t.grupo_id
