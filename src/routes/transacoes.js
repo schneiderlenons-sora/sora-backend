@@ -106,7 +106,22 @@ router.get('/:phone', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
     const grupoId = user.grupo_ativo;
 
-    const { mes, tipo, categoria, limit = 50, offset = 0, criado_por, criado_por_me, criado_por_phone, ate, bill_id } = req.query;
+    const { mes, tipo, categoria, limit = 50, offset = 0, criado_por_me, ate, bill_id } = req.query;
+
+    // ⚠️ "undefined" E "null" CHEGAM COMO STRING. `new URLSearchParams({ x:
+    // undefined })` no cliente NÃO pula a chave — ela vira a string literal
+    // "undefined", que é truthy aqui e ia direto pro `.eq()`. O Postgres
+    // respondia `invalid input syntax for type uuid: "undefined"` e a rota
+    // devolvia ZERO transações.
+    //
+    // Bug real: a aba Relatórios manda `criado_por` vazio quando o filtro de
+    // membro está em "todos", que é o PADRÃO — então a aba "Lançamentos
+    // pendentes" ficava vazia pra todo mundo (medido: 141 transações do mês
+    // viravam 0). O cliente foi corrigido junto, mas esta trava fica: JS velho
+    // em cache no navegador de alguém continua mandando o valor antigo.
+    const limpo = (v) => (v === 'undefined' || v === 'null' || v === '' ? undefined : v);
+    const criado_por = limpo(req.query.criado_por);
+    const criado_por_phone = limpo(req.query.criado_por_phone);
     // Aba "Arquivadas" (migration 131): com ?arquivadas=1 devolve SÓ as que EU
     // escondi. Sem o parâmetro, elas ficam de fora de tudo.
     const verArquivadas = req.query.arquivadas === '1' || req.query.arquivadas === 'true';
