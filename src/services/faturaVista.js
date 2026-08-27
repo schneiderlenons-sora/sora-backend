@@ -86,19 +86,27 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
       typeof cartao.saldo === 'number' && cartao.saldo < 0
       && competencia === (competenciaDoSimulado(cartao, faturas) || competenciaAtual(cartao))
     ) {
-      // ⚠️ O simulado é a soma dos DÉBITOS sem fatura — e parcela a vencer não
-      // é débito ainda, então ela fica de fora dele também. Medido no Itaú de
-      // um cliente: simulado R$ 218,70 (= exatamente as transações do ciclo)
-      // contra R$ 706,08 no app do banco, faltando a parcela 5/9 de R$ 347,52.
-      // A fatura já fechada do mesmo cartão fecha ao centavo com a parcela
-      // somada, então o banco a cobra — só não a antecipa no simulado.
-      const prevS = deps.parcelasPrevistas
-        ? await deps.parcelasPrevistas(cartao.id, competencia) : null;
-      const extraS = prevS?.total || 0;
-      fatura   = cent(-cartao.saldo + extraS);
+      // ⚠️ O SIMULADO MANDA SOZINHO — NÃO SOMAR NADA EM CIMA DELE.
+      //
+      // Este é o número que o cliente vê no app do banco, e chegar nele custou
+      // muita investigação. Numa conta real ele bate ao centavo com a regra de
+      // ouro (`used_amount − unbilled_amount` = R$ 1.774,64) E com o que a
+      // cliente leu no próprio app do banco.
+      //
+      // ⚠️ JÁ SOMEI PARCELA PREVISTA AQUI E ESTAVA ERRADO. A hipótese era que
+      // o simulado ("soma dos débitos SEM fatura no ciclo") não incluísse
+      // parcela a vencer — medida num cartão onde ele veio IGUAL à soma das
+      // transações do ciclo. Onde o simulado DIFERE da nossa soma, porém, ele
+      // já traz o que a gente não tem, e somar a projeção conta duas vezes:
+      // levou a fatura de R$ 1.774,64 pra R$ 2.716,75 e fez a Sora contradizer
+      // o banco — exatamente o que este arquivo existe pra impedir.
+      //
+      // A regra: o banco é a FONTE. A projeção não corrige a fonte, ela só
+      // preenche onde a fonte não existe (ramo 3, abaixo).
+      fatura   = cent(-cartao.saldo);
       pago     = 0;                          // simulado já é líquido de pagamentos
       restante = fatura;
-      fonte    = extraS ? 'simulada+previstas' : 'simulada';
+      fonte    = 'simulada';
     } else if (deps.parcelasPrevistas) {
       // ── 3. Nem publicada nem simulada (fatura futura): soma do ciclo mais as
       //      parcelas que só o banco conhece.
