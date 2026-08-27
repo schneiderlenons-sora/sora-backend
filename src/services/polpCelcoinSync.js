@@ -1611,8 +1611,27 @@ function produtoDe(inv) {
  * de subscrição (final 12/13) como ação. Sem campo de tipo na origem não dá pra
  * resolver direito — e chutar uma lista de ETFs conhecidos envelhece mal.
  */
+// Papéis que o emissor nomeia direto em `investment_type` e que agora têm tipo
+// próprio (migration 137). Antes tudo isso virava 'CDB' — e como TODA caixinha
+// do Nubank é um RDB, a carteira de quem usa banco digital saía inteira
+// rotulada errado.
+const TIPO_PELO_NOME = {
+  RDB: 'RDB', CDB: 'CDB', LCI: 'LCI', LCA: 'LCA', LC: 'LC',
+  COE: 'COE', CRI: 'CRI', CRA: 'CRA',
+  POUPANCA: 'Poupança', 'POUPANÇA': 'Poupança',
+  // ⚠️ "DEBENTURES" (plural) é como a Celcoin manda — foi o valor que apareceu
+  // no payload real. Deixo os dois: o singular é o que um humano digitaria.
+  DEBENTURES: 'Debênture', DEBENTURE: 'Debênture', 'DEBÊNTURE': 'Debênture',
+};
+
 function tipoInvestimento(inv) {
   const fam = inv.__familia;
+  // O nome do produto ganha da família quando ele é específico: a família diz
+  // "renda fixa bancária", o `investment_type` diz "RDB".
+  const bruto = String(inv.investment_type || '').trim().toUpperCase();
+  const preciso = TIPO_PELO_NOME[bruto];
+  if (preciso && (fam === 'bank_fixed_income' || fam === 'credit_fixed_income')) return preciso;
+
   if (fam === 'treasure_title') return 'Tesouro Direto';
   if (fam === 'bank_fixed_income') return 'CDB';        // CDB/RDB/LCI/LCA
   if (fam === 'credit_fixed_income') return 'Renda Fixa'; // Debêntures/CRI/CRA
@@ -1649,8 +1668,15 @@ function normalizeInvestimento(inv) {
     inv.investment_type || 'Investimento'
   ).toString().slice(0, 120);
 
+  // ⚠️ FRAÇÃO, NÃO PERCENTUAL. A coluna `rentabilidade` é lida pelo painel como
+  // fração (ele faz `rentabilidade * 100` pra exibir) e a rota de cotações
+  // (`routes/investimentos.js`) grava assim. Este ponto gravava em PERCENTUAL,
+  // e as duas unidades conviviam na mesma coluna: o painel multiplicava por 100
+  // o que já estava em %, e um CDB que rendeu 6,76% aparecia como **676%**.
+  // Medido antes de corrigir: 49 linhas na base em percentual contra 2 em
+  // fração. Migration 136 normaliza o histórico.
   const rentabilidade = aportado && atual != null && aportado > 0
-    ? Math.round(((atual - aportado) / aportado) * 10000) / 100   // %
+    ? (atual - aportado) / aportado
     : 0;
 
   return {

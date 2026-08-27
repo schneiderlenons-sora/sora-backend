@@ -307,19 +307,41 @@ const cdb = S.normalizeInvestimento({ __familia: 'bank_fixed_income', id: 'i1',
   balance: { quantity: '10', updated_unit_price: { amount: '1180.00' },
     gross_amount: { amount: '11800.00' }, net_amount: { amount: '11500.00' },
     purchase_unit_price: { amount: '1000.00' } } });
-ok(cdb.tipo === 'CDB', 'CDB/RDB/LCI/LCA → CDB');
+ok(cdb.tipo === 'CDB', 'investment_type CDB → CDB');
 ok(cdb.valor_atual === 11500, 'valor_atual = net_amount (LÍQUIDO), não gross');
 ok(cdb.valor_aportado === 10000, 'aportado = qtd × purchase_unit_price');
 ok(cdb.percentual_indexador === 102, '1.02 → 102% do CDI');
 ok(cdb.data_vencimento === '2027-06-01', 'vencimento do título');
-ok(quase(cdb.rentabilidade, 15), 'rentabilidade 15%');
+// ⚠️ FRAÇÃO, não percentual. Este ponto gravava 15 (em %) enquanto a rota de
+// cotações gravava 0.15 (fração) na MESMA coluna — e o painel, que multiplica
+// por 100 pra exibir, mostrava 1500%. Na conta real isso virou "+676%" num RDB
+// que rendeu 6,76%. Migration 136 normalizou o histórico.
+ok(quase(cdb.rentabilidade, 0.15), 'rentabilidade em FRAÇÃO (0.15 = 15%)');
+ok(cdb.rentabilidade < 1, 'nunca em percentual — 15 aqui viraria 1500% na tela');
+
+// ── Tipos precisos: o nome do produto ganha da família ────────────────
+// Antes tudo isso virava 'CDB'. Como TODA caixinha do Nubank é um RDB, a
+// carteira de quem usa banco digital saía inteira rotulada errado (medido: 22
+// posições de uma cliente, todas 'CDB', todas com nome "RDB").
+const papel = (t, fam = 'bank_fixed_income') => S.normalizeInvestimento({
+  __familia: fam, id: 'p-' + t, investment_type: t,
+  product: {}, balance: { net_amount: { amount: '100.00' } },
+}).tipo;
+ok(papel('RDB') === 'RDB', 'RDB tem tipo próprio (caixinha do Nubank)');
+ok(papel('LCI') === 'LCI', 'LCI tem tipo próprio');
+ok(papel('LCA') === 'LCA', 'LCA tem tipo próprio');
+ok(papel('DEBENTURES', 'credit_fixed_income') === 'Debênture', 'DEBENTURES (plural, como a Celcoin manda) → Debênture');
+ok(papel('CRI', 'credit_fixed_income') === 'CRI', 'CRI tem tipo próprio');
+// Produto que a Celcoin não nomeia continua caindo no guarda-chuva da família.
+ok(papel('') === 'CDB', 'sem investment_type, renda fixa bancária → CDB');
+ok(papel('QUALQUER_COISA', 'credit_fixed_income') === 'Renda Fixa', 'nome desconhecido → Renda Fixa');
 
 const deb = S.normalizeInvestimento({ __familia: 'credit_fixed_income', id: 'i2',
   investment_type: 'DEBENTURES',
   product: { due_date: '2030-01-01', remuneration: { indexer: 'IPCA', pre_fixed_rate: '6.50', post_fixed_indexer_percentage: '100' } },
   balance: { quantity: '5', gross_amount: { amount: '5500.00' }, net_amount: { amount: '5300.00' },
     purchase_unit_price: { amount: '1000.00' } } });
-ok(deb.tipo === 'Renda Fixa', 'DEBENTURES/CRI/CRA → Renda Fixa');
+ok(deb.tipo === 'Debênture', 'DEBENTURES → Debênture (era "Renda Fixa" pra tudo)');
 ok(deb.taxa_anual === 6.5 && deb.percentual_indexador === 100, 'IPCA + 6,5%');
 
 const fun = S.normalizeInvestimento({ __familia: 'fund', id: 'i3', anbima_category: 'MULTIMERCADO',
