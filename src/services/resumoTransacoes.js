@@ -94,4 +94,50 @@ async function calcularResumo({ grupoId, mes, criadoPorId } = {}) {
   };
 }
 
-module.exports = { calcularResumo, ehTransferencia, proximoMesPrimeiroDia };
+/**
+ * Resumo do ANO: 12 posições [{ mes: 1..12, receitas, gastos, saldo }].
+ *
+ * ⚠️ MORA AQUI, e não numa query própria da rota, POR DESIGN. Este arquivo é a
+ * fonte única do "o que conta como gasto" — a mesma `ehTransferencia` e o mesmo
+ * corte de arquivadas do resumo mensal. Uma segunda regra em outro lugar faria
+ * o gráfico anual divergir do card do mês, que é a classe de bug mais cara
+ * desta base.
+ *
+ * UMA query pro ano inteiro (não 12): a linha traz `data`, e o agrupamento é
+ * feito em memória.
+ */
+async function calcularResumoAnual({ grupoId, ano, criadoPorId } = {}) {
+  const meses = Array.from({ length: 12 }, (_, i) => ({
+    mes: i + 1, receitas: 0, gastos: 0, saldo: 0,
+  }));
+
+  let q = supabase.from('transacoes')
+    .select('tipo, categoria, valor, data, criado_por, transferencia')
+    .eq('grupo_id', grupoId)
+    .gte('data', `${ano}-01-01`).lt('data', `${Number(ano) + 1}-01-01`);
+  if (criadoPorId) q = q.eq('criado_por', criadoPorId);
+  q = await require('./arquivadas').filtrar(q, {});
+  const { data: rows } = await q;
+
+  (rows || []).forEach((r) => {
+    if (ehTransferencia(r)) return;
+    // A data vem 'YYYY-MM-DD' do Postgres (tipo date) — fatiar é seguro e não
+    // passa por `new Date()`, que interpretaria como UTC e jogaria o dia 1º de
+    // cada mês pro mês anterior.
+    const m = Number(String(r.data).slice(5, 7));
+    if (!(m >= 1 && m <= 12)) return;
+    const alvo = meses[m - 1];
+    if (r.tipo === 'Gasto') alvo.gastos += r.valor;
+    else alvo.receitas += r.valor;
+  });
+
+  for (const m of meses) m.saldo = m.receitas - m.gastos;
+  return {
+    ano: Number(ano),
+    meses,
+    receitas: meses.reduce((s, m) => s + m.receitas, 0),
+    gastos:   meses.reduce((s, m) => s + m.gastos, 0),
+  };
+}
+
+module.exports = { calcularResumo, calcularResumoAnual, ehTransferencia, proximoMesPrimeiroDia };

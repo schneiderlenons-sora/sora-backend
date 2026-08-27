@@ -5,7 +5,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
-const { calcularResumo } = require('../services/resumoTransacoes');
+const { calcularResumo, calcularResumoAnual } = require('../services/resumoTransacoes');
 
 const norm = p => p?.replace(/\D/g, '');
 // Normaliza nome de conta pra comparar (lowercase, sem acento).
@@ -604,6 +604,28 @@ router.get('/:phone/resumo', auth, async (req, res) => {
       criadoPorId: req.query.criado_por || (req.query.criado_por_me === 'true' ? user.id : undefined),
     });
     res.json(resumo);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// GET /api/transacoes/:phone/anual?ano=2026&criado_por=<id>
+//
+// Os 12 meses do ano, com a MESMA regra do resumo mensal (fonte única em
+// services/resumoTransacoes). Existe porque a aba Fluxo de caixa desenhava os
+// 12 meses a partir de uma SENOIDE sobre o valor do mês atual — número
+// inventado numa tela de dinheiro.
+router.get('/:phone/anual', auth, async (req, res) => {
+  try {
+    const user = usuarioReq(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
+
+    const ano = parseInt(req.query.ano, 10) || new Date().getFullYear();
+    const dados = await calcularResumoAnual({
+      grupoId: user.grupo_ativo, ano,
+      criadoPorId: req.query.criado_por || (req.query.criado_por_me === 'true' ? user.id : undefined),
+    });
+    res.json(dados);
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
