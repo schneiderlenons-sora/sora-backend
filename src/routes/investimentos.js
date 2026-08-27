@@ -81,6 +81,39 @@ router.get('/:phone', auth, exigirPlano('kit', 'premium', 'black'), exigirPermis
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// GET /api/investimentos/:phone/movimentos?limite=300
+//
+// Aportes, resgates e proventos que o Open Finance devolve por investimento
+// (migration 139). Alimenta a aba Aportes e o card de dividendos, que viviam
+// vazios porque essa fonte nunca era chamada.
+router.get('/:phone/movimentos', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
+  try {
+    const grupoId = await getGrupoId(req);
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+    const limite = Math.min(parseInt(req.query.limite, 10) || 300, 1000);
+
+    const { data, error } = await supabase.from('investimento_movimentos')
+      .select('*, investimentos(nome, ticker, tipo, instituicao)')
+      .eq('grupo_id', grupoId)
+      .order('data', { ascending: false })
+      .limit(limite);
+
+    // ⚠️ Migration 139 pendente devolve LISTA VAZIA, não 500. A aba depende
+    // desta rota, e derrubá-la por causa de uma tabela que ainda não existe
+    // levaria junto os aportes lançados à mão.
+    if (error) return res.json({ movimentos: [], totais: null, pendente: true });
+
+    // Totais por classe — é o que a tela mostra acima da lista.
+    // ⚠️ `neutro` fica de FORA: transferência de custódia não é dinheiro
+    // entrando nem saindo (ver CLASSE_MOVIMENTO no sync).
+    const totais = { aporte: 0, resgate: 0, provento: 0, imposto: 0 };
+    for (const m of data || []) {
+      if (totais[m.classe] !== undefined) totais[m.classe] += Number(m.valor) || 0;
+    }
+    res.json({ movimentos: data || [], totais });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // GET /api/investimentos/:phone/distribuicao
 router.get('/:phone/distribuicao', auth, exigirPlano('kit', 'premium', 'black'), exigirPermissao('admin', 'escrita', 'leitura'), async (req, res) => {
   try {

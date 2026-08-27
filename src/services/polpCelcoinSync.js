@@ -1649,6 +1649,90 @@ function tipoInvestimento(inv) {
   return 'Renda Fixa';
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   MOVIMENTAÇÕES DE INVESTIMENTO (migration 139)
+
+   Como a Sora LÊ cada `transaction_type` das 5 famílias. Os enums saíram dos
+   docs em docs/celcoin/*__transactions.txt.
+
+   ⚠️ AS TRANSFERÊNCIAS SÃO A ARMADILHA. `TRANSFERENCIA_TITULARIDADE`,
+   `TRANSFERENCIA_CUSTODIA` e `TRANSFERENCIA_COTAS` são o papel MUDANDO DE
+   CORRETORA — dinheiro nenhum se move. Lidas como aporte, inflariam o total
+   investido de quem portou a carteira, e a rentabilidade (valor − aportado)
+   desabaria junto. Ficam 'neutro'.
+
+   ⚠️ `COME_COTAS` é IMPOSTO, não resgate: o governo leva cotas e o investidor
+   não recebe nada. Somado aos resgates, viraria "você tirou R$ X" numa conta
+   em que ninguém tirou.
+
+   ⚠️ PROVENTO NÃO É APORTE. DIVIDENDOS/JCP/ALUGUEIS/PAGAMENTO_JUROS são
+   dinheiro saindo do ativo pro bolso — se entrassem como aporte, cada
+   dividendo recebido PIORARIA a rentabilidade exibida.
+   ═══════════════════════════════════════════════════════════════════════ */
+const CLASSE_MOVIMENTO = {
+  // Dinheiro entrando no ativo
+  APLICACAO: 'aporte',
+  COMPRA:    'aporte',
+  // Dinheiro saindo do ativo pro bolso
+  RESGATE:      'resgate',
+  VENDA:        'resgate',
+  VENCIMENTO:   'resgate',
+  AMORTIZACAO:  'resgate',
+  // Rendimento distribuído — dinheiro do ativo pro bolso, sem reduzir posição
+  DIVIDENDOS:      'provento',
+  JCP:             'provento',
+  ALUGUEIS:        'provento',
+  PAGAMENTO_JUROS: 'provento',
+  PREMIO:          'provento',
+  // Imposto retido na fonte
+  COME_COTAS: 'imposto',
+  MULTA:      'imposto',
+  // Não movimenta dinheiro
+  TRANSFERENCIA_TITULARIDADE: 'neutro',
+  TRANSFERENCIA_CUSTODIA:     'neutro',
+  TRANSFERENCIA_COTAS:        'neutro',
+  CANCELAMENTO:               'neutro',
+  OUTROS:                     'neutro',
+};
+
+/**
+ * Classe de uma movimentação. Cai em 'neutro' quando o tipo é desconhecido —
+ * de propósito: enum novo da Celcoin entrando como aporte silenciosamente
+ * estragaria o total investido, e neutro só deixa de contar.
+ */
+function classeMovimento(transactionType, direcao) {
+  const t = String(transactionType || '').trim().toUpperCase();
+  const c = CLASSE_MOVIMENTO[t];
+  if (c) return c;
+  // Sem `transaction_type` reconhecido, a direção ainda diz algo — mas só
+  // quando ela existe. ENTRADA/SAIDA é o campo `type` do doc.
+  const d = String(direcao || '').trim().toUpperCase();
+  if (d === 'ENTRADA') return 'aporte';
+  if (d === 'SAIDA') return 'resgate';
+  return 'neutro';
+}
+
+/** Uma linha de `/{familia}/{id}/transactions` → linha de investimento_movimentos. */
+function normalizeMovimento(mov) {
+  const liquido = money(mov.transaction_net_value);
+  const bruto = money(mov.transaction_gross_value);
+  return {
+    externalId: String(mov.id),
+    data: ymd(mov.transaction_date),
+    direcao: mov.type ? String(mov.type).toUpperCase() : null,
+    operacao: mov.transaction_type ? String(mov.transaction_type).toUpperCase() : null,
+    classe: classeMovimento(mov.transaction_type, mov.type),
+    // O líquido é o que de fato entrou/saiu da conta; o bruto vira fallback
+    // quando o emissor não manda o líquido.
+    valor: liquido ?? bruto ?? 0,
+    valor_bruto: bruto,
+    ir: money(mov.income_tax),
+    iof: money(mov.financial_transaction_tax),
+    quantidade: money(mov.transaction_quantity),
+    preco_unitario: money(mov.transaction_unit_price),
+  };
+}
+
 function normalizeInvestimento(inv) {
   const p = produtoDe(inv);
   const b = inv.balance || {};
@@ -2217,6 +2301,53 @@ async function upsertInvestimento(grupoId, n) {
 }
 
 /**
+ * Busca e grava as movimentações de UM investimento (migration 139).
+ *
+ * ⚠️ NUNCA APAGA E REGRAVA. Diferente das parcelas previstas — que são
+ * projeção — isto é HISTÓRICO: o banco pode parar de devolver uma movimentação
+ * antiga (janela da API, mudança de custódia) e apagá-la deixaria o extrato do
+ * usuário com buraco. Insere o que é novo, atualiza o que mudou, não toca no
+ * resto. A `unique (investimento_id, of_mov_id)` é quem garante isso.
+ *
+ * Devolve quantas linhas novas entraram (0 quando não há nada ou a migration
+ * ainda não rodou).
+ */
+async function sincronizarMovimentos(grupoId, path, ofId) {
+  if (!path || !ofId) return 0;
+
+  // O investimento tem de existir no nosso banco — é a FK da tabela.
+  const { data: inv } = await supabase.from('investimentos')
+    .select('id').eq('grupo_id', grupoId).eq('of_id', ofId).maybeSingle();
+  if (!inv) return 0;
+
+  // `max: 3` páginas de 500 = até 1500 movimentações por papel. Quem tem mais
+  // que isso num único investimento é caso de biblioteca, não de tela.
+  const brutos = await celcoin.listarTransacoesInvestimento(path, ofId, { max: 3 });
+  if (!brutos?.length) return 0;
+
+  let novas = 0;
+  for (const b of brutos) {
+    const m = normalizeMovimento(b);
+    if (!m.externalId || !m.data) continue;
+    const linha = {
+      grupo_id: grupoId, investimento_id: inv.id, of_mov_id: m.externalId,
+      data: m.data, direcao: m.direcao, operacao: m.operacao, classe: m.classe,
+      valor: m.valor, valor_bruto: m.valor_bruto, ir: m.ir, iof: m.iof,
+      quantidade: m.quantidade, preco_unitario: m.preco_unitario,
+    };
+    const { error } = await supabase.from('investimento_movimentos')
+      .upsert(linha, { onConflict: 'investimento_id,of_mov_id' });
+    // Migration 139 pendente: sai calado em vez de derrubar o sync inteiro.
+    if (error) {
+      if (/investimento_movimentos/i.test(error.message || '')) return novas;
+      continue;
+    }
+    novas++;
+  }
+  return novas;
+}
+
+/**
  * Cria/atualiza a caixinha e devolve o external id (pra reconciliação).
  *
  * ⚠️ Tolerante à migration 120 ainda não rodada: as colunas de remuneração são
@@ -2519,6 +2650,26 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         }
         const r = await upsertInvestimento(grupoId, n);
         relatorio.investimentos.push({ nome: n.nome, tipo: n.tipo, valor: n.valor_atual, resultado: r });
+
+        // 5B. MOVIMENTAÇÕES do investimento (migration 139) — aportes,
+        //     resgates e proventos. É daqui que saem a aba Aportes, o card de
+        //     dividendos e o gráfico de evolução, todos vazios até hoje.
+        //
+        // ⚠️ SÓ POSIÇÃO VIVA. É UMA CHAMADA POR INVESTIMENTO, e o Open Finance
+        // devolve o histórico inteiro do produto: medido na base, 434
+        // investimentos dos quais só 102 têm saldo. Buscar todos custaria 4×
+        // mais rede pra trazer o extrato de papel que já foi resgatado e não
+        // aparece na tela. Pior caso de um usuário: 27 chamadas.
+        //
+        // Tolerante de propósito: falhar aqui não pode derrubar o sync, que já
+        // gravou o investimento logo acima.
+        if ((n.valor_atual || 0) > 0.005) {
+          try {
+            await sincronizarMovimentos(grupoId, raw.__path, n.externalId);
+          } catch (e) {
+            console.warn('[celcoin] movimentos de investimento:', e.message);
+          }
+        }
       } catch (e) { relatorio.investimentos.push({ erro: e.message }); }
     }
 
@@ -2557,7 +2708,8 @@ module.exports = {
   ehPagamentoFatura: require('./categorizar').ehPagamentoFatura,
   normalizeConta, normalizeCaixinha, normalizeCartao, normalizeTxConta, normalizeTxCartao, faturaPorTransacoes,
   descricaoTx, documentoMascarado,
-  normalizeDivida, normalizeInvestimento, ultimaFaturaPublicada, faturaPorLimite,
+  normalizeDivida, normalizeInvestimento, normalizeMovimento, classeMovimento,
+  ultimaFaturaPublicada, faturaPorLimite,
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
   faturaSimulada, unbilledDoCartao, usadoDoCartao, usoConhecido, nomeDoCartao,

@@ -365,6 +365,58 @@ ok(fundo.ir_provisionado === 30, 'fundo usa income_tax_PROVISION — outro nome,
 ok(fundo.saldo_bloqueado === 7, 'fundo usa blocked_AMOUNT, não blocked_balance');
 ok(fundo.categoria_anbima === 'MULTIMERCADO', 'categoria ANBIMA do fundo');
 
+// ── 11B. MOVIMENTAÇÕES: como cada transaction_type é LIDO (migration 139) ──
+console.log('── 11B. classificação das movimentações ──');
+const cm = S.classeMovimento;
+
+// Dinheiro entrando / saindo do ativo.
+ok(cm('APLICACAO') === 'aporte' && cm('COMPRA') === 'aporte', 'APLICACAO/COMPRA → aporte');
+ok(cm('RESGATE') === 'resgate' && cm('VENDA') === 'resgate', 'RESGATE/VENDA → resgate');
+ok(cm('VENCIMENTO') === 'resgate' && cm('AMORTIZACAO') === 'resgate', 'VENCIMENTO/AMORTIZACAO → resgate');
+
+// ⚠️ A ARMADILHA PRINCIPAL. Transferência é o papel mudando de corretora —
+// dinheiro nenhum se move. Como aporte, inflaria o total investido de quem
+// portou a carteira e derrubaria a rentabilidade (valor − aportado) junto.
+ok(cm('TRANSFERENCIA_TITULARIDADE') === 'neutro', 'TRANSFERENCIA_TITULARIDADE não é aporte');
+ok(cm('TRANSFERENCIA_CUSTODIA') === 'neutro', 'TRANSFERENCIA_CUSTODIA não é aporte');
+ok(cm('TRANSFERENCIA_COTAS') === 'neutro', 'TRANSFERENCIA_COTAS (fundos) não é aporte');
+// ⚠️ Mesmo vindo marcada como ENTRADA pelo banco, transferência segue neutra:
+// o `transaction_type` ganha da direção.
+ok(cm('TRANSFERENCIA_CUSTODIA', 'ENTRADA') === 'neutro', 'ENTRADA não transforma transferência em aporte');
+
+// ⚠️ Provento NÃO é aporte: é dinheiro saindo do ativo pro bolso. Se entrasse
+// como aporte, cada dividendo PIORARIA a rentabilidade exibida.
+ok(cm('DIVIDENDOS') === 'provento' && cm('JCP') === 'provento', 'DIVIDENDOS/JCP → provento');
+ok(cm('ALUGUEIS') === 'provento' && cm('PAGAMENTO_JUROS') === 'provento', 'ALUGUEIS/PAGAMENTO_JUROS → provento');
+
+// ⚠️ Come-cotas é IMPOSTO: o governo leva cotas e o investidor não recebe
+// nada. Somado aos resgates viraria "você tirou R$ X" sem ninguém ter tirado.
+ok(cm('COME_COTAS') === 'imposto', 'COME_COTAS → imposto, não resgate');
+
+// Enum novo da Celcoin não pode entrar como aporte em silêncio.
+ok(cm('ALGO_QUE_NAO_EXISTE') === 'neutro', 'tipo desconhecido, sem direção → neutro');
+ok(cm(null, 'ENTRADA') === 'aporte', 'sem transaction_type, a direção decide');
+ok(cm(null, 'SAIDA') === 'resgate', 'SAIDA sem tipo → resgate');
+
+// Payload real de uma movimentação.
+const mv = S.normalizeMovimento({
+  id: 'mv1', type: 'ENTRADA', transaction_type: 'APLICACAO',
+  transaction_date: '2026-08-19', transaction_quantity: '100',
+  transaction_unit_price: { amount: '1.00' },
+  transaction_gross_value: { amount: '100.00' },
+  transaction_net_value: { amount: '98.50' },
+  income_tax: { amount: '1.00' }, financial_transaction_tax: { amount: '0.50' },
+});
+ok(mv.classe === 'aporte' && mv.data === '2026-08-19', 'aplicação de 19/08 vira aporte');
+ok(mv.valor === 98.5 && mv.valor_bruto === 100, 'guarda líquido E bruto — "resgatei 100, caiu 98,50"');
+ok(mv.ir === 1 && mv.iof === 0.5, 'IR e IOF da movimentação');
+
+// Sem líquido, o bruto assume — melhor que zerar a linha.
+const semLiq = S.normalizeMovimento({ id: 'mv2', transaction_type: 'RESGATE',
+  transaction_date: '2026-08-20', transaction_gross_value: { amount: '50.00' } });
+ok(semLiq.valor === 50, 'sem transaction_net_value, cai no bruto');
+console.log('  ok');
+
 const deb = S.normalizeInvestimento({ __familia: 'credit_fixed_income', id: 'i2',
   investment_type: 'DEBENTURES',
   product: { due_date: '2030-01-01', remuneration: { indexer: 'IPCA', pre_fixed_rate: '6.50', post_fixed_indexer_percentage: '100' } },
