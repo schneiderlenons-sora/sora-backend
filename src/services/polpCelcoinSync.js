@@ -1592,9 +1592,15 @@ function normalizeDivida(item, kind) {
  * "Investimento" genérico, e em renda variável caía como "Ações" mesmo sendo
  * FII, porque a classificação depende do ticker.
  */
+// ⚠️ CAMPO NOVO PRECISA ENTRAR NESTA LISTA. `produtoDe` só copia o que está
+// aqui — ler `p.grace_period_date` sem incluí-lo devolve `undefined` em
+// silêncio, tanto na raiz quanto no `product` legado. Foi o que fez a carência
+// e a data de emissão saírem vazias na primeira tentativa.
 const CAMPOS_PRODUTO = [
   'product_name', 'name', 'ticker', 'isin_code', 'due_date', 'purchase_date',
   'remuneration', 'anbima_category', 'issuer_institution_cnpj_number',
+  // migration 138
+  'grace_period_date', 'issue_date', 'clearing_code', 'anbima_class',
 ];
 function produtoDe(inv) {
   const legado = inv.product || {};
@@ -1698,6 +1704,30 @@ function normalizeInvestimento(inv) {
     percentual_indexador: pct(rem.post_fixed_indexer_percentage),
     taxa_anual: pct(rem.pre_fixed_rate),
     setor: fam === 'fund' ? (inv.anbima_category || (p.anbima_category || null)) : null,
+
+    // ── Detalhes que o Open Finance já mandava e a Sora descartava (138) ──
+    //
+    // ⚠️ CADA FAMÍLIA NOMEIA O MESMO CAMPO DE UM JEITO. Conferido nos 5 docs:
+    // renda fixa e Tesouro usam `income_tax`/`blocked_balance`; fundos usam
+    // `income_tax_provision`/`blocked_amount`. Ler só um nome deixaria metade
+    // das carteiras sem o dado.
+    valor_bruto:      money(b.gross_amount),
+    ir_provisionado:  money(b.income_tax) ?? money(b.income_tax_provision),
+    iof_provisionado: money(b.financial_transaction_tax) ?? money(b.financial_transaction_tax_provision),
+    saldo_bloqueado:  money(b.blocked_balance) ?? money(b.blocked_amount),
+
+    // ⚠️ O CAMPO MAIS ÚTIL DA LEVA. Quem guarda em caixinha pergunta uma coisa
+    // só: "posso sacar sem perder?". Só a renda fixa bancária informa.
+    carencia_ate: ymd(p.grace_period_date),
+    data_emissao: ymd(p.issue_date),
+
+    // `brand_name` é o nome da instituição no consentimento. Sem ele o card não
+    // tinha como dizer "Nubank" e todo papel parecia vir do nada.
+    instituicao: inv.brand_name || inv.__instituicao || null,
+    categoria_anbima: fam === 'fund'
+      ? (inv.anbima_category || p.anbima_category || inv.anbima_class || null)
+      : null,
+
     sincronizado: !!(inv.balance),
   };
 }
@@ -2155,16 +2185,33 @@ async function upsertInvestimento(grupoId, n) {
     taxa_anual: n.taxa_anual, nome_completo: n.nome_completo, setor: n.setor,
     ultima_atualizacao: new Date().toISOString(),
   };
+  // Detalhes da migration 138, separados de propósito: se ela ainda não rodou,
+  // o insert falha por coluna inexistente e a gente REFAZ sem eles, em vez de
+  // perder o investimento inteiro. É a mesma lição do `datas_manuais` e da 120
+  // — coluna nova em caminho crítico não pode derrubar a feature.
+  const extras = Object.fromEntries(Object.entries({
+    valor_bruto: n.valor_bruto, ir_provisionado: n.ir_provisionado,
+    iof_provisionado: n.iof_provisionado, saldo_bloqueado: n.saldo_bloqueado,
+    carencia_ate: n.carencia_ate, data_emissao: n.data_emissao,
+    instituicao: n.instituicao, categoria_anbima: n.categoria_anbima,
+  }).filter(([, v]) => v !== undefined && v !== null));
+
   const limpo = Object.fromEntries(Object.entries(base).filter(([, v]) => v !== undefined));
+  const colunaNova = (e) => /valor_bruto|ir_provisionado|iof_provisionado|saldo_bloqueado|carencia_ate|data_emissao|instituicao|categoria_anbima/i.test(e?.message || '');
 
   const { data: ja } = await supabase.from('investimentos')
     .select('id').eq('grupo_id', grupoId).eq('of_id', n.externalId).maybeSingle();
   if (ja) {
-    await supabase.from('investimentos').update(limpo).eq('id', ja.id);
+    const { error } = await supabase.from('investimentos').update({ ...limpo, ...extras }).eq('id', ja.id);
+    if (error && colunaNova(error)) await supabase.from('investimentos').update(limpo).eq('id', ja.id);
     return 'atualizado';
   }
-  const { error } = await supabase.from('investimentos')
-    .insert({ ...limpo, of_id: n.externalId, of_provider: PROVIDER, origem: 'of' });
+  const novo = { ...limpo, ...extras, of_id: n.externalId, of_provider: PROVIDER, origem: 'of' };
+  let { error } = await supabase.from('investimentos').insert(novo);
+  if (error && colunaNova(error)) {
+    ({ error } = await supabase.from('investimentos')
+      .insert({ ...limpo, of_id: n.externalId, of_provider: PROVIDER, origem: 'of' }));
+  }
   if (error) throw new Error(`investimento: ${error.message}`);
   return 'criado';
 }

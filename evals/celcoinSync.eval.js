@@ -336,6 +336,35 @@ ok(papel('CRI', 'credit_fixed_income') === 'CRI', 'CRI tem tipo próprio');
 ok(papel('') === 'CDB', 'sem investment_type, renda fixa bancária → CDB');
 ok(papel('QUALQUER_COISA', 'credit_fixed_income') === 'Renda Fixa', 'nome desconhecido → Renda Fixa');
 
+// ── Detalhes que o OF já mandava e a Sora descartava (migration 138) ──
+// ⚠️ CADA FAMÍLIA NOMEIA O MESMO CAMPO DE UM JEITO — conferido nos 5 docs:
+// renda fixa e Tesouro usam `income_tax`/`blocked_balance`, fundos usam
+// `income_tax_provision`/`blocked_amount`. Ler só um nome deixaria metade das
+// carteiras sem o dado.
+const cx = S.normalizeInvestimento({ __familia: 'bank_fixed_income', id: 'i9',
+  brand_name: 'Nubank', investment_type: 'RDB',
+  product: { due_date: '2028-08-19', issue_date: '2026-08-19', grace_period_date: '2026-09-18',
+    remuneration: { indexer: 'CDI', post_fixed_indexer_percentage: '1.00' } },
+  balance: { gross_amount: { amount: '2700.00' }, net_amount: { amount: '2642.80' },
+    income_tax: { amount: '45.00' }, financial_transaction_tax: { amount: '12.20' },
+    blocked_balance: { amount: '0.00' } } });
+ok(cx.tipo === 'RDB' && cx.instituicao === 'Nubank', 'caixinha do Nubank: RDB + instituição');
+ok(cx.carencia_ate === '2026-09-18', 'carência — a pergunta nº1 de quem usa caixinha');
+ok(cx.data_emissao === '2026-08-19', 'data de emissão');
+ok(cx.ir_provisionado === 45 && cx.iof_provisionado === 12.2, 'IR e IOF provisionados');
+ok(cx.valor_bruto === 2700, 'bruto guardado ao lado do líquido');
+// ⚠️ O líquido NÃO desconta IR/IOF de novo: `net_amount` já vem líquido dos
+// dois. Descontar aqui tiraria o valor em dobro.
+ok(cx.valor_atual === 2642.80, 'valor_atual segue sendo o net_amount, sem novo desconto');
+
+const fundo = S.normalizeInvestimento({ __familia: 'fund', id: 'i10',
+  product: { name: 'BTG Absoluto', anbima_category: 'MULTIMERCADO' },
+  balance: { net_amount: { amount: '1000.00' },
+    income_tax_provision: { amount: '30.00' }, blocked_amount: { amount: '7.00' } } });
+ok(fundo.ir_provisionado === 30, 'fundo usa income_tax_PROVISION — outro nome, mesmo dado');
+ok(fundo.saldo_bloqueado === 7, 'fundo usa blocked_AMOUNT, não blocked_balance');
+ok(fundo.categoria_anbima === 'MULTIMERCADO', 'categoria ANBIMA do fundo');
+
 const deb = S.normalizeInvestimento({ __familia: 'credit_fixed_income', id: 'i2',
   investment_type: 'DEBENTURES',
   product: { due_date: '2030-01-01', remuneration: { indexer: 'IPCA', pre_fixed_rate: '6.50', post_fixed_indexer_percentage: '100' } },
