@@ -62,17 +62,13 @@ _Fala em texto ou áudio, em linguagem natural_ 😉
 Acesse a aba *Comandos* no app 👉
 www.forsora.com/central-sora`;
 
-const WELCOME_TEXT = (nome) => `👋 *Olá, ${nome}! Bem-vindo(a) à Sora!* 🌿
-
-Sou sua assistente financeira no WhatsApp. Fala comigo em texto ou áudio — sem comandos difíceis.
-
-✅ "gastei 50 no mercado"
-✅ "recebi 3500 de salário"
-✅ "fatura nubank" / "resumo" / "saldo"
-
-Digite *ajuda* a qualquer momento pra ver o menu completo.
-
-🚀 Me manda seu primeiro lançamento!`;
+// ⚠️ O `WELCOME_TEXT` daqui foi REMOVIDO junto com o cadastro por WhatsApp
+// (ver o bloco "número que a Sora não conhece" mais abaixo): ele só era usado
+// para saudar a conta que aquele fluxo criava, e essa conta nascia sem e-mail
+// — ninguém conseguia logar nela.
+//
+// As boas-vindas de verdade vivem em `services/welcome.js`, disparadas quando
+// a pessoa VINCULA o WhatsApp a uma conta que já existe.
 
 // ── PRÉ-VENDA: lead (sem plano pago) perguntando sobre testar/comprar/preço ──
 // Local-first (sem IA): responde como vendedora — demo ao vivo no site + planos
@@ -263,33 +259,53 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       if (data) { user = data; break; }
     }
 
-    // Novo usuário: pede o nome
+    // ── Número que a Sora não conhece ────────────────────────────
+    //
+    // ⚠️ AQUI HAVIA UM LOOP INFINITO, e ele castigava justamente quem PAGOU.
+    //
+    // O código pedia o nome ("Qual é o seu nome para começarmos?") e, se a
+    // resposta não parecesse um nome, pedia de novo. Para sempre. Caso real
+    // (ago/2026): um cliente do Kit escreveu pedindo ajuda e ficou preso nessa
+    // pergunta — ele nunca ia "sair" dela, porque não era isso que ele queria.
+    //
+    // A causa é estrutural: a trava do Kit lá embaixo testa `user.plano`, mas
+    // ela só roda DEPOIS de achar o usuário PELO TELEFONE. E o Kit é
+    // justamente o plano que não vincula WhatsApp (o onboarding dele esconde
+    // esse passo de propósito) — então `phone` é NULL, ele nunca é encontrado,
+    // e a trava do Kit jamais é alcançada. Medido: 4 pagantes sem telefone
+    // vinculado hoje (3 Kit + 1 Platinum).
+    //
+    // ⚠️ E O RAMO DE CRIAR CONTA ERA PIOR AINDA. Se a pessoa respondesse um
+    // nome, ele inseria uma linha NOVA em `users` só com `{ phone, name }` —
+    // sem e-mail, ou seja, uma conta em que ninguém consegue LOGAR, separada
+    // da conta paga dela. O cliente do Kit ficaria com o produto numa conta e
+    // a conversa em outra. Medido: 0 contas assim na base — o loop, por
+    // acidente, impediu o estrago. Removido junto.
+    //
+    // O que fica no lugar: UMA resposta útil, que cobre os dois motivos reais
+    // de um número não ser reconhecido, em vez de uma pergunta que não leva a
+    // lugar nenhum.
     if (!user) {
-      // Lead novo já chegando com intenção de testar/comprar/preço → pitch
-      // direto (sem pedir nome). Ele se cadastra no site.
+      // Lead chegando com intenção de testar/comprar/preço → pitch direto.
       if (pareceVenda(mensagem)) {
         await enviarTexto(phone, VENDAS_TEXT(null));
         console.log(`💚 [${phone}] pré-venda (número novo): "${mensagem}"`);
         return;
       }
-      // Tenta extrair nome da primeira mensagem via IA
-      const respNome = await interpretarMensagem(
-        `O usuário enviou sua primeira mensagem: "${mensagem}". Extraia o nome próprio se houver, ou responda apenas a palavra PEDIR.`,
-        {}
-      );
-      const nome = respNome?.acao === 'conversa' ? respNome.resposta : null;
-
-      // Comparação case-insensitive — GPT pode retornar "Pedir", "pedir" ou "PEDIR"
-      if (!nome || nome.trim().toUpperCase() === 'PEDIR') {
-        await enviarTexto(phone, '👋 Olá! Qual é o seu nome para começarmos?');
-        return;
-      }
-
-      // Cria usuário — o trigger do Supabase cria o grupo automaticamente
-      const { data: novoUser } = await supabase
-        .from('users').insert({ phone, name: nome }).select().single();
-
-      await enviarMenu(phone, WELCOME_TEXT(nome));
+      console.log(`❓ [${phone}] número não reconhecido: "${String(mensagem).slice(0, 40)}"`);
+      await enviarBotaoLink(phone, {
+        message:
+          '👋 Oi! Não encontrei nenhuma conta da Sora com este número.\n\n'
+          + 'Dois motivos costumam explicar isso:\n\n'
+          + '1️⃣ *Você já assina, mas ainda não vinculou o WhatsApp.* '
+          + 'É rápido: entre no painel em *Configurações → WhatsApp* e vincule este número. '
+          + 'Depois disso eu te reconheço aqui na hora.\n\n'
+          + '2️⃣ *Você tem o Kit.* Ele organiza tudo pelo *painel* — o atendimento por '
+          + 'WhatsApp faz parte do plano Completo.\n\n'
+          + 'Ainda não tem conta? Dá pra me ver funcionando de graça no site 💚',
+        label: 'Abrir o painel',
+        url: `${APP_URL_WH}/configuracoes`,
+      });
       return;
     }
 
