@@ -11,7 +11,7 @@ const supabase = require('../db/supabase');
 const { enviarProativo } = require('../services/proativo');
 const { getLastSendError } = require('../services/whatsapp');
 
-const PLANOS_VALIDOS = ['inativo', 'basico', 'kit', 'premium', 'black'];
+const PLANOS_VALIDOS = ['inativo', 'basico', 'kit', 'premium', 'platinum'];
 
 const oneLine = (s) => String(s || '').replace(/\s*[\r\n\t]+\s*/g, ' ').trim();
 const CAPA = () => process.env.SORA_CAPA_URL

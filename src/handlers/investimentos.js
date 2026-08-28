@@ -3,19 +3,26 @@ const { enviarTexto } = require('../services/mensageiro');
 const { gerarDicas }  = require('../services/ia');
 const { oferecerDesconto } = require('../services/descontoConta');
 
-// Verifica plano Black
-async function checarBlack(phone) {
+const { normalizarPlano } = require('../config/planos');
+
+// ⚠️ ESTE GATE ERA SÓ-BLACK e ficou pra trás quando Investimentos virou
+// Premium+. Com o Black aposentado (migration 142) ele passaria a recusar
+// TODO MUNDO — inclusive quem paga Premium e vê a aba no painel. Agora
+// espelha o `exigirPlano` das rotas de investimentos.
+const PLANOS_INVESTIMENTOS = ['kit', 'premium', 'platinum'];
+
+async function podeInvestimentos(phone) {
   const { data } = await supabase.from('users').select('plano').eq('phone', phone).single();
-  return data?.plano === 'black';
+  return PLANOS_INVESTIMENTOS.includes(normalizarPlano(data?.plano));
 }
 
-const BLOQUEADO = '🚫 Esta funcionalidade é exclusiva do plano *Black*.\nAcesse o painel para fazer upgrade.';
+const BLOQUEADO = '🚫 A Central de Investimentos faz parte dos planos *Premium* e *Platinum*.\nAcesse o painel para fazer upgrade.';
 
 module.exports = async function handleInvestimentos(data, ctx) {
   const { phone, grupoId, user } = ctx;
 
-  // Todas as ações deste handler exigem plano Black
-  if (!(await checarBlack(phone))) {
+  // Todas as ações deste handler exigem plano com Investimentos
+  if (!(await podeInvestimentos(phone))) {
     await enviarTexto(phone, BLOQUEADO);
     return;
   }

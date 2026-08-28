@@ -21,7 +21,7 @@ const { salvarArquivoDrive, buscarArquivosDrive, urlAssinada, intentoBuscaArquiv
 // avançada são Premium+ e ficam gated dentro do handler (temGrowPremium).
 function temAcessoGrow(user) {
   if (!user) return false;
-  if (['basico', 'premium', 'black'].includes(user.plano)) return true;
+  if (['basico', 'premium', 'platinum'].includes(user.plano)) return true;
   if (['grow_basico', 'grow_premium'].includes(user.plano_grow)) return true;
   if (user.plano_grow === 'trial' && user.grow_trial_fim && new Date(user.grow_trial_fim) > new Date()) return true;
   return false;
@@ -179,11 +179,6 @@ async function obterContexto(phone) {
   return user;
 }
 
-// Verifica se o plano inclui investimentos
-async function isBlack(phone) {
-  const { data } = await supabase.from('users').select('plano').eq('phone', phone).single();
-  return data?.plano === 'black';
-}
 
 // ─── WEBHOOK PRINCIPAL ────────────────────────────────────────────
 router.post('/', async (req, res) => {
@@ -347,7 +342,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     // guardar/salvar/arquivar (senão segue pro OCR de nota/comida abaixo).
     const querSalvarDrive = /\b(salv|guard|arquiv|drive)\w*|\bpasta\b/.test(legendaImg || '');
     if (docInfo?.url || (imageUrl && querSalvarDrive)) {
-      if (!['premium', 'black'].includes(user.plano)) {
+      if (!['premium', 'platinum'].includes(user.plano)) {
         await enviarBotaoLink(phone, {
           message: `📁 *Guardar arquivos no Drive* — mandar documento/foto pra Sora salvar e organizar — é do plano *Premium*.\n\nFaça o upgrade e mande seus documentos direto por aqui 💚`,
           label: 'Ver os planos',
@@ -379,7 +374,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     }
 
     // ── 2.6b. DRIVE — buscar arquivo por linguagem natural ────────
-    if (!imageUrl && !docInfo && ['premium', 'black'].includes(user.plano)) {
+    if (!imageUrl && !docInfo && ['premium', 'platinum'].includes(user.plano)) {
       const termoBusca = intentoBuscaArquivo(mensagem);
       if (termoBusca) {
         const achados = await buscarArquivosDrive(user.id, termoBusca);
@@ -399,8 +394,8 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     // ── 2.7. IMAGEM (nota fiscal / comprovante) ───────────────────
     let data = null;
     if (imageUrl) {
-      if (!['premium', 'black'].includes(user.plano)) {
-        await enviarTexto(phone, '🚫 Ler fotos (notas fiscais e fotos de comida) é exclusivo dos planos Premium e Black.');
+      if (!['premium', 'platinum'].includes(user.plano)) {
+        await enviarTexto(phone, '🚫 Ler fotos (notas fiscais e fotos de comida) é exclusivo dos planos Premium e Platinum.');
         return;
       }
       // Foto de COMIDA (legenda com macros/calorias/comida…) → análise nutricional.
@@ -689,7 +684,7 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
         await require('../handlers/metas')(data, ctx);
         break;
 
-      // Investimentos (Black)
+      // Investimentos
       case 'criar_investimento':
       case 'listar_investimentos':
       case 'registrar_aporte':

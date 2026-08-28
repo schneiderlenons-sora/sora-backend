@@ -4,7 +4,7 @@
 //   POST   /api/pluggy/item            registra a conexão criada no widget + sync
 //   GET    /api/pluggy/connections      lista conexões do grupo
 //   DELETE /api/pluggy/connections/:id  desconecta (mantém histórico)
-// Gate: Premium/Black (como OFX/investimentos).
+// Gate: Premium/Platinum (como OFX/investimentos).
 // =====================================================================
 const express  = require('express');
 const router   = express.Router();

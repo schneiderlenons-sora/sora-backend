@@ -2,7 +2,7 @@ const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/mensageiro');
 const { nanoid } = require('nanoid');
 
-const LIMITE_MEMBROS = { inativo:1, basico:1, premium:5, black:5 };
+const LIMITE_MEMBROS = { inativo:1, basico:1, premium:5, platinum: 5 };
 
 module.exports = async function handleGrupos(data, ctx) {
   const { phone, grupoId, user } = ctx;
@@ -10,7 +10,7 @@ module.exports = async function handleGrupos(data, ctx) {
   if (data.acao === 'criar_grupo') {
     // Gestão compartilhada é Premium — mesmo gate do painel (POST /grupos/criar).
     // O WhatsApp deixava Básico/Inativo criar grupo (bypass do plano).
-    if (user.plano !== 'premium' && user.plano !== 'black') {
+    if (user.plano !== 'premium' && user.plano !== 'platinum') {
       await enviarTexto(phone, '👥 Criar grupos e dividir as finanças (casal/família) é do plano *Premium*. Dá uma olhada em forsora.com/planos 💚');
       return;
     }

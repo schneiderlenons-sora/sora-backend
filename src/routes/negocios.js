@@ -1,6 +1,7 @@
 const express  = require('express');
 const router   = express.Router();
 const supabase = require('../db/supabase');
+const { temNegocios } = require('../config/planos');
 const auth     = require('../middlewares/auth');
 const { gerarDre, sugerirConciliacao } = require('../handlers/negocios');
 const { encrypt, decrypt } = require('../services/cripto');
@@ -9,17 +10,21 @@ const { gerarInsights } = require('./../handlers/insights-negocio');
 
 const norm = p => p?.replace(/\D/g, '');
 
+// ⚠️ `select('*')` DE PROPÓSITO. O gate de Negócios passou a depender de
+// `negocios_liberado` (migration 142) e um select nominal quebraria a aba
+// INTEIRA no intervalo entre o deploy e a migration rodar à mão no Supabase
+// — é a lição registrada no CLAUDE.md (coluna nova em caminho crítico).
+// Uma linha só, server-side: o custo é irrelevante.
 async function getUser(req) {
   const { data } = await supabase.from('users')
-    .select('id, grupo_ativo, plano').eq('id', req.authUser?.id || '__none__').maybeSingle();
+    .select('*').eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
 
-// Acesso à aba Negócios — Premium e Black (o Black foi descontinuado; suas
-// features passaram pro Premium).
-function exigirBlack(user) {
-  return user?.plano === 'premium' || user?.plano === 'black';
-}
+// Acesso à aba Negócios. ⚠️ NÃO é `plano === 'platinum'`: soma o direito
+// adquirido de quem já usava a aba quando ela saiu do Premium e o vitalício.
+// Fonte única em config/planos.js, espelhada no front (lib/plans.ts).
+const exigirNegocios = temNegocios;
 
 // ─────────────────────────────────────────────────────────────────
 // EMPRESAS — CRUD (fundação do multi-empresa; ILIMITADAS no Premium)
@@ -45,7 +50,7 @@ router.get('/empresas/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const { data, error } = await supabase.from('empresas')
       .select('*')
@@ -64,7 +69,7 @@ router.post('/empresas', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const { nome, tipo, cor, logo_url, icone, cnpj } = req.body;
     const erro = validarEmpresa({ nome, tipo, cor, logo_url });
@@ -92,7 +97,7 @@ router.put('/empresas/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const { nome, tipo, cor, logo_url, icone, cnpj } = req.body;
     const erro = validarEmpresa({ nome, tipo, cor, logo_url });
@@ -120,7 +125,7 @@ router.delete('/empresas/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const { error } = await supabase.from('empresas')
       .update({ ativa: false })
@@ -176,7 +181,7 @@ router.get('/lancamentos/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
     if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
@@ -236,7 +241,7 @@ router.post('/lancamentos', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const b = req.body || {};
     const empresa = await empresaDoUsuario(user.id, b.empresa_id);
@@ -291,7 +296,7 @@ router.put('/lancamentos/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const b = req.body || {};
     const patch = {};
@@ -323,7 +328,7 @@ router.delete('/lancamentos/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const { error } = await supabase.from('lancamentos_negocio')
       .delete().eq('id', req.params.id).eq('user_id', user.id);
@@ -362,7 +367,7 @@ router.get('/funcionarios/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
     if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
@@ -382,7 +387,7 @@ router.post('/funcionarios', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const b = req.body || {};
     const empresa = await empresaDoUsuario(user.id, b.empresa_id);
@@ -419,7 +424,7 @@ router.put('/funcionarios/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const b = req.body || {};
     const erro = validarFuncionario(b);
@@ -459,7 +464,7 @@ router.delete('/funcionarios/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const { error } = await supabase.from('funcionarios_negocio')
       .update({ ativo: false }).eq('id', req.params.id).eq('user_id', user.id);
@@ -476,7 +481,7 @@ router.post('/funcionarios/:id/pagar', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     const { data: f } = await supabase.from('funcionarios_negocio')
       .select('*').eq('id', req.params.id).eq('user_id', user.id).maybeSingle();
@@ -519,7 +524,7 @@ router.get('/integracoes/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
 
     const { data, error } = await supabase
       .from('integracoes')
@@ -539,7 +544,7 @@ router.post('/integracoes', auth, async (req, res) => {
     const { phone, plataforma, credenciais, apelido } = req.body;
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
     if (!['hotmart','kiwify','eduzz','stripe','mercadopago','asaas','pagseguro','shopify','woocommerce'].includes(plataforma))
       return res.status(400).json({ erro: 'Plataforma inválida.' });
 
@@ -630,7 +635,7 @@ router.get('/dre/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
 
     const mesParam = req.query.periodo || new Date().toISOString().slice(0, 7);
     const periodo = `${mesParam}-01`;
@@ -705,7 +710,7 @@ router.get('/dre-gerencial/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
 
     const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
     if (!empId) return res.json(null);
@@ -765,7 +770,7 @@ router.get('/dre-detalhado/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
 
     const mesParam = req.query.periodo || new Date().toISOString().slice(0, 7);
     const inicio = `${mesParam}-01`;
@@ -896,7 +901,7 @@ router.get('/forecast/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
 
     // Pega últimos 6 meses de snapshots
     const meses = [];
@@ -1132,7 +1137,7 @@ router.get('/centros-custo/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
     const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
     if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
 
@@ -1149,7 +1154,7 @@ router.post('/centros-custo', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
     const b = req.body || {};
     const empresa = await empresaDoUsuario(user.id, b.empresa_id);
     if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
@@ -1176,7 +1181,7 @@ router.put('/centros-custo/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
     // Anti-IDOR: o centro tem de ser de uma empresa DESTE usuário.
     const { data: alvo } = await supabase.from('centros_custo')
@@ -1201,7 +1206,7 @@ router.delete('/centros-custo/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
     const { data: alvo } = await supabase.from('centros_custo')
       .select('id, empresa_id').eq('id', req.params.id).maybeSingle();
     if (!alvo || !(await empresaDoUsuario(user.id, alvo.empresa_id))) {
@@ -1227,7 +1232,7 @@ router.get('/indicadores/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
     const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
     if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
 
@@ -1366,7 +1371,7 @@ router.get('/contas/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
     const empresa = await empresaDoUsuario(user.id, req.query.empresa_id);
     if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
 
@@ -1386,7 +1391,7 @@ router.post('/contas', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
     const b = req.body || {};
     const empresa = await empresaDoUsuario(user.id, b.empresa_id);
     if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
@@ -1410,7 +1415,7 @@ router.put('/contas/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Recurso do plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
     const b = req.body || {};
     const patch = {};
     if (b.nome !== undefined) patch.nome = String(b.nome).trim().slice(0, 40);
@@ -1533,7 +1538,7 @@ router.get('/wrapped/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
 
     const mesParam = req.query.periodo || new Date().toISOString().slice(0, 7);
     const inicio = `${mesParam}-01`;
@@ -1614,7 +1619,7 @@ router.post('/insights/gerar', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!exigirBlack(user)) return res.status(403).json({ erro: 'Disponível no plano Premium.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
 
     const insights = await gerarInsights(user.id, user.grupo_ativo);
     res.json({ ok: true, gerados: insights.length, insights });

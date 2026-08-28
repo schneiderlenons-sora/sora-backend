@@ -130,7 +130,7 @@ GRUPOS:
 {"acao":"listar_membros"}
 {"acao":"remover_membro","nome":"João"}
 
-INVESTIMENTOS (plano Black):
+INVESTIMENTOS:
 {"acao":"criar_investimento","tipo":"CDB/CDI","nome":"CDB Banco X","valorAportado":1000,"quantidade":1,"precoUnitario":1000}
 {"acao":"listar_investimentos"}
 {"acao":"registrar_aporte","valor":500,"investimentoId":null,"descricao":"aporte mensal"}
@@ -221,7 +221,7 @@ async function interpretarMensagem(mensagem, contexto = {}) {
   }
 }
 
-// Gera dicas financeiras personalizadas (plano Black)
+// Gera dicas financeiras personalizadas (planos com Investimentos)
 async function gerarDicas(resumoGastos) {
   try {
     const response = await client.chat.completions.create({

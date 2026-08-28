@@ -124,16 +124,16 @@ router.post('/trocar', auth, async (req, res) => {
 });
 
 // Limite de membros por plano
-const LIMITE_MEMBROS = { inativo: 1, basico: 1, premium: 5, black: 5 };
+const LIMITE_MEMBROS = { inativo: 1, basico: 1, premium: 5, platinum: 5 };
 
-// POST /criar — cria um novo grupo (somente premium/black)
+// POST /criar — cria um novo grupo (somente premium/platinum)
 router.post('/criar', auth, async (req, res) => {
   try {
     const { phone, nome, emoji, copiar_dados } = req.body;
     const user = await getUser(req);
     if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (user.plano !== 'premium' && user.plano !== 'black') {
-      return res.status(403).json({ erro: 'Recurso disponível apenas nos planos Premium e Black.' });
+    if (user.plano !== 'premium' && user.plano !== 'platinum') {
+      return res.status(403).json({ erro: 'Recurso disponível apenas nos planos Premium e Platinum.' });
     }
     if (!nome?.trim()) return res.status(400).json({ erro: 'Informe o nome do grupo.' });
 

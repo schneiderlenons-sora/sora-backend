@@ -21,7 +21,7 @@ async function getUser(req) {
     .select('id, grupo_ativo, plano').eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
-const temAcesso = (u) => u?.plano === 'premium' || u?.plano === 'black';
+const temAcesso = (u) => u?.plano === 'premium' || u?.plano === 'platinum';
 
 /** Empresa do usuário (anti-IDOR: sempre valida a posse). */
 async function empresaDoUsuario(userId, empresaId) {

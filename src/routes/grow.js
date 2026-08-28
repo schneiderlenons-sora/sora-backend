@@ -16,7 +16,7 @@ async function getUser(req) {
 // lista de compras, agenda).
 function temAcessoGrow(user) {
   if (!user) return false;
-  if (['basico', 'premium', 'black'].includes(user.plano)) return true;
+  if (['basico', 'premium', 'platinum'].includes(user.plano)) return true;
   if (['grow_basico', 'grow_premium'].includes(user.plano_grow)) return true; // legado
   if (user.plano_grow === 'trial' && user.grow_trial_fim && new Date(user.grow_trial_fim) > new Date()) return true;
   return false;
@@ -25,7 +25,7 @@ function temAcessoGrow(user) {
 // Grow PREMIUM — Saúde, Estudos e Casa avançada (despensa/receitas/manutenções).
 function temGrowPremium(user) {
   if (!user) return false;
-  if (['premium', 'black'].includes(user.plano)) return true;
+  if (['premium', 'platinum'].includes(user.plano)) return true;
   if (user.plano_grow === 'grow_premium') return true; // legado
   return false;
 }
@@ -91,8 +91,8 @@ router.post('/ativar-trial/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
-    // Premium e Black JÁ incluem o Sora Grow — o trial de 7 dias é do Básico.
-    if (['premium','black'].includes(user.plano))
+    // Premium e Platinum JÁ incluem o Sora Grow — o trial de 7 dias é do Básico.
+    if (['premium','platinum'].includes(user.plano))
       return res.status(400).json({ erro: 'Seu plano ja inclui o Sora Grow.' });
     if (user.plano_grow !== 'sem_acesso')
       return res.status(400).json({ erro: 'Trial ja utilizado ou voce ja tem acesso' });

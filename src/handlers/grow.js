@@ -128,7 +128,7 @@ function fmtAntecedencia(minutos, temHora) {
 // Base (hábitos/tarefas/bem-estar/compras/agenda) é de todos os planos.
 function temGrowPremium(user) {
   if (!user) return false;
-  if (user.plano === 'premium' || user.plano === 'black') return true;
+  if (user.plano === 'premium' || user.plano === 'platinum') return true;
   if (user.plano_grow === 'grow_premium') return true;
   if (user.plano_grow === 'trial' && user.grow_trial_fim && new Date(user.grow_trial_fim) > new Date()) return true;
   return false;

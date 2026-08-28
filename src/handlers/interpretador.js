@@ -140,7 +140,7 @@ function interpretarRapido(message) {
   // --- CANCELAR PLANO / ASSINATURA (orienta a cancelar pela Stripe) ---
   // Específico de plano/assinatura — não conflita com "cancelar recorrência X"
   // nem "cancelar lembrete", que têm keywords próprias mais abaixo.
-  if (/\b(cancelar|cancela|encerrar|desativar|suspender|parar(?:\s+de\s+pagar)?)\s+(?:o\s+|a\s+|meu\s+|minha\s+)?(plano|assinatura|inscri[cç][aã]o|mensalidade|premium|black|b[aá]sico|sora)\b/i.test(msg)
+  if (/\b(cancelar|cancela|encerrar|desativar|suspender|parar(?:\s+de\s+pagar)?)\s+(?:o\s+|a\s+|meu\s+|minha\s+)?(plano|assinatura|inscri[cç][aã]o|mensalidade|premium|platinum|b[aá]sico|sora)\b/i.test(msg)
       || /\b(quero|gostaria de|preciso|como (?:fa[cç]o|posso|que faz)|posso)\s+(?:para\s+)?cancelar\b/i.test(msg)
       || /\bn[aã]o\s+quero\s+mais\s+(?:pagar|assinar|a\s+sora|o\s+plano|continuar)\b/i.test(msg)
       || /\b(cancelar|encerrar)\s+pagamento\b/i.test(msg))
@@ -548,7 +548,7 @@ function interpretarRapido(message) {
   // extra pra nunca virar "apagar" quando o alvo do cancelamento é outra coisa.
   if (/^\s*cancela(r)?\b/i.test(semAcento)
       && msg.trim().split(/\s+/).length <= 4
-      && !/\b(plano|assinatura|mensalidade|inscricao|premium|black|basico|sora|recorren|lembrete|divida|fatura|resumo|conta|cartao|cartoes)/i.test(semAcento))
+      && !/\b(plano|assinatura|mensalidade|inscricao|premium|platinum|basico|sora|recorren|lembrete|divida|fatura|resumo|conta|cartao|cartoes)/i.test(semAcento))
     return { acao: 'apagar' };
 
   if (/(excluir|apagar|deletar|desfazer)/i.test(semAcento)) {

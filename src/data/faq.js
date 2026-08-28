@@ -54,7 +54,7 @@ Eu entendo o valor, a categoria e a conta, e lanço na hora. Funciona por *texto
 
 Eu analiso o prato, identifico os alimentos e te devolvo os *macros estimados*: calorias, proteínas, carboidratos e gorduras.
 
-É uma estimativa pela imagem (valores aproximados). Disponível nos planos *Premium* e *Black*.`,
+É uma estimativa pela imagem (valores aproximados). Disponível nos planos *Premium* e *Platinum*.`,
   },
   {
     id: 'foto-pdf-ocr',
@@ -65,7 +65,7 @@ Eu analiso o prato, identifico os alimentos e te devolvo os *macros estimados*: 
 • Mandar a *foto da nota fiscal / cupom* — eu leio o valor e lanço (OCR).
 • Mandar um *PDF* (fatura, extrato) — eu interpreto.
 
-A leitura por *imagem (OCR)* e *PDF* faz parte dos planos *Premium* e *Black*. No Básico, você lança por texto e áudio. 😉`,
+A leitura por *imagem (OCR)* e *PDF* faz parte dos planos *Premium* e *Platinum*. No Básico, você lança por texto e áudio. 😉`,
   },
   {
     id: 'conta-padrao',
@@ -147,19 +147,19 @@ A *única* exceção é se você criar/entrar num *grupo* (gestão compartilhada
 
 • *Básico — R$ 19,90/mês*: lançamentos ilimitados, 3 contas, relatórios, limites e o Sora Grow básico.
 • *Premium — R$ 29,90/mês*: contas ilimitadas, OCR (foto), OFX, investimentos, gestão compartilhada e o Sora Grow completo.
-• *Black — R$ 79,90/mês*: tudo do Premium + a área *Negócios* (DRE, integrações Hotmart/Stripe).
+• *Platinum — R$ 49,90/mês*: tudo do Premium + a área *Negócios* (DRE, vendas, estoque, integrações Hotmart/Stripe) e 5 conexões de banco.
 
 No *anual* tem desconto. Veja e assine em 👉 forsora.com/planos`,
   },
   {
     id: 'diferenca-planos',
-    gatilhos: [/diferenca.{0,12}plano/, /\bbasico\b.{0,10}(premium|black)/, /premium.{0,10}black/, /qual (plano|o melhor)/, /o que (cada|muda) (no )?plano/, /o que (vem|tem).{0,12}(no|em cada) plano/],
+    gatilhos: [/diferenca.{0,12}plano/, /\bbasico\b.{0,10}(premium|platinum|black)/, /premium.{0,10}(platinum|black)/, /qual (plano|o melhor)/, /o que (cada|muda) (no )?plano/, /o que (vem|tem).{0,12}(no|em cada) plano/],
     resposta:
 `Resumo rápido:
 
 • *Básico (R$19,90)* — o essencial: lançar gastos/receitas, 3 contas, gráficos, limites, metas e o Grow básico (hábitos, tarefas, agenda, bem-estar).
 • *Premium (R$29,90)* — pra organizar tudo: contas/cartões *ilimitados*, foto de nota (OCR), importar OFX, *investimentos*, compartilhar com a família e o *Grow completo* (saúde, estudos, casa, viagens, filmes, leituras).
-• *Black (R$79,90)* — pra quem empreende: tudo do Premium + *Negócios* (DRE, forecast, integrações de vendas).
+• *Platinum (R$49,90)* — pra quem empreende: tudo do Premium + *Negócios* (DRE, vendas, estoque, forecast, integrações) e suporte prioritário.
 
 Compare em 👉 forsora.com/planos`,
   },
@@ -294,7 +294,7 @@ Configura também no painel (*Metas* e *Limites*).`,
     id: 'investimentos',
     gatilhos: [/como (funciona|ver|acompanh|cri|registr|uso)\w*.{0,12}investiment/, /o que (e|tem|sao).{0,12}investiment/, /(tenho|posso|como).{0,12}(investiment|cripto|acoes|fiis|renda fixa)/, /minha carteira de investiment/],
     resposta:
-`A *Central de Investimentos* (planos *Premium* e *Black*) acompanha cripto, ações, FIIs e renda fixa 📈:
+`A *Central de Investimentos* (planos *Premium* e *Platinum*) acompanha cripto, ações, FIIs e renda fixa 📈:
 
 • Rentabilidade atualizada
 • Cálculo automático de quanto aportar pra bater suas metas
@@ -306,7 +306,7 @@ Você gerencia no painel, em *Investimentos*.`,
     id: 'importar-ofx',
     gatilhos: [/importar (extrato|ofx|csv)/, /\bofx\b/, /extrato do banco/, /open finance/, /conectar (o )?banco/, /sincronizar (com o )?banco/],
     resposta:
-`Sim! 📥 No painel (planos *Premium*/*Black*) você importa o *extrato OFX* do seu banco — eu mostro um preview pra você revisar antes de lançar tudo de uma vez.
+`Sim! 📥 No painel (planos *Premium*/*Platinum*) você importa o *extrato OFX* do seu banco — eu mostro um preview pra você revisar antes de lançar tudo de uma vez.
 
 A importação é feita pelo *painel web* (forsora.com), que dá pra conferir cada transação com calma.`,
   },
@@ -329,7 +329,7 @@ Configura no painel, em *Grupos*.`,
 `O *Sora Grow* é a sua vida além das finanças 🌱 — tudo organizado no mesmo lugar:
 
 • *Base (todos os planos)*: hábitos, tarefas, agenda e bem-estar.
-• *Completo (Premium/Black)*: saúde (treinos, remédios, consultas), estudos, casa (compras, despensa, receitas) e coleções (viagens, filmes, leituras).
+• *Completo (Premium/Platinum)*: saúde (treinos, remédios, consultas), estudos, casa (compras, despensa, receitas) e coleções (viagens, filmes, leituras).
 
 E você comanda muita coisa por aqui mesmo: "fiz academia", "me lembra de X amanhã"…`,
   },

@@ -16,7 +16,7 @@ const auth     = require('../middlewares/auth');
 async function temAcessoGrow(id) {
   const { data: u } = await supabase.from('users').select('plano, plano_grow').eq('id', id).maybeSingle();
   if (!u) return false;
-  if (['premium', 'black'].includes(u.plano)) return true;
+  if (['premium', 'platinum'].includes(u.plano)) return true;
   if (u.plano_grow === 'grow_premium') return true;
   return false;
 }

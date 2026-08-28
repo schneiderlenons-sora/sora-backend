@@ -1384,7 +1384,7 @@ cron.schedule('59 23 * * *', async () => {
   const { data: users } = await supabase
     .from('users')
     .select('grupo_ativo')
-    .in('plano', ['kit', 'premium', 'black'])
+    .in('plano', ['kit', 'premium', 'platinum'])
     .not('grupo_ativo', 'is', null);
 
   const gruposVistos = new Set();

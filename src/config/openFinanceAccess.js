@@ -2,10 +2,10 @@
 // Quem pode usar o Open Finance — e quantos bancos pode conectar.
 //
 // Era allowlist de e-mails (teste fechado com a Polp). Agora está ABERTO pra
-// quem tem ASSINATURA RECORRENTE: Básico = 1 conexão, Premium/Black = 3.
+// quem tem ASSINATURA RECORRENTE: Básico = 1, Premium = 3, Platinum = 5.
 // Vitalício NÃO entra: pagou uma vez e cada conexão nos custa mensalidade no
-// agregador. Acima do limite seria +R$5/mês por conexão — a cobrança ainda não
-// existe, então por ora o limite simplesmente bloqueia.
+// agregador. Acima do limite: +R$6/mês por conexão avulsa (add-on real no
+// Stripe), que QUALQUER plano pode contratar.
 //
 // ⚠️ Espelha `temOpenFinance` / `LIMITES.conexoes_of` do frontend
 // (sora-frontend/lib/plans.ts). Mudou lá, mude aqui: se a tela liberar o que a
@@ -24,7 +24,7 @@ const EMAILS = [
 const PHONES = [];
 
 // Planos com direito ao recurso × quantas conexões cada um leva.
-const LIMITE_CONEXOES = { basico: 1, premium: 3, black: 3 };
+const LIMITE_CONEXOES = { basico: 1, premium: 3, platinum: 5 };
 
 const normPhone = (p) => (p || '').replace(/\D/g, '');
 

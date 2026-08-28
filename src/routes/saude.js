@@ -21,7 +21,7 @@ async function getUser(req) {
 // Saúde é Premium+ (não faz parte do Grow base do Básico).
 function temAcessoGrow(u) {
   if (!u) return false;
-  if (['premium', 'black'].includes(u.plano)) return true;
+  if (['premium', 'platinum'].includes(u.plano)) return true;
   if (u.plano_grow === 'grow_premium') return true; // legado
   return false;
 }

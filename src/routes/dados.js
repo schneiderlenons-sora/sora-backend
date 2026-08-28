@@ -16,7 +16,7 @@ async function getUser(req) {
 // Acesso base ao Grow (todos os planos pagos) — Dados Pessoais é aba base.
 function temAcessoGrow(u) {
   if (!u) return false;
-  if (['basico', 'premium', 'black'].includes(u.plano)) return true;
+  if (['basico', 'premium', 'platinum'].includes(u.plano)) return true;
   if (['grow_basico', 'grow_premium'].includes(u.plano_grow)) return true;
   if (u.plano_grow === 'trial' && u.grow_trial_fim && new Date(u.grow_trial_fim) > new Date()) return true;
   return false;

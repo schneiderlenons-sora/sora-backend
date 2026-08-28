@@ -44,7 +44,7 @@ function normalizarBanco(nome) {
 
 // Limite de contas por plano
 function limitePorPlano(plano) {
-  if (plano === 'premium' || plano === 'black') return Infinity;
+  if (plano === 'premium' || plano === 'platinum') return Infinity;
   return 3; // básico
 }
 
