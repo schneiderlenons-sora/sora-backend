@@ -452,6 +452,18 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       } catch (e) { console.error('venda negócio:', e.message); }
     }
 
+    // ORÁCULO (local-first, sem IA): "posso comprar um celular em 10x de 500?"
+    // → cruza caixa, renda, contas fixas, dívidas, fatura e limite e responde
+    // se cabe. Roda antes do Grow e do FAQ porque a frase é inconfundível.
+    // ⚠️ O gatilho exige PERMISSÃO + verbo de compra + VALOR (ver
+    // services/compraTexto). "comprei um celular por 3000" é passado e está
+    // barrado lá: se essa frase caísse aqui, o LANÇAMENTO DO GASTO sumiria.
+    if (!data) {
+      try {
+        if (await require('../handlers/oraculo').capturaOraculo(mensagem, { phone, user })) return;
+      } catch (e) { console.error('oráculo:', e.message); }
+    }
+
     // Quick-capture do Grow (local-first, sem IA): TAREFA e NOTA por linguagem
     // natural ("lembra de comprar as passagens", "anota que ...", "o que anotei
     // sobre ..."). Roda ANTES da Agenda; tarefa/nota só disparam SEM data (com

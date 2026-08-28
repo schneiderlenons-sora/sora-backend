@@ -79,7 +79,12 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
       const { data } = await supabase.from('recorrencias')
         .select('id, tipo, descricao, valor, dia_vencimento, ativa').eq('grupo_id', grupoId).eq('ativa', true);
       for (const r of data || []) {
-        const desp = r.tipo !== 'receita';
+        // ⚠️ `recorrencias.tipo` é 'Gasto' ou 'Recebimento' — NUNCA 'receita'.
+        // Comparando com 'receita', `desp` dava sempre true e as 95 receitas
+        // fixas da base apareciam VERMELHAS na agenda, rotuladas "Conta fixa"
+        // quando não tinham descrição. Achado ao construir o Oráculo, que lê
+        // essa mesma coluna.
+        const desp = r.tipo !== 'Recebimento';
         for (const d of ocorrenciasMensais(r.dia_vencimento, deStr, ateStr)) {
           eventos.push({ id: `rec-${r.id}-${d}`, source: 'recorrencia',
             titulo: r.descricao || (desp ? 'Conta fixa' : 'Receita fixa'), data: d, hora: null,
