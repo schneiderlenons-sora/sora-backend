@@ -420,9 +420,69 @@ function ehPagamentoFaturaDescricao(descricao, categoriaExterna) {
   return RE_PAGAMENTO_FATURA.test(s);
 }
 
+// ── APLICAR / RESGATAR não é gastar nem ganhar ──────────────────────────────
+//
+// O critério é UM só: **o patrimônio muda?**
+//   · aplicar R$ 1.000 num CDB → o dinheiro sai do bolso "conta" e entra no
+//     bolso "investimento". Patrimônio IGUAL → transferência.
+//   · resgatar → o caminho de volta. Patrimônio IGUAL → transferência.
+//   · rendimento, juros, dividendo, JCP → patrimônio AUMENTA → é RECEITA.
+//   · IR, IOF, come-cotas → patrimônio DIMINUI → é DESPESA.
+//
+// Medido na base (ago/2026): 264 aplicações contavam R$ 126.769 como DESPESA e
+// 409 resgates contavam R$ 101.377 como RECEITA. Quem usa Cofrinho do Inter ou
+// CDB de liquidez diária via o relatório inteiro distorcido — um cliente tinha
+// 132 aplicações, com o dinheiro entrando e saindo da mesma conta o mês todo,
+// inflando os dois lados a cada ciclo.
+//
+// ⚠️ AS EXCLUSÕES SÃO O CORAÇÃO DESTA REGRA, não um detalhe.
+// "REMUNERACAO APLICACAO AUTOMATICA" e "RENTAB.INVEST FACIL" contêm a palavra
+// "aplicação" mas são RENDIMENTO — renda de verdade. Sem barrá-las, esta função
+// transformaria receita em transferência e apagaria o ganho do usuário.
+// Medido: 20 linhas de "REMUNERACAO APLICACAO" na base.
+// ⚠️ IMPOSTO TAMBÉM ENTRA AQUI, e foi a simulação que me mostrou isso: a base
+// tem "IRRF S/RESGATE FUNDOS", "IR - RESGATE CDB..." e "IOF - RESGATE CDB...".
+// Todas contêm a palavra "resgate" e eu as teria transformado em transferência
+// — mas imposto é DESPESA de verdade: o patrimônio diminui e o dinheiro não
+// volta. Mesma lógica do rendimento, com o sinal trocado.
+//
+// "ajuste" também: correção de saldo tem fluxo próprio (🔧 Ajuste) e virar
+// transferência a esconderia do usuário.
+const RE_RENDA_INVEST = new RegExp([
+  // renda (patrimônio AUMENTA)
+  'remuneracao', 'rentab', 'rendiment', '\\brend\\b', 'juros',
+  'dividend', 'jcp', 'jscp', 'provento', 'estorno',
+  // imposto/taxa (patrimônio DIMINUI)
+  'irrf', '\\bir\\b', '\\biof\\b', 'imposto', 'come.?cotas', 'tributo', 'taxa',
+  // correção de saldo — não é movimentação de investimento
+  'ajuste',
+].join('|'));
+
+// ⚠️ `\b` OBRIGATÓRIO antes de "aplicac"/"resgate". Sem ele, "PassAPORTE ROTA
+// BIKER" casava com "aporte" — um passeio de bicicleta virava movimentação de
+// investimento (caso real na base).
+const RE_MOV_INVEST = /\b(aplicac|resgate|liquidac|aporte)/;
+
+/**
+ * A descrição é APLICAÇÃO ou RESGATE de investimento?
+ *
+ * Só isso — rendimento, dividendo e imposto NÃO entram, porque esses de fato
+ * mudam o patrimônio e devem seguir contando como receita/despesa.
+ *
+ * ⚠️ Quem chama precisa garantir que a carteira NÃO é cartão de crédito. Não
+ * existe "aplicar" a partir de um cartão, e marcar transferência em carteira de
+ * crédito mexe no cálculo da fatura (`valorFatura.valorNaFatura`).
+ */
+function ehMovimentoInvestimento(descricao, categoriaExterna) {
+  const s = `${descricao || ''} ${categoriaExterna || ''}`
+    .toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  if (RE_RENDA_INVEST.test(s)) return false;   // rendimento/dividendo/imposto vencem
+  return RE_MOV_INVEST.test(s);
+}
+
 module.exports = {
   ajustarPorDirecao,
   categorizar, categorizarDescricao, mapearCategoriaPluggy,
   CATEGORIA_FATURA, CATEGORIA_FATURA_LEGADO, CATEGORIA_ESTORNO,
-  ehPagamentoFatura, ehPagamentoFaturaDescricao,
+  ehPagamentoFatura, ehPagamentoFaturaDescricao, ehMovimentoInvestimento,
 };

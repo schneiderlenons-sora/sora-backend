@@ -43,7 +43,8 @@
     "eval:lembrete-fila": "node evals/lembreteFila.eval.js",
     "eval:categorizar-marca": "node evals/categorizarMarca.eval.js",
     "eval:compra": "node evals/compraTexto.eval.js",
-    "eval:saude-compra": "node evals/saudeCompra.eval.js"
+    "eval:saude-compra": "node evals/saudeCompra.eval.js",
+    "eval:mov-invest": "node evals/movimentoInvestimento.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

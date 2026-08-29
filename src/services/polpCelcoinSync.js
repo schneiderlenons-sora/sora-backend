@@ -30,7 +30,7 @@ const supabase = require('../db/supabase');
 const celcoin  = require('./polpCelcoin');
 const {
   categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA, CATEGORIA_ESTORNO,
-  ehPagamentoFaturaDescricao,
+  ehPagamentoFaturaDescricao, ehMovimentoInvestimento,
 } = require('./categorizar');
 const { cicloPorCompetencia, competenciaAtual, hojeSP } = require('./cicloFatura');
 const { valorNaFatura } = require('./valorFatura');
@@ -1224,7 +1224,22 @@ function normalizeTxConta(tx) {
   const pagouFatura = ref === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT'
     || ehPagamentoFaturaDescricao(descricao, ref);
 
-  const ehTransferencia = pagouFatura
+  // ⚠️ APLICAR/RESGATAR TAMBÉM NÃO É GASTO NEM RENDA — o dinheiro só muda de
+  // bolso (conta → investimento). Medido antes de ligar: 264 aplicações
+  // entravam como R$ 126.769 de DESPESA e 409 resgates como R$ 101.377 de
+  // RECEITA. Quem usa Cofrinho do Inter ou CDB de liquidez diária tinha o
+  // relatório inteiro distorcido — um cliente com 132 aplicações inflava os
+  // dois lados a cada ciclo de entra-e-sai na mesma conta.
+  //
+  // ⚠️ Rendimento, dividendo e imposto NÃO entram aqui: esses mudam o
+  // patrimônio de verdade e seguem como receita/despesa. Quem separa é o
+  // `ehMovimentoInvestimento` (evals/movimentoInvestimento.eval.js).
+  //
+  // ⚠️ Só nesta função (CONTA). Não existe "aplicar" a partir de um cartão, e
+  // marcar transferência em carteira de crédito mexeria no valor da fatura.
+  const movInvestimento = ehMovimentoInvestimento(descricao, ref);
+
+  const ehTransferencia = pagouFatura || movInvestimento
     || ref === 'TRANSFER_OUT_ACCOUNT_TRANSFER' || ref === 'TRANSFER_IN_ACCOUNT_TRANSFER';
 
   return {
@@ -1232,8 +1247,14 @@ function normalizeTxConta(tx) {
     ehGasto,
     valor: Math.abs(valor),
     descricao,
+    // Movimentação de investimento MANTÉM a categoria descritiva
+    // ("Investimentos" / "Resgate") em vez de virar "Transferências": a flag
+    // já tira do cálculo, e achatar o rótulo faria a pessoa perder de vista
+    // pra ONDE o dinheiro foi.
     categoria: ehTransferencia
-      ? (pagouFatura ? CATEGORIA_FATURA : 'Transferências')
+      ? (pagouFatura ? CATEGORIA_FATURA
+        : movInvestimento ? categoriaDe(descricao, ref, ehGasto)
+        : 'Transferências')
       : categoriaDe(descricao, ref, ehGasto),
     data: tx.transaction_date_time || tx.created_at,
     transferencia: ehTransferencia,
