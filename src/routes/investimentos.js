@@ -231,9 +231,26 @@ router.put('/:id', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermis
 // DELETE /api/investimentos/:id
 router.delete('/:id', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    await supabase.from('investimentos').delete().eq('id', req.params.id).eq('grupo_id', req.grupoId);
+    // ⚠️ LER O `error`. O client do Supabase NÃO lança em falha — devolve
+    // `{ error }`. Sem esta checagem a rota respondia `{ ok: true }` mesmo sem
+    // apagar nada, e o painel fechava o modal como se tivesse dado certo. É o
+    // mesmo defeito que o POST/PUT tinham (corrigido em ago/2026 junto da 121).
+    const { data, error } = await supabase.from('investimentos')
+      .delete().eq('id', req.params.id).eq('grupo_id', req.grupoId).select('id');
+    if (error) {
+      console.error('[investimentos DELETE]', error.message);
+      return res.status(500).json({ erro: error.message });
+    }
+    // Zero linhas = id inexistente ou de OUTRO grupo. Responder 200 aqui faria
+    // o item sumir da tela e voltar no próximo carregamento.
+    if (!data || !data.length) {
+      return res.status(404).json({ erro: 'Investimento não encontrado.' });
+    }
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ erro: err.message }); }
+  } catch (err) {
+    console.error('[investimentos DELETE] exceção:', err.message);
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // ── APORTES ──────────────────────────────────────────────────────
