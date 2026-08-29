@@ -194,6 +194,36 @@ URL das capas).
 
 ---
 
+## 5b. `comunicado_sora` — RESPOSTA a relato de bug (`routes/admin.js`)
+
+⚠️ **Este arquivo NÃO documentava o corpo deste template**, embora ele seja o
+`TEMPLATE_RESPOSTA` do `routes/admin.js` — o modelo que leva a resposta do
+suporte ao cliente que abriu um chamado. Ele só aparecia citado de passagem na
+seção 6, ao lado do corpo do `atualizacao_sora`, e isso já produziu um
+diagnóstico errado (ago/2026): concluí que ele dizia *"é só responder aqui"*
+quando esse texto é do OUTRO template. Corpo conferido no painel da Meta.
+
+- **Nome:** `comunicado_sora` · pt_BR · **APROVADO e EM USO**
+- **Corpo (Meta, 29/08/2026):**
+  ```
+  Oi, {{1}}! 👋 Aqui é a Sora, sobre o que você nos enviou: {{2}}. Se precisar
+  de mais ajuda é só contatar o suporte por e-mail: contato@forsora.com 💚
+  ```
+- **Cabeçalho:** Imagem (capa do comunicado).
+- **Params do código:** `[primeiroNome, oneLine(texto)]` — o `{{2}}` é a
+  resposta que o admin digitou, achatada em UMA linha (a Cloud API recusa `\n`
+  dentro de parâmetro).
+
+⚠️ **O corpo manda o cliente pro E-MAIL, não pro chamado no painel.** Desde a
+migration 143 existe conversa dentro do painel (`bug_mensagens`), e esta
+mensagem é o único aviso que o cliente recebe de que houve resposta — mas ela
+não cita o chamado. Quem quiser complementar a informação vai escrever um
+e-mail, e a thread fica parada esperando. Trocar o fim do corpo por algo como
+*"Pra continuar, responda no painel: forsora.com/reportar-bug"* exige editar o
+modelo na Meta e passar por nova aprovação.
+
+---
+
 ## 6. `atualizacao_sora` — comunicado em massa (`routes/admin.js`)
 
 Aviso de novidade disparado pelo painel admin (**Admin → Comunicados**).
