@@ -242,14 +242,26 @@ function explicar(grupo) {
 
 const COLUNAS = 'id, id_curto, valor, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia';
 
-/** Duplicatas do grupo nos últimos `dias`. */
+/**
+ * Duplicatas do grupo nos últimos `dias`.
+ *
+ * ⚠️ SEM FILTRO DE `tipo` NA QUERY. A regra "manual × banco" já vale pra
+ * Recebimento e Transferência (ver `ehDuplicata`), mas a query travava tudo em
+ * 'Gasto' e a receita NUNCA CHEGAVA na regra — a ampliação existia no papel e
+ * não no resultado. Quem separa o que é elegível são as regras, não o SELECT:
+ * a de "mesmo instante" continua exigindo `elegivel` (só consumo).
+ *
+ * Medido antes de tirar (base inteira, 78 grupos): 31 → 40 confirmadas, em 3
+ * grupos, e as 9 novas foram conferidas UMA A UMA — todas manual × banco de
+ * verdade, nenhuma duvidosa. Suspeitas continuaram em 0.
+ */
 async function buscarDuplicadas(grupoId, { dias = 90 } = {}) {
   if (!grupoId) return [];
   const supabase = require('../db/supabase');
   const desde = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
   const { data } = await supabase.from('transacoes')
     .select(COLUNAS)
-    .eq('grupo_id', grupoId).eq('tipo', 'Gasto').gte('data', desde)
+    .eq('grupo_id', grupoId).gte('data', desde)
     .order('data', { ascending: false }).limit(2000);
   return acharDuplicadas(data || []);
 }
@@ -270,8 +282,13 @@ async function buscarAnalise(grupoId, { dias = 90, cartaoId = null } = {}) {
   if (!grupoId) return { confirmadas: [], suspeitas: [], escopo: null };
   const supabase = require('../db/supabase');
 
+  // ⚠️ SEM `.eq('tipo', 'Gasto')` — mesma correção de `buscarDuplicadas`: a
+  // regra "manual × banco" cobre Recebimento/Transferência e o filtro daqui a
+  // impedia de rodar. Caso que expôs isto: cliente importou OFX e conectou o
+  // Open Finance no mesmo dia; das 11 duplicatas geradas o Watson achava 3,
+  // porque salário, PIX recebido e rendimento caíam fora do SELECT.
   let q = supabase.from('transacoes').select(COLUNAS)
-    .eq('grupo_id', grupoId).eq('tipo', 'Gasto');
+    .eq('grupo_id', grupoId);
   let escopo = { tipo: 'geral', dias };
 
   if (cartaoId) {
