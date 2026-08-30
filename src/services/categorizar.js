@@ -123,15 +123,28 @@ const REGRAS = [
       'macarrao', 'lasanha', 'nhoque', 'feijoada', 'strogonoff', 'estrogonofe', 'parmegiana', 'churrasco'] },
 
   // ── Transporte (subcategorias: Combustível, apps, Estacionamento, Pedágio…) ──
-  { cat: 'Uber',           kws: ['uber'] },
+  // "Me Leva" é app de corrida. O adquirente carimba "Me Leva Bq*Meleva" — as
+  // duas grafias entram porque a fatura trunca de jeitos diferentes.
+  // Medido: 9 lançamentos, 7 deles parados em Outros.
+  { cat: 'Uber',           kws: ['uber', 'meleva', 'me leva'] },
   { cat: '99',             kws: ['99app', '99 pop', '99pop', '99 tecnologia', '99 taxi'] },
   { cat: 'Blablacar',      kws: ['blablacar', 'bla bla car'] },
   { cat: 'Combustível',    kws: ['posto', 'ipiranga', 'shell ', 'petrobras', 'br mania', 'gasolina', 'combustivel', 'etanol', 'diesel', 'alcool posto'] },
   { cat: 'Estacionamento', kws: ['estacionamento', 'estapar', 'zona azul', 'estar zona'] },
   { cat: 'Pedágio',        kws: ['pedagio', 'sem parar', 'conectcar', 'veloe', 'move mais', 'ccr ', 'ecovias', 'artesp'] },
   { cat: 'Manutenção do veículo', kws: ['oficina mecanica', 'borracharia', 'autopecas', 'auto pecas', 'auto center', 'funilaria', 'troca de oleo'] },
-  { cat: 'Transporte',     kws: ['cabify', 'indrive', 'in drive', 'metro', 'metrô', 'cptm', 'bilhete unico', 'sptrans', 'onibus',
-      'passagem rodoviaria', 'buser', 'licenciamento', 'taxi', 'brt'] },
+  // ⚠️ 'Ônibus' JÁ É subcategoria canônica de Transporte (🚌, sql/087) — só não
+  // tinha regra, então toda passagem caía no pai genérico. As keywords saem de
+  // 'Transporte' e vêm pra cá. Medido: 'onibus', 'buser' e 'passagem
+  // rodoviaria' têm ZERO lançamentos na base — mover não recategoriza ninguém.
+  //
+  // ⚠️ 'bus servicos' é obrigatório JUNTO com 'clickbus': a fatura trunca em
+  // "BUS SERVICOS*CLIC" e só o 'clickbus' deixaria esses de fora.
+  // ⚠️ NUNCA 'bus' solto — casaria "busca"/"Buscapé". E NUNCA 'rodoviaria'
+  // solto: casaria "Polícia Rodoviária Federal", que é multa, não passagem.
+  { cat: 'Ônibus',         kws: ['clickbus', 'bus servicos', 'buser', 'onibus', 'passagem rodoviaria', 'brt'] },
+  { cat: 'Transporte',     kws: ['cabify', 'indrive', 'in drive', 'metro', 'metrô', 'cptm', 'bilhete unico', 'sptrans',
+      'licenciamento', 'taxi'] },
 
   // ── Compras (roupa/calçado/eletrônico) ──
   { cat: 'Calçados',       kws: ['centauro', 'netshoes', 'dafiti', 'calcados', 'sapataria', 'arezzo', 'melissa', 'olympikus', 'mizuno', 'usaflex'] },
@@ -140,6 +153,12 @@ const REGRAS = [
       'youcom', 'leader', 'calvin klein', 'tommy', 'decathlon', 'track field', 'osklen', 'colcci', 'lojas avenida', 'besni', 'roupa', 'vestuario'] },
 
   // ── Autocuidado ──
+  // ⚠️ ANTES de Barbeiro e de Salão de beleza, de propósito: o descritor real é
+  // "Vindi *Bodylaserbarba" (Vindi é o gateway; o nome da clínica vem depois do
+  // '*'), e a Body Laser faz depilação a laser — 'depilacao' do Salão e o
+  // "barba" no fim do nome roubariam a linha. Medido: 6 lançamentos, espalhados
+  // por Consultas, Outros e Higiene Pessoal.
+  { cat: 'Higiene Pessoal', kws: ['body laser', 'bodylaser'] },
   { cat: 'Barbeiro',       kws: ['barbearia', 'barbeiro', 'barber'] },
   { cat: 'Salão de beleza',kws: ['salao de beleza', 'salao', 'cabeleireiro', 'cabelereiro', 'sobrancelha', 'depilacao'] },
   { cat: 'Manicure',       kws: ['manicure', 'pedicure', 'nail', 'unhas'] },
@@ -158,9 +177,32 @@ const REGRAS = [
       'maltodextrina', 'albumina', 'growth', 'max titanium', 'integralmedica', 'probiotica', 'vitamina', 'multivitaminico',
       'isotonico', 'gatorade', 'colageno', 'termogenico'] },
 
+  // ── Alimentação genérica — o guarda-chuva do bloco de comida ─────────────
+  //
+  // O descritor da maquininha TRUNCA o nome: "Superfoods Alimentaca" (sem o
+  // "o"), "RJPRODUTOSALIMENT", "MacamoAlimentos". Por isso a keyword é o
+  // RADICAL 'aliment' — nenhum dos três casaria com a palavra "alimentação".
+  //
+  // ⚠️ FICA DEPOIS DE DIETA de propósito: "Suplemento Alimentar" é Dieta, e o
+  //    radical o roubaria se viesse antes.
+  // ⚠️ E DEPOIS de Padaria/Supermercado/Lanches/Restaurante, que são mais
+  //    específicas — este é o último palpite do bloco, não o primeiro.
+  // ⚠️ PIX e Transferências vencem o radical porque estão lá em cima. Sem essa
+  //    ordem, "Transferência enviada|AMM X COMERCIO DE ALIMENTOS" viraria
+  //    despesa de comida e sairia da conta de transferência. Medido na base.
+  { cat: 'Alimentação',    kws: ['aliment'] },
+
   // ── Academia / Fitness ──
   { cat: 'Academia',       kws: ['academia', 'smartfit', 'smart fit', 'bodytech', 'bioritmo', 'bio ritmo', 'selfit', 'bluefit',
-      'crossfit', 'personal trainer', 'pilates', 'tecnofit', 'totalpass', 'gympass', 'wellhub'] },
+      'crossfit', 'personal trainer', 'pilates', 'tecnofit', 'totalpass', 'gympass', 'wellhub',
+      // Franquias que faltavam. 'fitness' entra genérico de propósito: medido,
+      // as 3 ocorrências da base ("Dellas Fitness") estavam em Outros, e a única
+      // outra é uma transferência — que a regra de Transferências já vence.
+      // ⚠️ NENHUMA academia chamada "Velocity" entra aqui: ela casaria o 'veloc'
+      // do Cinema, lá embaixo. Ver o comentário de lá.
+      'contorno do corpo', 'sportfit', 'sport fit', 'panobianco', 'justfit', 'just fit',
+      'cia athletica', 'pratique fitness', 'skyfit', 'sky fit', 'ironberg', 'iron berg',
+      'formula academia', 'bodyshape', 'body shape', 'fitness'] },
 
   // ── Esporte ──
   { cat: 'Esporte',        kws: ['futebol', 'society', 'quadra de', 'aluguel de quadra', 'beach tennis', 'futevolei', 'volei',
@@ -207,7 +249,16 @@ const REGRAS = [
       'livraria', 'saraiva', 'papelaria', 'kumon', 'wizard', 'ccaa', 'fisk', 'cna ', 'curso de'] },
 
   // ── Lazer ──
-  { cat: 'Lazer',          kws: ['cinema', 'cinemark', 'kinoplex', 'ingresso', 'sympla', 'eventim', 'show ', 'teatro',
+  // 'Cinema' é subcategoria canônica (🎬, sql/087) e as marcas caíam todas no
+  // pai 'Lazer' — a quebra que a taxonomia promete nunca acontecia. Medido: 10
+  // lançamentos com nome de cinema saem de Lazer e vêm pra cá.
+  //
+  // ⚠️ 'veloc' entra CRU (não 'veloc tickets') porque o descritor trunca. É
+  // seguro porque 'velocidade' e 'velocity' têm ZERO ocorrências na base — e é
+  // exatamente por isso que nenhuma academia "Velocity" foi pra lista de
+  // Academia lá em cima: ela cairia aqui.
+  { cat: 'Cinema',         kws: ['cinema', 'cinemark', 'kinoplex', 'cinepolis', 'uci cinemas', 'veloc'] },
+  { cat: 'Lazer',          kws: ['ingresso', 'sympla', 'eventim', 'show ', 'teatro',
       'parque', 'hopi hari', 'beto carrero', 'steam', 'playstation', 'xbox', 'nintendo', 'riot games', 'epic games', 'twitch',
       'boliche', 'balada', 'bar ', 'pub ', 'cervejaria', 'festa', 'evento'] },
 

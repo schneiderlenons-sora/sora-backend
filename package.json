@@ -44,7 +44,8 @@
     "eval:categorizar-marca": "node evals/categorizarMarca.eval.js",
     "eval:compra": "node evals/compraTexto.eval.js",
     "eval:saude-compra": "node evals/saudeCompra.eval.js",
-    "eval:mov-invest": "node evals/movimentoInvestimento.eval.js"
+    "eval:mov-invest": "node evals/movimentoInvestimento.eval.js",
+    "eval:marcas-br": "node evals/categorizarMarcasBR.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
