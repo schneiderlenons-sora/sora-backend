@@ -18,6 +18,33 @@ const vistaDaFatura = (cartao, competencia, st) =>
 // A leitura mora em services/parcelasPrevistas.js pra ser a MESMA da agenda.
 const { lerPrevistas: parcelasPrevistasDe } = require('../services/parcelasPrevistas');
 
+// Moeda da carteira (migration 144). A CONVERSÃO MORA NO BACKEND de propósito:
+// o painel recebe `saldo_brl` pronto e não precisa buscar câmbio no navegador —
+// senão cada uma das 5 telas que somam saldo teria a sua própria cotação, e
+// elas divergiriam entre si.
+const { normalizarMoeda, taxas: taxasDe, saldoEmBRL } = require('../services/moeda');
+
+/**
+ * Anexa `moeda` e `saldo_brl` em cada carteira.
+ * ⚠️ `saldo_brl` é null quando o câmbio falhou — NUNCA 0. Quem soma precisa
+ * saber a diferença entre "vale zero" e "não sei quanto vale".
+ */
+async function comMoeda(lista) {
+  const ws = lista || [];
+  if (!ws.some((w) => normalizarMoeda(w.moeda) !== 'BRL')) {
+    // Caminho de 99% dos grupos: nenhuma conta estrangeira, nenhuma ida ao
+    // Yahoo, nenhum campo novo além do espelho do saldo.
+    return ws.map((w) => ({ ...w, moeda: normalizarMoeda(w.moeda), saldo_brl: Number(w.saldo) || 0 }));
+  }
+  const tabela = await taxasDe(ws.map((w) => w.moeda));
+  return ws.map((w) => ({
+    ...w,
+    moeda: normalizarMoeda(w.moeda),
+    saldo_brl: saldoEmBRL({ saldo: w.saldo, moeda: w.moeda }, tabela),
+    taxa_brl: tabela[normalizarMoeda(w.moeda)] ?? null,
+  }));
+}
+
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
 function variantesPhone(phone) {
   const p = norm(phone) || '';
@@ -55,7 +82,7 @@ router.get('/:phone', auth, async (req, res) => {
       if (r.error) r = await supabase.from('wallets').select('*').eq('grupo_id', grupoId).order('nome');
       data = r.data;
     }
-    res.json(data || []);
+    res.json(await comMoeda(data));
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -63,7 +90,7 @@ router.get('/:phone', auth, async (req, res) => {
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { nome, tipo, saldo, limite, cheque_especial,
-            dia_fechamento, dia_vencimento, bandeira, ultimos4 } = req.body;
+            dia_fechamento, dia_vencimento, bandeira, ultimos4, moeda } = req.body;
     const grupoId = req.grupoId; // grupo do usuário autenticado (exigirPermissao)
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
@@ -94,6 +121,10 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     }
     if (bandeira       !== undefined) row.bandeira       = bandeira || null;
     if (ultimos4       !== undefined) row.ultimos4       = ultimos4 || null;
+    // Moeda da conta (migration 144). `normalizarMoeda` devolve 'BRL' pra
+    // qualquer coisa fora do catálogo — é aqui que mora a validação, e NÃO num
+    // CHECK do banco (três incidentes desta base foram CHECK falhando calado).
+    if (moeda !== undefined) row.moeda = normalizarMoeda(moeda);
 
     let { data, error } = await supabase.from('wallets')
       .upsert(row, { onConflict: 'grupo_id,nome' })
@@ -104,6 +135,14 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       const { cheque_especial: _drop, ...semCheque } = row;
       ({ data, error } = await supabase.from('wallets')
         .upsert(semCheque, { onConflict: 'grupo_id,nome' })
+        .select().single());
+    }
+    // Mesma tolerância pra migration 144: sem ela, salvar conta continua
+    // funcionando (só não guarda a moeda) em vez de quebrar o cadastro inteiro.
+    if (error && /moeda/i.test(error.message || '')) {
+      const { moeda: _dropM, ...semMoeda } = row;
+      ({ data, error } = await supabase.from('wallets')
+        .upsert(semMoeda, { onConflict: 'grupo_id,nome' })
         .select().single());
     }
     if (error) throw error;
@@ -160,7 +199,7 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
 
     const {
       nome, tipo, saldo, limite, cheque_especial,
-      dia_fechamento, dia_vencimento, bandeira, ultimos4, nos_previstos,
+      dia_fechamento, dia_vencimento, bandeira, ultimos4, nos_previstos, moeda,
     } = req.body;
 
     const nomeNovo = typeof nome === 'string' ? nome.trim().slice(0, 60) : null;
@@ -196,6 +235,15 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (dia_fechamento !== undefined || dia_vencimento !== undefined) {
       patch.datas_manuais = !!(dia_fechamento || dia_vencimento);
     }
+    // Moeda da conta (migration 144).
+    //
+    // ⚠️ TROCAR A MOEDA NÃO CONVERTE O HISTÓRICO, de propósito. As transações
+    // antigas já têm o BRL congelado em `valor` (com a taxa do dia de cada
+    // uma), e reescrevê-las com o câmbio de hoje inventaria um passado que
+    // nunca existiu. O `saldo` também fica como está: ele passa a ser lido na
+    // moeda nova, e quem trocou por engano é quem sabe o número certo.
+    if (moeda !== undefined) patch.moeda = normalizarMoeda(moeda);
+
     if (!Object.keys(patch).length) return res.json(atual);
 
     // Renomeia a WALLET primeiro: é a operação que pode falhar por constraint,

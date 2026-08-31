@@ -6,6 +6,13 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { calcularResumo, calcularResumoAnual } = require('../services/resumoTransacoes');
+// Conta em moeda estrangeira (migration 144). `valor` continua SEMPRE em BRL;
+// o nativo e a taxa congelada do dia vão em colunas próprias.
+const {
+  normalizarMoeda: normalizarMoedaTx,
+  taxas: taxasTx,
+  camposTransacao,
+} = require('../services/moeda');
 
 const norm = p => p?.replace(/\D/g, '');
 // Normaliza nome de conta pra comparar (lowercase, sem acento).
@@ -199,9 +206,25 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 
     // Guardrail anti-conta-fantasma: casa a conta informada com uma wallet REAL
     // do grupo; se não existir, cai em 'Dinheiro' (nunca grava nome inexistente).
-    const { data: wsGrupo } = await supabase.from('wallets').select('id, saldo, nome').eq('grupo_id', grupoId);
+    // ⚠️ `select('*')` e NÃO `select('id, saldo, nome, moeda')`: pedir a coluna
+    // `moeda` (migration 144) pelo NOME faria esta query falhar enquanto a
+    // migration não roda — e ela é o caminho crítico do lançamento. Mesma lição
+    // que já derrubou o Grow inteiro ("Usuário não encontrado") e está no
+    // CLAUDE.md. Com `*` a coluna vem se existir e some se não existir.
+    const { data: wsGrupo } = await supabase.from('wallets').select('*').eq('grupo_id', grupoId);
     const walletReal = (wsGrupo || []).find(w => normNome(w.nome) === normNome(carteira_nome));
     const contaFinal = walletReal ? walletReal.nome : 'Dinheiro';
+
+    // ── Moeda da conta (migration 144) ──────────────────────────────────────
+    // O valor digitado está na moeda DA CONTA. `camposTransacao` devolve o BRL
+    // congelado pra `valor` — que é o que todo o resto do sistema soma — e
+    // guarda o nativo + a taxa do dia ao lado.
+    //
+    // ⚠️ Em conta BRL devolve `{ valor, moeda:null, valor_moeda:null,
+    // taxa_brl:null }`: a linha sai IDÊNTICA à de antes, sem efeito colateral.
+    const moedaConta = normalizarMoedaTx(walletReal?.moeda);
+    const tabelaTx   = moedaConta === 'BRL' ? {} : await taxasTx([moedaConta]);
+    const campoMoeda = camposTransacao(parseFloat(valor), moedaConta, tabelaTx);
 
     // Data FUTURA (fuso SP)? Um lançamento que ainda NÃO aconteceu não pode
     // entrar como "pago" nem debitar o saldo hoje.
@@ -227,13 +250,13 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 
     const idCurto = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-    const { data: tx, error } = await supabase.from('transacoes').insert({
+    const linha = {
       id_curto:      idCurto,
       grupo_id:      grupoId,
       criado_por:    userId,
       tipo,
       categoria,
-      valor:         parseFloat(valor),
+      valor:         campoMoeda.valor,   // SEMPRE BRL (congelado, ver moeda.js)
       observacao:    observacao || '',
       carteira_nome: contaFinal,
       pago:          ehFuturo ? false : (pago !== false),
@@ -243,15 +266,36 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       // conseguia produzir uma linha assim.
       transferencia: transferencia === true,
       data:          data || new Date().toISOString(),
-    }).select().single();
+    };
+    // Campos de moeda só entram quando NÃO é BRL — assim a linha em real fica
+    // byte a byte igual à de antes, e o insert não menciona colunas da 144.
+    if (campoMoeda.moeda) {
+      linha.moeda       = campoMoeda.moeda;
+      linha.valor_moeda = campoMoeda.valor_moeda;
+      linha.taxa_brl    = campoMoeda.taxa_brl;
+    }
+
+    let { data: tx, error } = await supabase.from('transacoes').insert(linha).select().single();
+    // Tolerante à migration 144: sem ela, o lançamento em moeda estrangeira
+    // ainda acontece (só sem o registro do câmbio) em vez de falhar.
+    if (error && /moeda|valor_moeda|taxa_brl/i.test(error.message || '')) {
+      const { moeda: _m, valor_moeda: _vm, taxa_brl: _t, ...semMoeda } = linha;
+      ({ data: tx, error } = await supabase.from('transacoes').insert(semMoeda).select().single());
+    }
 
     if (error) throw error;
 
     // Só debita o que está pago (futuro fica pendente até o dia chegar).
+    //
+    // ⚠️ O SALDO É DEBITADO NO VALOR NATIVO, não no BRL. Uma conta Nomad guarda
+    // dólares: gastar US$ 50 tem de tirar 50 do saldo dela, não os R$ 270 que a
+    // transação registra. Confundir os dois zeraria a conta do cliente em
+    // poucos lançamentos.
     if (tx.pago && walletReal) {
       const mult = tipo === 'Gasto' ? -1 : 1;
+      const valorNativo = campoMoeda.valor_moeda ?? campoMoeda.valor;
       await supabase.from('wallets')
-        .update({ saldo: (walletReal.saldo || 0) + (parseFloat(valor) * mult) }).eq('id', walletReal.id);
+        .update({ saldo: (walletReal.saldo || 0) + (valorNativo * mult) }).eq('id', walletReal.id);
     }
 
     // Limite de gasto: o alerta só existia pra lançamento vindo do zap — quem

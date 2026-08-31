@@ -2,6 +2,9 @@ const supabase = require('../db/supabase');
 const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { registrarAjuste } = require('../services/ajusteSaldo');
+// Conta em moeda estrangeira (migration 144). Cada linha sai NA MOEDA DELA; o
+// total converte pra BRL, porque somar dólar com real seria mentira.
+const { normalizarMoeda, taxas: taxasDe, somarSaldos, formatar: fmtMoeda } = require('../services/moeda');
 
 // Soma os gastos de uma carteira (conta/cartão) num intervalo [ini, fimExcl).
 // excluirTransfer = ignora transferências (elas não são gasto de verdade).
@@ -287,21 +290,39 @@ module.exports = async function handleWallets(data, ctx) {
       return;
     }
 
+    // Câmbio só quando existe conta estrangeira — em 99% dos grupos isto não
+    // faz nenhuma ida de rede e o comportamento é idêntico ao de antes.
+    const temEstrangeira = wallets.some(w => normalizarMoeda(w.moeda) !== 'BRL');
+    const tabela = temEstrangeira ? await taxasDe(wallets.map(w => w.moeda)) : {};
+
     const linhas = wallets.map(w => {
       const emoji = w.tipo === 'Crédito' ? '💳' : w.tipo === 'Poupança' ? '🐷' : w.tipo === 'Dinheiro' ? '💵' : '🏦';
-      return `${emoji} *${w.nome}:* R$ ${w.saldo.toFixed(2)}`;
+      // A linha mostra o valor NA MOEDA DA CONTA — é o número que o cliente vê
+      // no app do banco dele. Converter aqui esconderia quanto ele tem de fato.
+      return `${emoji} *${w.nome}:* ${fmtMoeda(w.saldo, w.moeda)}`;
     }).join('\n');
 
-    const emContas  = wallets.filter(w => w.tipo !== 'Crédito').reduce((s, w) => s + (w.saldo || 0), 0);
-    const saldoCard = wallets.filter(w => w.tipo === 'Crédito').reduce((s, w) => s + (w.saldo || 0), 0); // negativo = a pagar
+    const contas  = wallets.filter(w => w.tipo !== 'Crédito');
+    const cartoes = wallets.filter(w => w.tipo === 'Crédito');
+    const rc = somarSaldos(contas,  tabela);
+    const rk = somarSaldos(cartoes, tabela);
+    const emContas  = rc.total;
+    const saldoCard = rk.total;   // negativo = a pagar
     const aPagar    = saldoCard < 0 ? -saldoCard : 0;
 
+    // ⚠️ Se alguma conta ficou de fora por falta de câmbio, o total é PARCIAL e
+    // tem de dizer isso. Number redondo escondendo dinheiro é pior que aviso.
+    const faltando = rc.semCambio + rk.semCambio;
+    const avisoCambio = faltando > 0
+      ? `\n⚠️ ${faltando} conta(s) fora do total: câmbio indisponível agora.`
+      : '';
+
     // Com cartão a pagar, mostra o líquido (contas − fatura). Sem cartão, só o total.
-    const rodape = aPagar > 0
+    const rodape = (aPagar > 0
       ? `💵 Total em contas: R$ ${emContas.toFixed(2)}\n` +
         `💳 A pagar no cartão: R$ ${aPagar.toFixed(2)}\n` +
         `💰 *Saldo líquido: R$ ${(emContas + saldoCard).toFixed(2)}*`
-      : `💵 *Total: R$ ${emContas.toFixed(2)}*`;
+      : `💵 *Total: R$ ${emContas.toFixed(2)}*`) + avisoCambio;
 
     await enviarTexto(phone, `💰 *SEUS SALDOS:*\n\n${linhas}\n\n${rodape}`);
     return;

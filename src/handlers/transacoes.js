@@ -9,6 +9,12 @@ const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
 const { criarPendente, buscarPendente, removerPendente } = require('../services/pendentes');
 const { categorizarDescricao } = require('../services/categorizar');
+// Conta em moeda estrangeira (migration 144) — o patrimônio soma em BRL.
+const {
+  normalizarMoeda: normalizarMoedaTx,
+  taxas: taxasTx,
+  somarSaldos: somarSaldosTx,
+} = require('../services/moeda');
 // Emoji e hierarquia das categorias vêm do BANCO (o mapa daqui é só fallback).
 const { arvoreDoGrupo, emojiPara, familiaDe, limpar: limparCat } = require('../services/categoriasArvore');
 // Regra canônica do que NÃO é consumo — a mesma do painel. Duplicar a regra aqui
@@ -856,12 +862,22 @@ module.exports = async function handleTransacoes(data, ctx) {
     // Diferente do "saldo do mês" (fluxo: receitas − gastos). Só no resumo do mês.
     let blocoPatrimonio = '';
     if (ehMes && ws.length) {
-      const emContas  = ws.filter(w => w.tipo !== 'Crédito').reduce((s, w) => s + (w.saldo || 0), 0);
-      const saldoCard = ws.filter(w => w.tipo === 'Crédito').reduce((s, w) => s + (w.saldo || 0), 0); // negativo = a pagar
+      // Conta em moeda estrangeira (migration 144): converte antes de somar.
+      // Sem conta estrangeira, `tabela` fica vazia, não há ida de rede e o
+      // comportamento é idêntico ao de antes.
+      const temEstrangeira = ws.some(w => normalizarMoedaTx(w.moeda) !== 'BRL');
+      const tabela = temEstrangeira ? await taxasTx(ws.map(w => w.moeda)) : {};
+      const rc = somarSaldosTx(ws.filter(w => w.tipo !== 'Crédito'), tabela);
+      const rk = somarSaldosTx(ws.filter(w => w.tipo === 'Crédito'), tabela);
+      const emContas  = rc.total;
+      const saldoCard = rk.total;   // negativo = a pagar
       const aPagar    = saldoCard < 0 ? -saldoCard : 0;
-      blocoPatrimonio = aPagar > 0
+      // ⚠️ Total parcial tem de se declarar parcial — mesmo aviso de wallets.js.
+      const faltando = rc.semCambio + rk.semCambio;
+      const aviso = faltando > 0 ? `\n⚠️ ${faltando} conta(s) fora: câmbio indisponível.` : '';
+      blocoPatrimonio = (aPagar > 0
         ? `\n\n🏦 Em contas: R$ ${emContas.toFixed(2)}\n💳 A pagar no cartão: R$ ${aPagar.toFixed(2)}\n💰 *Saldo real: R$ ${(emContas + saldoCard).toFixed(2)}*`
-        : `\n\n🏦 *Saldo em contas: R$ ${emContas.toFixed(2)}*`;
+        : `\n\n🏦 *Saldo em contas: R$ ${emContas.toFixed(2)}*`) + aviso;
     }
 
     // 📌 Ainda neste mês: gastos fixos (recorrências) que ainda vão vencer no mês.

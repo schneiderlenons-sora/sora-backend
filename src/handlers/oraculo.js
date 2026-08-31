@@ -20,6 +20,8 @@ const { avaliarCompra, calcularRenda, calcularSaida } = require('../services/sau
 const { capaDe } = require('../agentes');
 const { normalizarPlano } = require('../config/planos');
 const { competenciaAtual, cicloPorCompetencia, competenciaVizinha } = require('../services/cicloFatura');
+// Conta em moeda estrangeira (migration 144) — o caixa soma em BRL.
+const { normalizarMoeda, taxas: taxasDe, somarSaldos } = require('../services/moeda');
 
 const PLANOS_ORACULO = ['premium', 'platinum'];
 
@@ -75,9 +77,19 @@ async function lerFoto(grupoId) {
   // ⚠️ Carteira de crédito fica FORA. O saldo dela representa a FATURA
   // (negativo por definição no Open Finance), não dinheiro — somá-la ao caixa
   // misturaria dívida com disponibilidade. Mesma regra do lib/saldo-projetado.
-  const caixa = wallets
-    .filter((w) => w.tipo !== 'Crédito')
-    .reduce((s, w) => s + cent(w.saldo), 0);
+  //
+  // ⚠️ CONTA EM MOEDA ESTRANGEIRA CONVERTE (migration 144), e aqui isso não é
+  // cosmético: o Oráculo decide se a compra cabe. Contar US$ 6.834 como
+  // R$ 6.834 subestima o caixa em ~5× e faz ele dizer "não" pra quem podia.
+  //
+  // ⚠️ Sem câmbio a conta fica FORA do caixa (não entra como zero — ela
+  // simplesmente não é somada). Errar pra MENOS é o lado seguro: o Oráculo é
+  // conservador por desenho, e caixa subestimado no máximo segura uma compra
+  // que caberia; o inverso aprovaria uma que não cabe.
+  const contasOraculo = wallets.filter((w) => w.tipo !== 'Crédito');
+  const temEstrangeira = contasOraculo.some((w) => normalizarMoeda(w.moeda) !== 'BRL');
+  const tabelaCambio = temEstrangeira ? await taxasDe(contasOraculo.map((w) => w.moeda)) : {};
+  const caixa = cent(somarSaldos(contasOraculo, tabelaCambio).total);
 
   // ── Renda e despesa fixas ────────────────────────────────────────────────
   // ⚠️ `tipo` é 'Gasto'/'Recebimento' (medido: 289/95 na base). Comparar com
