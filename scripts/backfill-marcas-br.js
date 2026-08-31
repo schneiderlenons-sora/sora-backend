@@ -58,10 +58,13 @@ const norm = (s) => (s || '')
 const NOVAS = [
   { cat: 'Uber',            re: /meleva|me leva/ },
   { cat: 'Ônibus',          re: /clickbus|bus servicos|buser|\bonibus\b|passagem rodoviaria|\bbrt\b/ },
-  { cat: 'Cinema',          re: /cinema|cinemark|kinoplex|cinepolis|uci cinemas|veloc/ },
+  { cat: 'Cinema',          re: /cinema|cinemark|kinoplex|cinepolis|uci cinemas|velox tick|veloxticket|velox ingresso|veloxingresso/ },
   { cat: 'Higiene Pessoal', re: /body laser|bodylaser/ },
   { cat: 'Alimentação',     re: /aliment/ },
-  { cat: 'Academia',        re: /contorno do corpo|sportfit|sport fit|panobianco|justfit|just fit|cia athletica|pratique fitness|skyfit|sky fit|ironberg|iron berg|formula academia|bodyshape|body shape|fitness/ },
+  // ⚠️ SEM 'fitness' e SEM 'body shape'. A 1ª rodada os tinha, e moveu 3 linhas
+  // de "Dellas Fitness" (uma LOJA) pra Academia — desfeito à mão depois que o
+  // usuário apontou. Palavra genérica no nome não diz o ramo do negócio.
+  { cat: 'Academia',        re: /contorno do corpo|sportfit|sport fit|panobianco|justfit|cia athletica|pratique fitness|skyfit|sky fit|ironberg|iron berg|formula academia/ },
 ];
 
 // ⚠️ SÓ SOBE DE UMA CATEGORIA GENÉRICA. Esta lista é a trava mais importante do

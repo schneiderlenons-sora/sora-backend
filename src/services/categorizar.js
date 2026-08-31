@@ -195,14 +195,15 @@ const REGRAS = [
   // ── Academia / Fitness ──
   { cat: 'Academia',       kws: ['academia', 'smartfit', 'smart fit', 'bodytech', 'bioritmo', 'bio ritmo', 'selfit', 'bluefit',
       'crossfit', 'personal trainer', 'pilates', 'tecnofit', 'totalpass', 'gympass', 'wellhub',
-      // Franquias que faltavam. 'fitness' entra genérico de propósito: medido,
-      // as 3 ocorrências da base ("Dellas Fitness") estavam em Outros, e a única
-      // outra é uma transferência — que a regra de Transferências já vence.
-      // ⚠️ NENHUMA academia chamada "Velocity" entra aqui: ela casaria o 'veloc'
-      // do Cinema, lá embaixo. Ver o comentário de lá.
-      'contorno do corpo', 'sportfit', 'sport fit', 'panobianco', 'justfit', 'just fit',
+      // Franquias que faltavam — todas NOMES DE MARCA, nunca palavra genérica.
+      //
+      // ⚠️ 'fitness' JÁ ESTEVE AQUI e foi REMOVIDO: "Dellas Fitness" é uma LOJA,
+      // não academia. Ter "fitness" no nome não diz o ramo do negócio — o mesmo
+      // vale pra "body shape" (que é tanto academia quanto lingerie). Regra da
+      // casa: só entra aqui o que identifica a marca sozinho.
+      'contorno do corpo', 'sportfit', 'sport fit', 'panobianco', 'justfit',
       'cia athletica', 'pratique fitness', 'skyfit', 'sky fit', 'ironberg', 'iron berg',
-      'formula academia', 'bodyshape', 'body shape', 'fitness'] },
+      'formula academia'] },
 
   // ── Esporte ──
   { cat: 'Esporte',        kws: ['futebol', 'society', 'quadra de', 'aluguel de quadra', 'beach tennis', 'futevolei', 'volei',
@@ -253,11 +254,12 @@ const REGRAS = [
   // pai 'Lazer' — a quebra que a taxonomia promete nunca acontecia. Medido: 10
   // lançamentos com nome de cinema saem de Lazer e vêm pra cá.
   //
-  // ⚠️ 'veloc' entra CRU (não 'veloc tickets') porque o descritor trunca. É
-  // seguro porque 'velocidade' e 'velocity' têm ZERO ocorrências na base — e é
-  // exatamente por isso que nenhuma academia "Velocity" foi pra lista de
-  // Academia lá em cima: ela cairia aqui.
-  { cat: 'Cinema',         kws: ['cinema', 'cinemark', 'kinoplex', 'cinepolis', 'uci cinemas', 'veloc'] },
+  // ⚠️ É "Velox" (com X), e NUNCA a palavra solta: "Oi Velox" é banda larga.
+  // Pelo mesmo motivo que 'fitness' saiu da Academia, aqui exige-se o contexto
+  // de ingresso. Os dois descritores reais da base são "Velox Tickets" e
+  // "EC*VELOXINGRESSOS" — 'velox tick' cobre também a versão truncada.
+  { cat: 'Cinema',         kws: ['cinema', 'cinemark', 'kinoplex', 'cinepolis', 'uci cinemas',
+      'velox tick', 'veloxticket', 'velox ingresso', 'veloxingresso'] },
   { cat: 'Lazer',          kws: ['ingresso', 'sympla', 'eventim', 'show ', 'teatro',
       'parque', 'hopi hari', 'beto carrero', 'steam', 'playstation', 'xbox', 'nintendo', 'riot games', 'epic games', 'twitch',
       'boliche', 'balada', 'bar ', 'pub ', 'cervejaria', 'festa', 'evento'] },

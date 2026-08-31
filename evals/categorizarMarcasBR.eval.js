@@ -35,9 +35,10 @@ console.log('── 1. marcas pedidas ──');
   eq('Bus Servicos*Clickbus', 'Ônibus');
   eq('BUS SERVICOS*CLIC', 'Ônibus');
 
-  // Veloc Tickets — 0 na base; regra pedida pra frente.
-  eq('Veloc Tickets', 'Cinema');
-  eq('VELOC TICK', 'Cinema', 'truncado — é por isso que a keyword é o radical');
+  // Velox Tickets (com X). Os dois descritores reais da base.
+  eq('Velox Tickets', 'Cinema');
+  eq('EC*VELOXINGRESSOS', 'Cinema');
+  eq('VELOX TICK', 'Cinema', 'truncado');
 
   // Body Laser — 6 lançamentos, em Consultas, Outros e Higiene Pessoal.
   // ⚠️ "Vindi" é o gateway de cobrança; a clínica vem depois do '*'.
@@ -49,7 +50,6 @@ console.log('── 1. marcas pedidas ──');
   eq('Contorno do Corpo Barb', 'Academia');
   eq('Sportfit', 'Academia');
   eq('SmartFit', 'Academia');
-  eq('Dellas Fitness 1/3', 'Academia');
   eq('Panobianco Academia', 'Academia');
 
   // Alimentação pelo RADICAL: o descritor trunca a palavra.
@@ -101,6 +101,28 @@ console.log('  ok');
 // ⚠️ 'bus' solto casaria "busca"/"Buscapé"; 'rodoviaria' solto casaria
 // "Polícia Rodoviária Federal", que é MULTA, não passagem. Por isso as
 // keywords são frases inteiras. Estes casos travam essa decisão.
+// ── 2b. PALAVRA GENÉRICA NÃO DIZ O RAMO DO NEGÓCIO ────────────────────────
+// ⚠️ Estes dois casos são correção de erro MEU, apontado pelo usuário. Eu tinha
+// posto 'fitness' na Academia e 'veloc' solto no Cinema, inferindo o ramo a
+// partir de uma palavra comum no nome. Não funciona:
+//   · "Dellas Fitness" é uma LOJA — ter "fitness" no nome não faz academia.
+//   · "Oi Velox" é banda larga — "velox" sozinho não faz cinema.
+// A regra que ficou: keyword de marca tem de identificar a marca SOZINHA. Se
+// precisa de contexto, o contexto entra na keyword ('velox tick').
+console.log('── 2b. palavra genérica não define o negócio ──');
+{
+  const dellas = cat('Dellas Fitness 1/3');
+  if (dellas === 'Academia') falhas.push('"Dellas Fitness" virou Academia — é LOJA; \'fitness\' não pode voltar');
+
+  const oi = cat('OI VELOX BANDA LARGA');
+  if (oi === 'Cinema') falhas.push('"OI VELOX" virou Cinema — \'velox\' solto não pode voltar');
+
+  // E o que É a marca continua casando.
+  eq('Velox Tickets', 'Cinema');
+  eq('Sportfit', 'Academia', 'marca de verdade, não palavra genérica');
+}
+console.log('  ok');
+
 console.log('── 3. Ônibus com keyword estreita ──');
 {
   const naoEhOnibus = [
