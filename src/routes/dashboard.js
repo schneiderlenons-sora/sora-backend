@@ -32,7 +32,33 @@ const calcResumo = (grupoId, mes) => calcularResumo({ grupoId, mes });
 
 // Lista de transações — mesma lógica de GET /api/transacoes/:phone
 // (com o mesmo fallback caso a FK do join não exista no schema).
-async function listarTransacoes(grupoId, { mes, tipo, limit, ate }) {
+// Colunas mínimas do GRÁFICO do dashboard (`txsMes`). ESPELHA `COLUNAS_GRAFICO`
+// de sora-frontend/lib/ssr-data.ts — mexeu num, mexa no outro, senão o SSR
+// pinta uma forma e a revalidação troca por outra.
+//
+// Enumeradas a partir dos consumidores REAIS: computeDailyAmount (data, valor),
+// o filtro do gráfico (categoria, transferencia), gastoPorContaDe (tipo,
+// carteira_nome) e ResumoCards (carteira_nome). Sem o embed do criador — o
+// gráfico não mostra avatar, e o join puxava 6 campos de `users` POR LINHA.
+// Medido: 57,8 KB → 14,0 KB por visita.
+const COLUNAS_GRAFICO = 'id, data, valor, categoria, tipo, transferencia, carteira_nome';
+
+async function listarTransacoes(grupoId, { mes, tipo, limit, ate, colunas }) {
+  // Caminho enxuto: quem pede colunas específicas não usa o embed do criador,
+  // logo não precisa da escada de fallback de embed que vem depois.
+  if (colunas) {
+    let q = supabase.from('transacoes').select(colunas, { count: 'exact' })
+      .eq('grupo_id', grupoId)
+      .order('data', { ascending: false })
+      .range(0, Number(limit) - 1);
+    if (mes)  q = q.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
+    if (ate)  q = q.lte('data', ate);
+    if (tipo) q = q.eq('tipo', tipo);
+    q = await arquivadas.filtrar(q, {});
+    const { data: d, count: c } = await q;
+    return { transacoes: (d || []).map(t => ({ ...t, wallet_nome: t.carteira_nome })), total: c || 0 };
+  }
+
   let query = supabase.from('transacoes')
     .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url, avatar_preset, avatar_cor)', { count: 'exact' })
     .eq('grupo_id', grupoId)
@@ -93,8 +119,18 @@ router.get('/:phone', auth, async (req, res) => {
       calcResumo(grupoId, mesAnt),
       supabase.from('wallets').select('*').eq('grupo_id', grupoId).order('nome'),
       listarTransacoes(grupoId, { limit: 8, ate: new Date().toISOString() }), // recentes: nada de futuro (parcelas)
-      listarTransacoes(grupoId, { mes, tipo: 'Gasto', limit: 500 }),
-      supabase.from('categorias').select('*, parent:parent_id(id,nome)').eq('grupo_id', grupoId).eq('ativa', true).order('nome'),
+      // ⚠️ Só o GRÁFICO vai enxuto. A lista de RECENTES (acima) continua com
+      // `select('*')` + embed do criador porque ela mostra observação, avatar de
+      // quem lançou e o resto — estreitar ali apagaria conteúdo da tela.
+      listarTransacoes(grupoId, { mes, tipo: 'Gasto', limit: 500, colunas: COLUNAS_GRAFICO }),
+      // ⚠️ Colunas explícitas e SEM o embed do pai. Era a leitura mais cara do
+      // dashboard (~180 categorias por grupo × todas as colunas, em toda visita).
+      // O dashboard só usa `categorias` via `getCategoriaTheme`, cujo contrato é
+      // nome + icone + cor. Medido: 58,4 KB → 27,4 KB.
+      // ⚠️ Vale só pra ESTA rota. A aba /categorias usa GET /api/categorias/:phone,
+      // que segue devolvendo tudo — ela precisa.
+      supabase.from('categorias').select('id, nome, icone, cor, parent_id, tipo')
+        .eq('grupo_id', grupoId).eq('ativa', true).order('nome'),
     ]);
 
     const val = (r, d) => (r.status === 'fulfilled' ? r.value : d);
