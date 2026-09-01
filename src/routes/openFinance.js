@@ -232,11 +232,41 @@ router.get('/conexoes', auth, async (req, res) => {
       (gs || []).forEach((g) => { nomes[g.id] = g.nome; });
     }
 
+    // ── O que cada conexão JÁ TROUXE (conta? cartão?) ────────────────────────
+    //
+    // ⚠️ EXISTE PRA IMPEDIR RECONEXÃO EM VÃO. Medido na base: em 8 de 28
+    // conexões o CARTÃO só apareceu DEPOIS da conta, com mediana de 5,7h de
+    // atraso. O banco libera as contas primeiro e os cartões quando termina de
+    // processar do lado dele.
+    //
+    // Sem esse sinal a tela dizia "em instantes os dados chegam"; o usuário via
+    // só a conta, concluía que falhou e RECONECTAVA. Cada reconexão cria um
+    // consentimento novo na Polp e o antigo continua sendo COBRADO de nós —
+    // é o mesmo motivo pelo qual `outro_grupo` existe, logo acima. Caso real:
+    // cliente desconectou e reconectou 3x na mesma noite, e o cartão apareceu
+    // sozinho 5h46 depois.
+    //
+    // Query barata: só `tipo` + `of_consent_id` das carteiras já vinculadas.
+    const vinculos = {};
+    try {
+      const ids = [...new Set((data || []).map((c) => c.external_id).filter(Boolean))];
+      if (ids.length) {
+        const { data: ws } = await supabase.from('wallets')
+          .select('tipo, of_consent_id').in('of_consent_id', ids);
+        for (const w of ws || []) {
+          const v = vinculos[w.of_consent_id] || (vinculos[w.of_consent_id] = { contas: 0, cartoes: 0 });
+          if (w.tipo === 'Crédito') v.cartoes++; else v.contas++;
+        }
+      }
+    } catch { /* tolerante: sem isto a tela só perde o aviso, não quebra */ }
+
     res.json({
       conexoes: (data || []).map((c) => ({
         ...c,
         outro_grupo: !!(c.grupo_id && c.grupo_id !== grupoId),
         grupo_nome: nomes[c.grupo_id] || null,
+        contas_vinculadas:  vinculos[c.external_id]?.contas  || 0,
+        cartoes_vinculados: vinculos[c.external_id]?.cartoes || 0,
       })),
     });
   } catch (err) { res.status(500).json({ erro: err.message }); }
