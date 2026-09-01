@@ -56,6 +56,16 @@ function ehPagamentoFaturaCat(categoria) {
  */
 function valorNaFatura(t) {
   if (!t) return 0;
+
+  // ⚠️ "Não considerar EM TUDO" (regra do usuário, migration 146) sai TAMBÉM da
+  // fatura — é o que a tela promete: "sai das somas, da fatura e do saldo".
+  //
+  // ⚠️ O escopo 'fluxo' NÃO entra aqui, de propósito: ele tira a linha de
+  // receita/despesa e a MANTÉM na fatura, que é exatamente o sentido de "só na
+  // despesa/receita". Tratar os dois igual faria a fatura da Sora divergir da
+  // do banco — o defeito que este arquivo inteiro existe pra evitar.
+  if (t.ignorar_em === 'tudo') return 0;
+
   const v = Math.abs(Number(t.valor) || 0);
 
   if (t.tipo === 'Gasto') return v;

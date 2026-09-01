@@ -21,6 +21,11 @@ function proximoMesPrimeiroDia(mes) {
 // rede de segurança (linhas sem a flag): pagamento de fatura e movimentações
 // (Pix/TED do Open Finance caem em "Transferências").
 function ehTransferencia(r) {
+  // ⚠️ "Não considerar" (regra do usuário, migration 146) sai das somas nos
+  // DOIS escopos — 'fluxo' e 'tudo'. A diferença entre eles é só a FATURA, que
+  // é decidida em services/valorFatura.js. Aqui é receita × despesa, e nos dois
+  // casos a linha não conta.
+  if (r.ignorar_em) return true;
   return r.transferencia === true || ehPagamentoFatura(r.categoria) || r.categoria === 'Transferências';
 }
 
@@ -28,7 +33,10 @@ function ehTransferencia(r) {
 // criadoPorId (opcional): filtra só as transações criadas por esse usuário.
 async function calcularResumo({ grupoId, mes, criadoPorId } = {}) {
   let q = supabase.from('transacoes')
-    .select('tipo, categoria, valor, criado_por, transferencia')
+    // ⚠️ `ignorar_em` (146) precisa vir junto — `ehTransferencia` a lê. Pedir
+    // uma coluna que não existe faria o SELECT INTEIRO falhar e o resumo do mês
+    // voltar vazio pra todo mundo, então a leitura é tolerante logo abaixo.
+    .select('tipo, categoria, valor, criado_por, transferencia, ignorar_em')
     .eq('grupo_id', grupoId)
     .gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
   if (criadoPorId) q = q.eq('criado_por', criadoPorId);
@@ -38,7 +46,21 @@ async function calcularResumo({ grupoId, mes, criadoPorId } = {}) {
   // também as esconde. Contar aqui e esconder lá seria o número mágico que
   // custou semanas de investigação na fatura do cartão.
   q = await require('./arquivadas').filtrar(q, {});
-  const { data: rows } = await q;
+  let { data: rows, error: errIgnorar } = await q;
+
+  // ⚠️ REDE DA MIGRATION 146. Sem a coluna `ignorar_em`, o Supabase reprova o
+  // SELECT INTEIRO e `rows` volta vazio — o resumo do mês zeraria pra TODA a
+  // base até a migration rodar. É o mesmo acidente que já derrubou o Grow
+  // ("Usuário não encontrado"). Aqui refaz sem a coluna.
+  if (errIgnorar && /ignorar_em/i.test(errIgnorar.message || '')) {
+    let q2 = supabase.from('transacoes')
+      .select('tipo, categoria, valor, criado_por, transferencia')
+      .eq('grupo_id', grupoId)
+      .gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
+    if (criadoPorId) q2 = q2.eq('criado_por', criadoPorId);
+    q2 = await require('./arquivadas').filtrar(q2, {});
+    rows = (await q2).data;
+  }
 
   let receitas = 0, gastos = 0;
   const porCategoria    = {}; // gastos por categoria
