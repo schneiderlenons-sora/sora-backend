@@ -50,6 +50,39 @@ const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
  *        { parcelasPrevistas(cartaoId, competencia) -> {total},
  *          faturasBanco(cartaoId) -> [ {competencia,total,pago,...} ] }
  */
+/**
+ * O "simulado" é, na verdade, o LIMITE USADO cru?
+ *
+ * ⚠️ ESTA É A TRAVA DA REGRA DE OURO — "nunca exibir o limite usado como Fatura
+ * atual". A fatura simulada nasce de `used_amount − unbilled_amount`. Quando o
+ * emissor manda `unbilled_amount: 0`, a conta degenera e o resultado É o limite
+ * usado, sem mais nada.
+ *
+ * Zero pode ser legítimo: a fatura fechou e ninguém comprou nada desde então.
+ * O que denuncia o dado ruim é a CONTRADIÇÃO — o emissor dizer que nada está
+ * sem faturar enquanto o ciclo ABERTO tem lançamento. Compra em ciclo aberto é,
+ * por definição, não faturada. Se há uma, `unbilled` não podia ser 0.
+ *
+ * CASO REAL (Inter, set/2026) que trouxe esta função:
+ *   used_amount ..... R$ 10.217,60
+ *   unbilled_amount . R$ 0,00        ← o emissor
+ *   ciclo aberto .... R$ 180,00 numa compra, sem bill_id
+ *   histórico ....... faturas de R$ 135 a R$ 870/mês, 24 meses
+ * A Sora exibia R$ 10.217,60 — dezesseis vezes a fatura típica do cartão.
+ *
+ * ⚠️ NÃO é "todo simulado igual ao usado é suspeito". Sem movimento no ciclo, a
+ * igualdade é esperada e o número é adotado como antes — é o caso que o
+ * `eval:fatura-of` trava (`faturaPorLimite(3423.57, 0) = 3423.57`).
+ */
+function simuladoEhOLimiteUsado(cartao, st) {
+  const usado = Number(cartao && cartao.of_limite_usado);
+  if (!Number.isFinite(usado) || usado <= 0) return false;
+  // O simulado é exatamente o limite usado?
+  if (Math.abs(cent(-cartao.saldo) - cent(usado)) > 0.01) return false;
+  // …e existe movimento no ciclo aberto, que o emissor deveria ter contado?
+  return cent(st && st.fatura) > 0;
+}
+
 async function valorExibido(cartao, competencia, st, deps = {}) {
   const ehOF = !!cartao.of_conta_id;
   const lerFaturas = deps.faturasBanco || faturasDoCartao;
@@ -85,6 +118,7 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
       //      melhor palpite disponível.
       typeof cartao.saldo === 'number' && cartao.saldo < 0
       && competencia === (competenciaDoSimulado(cartao, faturas) || competenciaAtual(cartao))
+      && !simuladoEhOLimiteUsado(cartao, st)
     ) {
       // ⚠️ O SIMULADO MANDA SOZINHO — NÃO SOMAR NADA EM CIMA DELE.
       //

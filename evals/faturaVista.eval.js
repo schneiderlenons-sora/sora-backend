@@ -226,6 +226,60 @@ console.log('── 5. bordas ──');
 }
 console.log('  ok');
 
+// ── 6. O SIMULADO QUE É, NA VERDADE, O LIMITE USADO ───────────────────────
+//
+// ⚠️ Caso REAL (Inter, set/2026) — relato do cliente: "a fatura está como se
+// fosse o limite usado do cartão e não a fatura real". O payload cru confirmou:
+//
+//     used_amount ..... R$ 10.217,60
+//     unbilled_amount . R$ 0,00        ← o emissor manda ZERO
+//     ciclo aberto .... 1 compra de R$ 180, sem bill_id
+//     histórico ....... 24 faturas entre R$ 135 e R$ 870
+//
+// Com `unbilled = 0` a regra de ouro (`used − unbilled`) degenera e devolve o
+// limite usado cru. A Sora exibia R$ 10.217,60 num cartão cuja fatura típica é
+// R$ 640 — dezesseis vezes.
+//
+// O que denuncia o dado ruim é a CONTRADIÇÃO: o emissor dizer que nada está sem
+// faturar enquanto o ciclo ABERTO tem lançamento. Compra em ciclo aberto é, por
+// definição, não faturada.
+//
+// Medido na base: 3 de 42 cartões de OF mudam, todos PRA BAIXO (o limite usado
+// infla). O do relato foi de R$ 10.217,60 pra R$ 568,93 = GOL 180 (1/3) + azul
+// seguros 388,93 (8/10) — coerente com o histórico do cartão.
+console.log('── 6. simulado igual ao limite usado ──');
+{
+  const inter = {
+    id: 'inter', of_conta_id: 'of-inter',
+    dia_fechamento: 3, dia_vencimento: 10,
+    saldo: -10217.60, of_limite_usado: 10217.60,
+  };
+
+  // Com movimento no ciclo → o simulado é recusado e cai no auditável.
+  const comMovimento = await valorExibido(inter, '2026-09', st(568.93), semDeps);
+  ok(comMovimento.fatura !== 10217.60, 'NÃO exibe o limite usado como fatura');
+  eq(comMovimento.fonte, 'ciclo+previstas', 'cai no caminho auditável');
+
+  // ⚠️ SEM movimento no ciclo, `unbilled = 0` é LEGÍTIMO (a fatura fechou e
+  // ninguém comprou desde então) — e aí o simulado continua valendo. Sem esta
+  // metade, a trava viraria "nunca confie no simulado", que é o oposto do que
+  // este arquivo inteiro defende.
+  const semMovimento = await valorExibido(inter, '2026-09', st(0), semDeps);
+  eq(semMovimento.fatura, 10217.60, 'ciclo vazio: o simulado segue valendo');
+  eq(semMovimento.fonte, 'simulada', 'e a fonte continua sendo o banco');
+
+  // Simulado DIFERENTE do limite usado = a regra de ouro funcionou. Intocado.
+  const regraFechou = { ...inter, saldo: -1774.64, of_limite_usado: 3155.80 };
+  const normal = await valorExibido(regraFechou, '2026-09', st(900), semDeps);
+  eq(normal.fatura, 1774.64, 'regra de ouro que fechou continua mandando');
+
+  // Sem `of_limite_usado` não há com o que comparar — adota o simulado.
+  const semUsado = { ...inter, of_limite_usado: null };
+  const r4 = await valorExibido(semUsado, '2026-09', st(180), semDeps);
+  eq(r4.fatura, 10217.60, 'sem limite usado gravado, nada muda');
+}
+console.log('  ok');
+
 } // fim do main
 
 // ── Resultado ────────────────────────────────────────────────────────────
