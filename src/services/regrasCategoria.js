@@ -96,15 +96,64 @@ async function categoriaPorRegra(grupoId, descricao) {
   return null;
 }
 
-/** Cria/atualiza a regra do estabelecimento. Devolve o termo gravado. */
+/**
+ * Cria/atualiza a regra do estabelecimento. Devolve o termo gravado.
+ *
+ * ⚠️⚠️ ISTO NUNCA FUNCIONOU ATÉ SET/2026, E FALHAVA CALADO.
+ *
+ * A versão anterior fazia `upsert(..., { onConflict: 'grupo_id,termo' })`, mas o
+ * índice único da migration 104 é sobre uma EXPRESSÃO —
+ * `(grupo_id, lower(btrim(termo)))`. O Postgres não casa `ON CONFLICT (colunas)`
+ * com índice de expressão e devolve 42P10 ("there is no unique or exclusion
+ * constraint matching the ON CONFLICT specification"). Toda tentativa de criar
+ * regra morria aí.
+ *
+ * E morria em SILÊNCIO: o `PUT /api/transacoes/:id` chama isto dentro de um
+ * try/catch best-effort (pra falha aqui não desfazer a edição já salva), então
+ * o erro virava um `console.warn`. O usuário marcava "aplicar a todas", via a
+ * transação salvar e ia embora achando que tinha criado a regra. Medido: ZERO
+ * regras na base inteira, com 69 descrições repetindo em "Outros".
+ *
+ * A gravação agora é UPDATE-e-senão-INSERT, que independe do formato do índice
+ * — funciona com o índice de expressão que está no banco hoje E com o índice
+ * simples da migration 145. `termo` já vem normalizado por `termoDe`, então
+ * `lower(btrim(termo)) === termo` e as duas formas concordam.
+ */
 async function salvarRegra({ grupoId, descricao, categoria, userId } = {}) {
   const termo = termoDe(descricao);
   if (!grupoId || !termo || !categoria) return null;
-  const { error } = await supabase.from('regras_categoria').upsert({
-    grupo_id: grupoId, termo, categoria, criado_por: userId || null,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'grupo_id,termo' });
-  if (error) throw error;
+  const agora = new Date().toISOString();
+
+  // 1) Já existe? Só troca a categoria.
+  const { data: atual, error: eSel } = await supabase.from('regras_categoria')
+    .select('id').eq('grupo_id', grupoId).eq('termo', termo).maybeSingle();
+  if (eSel) throw eSel;
+
+  if (atual?.id) {
+    const { error } = await supabase.from('regras_categoria')
+      .update({ categoria, updated_at: agora }).eq('id', atual.id);
+    if (error) throw error;
+    invalidarCache(grupoId);
+    return termo;
+  }
+
+  // 2) Não existe: insere.
+  const { error } = await supabase.from('regras_categoria').insert({
+    grupo_id: grupoId, termo, categoria, criado_por: userId || null, updated_at: agora,
+  });
+  if (error) {
+    // ⚠️ CORRIDA: duas correções do mesmo estabelecimento ao mesmo tempo. O
+    // índice único barra a segunda — e aí o certo é atualizar, não estourar.
+    // (23505 = unique_violation)
+    if (error.code === '23505') {
+      const { error: e2 } = await supabase.from('regras_categoria')
+        .update({ categoria, updated_at: agora })
+        .eq('grupo_id', grupoId).eq('termo', termo);
+      if (e2) throw e2;
+    } else {
+      throw error;
+    }
+  }
   invalidarCache(grupoId);
   return termo;
 }
@@ -143,7 +192,60 @@ async function aplicarRegrasEmLote(grupoId, linhas) {
   return aplicadas;
 }
 
+/**
+ * Regras do grupo pra TELA de gerenciamento — com id, autor e datas.
+ *
+ * ⚠️ Diferente de `carregarRegras`, que é o caminho quente do import: aquela
+ * devolve só `{termo, categoria}` normalizado e vive num cache de 5 min. Aqui a
+ * leitura é DIRETA e sem cache — quem abriu a tela acabou de mexer nas regras e
+ * não pode ver a versão de cinco minutos atrás.
+ *
+ * ⚠️ Tolerante à migration 104: sem ela devolve lista vazia e a tela mostra
+ * "nenhuma regra ainda" em vez de estourar.
+ */
+async function listarRegras(grupoId) {
+  if (!grupoId) return [];
+  try {
+    const { data, error } = await supabase.from('regras_categoria')
+      .select('id, termo, categoria, criado_por, created_at, updated_at')
+      .eq('grupo_id', grupoId)
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Troca a categoria de uma regra existente, pelo id.
+ *
+ * ⚠️ O `.eq('grupo_id')` não é decoração: sem ele um id vindo do cliente
+ * editaria a regra de OUTRO grupo.
+ */
+async function atualizarRegra({ grupoId, id, categoria } = {}) {
+  if (!grupoId || !id || !categoria) return null;
+  const { data, error } = await supabase.from('regras_categoria')
+    .update({ categoria, updated_at: new Date().toISOString() })
+    .eq('id', id).eq('grupo_id', grupoId)
+    .select().maybeSingle();
+  if (error) throw error;
+  invalidarCache(grupoId);
+  return data || null;
+}
+
+/** Apaga pelo id (a tela lista por id; `removerRegra` apaga por termo). */
+async function removerRegraPorId({ grupoId, id } = {}) {
+  if (!grupoId || !id) return false;
+  const { error } = await supabase.from('regras_categoria')
+    .delete().eq('id', id).eq('grupo_id', grupoId);
+  if (error) throw error;
+  invalidarCache(grupoId);
+  return true;
+}
+
 module.exports = {
   normalizar, termoDe, carregarRegras, categoriaPorRegra, aplicarRegrasEmLote,
   salvarRegra, removerRegra, invalidarCache,
+  listarRegras, atualizarRegra, removerRegraPorId,
 };
