@@ -60,13 +60,13 @@ async function aplicarNoHistorico(grupoId, termo) {
 
     const antes = {
       categoria: t.categoria, observacao: t.observacao,
-      recorrente: t.recorrente, ignorar_em: t.ignorar_em,
+      ignorar_em: t.ignorar_em,
     };
     const depois = { ...antes };
     if (!aplicarNaLinha(depois, regra)) continue;
 
     const patch = {};
-    for (const k of ['categoria', 'observacao', 'recorrente', 'ignorar_em']) {
+    for (const k of ['categoria', 'observacao', 'ignorar_em']) {
       if (depois[k] !== antes[k]) patch[k] = depois[k];
     }
     if (!Object.keys(patch).length) continue;
@@ -208,7 +208,6 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       categoria:     String(b.categoria || '').trim() || null,
       modoMatch:     b.modo_match,
       renomearPara:  String(b.renomear_para || '').trim() || null,
-      recorrente:    b.recorrente === true,
       ignorarEscopo: b.ignorar_escopo,
     });
     if (!termo) return res.status(400).json({ erro: 'Não consegui montar essa regra.' });
@@ -236,7 +235,6 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
       tipo:          b.tipo,
       modoMatch:     b.modo_match,
       renomearPara:  b.renomear_para,
-      recorrente:    b.recorrente,
       ignorarEscopo: b.ignorar_escopo,
     });
     if (!regra) return res.status(404).json({ erro: 'Regra não encontrada.' });

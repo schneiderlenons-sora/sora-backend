@@ -109,7 +109,6 @@ async function carregarRegras(grupoId) {
         modo_match:     umDe(r.modo_match, MATCHES, 'contem'),
         categoria:      r.categoria || null,
         renomear_para:  r.renomear_para || null,
-        recorrente:     r.recorrente === true,
         ignorar_escopo: umDe(r.ignorar_escopo, ESCOPOS, 'tudo'),
       }))
       // Regra de ignorar não precisa de categoria; a de categorizar precisa de
@@ -181,7 +180,7 @@ async function salvarRegra({
   grupoId, descricao, categoria, userId,
   // ── Campos da regra completa (migration 146) ──────────────────────────────
   // Omitidos = comportamento antigo: categorizar, "contém", sem renome.
-  tipo, modoMatch, renomearPara, recorrente, ignorarEscopo,
+  tipo, modoMatch, renomearPara, ignorarEscopo,
   /** `true` quando o TEXTO veio do usuário, digitado como o banco escreve.
    *  ⚠️ Aí NÃO se passa por `termoDe`: ele existe pra tirar ruído de descrição
    *  de maquininha ("PIX", "compra", "pagamento", "debito"…) e destruiria
@@ -202,7 +201,6 @@ async function salvarRegra({
     tipo:           tipoFinal,
     modo_match:     umDe(modoMatch, MATCHES, 'contem'),
     renomear_para:  tipoFinal === 'ignorar' ? null : (renomearPara || null),
-    recorrente:     tipoFinal === 'ignorar' ? false : recorrente === true,
     ignorar_escopo: tipoFinal === 'ignorar' ? umDe(ignorarEscopo, ESCOPOS, 'tudo') : null,
     updated_at:     agora,
   };
@@ -212,7 +210,7 @@ async function salvarRegra({
   // isto, subir o código antes de rodar a migration quebraria até a regra
   // simples que já funcionava.
   const semNovas = (obj) => ({ categoria: obj.categoria, updated_at: obj.updated_at });
-  const ehColunaNova = (e) => /tipo|modo_match|renomear_para|recorrente|ignorar_escopo/i.test(e?.message || '');
+  const ehColunaNova = (e) => /tipo|modo_match|renomear_para|ignorar_escopo/i.test(e?.message || '');
 
   // ⚠️ ERRO CLARO EM VEZ DE 23502. Antes da migration 146, `categoria` ainda é
   // NOT NULL — então uma regra de "não considerar" (que não tem categoria) e
@@ -336,9 +334,6 @@ function aplicarNaLinha(linha, regra) {
   if (regra.renomear_para && linha.observacao !== regra.renomear_para) {
     linha.observacao = regra.renomear_para; mudou = true;
   }
-  if (regra.recorrente === true && linha.recorrente !== true) {
-    linha.recorrente = true; mudou = true;
-  }
   return mudou;
 }
 
@@ -374,24 +369,23 @@ async function listarRegras(grupoId) {
  * editaria a regra de OUTRO grupo.
  */
 async function atualizarRegra({
-  grupoId, id, categoria, tipo, modoMatch, renomearPara, recorrente, ignorarEscopo,
+  grupoId, id, categoria, tipo, modoMatch, renomearPara, ignorarEscopo,
 } = {}) {
   if (!grupoId || !id) return null;
 
   // Só os campos ENVIADOS entram no patch — a tela de lista manda só a
   // categoria, e sobrescrever o resto com default apagaria o renome e o
-  // "recorrente" que a pessoa configurou no formulário completo.
+  // "renomear" que a pessoa configurou no formulário completo.
   const patch = { updated_at: new Date().toISOString() };
   if (categoria !== undefined)     patch.categoria      = categoria || null;
   if (tipo !== undefined)          patch.tipo           = umDe(tipo, TIPOS, 'categorizar');
   if (modoMatch !== undefined)     patch.modo_match     = umDe(modoMatch, MATCHES, 'contem');
   if (renomearPara !== undefined)  patch.renomear_para  = renomearPara || null;
-  if (recorrente !== undefined)    patch.recorrente     = recorrente === true;
   if (ignorarEscopo !== undefined) patch.ignorar_escopo = umDe(ignorarEscopo, ESCOPOS, 'tudo');
 
   // Virou "ignorar"? Os campos de categorizar deixam de fazer sentido.
   if (patch.tipo === 'ignorar') {
-    patch.categoria = null; patch.renomear_para = null; patch.recorrente = false;
+    patch.categoria = null; patch.renomear_para = null;
     if (patch.ignorar_escopo === undefined) patch.ignorar_escopo = 'tudo';
   }
 
@@ -400,7 +394,7 @@ async function atualizarRegra({
 
   let { data, error } = await tentar(patch);
   // Tolerante à migration 146, como no `salvarRegra`.
-  if (error && /tipo|modo_match|renomear_para|recorrente|ignorar_escopo/i.test(error.message || '')) {
+  if (error && /tipo|modo_match|renomear_para|ignorar_escopo/i.test(error.message || '')) {
     ({ data, error } = await tentar({ categoria: patch.categoria, updated_at: patch.updated_at }));
   }
   if (error) throw error;

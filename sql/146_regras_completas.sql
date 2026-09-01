@@ -1,12 +1,18 @@
 -- =====================================================================
--- 146 — Regras completas: categorizar, renomear, recorrente e NÃO CONSIDERAR
+-- 146 — Regras completas: categorizar, renomear e NÃO CONSIDERAR
 --
 -- A tabela `regras_categoria` (migration 104) só sabia "termo → categoria".
 -- Agora ela guarda a regra inteira que o usuário monta na tela do Watson:
 --
 --   CATEGORIZAR   descrição + (texto exato | contém) → categoria
 --                 + renomear para (opcional)
---                 + considerar como recorrente (opcional)
+--
+-- ⚠️ NÃO EXISTE "considerar como recorrente" aqui, de propósito. Na Sora, conta
+-- fixa é uma TABELA À PARTE (`recorrencias`, 458 linhas em uso) com cron,
+-- lançamento automático e lembrete. A coluna `transacoes.recorrente` só faz
+-- UMA coisa — dizer ao Watson "não me acuse de duplicata" (duplicadas.js:62) —
+-- então um campo com esse nome na regra prometeria conta fixa e entregaria
+-- outra coisa.
 --
 --   NÃO CONSIDERAR  descrição + (texto exato | contém)
 --                   + escopo: "em tudo" ou "só na despesa/receita"
@@ -43,7 +49,6 @@ alter table public.regras_categoria
   -- silenciosamente estreitaria regras que já existem.
   add column if not exists modo_match     text    not null default 'contem',
   add column if not exists renomear_para  text,
-  add column if not exists recorrente     boolean not null default false,
   add column if not exists ignorar_escopo text;
 
 comment on column public.regras_categoria.tipo is
@@ -52,8 +57,6 @@ comment on column public.regras_categoria.modo_match is
   '"exato" (descrição idêntica, sem acento/caixa) ou "contem" (substring).';
 comment on column public.regras_categoria.renomear_para is
   'Novo nome do lançamento. NULL = mantém a descrição do banco.';
-comment on column public.regras_categoria.recorrente is
-  'Marca o lançamento como conta fixa do mês, mesmo com valor variável.';
 comment on column public.regras_categoria.ignorar_escopo is
   '"tudo" (somas + fatura) ou "fluxo" (só despesa/receita). Só com tipo=ignorar.';
 

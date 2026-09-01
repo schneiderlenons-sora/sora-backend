@@ -1,6 +1,6 @@
 // =============================================================================
-// EVAL das regras completas (migration 146): categorizar, renomear, recorrente
-// e "não considerar".
+// EVAL das regras completas (migration 146): categorizar, renomear e
+// "não considerar".
 //
 // A seção 1 é a mais importante: REGRA ANTIGA NÃO PODE MUDAR DE COMPORTAMENTO.
 // O motor roda em TODA importação (OFX + 3 syncs de Open Finance + WhatsApp), e
@@ -28,7 +28,6 @@ const regra = (o) => ({
   modo_match: o.modo_match || 'contem',
   categoria: o.categoria || null,
   renomear_para: o.renomear_para || null,
-  recorrente: o.recorrente === true,
   ignorar_escopo: o.ignorar_escopo || 'tudo',
 });
 
@@ -70,15 +69,18 @@ console.log('── 2. exato × contém ──');
 }
 console.log('  ok');
 
-// ── 3. Categorizar: renomear e recorrente ──────────────────────────────────
-console.log('── 3. renomear e recorrente ──');
+// ── 3. Categorizar: renomear ───────────────────────────────────────────────
+console.log('── 3. renomear ──');
 {
-  const r = regra({ termo: 'ott grafica', categoria: 'Casa', renomear_para: 'Gráfica do bairro', recorrente: true });
+  const r = regra({ termo: 'ott grafica', categoria: 'Casa', renomear_para: 'Gráfica do bairro' });
   const linha = { observacao: 'OTT GRAFICA LTDA 0912', categoria: 'Outros' };
   ok(R.aplicarNaLinha(linha, r), 'aplicou');
   eq(linha.categoria, 'Casa', 'categoria');
   eq(linha.observacao, 'Gráfica do bairro', 'renomeada');
-  eq(linha.recorrente, true, 'marcada como recorrente');
+  // ⚠️ NÃO existe "considerar como recorrente". Na Sora conta fixa é a tabela
+  // `recorrencias`; `transacoes.recorrente` só silencia o detector de
+  // duplicatas. Um campo com esse nome prometeria uma coisa e faria outra.
+  eq(linha.recorrente, undefined, 'regra NÃO mexe em recorrente');
 
   // Regra SÓ de renomear (sem categoria) é válida — o print traz categoria e
   // renome como campos independentes.
