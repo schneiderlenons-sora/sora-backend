@@ -1056,8 +1056,10 @@ function normalizeCartao(card, bills, hoje, instituicao) {
   // novo direto, como se fosse o valor da fatura. Deu R$ 1.381,16 onde o banco
   // mostrava R$ 1.774,64.
   //
-  // A doc define o campo como "soma das transações com `bill_id` NULL" — ou
-  // seja, o que ocupa limite e ainda NÃO entrou em fatura nenhuma. Isso é
+  // A doc define o campo como "soma das transações com `bill_id` null E
+  // `bill_post_date` posterior a `bill_closing_date` + 1 mês". A cláusula do MÊS
+  // é o que importa: sem ela o campo parece "o que está em aberto agora"; com
+  // ela é "o que já está lançado para depois do próximo fechamento" — ou seja,
   // justamente a "parcela a vencer" que a REGRA DE OURO manda descontar:
   //
   //     fatura = used_amount − unbilled_amount
@@ -1065,6 +1067,14 @@ function normalizeCartao(card, bills, hoje, instituicao) {
   //
   // `usado` sai de `limiteTotalDoCartao` (é card-level: vem igual em todas as
   // linhas de limits[]); o `unbilled` é POR PLÁSTICO e por isso é somado.
+  // ⚠️ `unbilled_amount` É DERIVADO DAS TRANSAÇÕES. Emissor que não entrega
+  // transação manda 0 — e aí `used − 0` devolve o LIMITE USADO INTEIRO como se
+  // fosse a fatura. Medido no Banco Inter de um cliente: a Polp deu 4 transações
+  // no cartão (1 no ciclo aberto), `unbilled_amount: 0`, e a regra de ouro deu
+  // R$ 10.217,60 numa fatura que o banco cobrava em R$ 1.995,24. O consentimento
+  // vinha `PARTIAL_SUCCESS` + `PARTIALLY_UNAVAILABLE_RESOURCES`. É falha de dado
+  // da origem, não de conta — quem barra o valor absurdo é o
+  // `simuladoEhOLimiteUsado` do `faturaVista`, e a tela cai no ciclo.
   const unbilled = unbilledDoCartao(card);
   // ⚠️ `usadoDoCartao` lê `used_amount` DIRETO de limits[], sem depender de o
   // teto ter sido adotado. Usar o `usado` do `limiteTotalDoCartao` amarrava a
