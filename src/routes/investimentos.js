@@ -1,4 +1,7 @@
 const express  = require('express');
+// ⚠️ Regra CANÔNICA do que conta como gasto — a mesma do resumo do mês e do
+// SSR. Reimplementar aqui faria a reserva divergir do resto do painel.
+const { ehTransferencia } = require('../services/resumoTransacoes');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
@@ -210,7 +213,12 @@ router.post('/', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissa
 // Mesmo problema do POST: o `error` era descartado e a edição "sumia" sem aviso.
 router.put('/:id', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const campos = ['nome','ticker','quantidade','preco_unitario','valor_atual','valor_aportado'];
+    // ⚠️ `is_reserva_emergencia` FALTAVA AQUI, e era metade do bug: a aba
+    // Reserva dizia 'Edite um CDB de liquidez diária' e a edição descartava o
+    // campo em silêncio — sem outro campo junto, a rota ainda respondia 400
+    // 'Nada para atualizar'. Cliente premium ficou com a reserva zerada tendo
+    // R$ 79.836,29 num fundo DI.
+    const campos = ['nome','ticker','quantidade','preco_unitario','valor_atual','valor_aportado','is_reserva_emergencia'];
     const update = {};
     campos.forEach(c => { if (req.body[c] !== undefined) update[c] = req.body[c]; });
     if (!Object.keys(update).length) return res.status(400).json({ erro: 'Nada para atualizar.' });
@@ -533,11 +541,25 @@ router.get('/reserva/:phone', auth, exigirPlano('kit', 'premium', 'platinum'), e
 
     const seisMesesAtras = new Date();
     seisMesesAtras.setMonth(seisMesesAtras.getMonth() - 6);
+    // ⚠️ TRANSFERÊNCIA NÃO É GASTO — e aqui ela estava entrando.
+    // A rota somava todo `tipo='Gasto'` cru, sem a regra canônica do painel
+    // (`ehTransferencia`, em services/resumoTransacoes.js). Pagamento de fatura
+    // é gravado como Gasto + transferencia, então o dinheiro contava DUAS
+    // vezes: a compra no cartão e a quitação da fatura.
+    //
+    // Medido num cliente: R$ 30.451,33 em 4 linhas inflavam o gasto médio de
+    // R$ 27.198,80 para R$ 32.274,02 — e a meta de reserva de 12 meses de
+    // R$ 326.385,58 para R$ 387.288,24. Sessenta mil reais de objetivo que não
+    // existiam, num card que já diz 'CRÍTICO' em vermelho.
     const { data: gastos } = await supabase.from('transacoes')
-      .select('valor').eq('grupo_id', grupoId).eq('tipo', 'Gasto')
+      // `categoria` e `ignorar_em` (146) são lidas por ehTransferencia.
+      .select('valor, transferencia, categoria, ignorar_em')
+      .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
       .gte('data', seisMesesAtras.toISOString().slice(0, 10));
 
-    const totalGastos = (gastos || []).reduce((s, g) => s + (g.valor || 0), 0);
+    const totalGastos = (gastos || [])
+      .filter((g) => !ehTransferencia(g))
+      .reduce((s, g) => s + (g.valor || 0), 0);
     const gastoMedio  = totalGastos / 6;
     const mesesObj    = config?.meses_objetivo || 6;
     const objetivo    = gastoMedio * mesesObj;
