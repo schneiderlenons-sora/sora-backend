@@ -1479,10 +1479,31 @@ function normalizeTxCartao(tx, hoje) {
   // Por isso a lista é de FRASES INTEIRAS, não da palavra solta, e o cashback
   // é barrado explicitamente.
   const descNorm = String(descricao || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  // ⚠️ OS BANCOS ABREVIAM: "PAGTO", "PGTO". A regra exigia a palavra inteira
+  // "pagamento" e por isso deixava passar 12 quitações — R$ 57.566,13 abatendo
+  // fatura que já tinha sido paga. Nove delas batem NO CENTAVO com o total de
+  // uma fatura publicada pelo banco (a prova exigida aqui); as outras três são
+  // pagamentos PARCIAIS, que por definição não batem com um total — e a própria
+  // doc da Celcoin descreve o caso ("pagamentos avulsos feitos antes do
+  // fechamento, ex.: para liberação de limite").
+  //   · "PAGTO DEBITO AUTOMATICO" (Inter) ......... 5x
+  //   · "PAGTO. POR DEB EM C/C" (Bradesco/Visa) ... 3x, até R$ 21.707,68
+  //   · "PAGTO ANTECIPADO PIX" (Bradesco) ......... 2x
+  //   · "PGTO.BOLETO REGISTRADO" (Caixa) .......... 2x
+  //
+  // ⚠️ CONTINUA SENDO LISTA DE FRASES, não da palavra solta. "PAGAMENTO
+  // CASHBACK TAG" tem "pagamento" e NÃO é quitação (é consumo que voltou, tem
+  // de seguir abatendo) — por isso o cashback é barrado antes de tudo. Medido:
+  // a regra nova pega 75 dos 145 créditos em cartão e deixa de fora estorno,
+  // "Crédito de SHEIN" e Uber, que é o comportamento certo.
+  const PAGTO = '(?:pagamento|pagto|pgto)';
   const ehPagamentoNoCartao = ehCredito
     && !/\bcashback\b/.test(descNorm)
     && (/\bpagamento\s+recebido\b/.test(descNorm)
-      || /\bpagamento\b[\s\S]*\bdebito\s+automatico\b/.test(descNorm)
+      || new RegExp(`\\b${PAGTO}\\b[\\s\\S]*\\bdebito\\s+automatico\\b`).test(descNorm)
+      || new RegExp(`\\b${PAGTO}\\.?\\s+por\\s+deb\\b`).test(descNorm)
+      || new RegExp(`\\b${PAGTO}\\.?\\s+antecipado\\b`).test(descNorm)
+      || new RegExp(`\\b${PAGTO}\\.?\\s*boleto\\s+registrado\\b`).test(descNorm)
       || /\bobrigado\s+pelo\s+pagamento\b/.test(descNorm)
       || /\bpagamento\s+com\s+saldo\b/.test(descNorm)
       || /\bpagamento\s+on\s*-?\s*line\b/.test(descNorm));
