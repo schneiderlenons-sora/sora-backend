@@ -47,7 +47,8 @@
     "eval:mov-invest": "node evals/movimentoInvestimento.eval.js",
     "eval:marcas-br": "node evals/categorizarMarcasBR.eval.js",
     "eval:moeda": "node evals/moeda.eval.js",
-    "eval:regras-completas": "node evals/regrasCompletas.eval.js"
+    "eval:regras-completas": "node evals/regrasCompletas.eval.js",
+    "eval:rateio": "node evals/rateio.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

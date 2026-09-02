@@ -6,6 +6,10 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { calcularResumo, calcularResumoAnual } = require('../services/resumoTransacoes');
+// Rateio (migration 151): a aritmética e as recusas vivem no serviço, travadas
+// em `npm run eval:rateio`. Aqui fica só a persistência.
+const { montarRateio } = require('../services/rateio');
+const { randomUUID } = require('crypto');
 // Conta em moeda estrangeira (migration 144). `valor` continua SEMPRE em BRL;
 // o nativo e a taxa congelada do dia vão em colunas próprias.
 const {
@@ -455,6 +459,74 @@ router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res)
     }
 
     res.json({ inserted: data?.length || 0, duplicados });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// POST /api/transacoes/:id/rateio — divide o lançamento em N categorias.
+//
+// ⚠️ SUBSTITUI a transação: insere as partes e apaga a original. Não existe
+// linha-pai, então nenhuma soma do painel precisa saber que rateio existe.
+// A regra e as recusas estão em services/rateio.js (eval:rateio).
+//
+// ⚠️ NÃO MEXE EM SALDO — de propósito. As partes somam exatamente o valor da
+// original, então o efeito líquido na carteira é ZERO. Passar pelo POST/DELETE
+// normais ajustaria o saldo duas vezes (uma pra cada lado) e o deixaria errado.
+//
+// ⚠️ ORDEM DE ESCRITA: INSERE primeiro, APAGA depois. O Supabase não dá
+// transação aqui, então a ordem é a única proteção que existe:
+//   · inserir → apagar: se o apagar falhar, dá pra desfazer as partes e o
+//     usuário volta ao estado original;
+//   · apagar → inserir: se o inserir falhar, o lançamento SUMIU.
+// Entre perder o dinheiro do usuário e contá-lo em dobro por um instante,
+// nenhum dos dois é aceitável — mas só o primeiro é irreversível.
+router.post('/:id/rateio', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const partes = req.body?.partes;
+
+    const { data: tx, error: eGet } = await supabase.from('transacoes')
+      .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+    if (eGet)  return res.status(500).json({ erro: eGet.message });
+    if (!tx)   return res.status(404).json({ erro: 'Lançamento não encontrado.' });
+
+    const grupo = randomUUID();
+    const { erro, linhas } = montarRateio(tx, partes, grupo);
+    if (erro) return res.status(422).json({ erro });
+
+    // 1) as partes entram
+    // ⚠️ `let`, não `const`: quando o insert falha o Supabase devolve
+    // `data: null`, e o retry abaixo precisa REATRIBUIR a lista. Mexer em
+    // `criadas` como se fosse array (`.length = 0`) estourava TypeError
+    // justamente no caminho de erro — o pior lugar pra ter um segundo erro.
+    let { data: criadas, error: eIns } = await supabase.from('transacoes')
+      .insert(linhas).select('id');
+    if (eIns) {
+      // Sem a 151 a coluna não existe: tenta de novo sem ela, pra a função
+      // valer mesmo antes da migration (o vínculo entre as partes é que fica
+      // de fora, e ele é só rótulo).
+      if (/rateio_grupo/i.test(eIns.message || '')) {
+        const semGrupo = linhas.map(({ rateio_grupo, ...resto }) => resto);
+        const retry = await supabase.from('transacoes').insert(semGrupo).select('id');
+        if (retry.error) return res.status(500).json({ erro: retry.error.message });
+        criadas = retry.data || [];
+      } else {
+        return res.status(500).json({ erro: eIns.message });
+      }
+    }
+    if (!criadas || !criadas.length) {
+      return res.status(500).json({ erro: 'Não consegui criar as partes.' });
+    }
+
+    // 2) a original sai
+    const { error: eDel } = await supabase.from('transacoes')
+      .delete().eq('id', tx.id).eq('grupo_id', req.grupoId);
+    if (eDel) {
+      // Desfaz as partes pra não deixar o valor contado em dobro.
+      const ids = (criadas || []).map((r) => r.id);
+      if (ids.length) await supabase.from('transacoes').delete().in('id', ids);
+      return res.status(500).json({ erro: `Não consegui remover o lançamento original: ${eDel.message}` });
+    }
+
+    res.json({ ok: true, grupo, partes: (criadas || []).length });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
