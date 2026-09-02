@@ -1,0 +1,109 @@
+# https://polp.com.br/docs/celcoin/consents/create
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+POST/consents
+Criar Consentimento
+Inicia um novo consentimento Open Finance por período indeterminado (válido até revogação). Após a criação, redirecione o usuário para url_to_authenticate para autorização no banco. Com avoidDuplicates=true, pode reutilizar um consent ativo existente.
+Observações
+Retorna HTTP 201 em caso de sucesso.
+A instituição deve estar com status OPERATIONAL.
+Instituição PERSONAL: enviar somente o CPF.
+Instituição BUSINESS: enviar o CPF do operador/representante e o CNPJ da empresa.
+Instituição BOTH: pode enviar somente o CPF (conexão pessoal) ou CPF + CNPJ (conexão empresarial).
+Com avoidDuplicates=true, a comparação de documents é exata (objeto JSON completo). Se já existir consent AUTHORISED ou AWAITING_AUTHORIZATION com a mesma institution_id e documents, a API devolve esse consent sem criar outro na Celcoin. Se o existente estiver EXPIRED, um novo consent é criado.
+Para renovar a autorização do mesmo registro local (EXPIRED, REJECTED ou AUTHORISED) sem criar outro consent na Polp nem reprocessar contas, use POST /consents/{consent}/recreate.
+O consentimento não expira automaticamente: permanece ativo por período indeterminado até ser revogado via DELETE /consents/{consent}, pelo usuário no banco ou pela instituição.
+Veja a seção Produtos do consentimento abaixo para os valores atuais, o legado e as regras de agrupamento/normalização.
+Request Body
+Field Type Description
+institution_id string ID da instituição (obtido em GET /institutions). Obrigatório.
+cpf string CPF do titular (PERSONAL/BOTH) ou do operador/representante (BUSINESS). Consulte institution.type.
+cnpj string | null CNPJ da empresa. Obrigatório em BUSINESS; opcional em BOTH para conexão empresarial; proibido em PERSONAL.
+cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Opcional.
+products string[] Produtos Open Finance solicitados. Use os valores atuais (ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE). Valores legado ainda são aceitos e normalizados — veja a seção Produtos do consentimento.
+avoidDuplicates boolean Se true, evita criar consent duplicado: busca por institution_id + documents iguais (objeto inteiro, ex.: {"cpf":"..."} ≠ {"cpf":"...","cnpj":"..."}). Com status AUTHORISED ou AWAITING_AUTHORIZATION, retorna o consent existente; com EXPIRED (ou outros status), permite criar um novo. Opcional; padrão false.
+Response Fields
+Field Type Description
+id string Identificador único do consentimento.
+institution_id string ID da instituição financeira vinculada (mesmo valor de GET /institutions).
+cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Campo aberto para correlacionar o consentimento ao seu usuário.
+status string Status Open Finance. Enum: ConsentStatus.
+status_label string Rótulo traduzido do status.
+execution_status string | null Status da importação e do enriquecimento. Enum: ConsentExecutionStatus. AWAITING_RESOURCES: a instituição ainda não enviou os dados — a Polp retenta a cada 10 minutos. SUCCESS: resources importados. PARTIAL_SUCCESS: os dados principais já estão disponíveis, mas houve falha pontual ao gerar categoria ou counterparty (veja flags). Pode continuar usando o consentimento; a Polp retenta o enriquecimento e, quando concluir, volta para SUCCESS.
+execution_status_label string | null Rótulo traduzido do execution_status.
+flags string[] Indicadores de enriquecimento pendente. Enum: ConsentFlag. Array vazio quando não há pendência. ERROR_PROCESSING_CATEGORIES: falha ao gerar categoria. ERROR_PROCESSING_COUNTERPARTIES: falha ao gerar counterparty. PARTIALLY_UNAVAILABLE_RESOURCES: ao menos um recurso do consentimento está com status diferente de AVAILABLE, enquanto outros permanecem disponíveis. Não bloqueia o uso dos dados; a Polp retenta e remove a flag quando o processamento concluir.
+flags_label string[] Rótulos traduzidos das flags.
+products string[] Produtos Open Finance do consentimento. Enum: ConsentProduct. Valores atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Em consents antigos, products pode ainda conter valores legado (LOAN, FUND, …).
+products_label string[] Rótulos traduzidos dos produtos (incluindo nomes legado quando ainda gravados no banco).
+url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco.
+url_to_authenticate_expires_at string | null Expiração da URL de autenticação (ISO 8601).
+error object | null Detalhes de erro, se houver.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Produtos do consentimento
+O Open Finance exige agrupamentos atômicos de permissões. Por isso crédito e investimento não são mais pedidos produto a produto: use os valores CREDIT_OPERATIONS e INVESTMENTS.
+Se products for omitido, a API solicita os cinco valores da tabela atual.
+Exemplo de normalização: ["ACCOUNT", "CREDIT_CARD_ACCOUNT", "VARIABLE_INCOME"] é gravado como ["ACCOUNT", "CREDIT_CARD_ACCOUNT", "INVESTMENTS"].
+Valores atuais recomendados no POST /consents
+Value Label Agrupamento / cobre
+ACCOUNT Conta de depósito à vista, poupança ou pagamento pré-paga Contas (saldo, limites e extratos)
+CREDIT_CARD_ACCOUNT Conta de pagamento pós-paga (Cartão de Crédito) Cartão (limites, transações e faturas)
+CREDIT_OPERATIONS Operações de Crédito Empréstimos, financiamentos, cheque especial e invoice financings
+INVESTMENTS Investimentos Renda fixa bancária/crédito, fundos, renda variável e tesouro
+EXCHANGE Câmbio Operações de câmbio
+Valores legado ainda aceitos no body, normalizados na gravação
+Mantidos por compatibilidade. Continuam válidos no request, mas a API converte para o agrupamento atual antes de persistir e de montar as permissions Open Finance.
+Crédito → normaliza para CREDIT_OPERATIONS
+Value legado Label Gravado como
+LOAN Empréstimo CREDIT_OPERATIONS
+FINANCING Financiamento CREDIT_OPERATIONS
+UNARRANGED_ACCOUNT_OVERDRAFT Cheque Especial / Adiantamento a depositantes CREDIT_OPERATIONS
+INVOICE_FINANCING Financiamento de Fatura / Direitos creditórios descontados CREDIT_OPERATIONS
+Investimento → normaliza para INVESTMENTS
+Value legado Label Gravado como
+BANK_FIXED_INCOME Renda Fixa Bancária INVESTMENTS
+CREDIT_FIXED_INCOME Renda Fixa Crédito INVESTMENTS
+VARIABLE_INCOME Renda Variável INVESTMENTS
+TREASURE_TITLE Título do Tesouro Direto INVESTMENTS
+FUND Fundo de Investimento INVESTMENTS
+Enums Relacionados
+InstitutionType → institution.type
+Value
+PERSONAL
+BUSINESS
+BOTH
+ConsentStatus → status
+Value Label
+AWAITING_AUTHORIZATION Aguardando autorização
+AUTHORISED Autorizado
+REJECTED Rejeitado
+EXPIRED Expirado
+ConsentExecutionStatus → execution_status
+Value Label
+AWAITING_RESOURCES Aguardando recursos
+SUCCESS Sucesso
+PARTIAL_SUCCESS Sucesso parcial
+ConsentFlag → flags
+Value Label
+ERROR_PROCESSING_CATEGORIES Erro ao processar categorias
+ERROR_PROCESSING_COUNTERPARTIES Erro ao processar counterparties
+PARTIALLY_UNAVAILABLE_RESOURCES Alguns recursos indisponíveis
+cURL RequestCOPY
+curl -X POST https://api.polp.com.br/api/v2/consents \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789" \
+-H "Content-Type: application/json" \
+-d '{ "institution_id": "550e8400-e29b-41d4-a716-446655440000", "cpf": "12345678900", "cliente_user_id": "[email&#160;protected]", "products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT", "CREDIT_OPERATIONS", "INVESTMENTS"], "avoidDuplicates": true }'
+Request BodyCOPY
+{
+"institution_id": "550e8400-e29b-41d4-a716-446655440000",
+"cpf": "12345678900",
+"cliente_user_id": "[email&#160;protected]",
+"products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT", "CREDIT_OPERATIONS", "INVESTMENTS"],
+"avoidDuplicates": true
+}
+JSON Response
+{ ... }
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

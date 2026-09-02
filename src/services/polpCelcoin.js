@@ -187,6 +187,29 @@ async function listarConsentimentos() {
   return paginado('/consents');
 }
 
+// Recursos do consentimento, com o STATUS de cada um na instituição.
+//
+// ⚠️ É ESTA A ROTA QUE EXPLICA "PARTIALLY_UNAVAILABLE_RESOURCES". O consentimento
+// diz que ALGO ficou indisponível; só aqui dá pra ver O QUÊ (ACCOUNT,
+// CREDIT_CARD_ACCOUNT, LOAN…) e em que estado. Sem ela, "o banco não mandou as
+// transações" fica no palpite — foi exatamente o que travou o diagnóstico da
+// fatura do Banco Inter de um cliente.
+//
+// A Polp consulta a Celcoin EM TEMPO REAL a cada chamada, então o retorno é o
+// estado de agora, não o do último sync.
+//
+// ⚠️ `TEMPORARILY_UNAVAILABLE` NÃO É ERRO PERMANENTE — a doc é explícita: o
+// recurso pode voltar a AVAILABLE, e a orientação é fazer retry/polling antes de
+// comunicar indisponibilidade ao usuário. Só `UNAVAILABLE` indica encerramento.
+//
+// ⚠️ Só funciona com o consentimento em `AUTHORISED`. Em AWAITING_AUTHORIZATION,
+// REJECTED, EXPIRED ou revogado a rota devolve erro — por isso o catch.
+// Resposta é `{ data: [...] }` completa, sem cursor.
+async function listarResources(consentId) {
+  try { return dados(await api(`/consents/${encodeURIComponent(consentId)}/resources`)) || []; }
+  catch (e) { return { erro: e.message }; }
+}
+
 // Cronograma de sync (last_sync_at / next_sync_at por recurso).
 async function syncSchedules(consentId) {
   try { return await paginado(`/consents/${encodeURIComponent(consentId)}/sync-schedules`, { max: 5 }); }
@@ -318,6 +341,7 @@ async function alertas() {
 }
 
 module.exports = {
+  listarResources,
   PROVIDER, PRODUTOS_ESSENCIAIS, FAMILIAS_INVESTIMENTO, CelcoinError, ehCombinacaoInvalida,
   configurado, api, paginado,
   listarInstituicoes,

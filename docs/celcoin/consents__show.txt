@@ -1,0 +1,72 @@
+# https://polp.com.br/docs/celcoin/consents/show
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+GET/consents/{consent}
+Obter Consentimento
+Retorna um consentimento Open Finance pelo ID. Rate-limited — prefira webhooks e o index paginado.
+Observações
+Rate limit: 240 requisições/minuto por usuário autenticado (ou IP). Ver /docs/celcoin/rate-limits.
+Não faça polling nesta rota. O fluxo ideal é orientado a webhooks.
+Use o show apenas pontualmente — quando precisar do status ou dos dados completos do consentimento.
+execution_status AWAITING_RESOURCES: algumas instituições levam minutos para enviar os resources. A Polp retenta a cada 10 minutos até os dados chegarem; passa para SUCCESS quando a sincronização inicia.
+execution_status PARTIAL_SUCCESS: os dados do consentimento já podem ser usados. Indica apenas falha pontual no enriquecimento de categoria e/ou counterparty (veja flags). A Polp retenta automaticamente; quando concluir, as flags saem e o status volta para SUCCESS — um webhook de transações é enviado nesse momento.
+Response Fields
+Field Type Description
+id string Identificador único do consentimento.
+institution_id string ID da instituição financeira vinculada (mesmo valor de GET /institutions).
+cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Campo aberto para correlacionar o consentimento ao seu usuário.
+status string Status Open Finance. Enum: ConsentStatus.
+status_label string Rótulo traduzido do status.
+execution_status string | null Status da importação e do enriquecimento. Enum: ConsentExecutionStatus. AWAITING_RESOURCES: a instituição ainda não enviou os dados — a Polp retenta a cada 10 minutos. SUCCESS: resources importados. PARTIAL_SUCCESS: os dados principais já estão disponíveis, mas houve falha pontual ao gerar categoria ou counterparty (veja flags). Pode continuar usando o consentimento; a Polp retenta o enriquecimento e, quando concluir, volta para SUCCESS.
+execution_status_label string | null Rótulo traduzido do execution_status.
+flags string[] Indicadores de enriquecimento pendente. Enum: ConsentFlag. Array vazio quando não há pendência. ERROR_PROCESSING_CATEGORIES: falha ao gerar categoria. ERROR_PROCESSING_COUNTERPARTIES: falha ao gerar counterparty. PARTIALLY_UNAVAILABLE_RESOURCES: ao menos um recurso do consentimento está com status diferente de AVAILABLE, enquanto outros permanecem disponíveis. Não bloqueia o uso dos dados; a Polp retenta e remove a flag quando o processamento concluir.
+flags_label string[] Rótulos traduzidos das flags.
+products string[] Produtos Open Finance do consentimento. Enum: ConsentProduct. Valores atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Em consents antigos, products pode ainda conter valores legado (LOAN, FUND, …).
+products_label string[] Rótulos traduzidos dos produtos (incluindo nomes legado quando ainda gravados no banco).
+url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco.
+url_to_authenticate_expires_at string | null Expiração da URL de autenticação (ISO 8601).
+error object | null Detalhes de erro, se houver.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Enums Relacionados
+ConsentStatus → status
+Value Label
+AWAITING_AUTHORIZATION Aguardando autorização
+AUTHORISED Autorizado
+REJECTED Rejeitado
+EXPIRED Expirado
+ConsentExecutionStatus → execution_status
+Value Label
+AWAITING_RESOURCES Aguardando recursos
+SUCCESS Sucesso
+PARTIAL_SUCCESS Sucesso parcial
+ConsentFlag → flags
+Value Label
+ERROR_PROCESSING_CATEGORIES Erro ao processar categorias
+ERROR_PROCESSING_COUNTERPARTIES Erro ao processar counterparties
+PARTIALLY_UNAVAILABLE_RESOURCES Alguns recursos indisponíveis
+ConsentProduct → products
+Value Label
+ACCOUNT Conta de depósito à vista, poupança ou pagamento pré-paga
+CREDIT_CARD_ACCOUNT Conta de pagamento pós-paga (Cartão de Crédito)
+CREDIT_OPERATIONS Operações de Crédito (agrupamento atual)
+INVESTMENTS Investimentos (agrupamento atual)
+EXCHANGE Câmbio
+LOAN Empréstimo — legado (normalizado para CREDIT_OPERATIONS)
+FINANCING Financiamento — legado (normalizado para CREDIT_OPERATIONS)
+UNARRANGED_ACCOUNT_OVERDRAFT Cheque Especial / Adiantamento a depositantes — legado (normalizado para CREDIT_OPERATIONS)
+INVOICE_FINANCING Financiamento de Fatura / Direitos creditórios descontados — legado (normalizado para CREDIT_OPERATIONS)
+BANK_FIXED_INCOME Renda Fixa Bancária — legado (normalizado para INVESTMENTS)
+CREDIT_FIXED_INCOME Renda Fixa Crédito — legado (normalizado para INVESTMENTS)
+VARIABLE_INCOME Renda Variável — legado (normalizado para INVESTMENTS)
+TREASURE_TITLE Título do Tesouro Direto — legado (normalizado para INVESTMENTS)
+FUND Fundo de Investimento — legado (normalizado para INVESTMENTS)
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/consents/{consent} \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{ ... }
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/consents/bank-fixed-incomes
-# baixado em 2026-08-24
+# baixado em 2026-09-02
 
 ownload Bruno Collection
 GET/consents/{consent}/bank-fixed-incomes

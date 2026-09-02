@@ -1,0 +1,24 @@
+# https://polp.com.br/docs/celcoin/changelog
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+← Celcoin v2
+Changelog
+Mudanças relevantes na API Open Finance sob demanda (Celcoin v2): novos campos, enums, flags e correções de comportamento. Ordenado do mais recente para o mais antigo.
+2026-08-28Novidade
+Nova rota GET /consents/{consent}/resources
+Lista os recursos Open Finance do consentimento consultando a Celcoin em tempo real. Cada item traz type, status e resource_id com o UUID local da Polp (conta, cartão, empréstimo, financiamento ou investimento). O resourceId da Celcoin nunca é exposto; se o recurso ainda não existir na base (ou o tipo não tiver modelo local, como EXCHANGE), resource_id vem null. A rota não é paginada por cursor: devolve a lista completa em data[].
+2026-08-24Breaking change
+simulated_bill_total_amount sai do cartão; unbilled_amount entra em cada limite
+GET /consents/{consent}/credit-cards e GET /credit-cards/{creditCard}: o campo simulated_bill_total_amount foi removido da raiz do cartão. No lugar, cada item de limits[] ganhou unbilled_amount: soma do brazilian_amount das transações com bill_id null e bill_post_date posterior a bill_closing_date + 1 mês, filtradas pelo identification_number daquele limite. Null quando o cartão não tem faturas com data de fechamento.
+2026-08-24Breaking change
+transaction_type das transações de cartão pode ser null
+GET /credit-cards/{creditCard}/transactions e GET /bills/{bill}/transactions: transaction_type passou a ser string | null. Em caso extremo o Banco Central não envia o tipo da transação; a Polp persiste e devolve null em vez de falhar a sincronização.
+2026-08-19Novidade
+Novo campo bill_forecast_date nas transações de cartão
+GET /credit-cards/{creditCard}/transactions e GET /bills/{bill}/transactions ganharam o campo bill_forecast_date (AAAA-MM): o mês/ano de faturamento, sempre preenchido — mesmo antes de a transação ser lançada numa fatura (bill_post_date = "0001-01-01" e bill_id = null), inclusive para parcelas futuras e lançamentos agendados. Também corrigimos a documentação de bill_post_date: o campo nunca é null, e sim a data-sentinela "0001-01-01" quando ainda não há lançamento. Limitação conhecida: em /bills/{bill}/transactions, bill_forecast_date pode vir null para lançamentos que só passaram pela sincronização daquela fatura, sem antes ter sido capturados por /credit-cards/{creditCard}/transactions.
+2026-08-18Novidade
+Nova flag PARTIALLY_UNAVAILABLE_RESOURCES
+O enum ConsentFlag ganhou o valor PARTIALLY_UNAVAILABLE_RESOURCES. Ele é sinalizado quando ao menos um recurso do consentimento retorna status diferente de AVAILABLE (UNAVAILABLE, TEMPORARILY_UNAVAILABLE ou PENDING_AUTHORISATION) enquanto outros recursos seguem disponíveis. Nesse caso execution_status vai para PARTIAL_SUCCESS; a flag some automaticamente quando todos os recursos voltarem a ficar disponíveis.
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

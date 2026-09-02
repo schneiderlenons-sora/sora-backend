@@ -548,6 +548,12 @@ async function diagnosticoCelcoin(req, res) {
   try { out.consentimento = await celcoin.getConsentimento(id); }
   catch (e) { out.consentimento_erro = e.message; }
 
+  // ⚠️ SEMPRE, em qualquer foco: é UMA chamada e é ela que responde "por que
+  // faltou dado". O consentimento avisa `PARTIALLY_UNAVAILABLE_RESOURCES` mas
+  // não diz QUAL recurso; esta lista diz o tipo e o status de cada um.
+  try { out.resources = await celcoin.listarResources(id); }
+  catch (e) { out.resources_erro = e.message; }
+
   if (!soCartoes && !soSaldo && !soInvestimentos) {
     try { out.sync_schedules = await celcoin.syncSchedules(id); }
     catch (e) { out.sync_schedules_erro = e.message; }

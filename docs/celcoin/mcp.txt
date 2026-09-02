@@ -1,0 +1,505 @@
+# https://polp.com.br/docs/celcoin/mcp
+# baixado em 2026-09-02
+
+Polp Docs | Celcoin — MCP
+Open finance expand_more badge
+Identificação de Identidade
+Verificação e validação de identidade.
+category
+Categorização
+Classificação automática de transações.
+update
+Recorrência
+Identificação automática de padrões recorrentes.
+storefront
+CNPJ Enriquecido
+Consulta e enriquecimento de CNPJ nas transações.
+hub
+MCP Server
+Dados bancários direto no seu agente de IA.
+DDA Casos de Uso expand_more
+Por segmento
+Ver todos
+calculate
+Softwares de contabilidade
+Extrato e lançamentos entram no fluxo do seu sistema.
+apartment
+ERPs e gestão
+Caixa e baixas com saldo bancário ao vivo.
+phone_iphone
+Aplicativos financeiros
+O usuário conecta o banco; o app mostra as finanças.
+business_center
+BPO financeiro
+Feche várias empresas num único pipeline de dados.
+candlestick_chart
+Gestores de investimento
+Posição multi-banco pronta para a reunião.
+domain
+Escritórios contábeis
+O cliente autoriza o banco; o movimento chega no escritório.
+code
+Quem desenvolve software
+Conexão bancária no produto, sem integrar banco a banco.
+Por necessidade
+compare_arrows
+Conciliar extrato
+Cruze títulos e extrato sem arquivo intermediário.
+person
+Dados de pessoa física
+Contas e cartões de PF numa única integração.
+storefront
+Dados de pessoa jurídica
+Saldo e extrato de CNPJ, no mesmo formato.
+real_estate_agent
+Análise de crédito
+Capacidade de pagamento a partir do movimento real.
+fingerprint
+Confirmar identidade
+Titularidade conferida com o que o banco já conhece.
+policy
+Fraude e PLD
+Histórico autorizado para regras de risco e PLD.
+show_chart
+Carteira de investimentos
+Renda fixa, fundos e tesouro de vários bancos juntos.
+Open Finance enriquecido para o seu produto.
+Explorar casos de uso arrow_forward
+Desenvolvedores expand_more
+account_balance
+Celcoin
+chevron_right
+API v2 — Open Finance via Celcoin.
+menu_book
+Referência da API
+Consentimentos, contas, cartões e investimentos.
+smart_toy
+MCP
+Ferramentas MCP para agentes de IA.
+receipt_long
+Super DDA
+chevron_right
+API v1 — boletos via Débito Direto Autorizado.
+menu_book
+Referência da API
+Cadastros DDA, boletos e webhooks.
+PreçosContatoMídia
+Acessar Painel menu
+menu API MCP
+Celcoin Pluggy DDA
+MCP v2.0.0-celcoin
+Getting Started
+info Introductionsettings Configurationswap_horiz Paginationbuild All Tools
+Catálogo
+menu_book list-institutionsmenu_book list-categories
+Consentimentos
+verified_user list-consentsverified_user create-consentverified_user show-consentverified_user delete-consentverified_user list-consent-sync-schedulesverified_user list-consent-resources
+Por consentimento
+folder_open list-consent-accountsfolder_open list-consent-credit-cardsfolder_open list-consent-loansfolder_open list-consent-financingsfolder_open list-consent-bank-fixed-incomesfolder_open list-consent-credit-fixed-incomesfolder_open list-consent-fundsfolder_open list-consent-treasure-titlesfolder_open list-consent-variable-incomes
+Detalhes
+search show-accountsearch show-credit-cardsearch show-billsearch show-loansearch show-financingsearch show-bank-fixed-incomesearch show-credit-fixed-incomesearch show-fundsearch show-treasure-titlesearch show-variable-income
+Transações
+receipt_long list-account-transactionsreceipt_long list-credit-card-transactionsreceipt_long list-credit-card-recurringsreceipt_long list-credit-card-installmentsreceipt_long list-credit-card-billsreceipt_long list-bill-transactionsreceipt_long list-bank-fixed-income-transactionsreceipt_long list-credit-fixed-income-transactionsreceipt_long list-fund-transactionsreceipt_long list-treasure-title-transactionsreceipt_long list-variable-income-transactions
+← Provedores /Celcoin v2 · MCP
+MCP 0.1.038 tools
+Model Context Protocol
+Servidor MCP que expõe a API v2 (Celcoin Open Finance) via Model Context Protocol. O fluxo principal é gerenciar consentimentos e consultar contas, cartões (incluindo recorrências e parcelamentos), empréstimos, financiamentos e investimentos vinculados. Listagens usam paginação por cursor (per_page + cursor), igual à API REST.
+Endpoint
+O servidor Open Finance Celcoin Server é servido via Streamable HTTP na rota abaixo. Requer plano Pro.
+https://api.polp.com.br/mcp/open-finance-celcoin
+Configuração
+Use o mesmo par de credenciais da API REST (x-api-client / x-api-secret) nos headers HTTP do cliente MCP. Veja os exemplos no painel à direita para Claude Desktop, Cursor e outras IDEs.
+Transporte: HTTP (Streamable HTTP / SSE)
+Autenticação: API Key via headers
+Plano: Pro (obrigatório)
+Paridade REST: mesmos resources, paginação e autorização da API Celcoin v2
+Paginação
+As tools de listagem usam paginação por cursor, igual à API REST Celcoin. Não existe parâmetro page.
+Entrada: per_page (default 15; 500 em tools de transação) e cursor (opcional).
+Resposta: pagination.next_cursor, prev_cursor e has_more.
+Próxima página: passe o next_cursor como argumento cursor na próxima chamada.
+Veja o exemplo de resposta no painel à direita (Pagination Response).
+Como funciona
+Registre a URL do servidor e os headers no seu cliente MCP (Claude, Cursor, agente customizado).
+O cliente descobre as ferramentas disponíveis via protocolo MCP (tools/list).
+O modelo de IA escolhe a tool adequada e envia os argumentos (tools/call).
+O servidor valida os parâmetros, executa a mesma lógica da API REST e retorna JSON estruturado.
+Tools de escrita (write) são marcadas como destrutivas no protocolo. As demais são somente leitura (read).
+Ferramentas (38)
+Catálogo completo de tools expostas pelo servidor. Cada tool corresponde a um ou mais endpoints REST.
+menu_bookCatálogo
+(2)
+list-institutionsreadGET /institutions
+Lista todas as instituições financeiras disponíveis para consentimento Open Finance (Celcoin).
+Sem parâmetros de entrada.
+list-categoriesreadGET /categories
+Lista as categorias de transações disponíveis na API v2 Celcoin.
+Sem parâmetros de entrada.
+verified_userConsentimentos
+(6)
+list-consentsreadGET /consents
+Lista os consentimentos Open Finance do usuário autenticado (inclui institution_id), ordenados do mais recente.
+Parâmetros
+Field Type Description
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+create-consentwritePOST /consents
+Cria um novo consentimento Open Finance (Celcoin) para uma instituição, com CPF/CNPJ, produtos opcionais e avoidDuplicates para reutilizar consents ativos com a mesma institution_id e documents.
+Parâmetros
+Field Type Description
+institution_id * string (uuid) UUID da instituição (obtido em list-institutions).
+cpf string CPF do titular (PERSONAL/BOTH) ou do operador/representante (BUSINESS).
+cnpj string CNPJ da empresa. Obrigatório em BUSINESS; opcional em BOTH; proibido em PERSONAL.
+cliente_user_id string Identificador externo do cliente (email, UUID, ID interno, etc.).
+products string[] Produtos Open Finance. Atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Legado (LOAN, FUND, VARIABLE_INCOME, …) ainda aceito, mas normalizado na gravação.
+avoidDuplicates boolean Se true, reutiliza consent AUTHORISED/AWAITING_AUTHORIZATION com a mesma institution_id e documents (objeto inteiro); EXPIRED permite criar novo.
+show-consentreadGET /consents/{id}
+Retorna os detalhes de um consentimento Open Finance pelo seu UUID (inclui institution_id).
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+delete-consentwriteDELETE /consents/{id}
+Revoga e remove um consentimento Open Finance (Celcoin).
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+list-consent-sync-schedulesreadGET /consents/{id}/sync-schedules
+Lista os agendamentos de sincronização de um consentimento, ordenados por próxima sincronização.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 50) Quantidade de itens por página (1-50).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+list-consent-resourcesreadGET /consents/{id}/resources
+Consulta a Celcoin em tempo real e lista os recursos Open Finance do consentimento. resource_id é o UUID local da Polp (nunca o ID da Celcoin); null se ainda não persistido ou se o tipo não tem modelo local.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+folder_openPor consentimento
+(9)
+list-consent-accountsreadGET /consents/{id}/accounts
+Lista as contas vinculadas a um consentimento, com identificação, saldo e limite de cheque especial.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-consent-credit-cardsreadGET /consents/{id}/credit-cards
+Lista os cartões de crédito vinculados a um consentimento, com identificação, limites e unbilled_amount em cada limite.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-consent-loansreadGET /consents/{id}/loans
+Lista os empréstimos vinculados a um consentimento, com contrato, garantias, parcelas e pagamentos.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-consent-financingsreadGET /consents/{id}/financings
+Lista os financiamentos vinculados a um consentimento, com contrato, garantias, parcelas e pagamentos.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-consent-bank-fixed-incomesreadGET /consents/{id}/bank-fixed-incomes
+Lista os investimentos de renda fixa bancária vinculados a um consentimento.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-consent-credit-fixed-incomesreadGET /consents/{id}/credit-fixed-incomes
+Lista os investimentos de renda fixa de crédito vinculados a um consentimento.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-consent-fundsreadGET /consents/{id}/funds
+Lista os fundos de investimento vinculados a um consentimento.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-consent-treasure-titlesreadGET /consents/{id}/treasure-titles
+Lista os títulos do tesouro vinculados a um consentimento.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-consent-variable-incomesreadGET /consents/{id}/variable-incomes
+Lista os investimentos de renda variável vinculados a um consentimento.
+Parâmetros
+Field Type Description
+consent_id * string (uuid) UUID do consentimento.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+searchDetalhes
+(10)
+show-accountreadGET /accounts/{id}
+Retorna os detalhes de uma conta, com identificação, saldo e limite de cheque especial.
+Parâmetros
+Field Type Description
+account_id * string ID da conta.
+show-credit-cardreadGET /credit-cards/{id}
+Retorna os detalhes de um cartão de crédito, com identificação, limites e unbilled_amount em cada limite.
+Parâmetros
+Field Type Description
+credit_card_id * string ID do cartão de crédito.
+show-billreadGET /bills/{id}
+Retorna os detalhes de uma fatura de cartão de crédito.
+Parâmetros
+Field Type Description
+bill_id * string ID da fatura.
+show-loanreadGET /loans/{id}
+Retorna os detalhes de um empréstimo, com contrato, garantias, parcelas e pagamentos.
+Parâmetros
+Field Type Description
+loan_id * string ID do empréstimo.
+show-financingreadGET /financings/{id}
+Retorna os detalhes de um financiamento, com contrato, garantias, parcelas e pagamentos.
+Parâmetros
+Field Type Description
+financing_id * string ID do financiamento.
+show-bank-fixed-incomereadGET /bank-fixed-incomes/{id}
+Retorna os detalhes de um investimento de renda fixa bancária, com produto e saldo.
+Parâmetros
+Field Type Description
+bank_fixed_income_id * string ID do investimento.
+show-credit-fixed-incomereadGET /credit-fixed-incomes/{id}
+Retorna os detalhes de um investimento de renda fixa de crédito, com produto e saldo.
+Parâmetros
+Field Type Description
+credit_fixed_income_id * string ID do investimento.
+show-fundreadGET /funds/{id}
+Retorna os detalhes de um fundo de investimento, com produto e saldo.
+Parâmetros
+Field Type Description
+fund_id * string ID do fundo.
+show-treasure-titlereadGET /treasure-titles/{id}
+Retorna os detalhes de um título do tesouro, com produto e saldo.
+Parâmetros
+Field Type Description
+treasure_title_id * string ID do título.
+show-variable-incomereadGET /variable-incomes/{id}
+Retorna os detalhes de um investimento de renda variável, com produto e saldo.
+Parâmetros
+Field Type Description
+variable_income_id * string ID do investimento.
+receipt_longTransações
+(11)
+list-account-transactionsreadGET /accounts/{id}/transactions
+Lista as transações de uma conta, com filtros de data e paginação por cursor.
+Parâmetros
+Field Type Description
+account_id * string ID da conta.
+per_page integer (default: 500) Quantidade de itens por página (1-500).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromDate string Filtrar pela data da transação a partir desta data (ISO 8601).
+toDate string Filtrar pela data da transação até esta data (ISO 8601).
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-credit-card-transactionsreadGET /credit-cards/{id}/transactions
+Lista as transações de um cartão de crédito, com filtros de data e paginação por cursor.
+Parâmetros
+Field Type Description
+credit_card_id * string ID do cartão de crédito.
+per_page integer (default: 500) Quantidade de itens por página (1-500).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromDate string Filtrar pela data da transação a partir desta data (ISO 8601).
+toDate string Filtrar pela data da transação até esta data (ISO 8601).
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-credit-card-recurringsreadGET /credit-cards/{id}/recurrings
+Lista recorrências detectadas nas transações de um cartão (assinaturas sem parcelamento).
+Parâmetros
+Field Type Description
+credit_card_id * string ID do cartão de crédito.
+per_page integer (default: 50) Quantidade de itens por página (1-50).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+list-credit-card-installmentsreadGET /credit-cards/{id}/installments
+Lista parcelamentos detectados nas transações de um cartão via charge_identificator e charge_number.
+Parâmetros
+Field Type Description
+credit_card_id * string ID do cartão de crédito.
+per_page integer (default: 50) Quantidade de itens por página (1-50).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+list-credit-card-billsreadGET /credit-cards/{id}/bills
+Lista as faturas de um cartão de crédito, ordenadas pela data de vencimento mais recente.
+Parâmetros
+Field Type Description
+credit_card_id * string ID do cartão de crédito.
+per_page integer (default: 15) Quantidade de itens por página (1-100).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-bill-transactionsreadGET /bills/{id}/transactions
+Lista as transações de uma fatura de cartão de crédito, com filtros de data e paginação por cursor.
+Parâmetros
+Field Type Description
+bill_id * string ID da fatura.
+per_page integer (default: 500) Quantidade de itens por página (1-500).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromDate string Filtrar pela data da transação a partir desta data (ISO 8601).
+toDate string Filtrar pela data da transação até esta data (ISO 8601).
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-bank-fixed-income-transactionsreadGET /bank-fixed-incomes/{id}/transactions
+Lista as transações de um investimento de renda fixa bancária, com filtros de data e paginação por cursor.
+Parâmetros
+Field Type Description
+bank_fixed_income_id * string ID do investimento de renda fixa bancária.
+per_page integer (default: 500) Quantidade de itens por página (1-500).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromDate string Filtrar pela data da transação a partir desta data (ISO 8601).
+toDate string Filtrar pela data da transação até esta data (ISO 8601).
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-credit-fixed-income-transactionsreadGET /credit-fixed-incomes/{id}/transactions
+Lista as transações de um investimento de renda fixa de crédito, com filtros de data e paginação por cursor.
+Parâmetros
+Field Type Description
+credit_fixed_income_id * string ID do investimento de renda fixa de crédito.
+per_page integer (default: 500) Quantidade de itens por página (1-500).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromDate string Filtrar pela data da transação a partir desta data (ISO 8601).
+toDate string Filtrar pela data da transação até esta data (ISO 8601).
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-fund-transactionsreadGET /funds/{id}/transactions
+Lista as transações de um fundo de investimento, com filtros de data e paginação por cursor.
+Parâmetros
+Field Type Description
+fund_id * string ID do fundo.
+per_page integer (default: 500) Quantidade de itens por página (1-500).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromDate string Filtrar pela data da transação a partir desta data (ISO 8601).
+toDate string Filtrar pela data da transação até esta data (ISO 8601).
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-treasure-title-transactionsreadGET /treasure-titles/{id}/transactions
+Lista as transações de um título do tesouro, com filtros de data e paginação por cursor.
+Parâmetros
+Field Type Description
+treasure_title_id * string ID do título do tesouro.
+per_page integer (default: 500) Quantidade de itens por página (1-500).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromDate string Filtrar pela data da transação a partir desta data (ISO 8601).
+toDate string Filtrar pela data da transação até esta data (ISO 8601).
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+list-variable-income-transactionsreadGET /variable-incomes/{id}/transactions
+Lista as transações de um investimento de renda variável, com filtros de data e paginação por cursor.
+Parâmetros
+Field Type Description
+variable_income_id * string ID do investimento de renda variável.
+per_page integer (default: 500) Quantidade de itens por página (1-500).
+cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
+fromDate string Filtrar pela data da transação a partir desta data (ISO 8601).
+toDate string Filtrar pela data da transação até esta data (ISO 8601).
+fromCreatedAt string Filtrar por created_at inicial (ISO 8601).
+toCreatedAt string Filtrar por created_at final (ISO 8601).
+fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
+toUpdatedAt string Filtrar por updated_at final (ISO 8601).
+MCP EndpointCOPY
+https://api.polp.com.br/mcp/open-finance-celcoin
+Authentication HeadersCOPY
+x-api-client: <your_client_id>
+x-api-secret: <your_client_secret>
+Claude DesktopCOPY
+{
+"mcpServers": {
+"polp-celcoin": {
+"url": "https://api.polp.com.br/mcp/open-finance-celcoin",
+"headers": {
+"x-api-client": "pk_live_...",
+"x-api-secret": "sk_live_..."
+}
+Cursor / WindsurfCOPY
+{
+"mcp": {
+"servers": {
+"polp-celcoin": {
+"transport": "http",
+"url": "https://api.polp.com.br/mcp/open-finance-celcoin",
+"headers": {
+"x-api-client": "pk_live_...",
+"x-api-secret": "sk_live_..."
+}
+Tool Call ExampleCOPY
+// O cliente MCP chama tools/list e depois tools/call
+{
+"name": "list-consents",
+"arguments": {
+"per_page": 15,
+"cursor": "<next_cursor>"
+}
+Pagination ResponseCOPY
+{
+"data": [ /* ... */ ],
+"pagination": {
+"per_page": 15,
+"next_cursor": "eyJpZCI6MTUsIl9wb2ludHNUb05leHRJdGVtcyI6dHJ1ZX0",
+"prev_cursor": null,
+"has_more": true
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

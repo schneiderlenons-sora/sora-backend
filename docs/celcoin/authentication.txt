@@ -1,0 +1,37 @@
+# https://polp.com.br/docs/celcoin/authentication
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+← Celcoin v2
+Autenticação
+A API v2 utiliza autenticação via API Keys. Todas as rotas (exceto GET /institutions) exigem credenciais válidas, plano ativo e nenhuma fatura em atraso.
+Headers Obrigatórios
+Header Description
+x-api-client UUID do client_id gerado no dashboard.
+x-api-secret Secret gerado no dashboard. Exibido apenas uma vez na criação.
+Rota Pública
+GET /api/v2/institutions não exige autenticação — apenas o middleware de acesso à API v2.
+Erros de Autenticação e Acesso
+Status Condição
+401 Headers ausentes ou credenciais inválidas.
+402 Plano inativo ou fatura em atraso (inclui payment_url).
+403 Conta pendente de aprovação.
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/consents \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+401 — Credenciais ausentes
+{ "message": "API credentials missing." }
+401 — Credenciais inválidas
+{ "message": "Invalid API credentials." }
+402 — Plano inativo
+{ "message": "É necessário possuir um plano ativo para acessar este recurso." }
+402 — Fatura em atraso
+{
+"message": "Acesso bloqueado. Existe uma fatura em aberto com pagamento em atraso.",
+"payment_url": "https://..."
+}
+403 — Conta pendente
+{ "message": "Sua conta está pendente de aprovação." }
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

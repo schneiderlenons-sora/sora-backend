@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/categories
-# baixado em 2026-08-24
+# baixado em 2026-09-02
 
 ownload Bruno Collection
 GET/categories

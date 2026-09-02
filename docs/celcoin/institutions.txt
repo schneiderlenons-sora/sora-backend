@@ -1,0 +1,45 @@
+# https://polp.com.br/docs/celcoin/institutions
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+GET/institutions
+Listar Instituições
+Retorna instituições financeiras disponíveis via Open Finance (Celcoin). O campo type (InstitutionType) define quais documentos enviar no POST /consents; credentials lista os campos aceitos.
+Observações
+Instituição PERSONAL: enviar somente o CPF.
+Instituição BUSINESS: enviar o CPF do operador/representante e o CNPJ da empresa.
+Instituição BOTH: pode enviar somente o CPF (conexão pessoal) ou CPF + CNPJ (conexão empresarial).
+Query Parameters
+Field Type Description
+page integer Número da página (padrão: 1).
+Response Fields
+Field Type Description
+id string Identificador único da instituição Celcoin.
+name string Nome da instituição financeira.
+description string | null Descrição da instituição.
+logo_url string | null URL do logotipo.
+status string Status operacional. Enum: InstitutionStatus.
+type string Tipo de cliente atendido. Enum: InstitutionType. Define quais documentos enviar no POST /consents (ver regras de CPF/CNPJ).
+credentials string[] Campos aceitos ao criar consentimento (cpf e/ou cnpj), derivados do type da instituição.
+updated_at string Última atualização (ISO 8601).
+Enums Relacionados
+InstitutionStatus → status
+Value
+OPERATIONAL
+MAJOR_OUTAGE
+DEGRADED_PERFORMANCE
+InstitutionType → type
+Value
+PERSONAL
+BUSINESS
+BOTH
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/institutions \
+JSON Response
+{
+"data": [ ... ],
+"links": { "first": null, "last": null, "prev": null, "next": "...?cursor=..." },
+"meta": { "path": "...", "per_page": 15, "next_cursor": "...", "prev_cursor": null }
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

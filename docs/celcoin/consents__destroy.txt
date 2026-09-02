@@ -1,0 +1,18 @@
+# https://polp.com.br/docs/celcoin/consents/destroy
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+DELETE/consents/{consent}
+Revogar Consentimento
+Revoga um consentimento Open Finance ativo, encerrando o acesso aos dados. O consentimento é por período indeterminado até esta revogação (ou revogação pelo usuário/instituição).
+Response Fields
+Field Type Description
+message string Mensagem de confirmação: "Consentimento revogado."
+cURL RequestCOPY
+curl -X DELETE https://api.polp.com.br/api/v2/consents/{consent} \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{ "message": "Consentimento revogado." }
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

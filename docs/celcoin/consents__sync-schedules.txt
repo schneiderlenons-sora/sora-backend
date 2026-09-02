@@ -1,0 +1,72 @@
+# https://polp.com.br/docs/celcoin/consents/sync-schedules
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+GET/consents/{consent}/sync-schedules
+Cronograma de Sincronização
+Retorna o cronograma de sincronização de recursos do consentimento — listagens, identificação de produto, saldos e transações por recurso.
+Observações
+Recursos de investimento incluem *.product (Product Identification), *.balances e *.transactions por investmentId.
+Contas e cartões incluem *.identification (Account Identification / Credit Card Identification) por accountId ou creditCardAccountId.
+Empréstimos incluem loan.contract (Contract Identification) por contractId.
+resource_id contém o ID do recurso sincronizado (conta, cartão, investimento, etc.) quando aplicável.
+A faixa e o intervalo de cada resource seguem o plano — veja Frequência de Atualização na documentação.
+Query Parameters
+Field Type Description
+cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 50 itens por página.
+Response Fields
+Field Type Description
+consent_id string ID do consentimento.
+resource string Recurso sincronizado. Enum: ConsentSyncResource.
+resource_id string | null ID do recurso sincronizado (conta, cartão, investmentId, etc.), quando aplicável. Usado em recursos por instância (*.balances, *.transactions, *.product).
+last_sync_at string | null Última sincronização (ISO 8601).
+next_sync_at string | null Próxima sincronização agendada (ISO 8601).
+Enums Relacionados
+ConsentSyncResource → resource
+Value
+account
+account.balance
+account.reserved_balances
+account.transactions
+account.overdraft_limits
+credit_card
+credit_card.bills
+credit_card.bills.transactions
+credit_card.limits
+credit_card.transactions
+loan
+loan.warranties
+loan.scheduled_instalments
+loan.payments
+financing
+financing.warranties
+financing.scheduled_instalments
+financing.payments
+bank_fixed_income
+bank_fixed_income.balances
+bank_fixed_income.transactions
+credit_fixed_income
+credit_fixed_income.balances
+credit_fixed_income.transactions
+fund
+fund.balances
+fund.transactions
+treasure_title
+treasure_title.balances
+treasure_title.transactions
+variable_income
+variable_income.balances
+variable_income.transactions
+variable_income.broker_notes
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/consents/{consent}/sync-schedules \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [ ... ],
+"links": { "first": null, "last": null, "prev": null, "next": "...?cursor=..." },
+"meta": { "path": "...", "per_page": 50, "next_cursor": "...", "prev_cursor": null }
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

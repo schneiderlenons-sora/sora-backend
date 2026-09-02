@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin
-# baixado em 2026-08-24
+# baixado em 2026-09-02
 
 ownload Bruno Collection
 ← Provedores /Celcoin v2
@@ -15,7 +15,8 @@ GET /institutions — listar bancos disponíveis (público)
 POST /consents — criar consentimento com institution_id e produtos
 Redirecionar usuário para url_to_authenticate
 Aguardar status: AUTHORISED
-Consultar recursos via /consents/{consent}/accounts, etc.
+Consultar o status dos recursos em GET /consents/{consent}/resources (ver rota) — resource_id é o UUID local da Polp
+Consultar dados via /consents/{consent}/accounts, etc.
 Receber eventos de recurso (accounts, credit_cards, …) e *.transactions via webhooks
 POST /consents/{consent}/recreate — recriar na Celcoin sem novo registro local (EXPIRED, REJECTED ou para renovar autorização). Ver rota
 DELETE /consents/{consent} — revogar o consentimento (fim do acesso)

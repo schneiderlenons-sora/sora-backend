@@ -1,0 +1,77 @@
+# https://polp.com.br/docs/celcoin/consents/resources
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+GET/consents/{consent}/resources
+Listar Recursos do Consentimento
+Consulta a Celcoin em tempo real e lista os recursos Open Finance do consentimento. resource_id é o UUID local da Polp — nunca o identificador da Celcoin.
+Atenção aos status
+TEMPORARILY_UNAVAILABLENão indica erro permanente: o recurso pode voltar a AVAILABLE. Não interprete como encerramento. Implemente retry ou polling antes de comunicar indisponibilidade ao usuário. UNAVAILABLE sim indica encerramento.
+PENDING_AUTHORISATIONEm alçadas duplas, para contas com mais de um titular, todos devem autorizar o consentimento. Recursos neste status só transitam para AVAILABLE após todos os co-titulares autorizarem.
+AUTHORISEDA rota só funciona para consentimentos neste status (a permission RESOURCES_READ já é solicitada na criação). Tentativas com AWAITING_AUTHORIZATION, REJECTED, EXPIRED ou consentimento revogado retornam erro.
+Observações
+A cada chamada a Polp consulta a Celcoin em tempo real e devolve o UUID local da Polp em resource_id, quando o recurso já existe na base.
+O resourceId da Celcoin não aparece na resposta. Use resource_id nas rotas da Polp (GET /accounts/{id}, GET /credit-cards/{id}, GET /loans/{id}, etc.).
+resource_id é null quando o recurso ainda não foi persistido, ou quando o tipo não tem modelo local: EXCHANGE, UNARRANGED_ACCOUNT_OVERDRAFT e INVOICE_FINANCING.
+Correspondência por type: ACCOUNT → accounts; CREDIT_CARD_ACCOUNT → credit-cards; LOAN → loans; FINANCING → financings; BANK_FIXED_INCOME → bank-fixed-incomes; CREDIT_FIXED_INCOME → credit-fixed-incomes; VARIABLE_INCOME → variable-incomes; TREASURE_TITLE → treasure-titles; FUND → funds.
+Não é paginação por cursor: a resposta é { "data": [ ... ] } com a lista completa.
+Response Fields
+Field Type Description
+type string Tipo do recurso Open Finance. Enum: ResourceType.
+type_label string Rótulo traduzido do tipo.
+status string Status do recurso na instituição. Enum: ResourceStatus.
+status_label string Rótulo traduzido do status.
+resource_id string | null UUID local da Polp (conta, cartão, empréstimo, financiamento ou investimento). Nunca é o resourceId da Celcoin. Null se o recurso ainda não foi persistido, ou se o tipo não tem modelo local (EXCHANGE, UNARRANGED_ACCOUNT_OVERDRAFT, INVOICE_FINANCING).
+Enums Relacionados
+ResourceType → type
+Value Label
+ACCOUNT Conta de depósito à vista, poupança ou pagamento pré-paga
+CREDIT_CARD_ACCOUNT Conta de pagamento pós-paga (Cartão de Crédito)
+LOAN Empréstimo
+FINANCING Financiamento
+UNARRANGED_ACCOUNT_OVERDRAFT Cheque Especial / Adiantamento a depositantes
+INVOICE_FINANCING Financiamento de Fatura / Direitos creditórios descontados
+BANK_FIXED_INCOME Renda Fixa Bancária
+CREDIT_FIXED_INCOME Renda Fixa Crédito
+VARIABLE_INCOME Renda Variável
+TREASURE_TITLE Título do Tesouro Direto
+FUND Fundo de Investimento
+EXCHANGE Câmbio
+ResourceStatus → status
+Value Label
+AVAILABLE Disponível
+UNAVAILABLE Indisponível
+TEMPORARILY_UNAVAILABLE Temporariamente indisponível
+PENDING_AUTHORISATION Aguardando autorização
+cURL RequestCOPY
+curl https://api.polp.com.br/api/v2/consents/{consent}/resources \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+JSON Response
+{
+"data": [
+{
+"type": "ACCOUNT",
+"type_label": "Conta de depósito à vista, poupança ou pagamento pré-paga",
+"status": "AVAILABLE",
+"status_label": "Disponível",
+"resource_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+},
+{
+"type": "CREDIT_CARD_ACCOUNT",
+"type_label": "Conta de pagamento pós-paga (Cartão de Crédito)",
+"status": "TEMPORARILY_UNAVAILABLE",
+"status_label": "Temporariamente indisponível",
+"resource_id": "3f1a0c2e-8b44-4d1a-9c6a-2d7f1b8e4a11"
+},
+{
+"type": "EXCHANGE",
+"type_label": "Câmbio",
+"status": "AVAILABLE",
+"status_label": "Disponível",
+"resource_id": null
+}
+]
+}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

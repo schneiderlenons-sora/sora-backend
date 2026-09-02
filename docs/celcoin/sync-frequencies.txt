@@ -1,0 +1,71 @@
+# https://polp.com.br/docs/celcoin/sync-frequencies
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+← Celcoin v2
+Frequência de Atualização
+Cada recurso de um consentimento Celcoin é atualizado automaticamente pela Polp. A tabela abaixo indica quantas vezes por dia (ou o intervalo equivalente) cada recurso é sincronizado — igual em todos os planos.
+Como funciona
+Cada recurso usa o enum ConsentSyncResource e uma faixa máxima do Open Finance.
+A Polp agenda o sync no máximo permitido pela faixa — as taxas abaixo são a frequência efetiva aproximada.
+Consulte o cronograma por consentimento em GET /consents/{'{consent}'}/sync-schedules (API v2).
+Por recurso
+Contas
+Recurso Chave Atualização
+Identificação da conta account.identification 1× a cada ~8 dias
+Saldo da conta account.balance 14× por dia
+Saldos reservados (caixinhas) account.reserved_balances 1× a cada ~4 dias
+Transações da conta account.transactions 8× por dia
+Limite de cheque especial account.overdraft_limits 14× por dia
+Cartões de crédito
+Recurso Chave Atualização
+Identificação do cartão credit_card.identification 1× a cada ~8 dias
+Faturas do cartão credit_card.bills 1× por dia
+Transações da fatura credit_card.bills.transactions 1× por dia
+Limites do cartão credit_card.limits 8× por dia
+Transações do cartão credit_card.transactions 8× por dia
+Empréstimos
+Recurso Chave Atualização
+Contrato do empréstimo loan.contract 1× a cada ~8 dias
+Garantias do empréstimo loan.warranties 1× a cada ~4 dias
+Parcelas programadas loan.scheduled_instalments 1× por dia
+Pagamentos do empréstimo loan.payments 1× por dia
+Financiamentos
+Recurso Chave Atualização
+Contrato do financiamento financing.contract 1× a cada ~8 dias
+Garantias do financiamento financing.warranties 1× a cada ~4 dias
+Parcelas programadas financing.scheduled_instalments 1× por dia
+Pagamentos do financiamento financing.payments 1× por dia
+Renda fixa bancária
+Recurso Chave Atualização
+Listagem — renda fixa bancária bank_fixed_income 1× por dia
+Produto — renda fixa bancária bank_fixed_income.product 1× a cada ~8 dias
+Saldo — renda fixa bancária bank_fixed_income.balances 4× por dia
+Transações — renda fixa bancária bank_fixed_income.transactions 4× por dia
+Renda fixa crédito
+Recurso Chave Atualização
+Listagem — renda fixa crédito credit_fixed_income 1× por dia
+Produto — renda fixa crédito credit_fixed_income.product 1× a cada ~8 dias
+Saldo — renda fixa crédito credit_fixed_income.balances 4× por dia
+Transações — renda fixa crédito credit_fixed_income.transactions 4× por dia
+Fundos
+Recurso Chave Atualização
+Listagem — fundos fund 1× por dia
+Produto — fundos fund.product 1× a cada ~8 dias
+Saldo — fundos fund.balances 4× por dia
+Transações — fundos fund.transactions 4× por dia
+Tesouro direto
+Recurso Chave Atualização
+Listagem — tesouro direto treasure_title 1× por dia
+Produto — tesouro direto treasure_title.product 1× a cada ~8 dias
+Saldo — tesouro direto treasure_title.balances 4× por dia
+Transações — tesouro direto treasure_title.transactions 4× por dia
+Renda variável
+Recurso Chave Atualização
+Listagem — renda variável variable_income 1× por dia
+Produto — renda variável variable_income.product 1× a cada ~8 dias
+Saldo — renda variável variable_income.balances 1× por dia
+Transações — renda variável variable_income.transactions 1× por dia
+Notas de corretagem variable_income.broker_notes 1× por dia
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

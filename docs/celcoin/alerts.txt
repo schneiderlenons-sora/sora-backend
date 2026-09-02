@@ -1,0 +1,36 @@
+# https://polp.com.br/docs/celcoin/alerts
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+← Celcoin v2
+GET /alerts
+Alertas de Status
+Retorna notícias e incidentes operacionais da plataforma Polp. Use este endpoint para exibir comunicados no dashboard ou aplicativo.
+public Endpoint público — não exige headers x-api-client nem x-api-secret.
+Disponível em /api/v1/alerts (prefixo v1 da plataforma), independentemente da base URL /api/v2 usada pelos demais endpoints Celcoin.
+Base URL
+https://api.polp.com.br/api/v1/alerts
+Comportamento
+Retorna alertas ativos, ordenados do mais recente ao mais antigo.
+Quando não há alertas, a resposta é { "data": [] }.
+Gerenciados em /admin/alerts.
+type: news ou incident.
+provider: pluggy, celcoin ou both.
+Query Params
+Field Type Description
+provider string Filtra por provedor. Aceita pluggy, celcoin ou both. Quando pluggy/celcoin, também retorna alertas both.
+type string Filtra por tipo: news ou incident.
+Response Fields
+Field Type Description
+id integer Identificador do alerta.
+content string Mensagem do alerta. Suporta Markdown leve (negrito, itálico, código e links).
+type string Tipo do comunicado: news (notícia) ou incident (incidente).
+provider string Escopo do alerta: pluggy, celcoin ou both.
+created_at string Data de criação em ISO 8601.
+updated_at string Data da última atualização em ISO 8601.
+Tipos de alerta
+type Uso
+incident Incidente em andamento — indisponibilidade, degradação ou impacto operacional.
+news Notícia / aviso — manutenção programada, mudança de comportamento ou comunicado geral.
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

@@ -1,0 +1,39 @@
+# https://polp.com.br/docs/celcoin/rate-limits
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+← Celcoin v2
+Rate Limits
+Limites de requisição aplicados nas rotas da API Celcoin v2 (https://api.polp.com.br/api/v2). Rotas sem throttle explícito não entram nesta lista.
+Como funciona
+Os limites são por janela de 1 minuto.
+Na maioria das rotas, a chave é o usuário autenticado (via API Key) ou o IP se não houver usuário.
+Ao exceder o limite, a API responde 429 Too Many Requests.
+Prefira webhooks em vez de polling em endpoints de show.
+Show de consentimento
+Consulta de um consentimento específico. 240 req/minPor usuário autenticado (ou IP)
+Método Rota Limite Escopo
+GET /consents/{consent} 240 req/min Por usuário autenticado (ou IP)
+Show de recursos
+Endpoints de detalhe (show) de recursos individuais. 30 req/minPor usuário autenticado (ou IP)
+Método Rota Limite Escopo
+GET /accounts/{account} 30 req/min Por usuário autenticado (ou IP)
+GET /credit-cards/{creditCard} 30 req/min Por usuário autenticado (ou IP)
+GET /bills/{bill} 30 req/min Por usuário autenticado (ou IP)
+GET /loans/{loan} 30 req/min Por usuário autenticado (ou IP)
+GET /financings/{financing} 30 req/min Por usuário autenticado (ou IP)
+GET /bank-fixed-incomes/{bankFixedIncome} 30 req/min Por usuário autenticado (ou IP)
+GET /credit-fixed-incomes/{creditFixedIncome} 30 req/min Por usuário autenticado (ou IP)
+GET /funds/{fund} 30 req/min Por usuário autenticado (ou IP)
+GET /treasure-titles/{treasureTitle} 30 req/min Por usuário autenticado (ou IP)
+GET /variable-incomes/{variableIncome} 30 req/min Por usuário autenticado (ou IP)
+429 Too Many Requests
+{
+"message": "Too Many Attempts."
+}
+Headers de resposta
+X-RateLimit-Limit: 30
+X-RateLimit-Remaining: 0
+Retry-After: 42
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

@@ -1,0 +1,46 @@
+# https://polp.com.br/docs/celcoin/operational-limits
+# baixado em 2026-09-02
+
+ownload Bruno Collection
+← Celcoin v2
+Limites Operacionais
+O ecossistema do Open Finance Brasil possui limites operacionais regulatórios que devem ser respeitados ao se consumir os dados de um CPF/CNPJ de uma instituição específica.
+warning Reconectar a mesma conta não “reseta” o limite
+Se você conectar várias vezes a mesma conta com o mesmo CPF/CNPJ na mesma instituição, cada sincronização consome o limite operacional do mês. Ao atingir o teto, os dados não serão atualizados até a virada do próximo mês. Prefira reutilizar o consentimento existente em vez de criar novos para o mesmo cliente.
+Como a contabilização funciona
+A contabilização dos acessos é realizada por:
+I.mês
+II.endpoint
+III.objeto mais granular referenciado na chamada (consentimento/recurso/produto)
+IV.cliente (CPF ou CNPJ)
+Diferente dos rate limits da API Polp (requisições por minuto), estes limites são regulatórios do Open Finance e valem na rede, por CPF/CNPJ e instituição transmissora.
+Resumo consolidado
+Categoria Menor limite Maior limite
+Accounts 4 420
+Credit Cards 4 240
+Funds 4 120
+Bank Fixed Incomes 4 120
+Credit Fixed Incomes 4 120
+Treasure Titles 4 120
+Variable Incomes 4 30
+Empréstimo 8 120
+Financiamento 8 30
+Adiantamento a Depositantes 8 30
+Direitos Creditórios Descontados 8 30
+Câmbio (DC) 8 30
+Recomendações de consumo
+Atualização frequente
+Saldos
+Limites
+Transações correntes
+Atualização moderada
+Listagem de contas
+Listagem de investimentos
+Faturas
+Atualização restrita
+Detalhes de recursos
+Históricos completos
+Dados cadastrais
+Preferencialmente use cache e persistência local.
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus
