@@ -46,6 +46,8 @@ const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
 const ymd = (d) => (d ? String(d).slice(0, 10) : null);
 /** Instante ao SEGUNDO (descarta milissegundo e fuso textual). */
 const instante = (d) => (d ? String(d).slice(0, 19) : '');
+// ⚠️ O DIA, não o instante — ver a nota em `deduplicar`.
+const diaDaCompra = (d) => (d ? String(d).slice(0, 10) : '');
 
 /** Achata um parcelamento cru da Polp no formato que usamos. */
 function normalizar(p) {
@@ -64,9 +66,21 @@ function normalizar(p) {
 /**
  * Junta as linhas que são a MESMA compra.
  *
- * Chave: instante da compra (ao segundo) + total de parcelas. O valor entra com
- * tolerância de R$ 1 — a duplicata da Polp difere em centavos, e exigir valor
- * idêntico deixaria as duas passarem (foi o que aconteceu).
+ * Chave: DIA da compra + total de parcelas. O valor entra com tolerância de
+ * R$ 1 — a duplicata da Polp difere em centavos, e exigir valor idêntico
+ * deixaria as duas passarem (foi o que aconteceu).
+ *
+ * ⚠️ A CHAVE ERA O INSTANTE AO SEGUNDO, e isso quebrou quando a Polp
+ * REPROCESSOU as transações de um cartão: o mesmo parcelamento voltou com
+ * `purchasedAt` diferente e passou pela dedup, projetando a parcela duas vezes
+ * (R$ 388,93 + R$ 388,99 na mesma competência, inflando a fatura em R$ 388,99).
+ *
+ * Medido antes de afrouxar, nas 664 linhas de `of_parcelas_previstas` da base:
+ * a dedup por DIA fundiria **75 pares**, e em TODOS os 75 as duas linhas têm a
+ * mesma descrição e o mesmo valor — ou seja, são a mesma compra. Pares de
+ * compras DIFERENTES que seriam fundidos por engano: **zero**. O risco teórico
+ * (duas compras no mesmo dia, mesmo nº de parcelas e valor a menos de R$ 1) não
+ * aparece uma vez sequer.
  *
  * Entre as duplicatas fica a de MENOR valor de parcela: nos dois pares reais
  * medidos (79,86/79,87 e 139,99/140,00) o app do banco mostrava a menor.
@@ -78,7 +92,7 @@ function deduplicar(lista) {
   const grupos = [];
   for (const it of itens) {
     const igual = grupos.find((g) =>
-      instante(g.compradoEm) === instante(it.compradoEm)
+      diaDaCompra(g.compradoEm) === diaDaCompra(it.compradoEm)
       && g.totalParcelas === it.totalParcelas
       && Math.abs(g.valorParcela - it.valorParcela) <= 1);
     if (!igual) { grupos.push({ ...it }); continue; }

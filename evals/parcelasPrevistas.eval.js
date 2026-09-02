@@ -79,12 +79,31 @@ console.log('  ok');
 // ── 3. Dedup DE MENOS e DEMAIS: os dois erros caros ─────────────────────
 console.log('── 3. o que NÃO pode ser fundido ──');
 {
-  // Mesmo valor e mesma loja, mas em SEGUNDOS diferentes: são duas compras.
-  const duas = [
+  // ⚠️ ESTE CASO FOI INVERTIDO, e a inversão é o conserto.
+  //
+  // A premissa antiga era "segundos diferentes = duas compras". Ela caiu quando
+  // a Polp REPROCESSOU as transações de um cartão: o mesmo parcelamento voltou
+  // com `purchasedAt` diferente, passou pela dedup e a parcela foi projetada
+  // duas vezes (R$ 388,93 + R$ 388,99 na mesma competência).
+  //
+  // Antes de afrouxar pro DIA, medido nas 664 linhas de of_parcelas_previstas
+  // da base: 75 pares seriam fundidos e em TODOS os 75 as duas linhas têm a
+  // MESMA descrição e o MESMO valor. Pares de compras diferentes fundidos por
+  // engano: ZERO. O risco teórico não aparece uma vez sequer em produção.
+  const mesmoDia = [
     { description: 'PADARIA', amount: -20, totalInstallments: 2, purchasedAt: '2026-08-03T10:00:00Z' },
     { description: 'PADARIA', amount: -20, totalInstallments: 2, purchasedAt: '2026-08-03T10:00:01Z' },
   ];
-  eq(deduplicar(duas).length, 2, '1 segundo de diferença = duas compras (não funde)');
+  eq(deduplicar(mesmoDia).length, 1, 'mesmo dia + mesmo valor + mesmas parcelas = uma compra só');
+
+  // ⚠️ O QUE CONTINUA SEPARADO: dias diferentes. É a assinatura que sobrou pra
+  // distinguir a recompra do mesmo item — sem ela, uma assinatura mensal
+  // parcelada viraria uma linha só.
+  const diasDiferentes = [
+    { description: 'PADARIA', amount: -20, totalInstallments: 2, purchasedAt: '2026-08-03T10:00:00Z' },
+    { description: 'PADARIA', amount: -20, totalInstallments: 2, purchasedAt: '2026-08-04T10:00:00Z' },
+  ];
+  eq(deduplicar(diasDiferentes).length, 2, 'dias diferentes = duas compras (não funde)');
 
   // Mesmo instante, mas parcelamentos diferentes: compras diferentes.
   const difParcelas = [
