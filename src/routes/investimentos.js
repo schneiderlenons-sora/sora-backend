@@ -218,7 +218,7 @@ router.put('/:id', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermis
     // campo em silêncio — sem outro campo junto, a rota ainda respondia 400
     // 'Nada para atualizar'. Cliente premium ficou com a reserva zerada tendo
     // R$ 79.836,29 num fundo DI.
-    const campos = ['nome','ticker','quantidade','preco_unitario','valor_atual','valor_aportado','is_reserva_emergencia'];
+    const campos = ['nome','ticker','quantidade','preco_unitario','valor_atual','valor_aportado','is_reserva_emergencia','meta_id'];
     const update = {};
     campos.forEach(c => { if (req.body[c] !== undefined) update[c] = req.body[c]; });
     if (!Object.keys(update).length) return res.status(400).json({ erro: 'Nada para atualizar.' });
@@ -414,7 +414,24 @@ router.get('/:phone/metas', auth, exigirPlano('kit', 'premium', 'platinum'), exi
 });
 
 // POST /api/investimentos/metas
-router.post('/metas', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+// ⚠️ ROTA LEGADA E MORTA — respondia 200 com null.
+//
+// Ela insere `nome`, `prazo_anos`, `taxa_anual`, `aporte_mensal_sugerido` e
+// `investimento_id`: CINCO colunas que não existem em `metas`. Como o insert era
+// `const { data } = await ...` sem ler o `error`, a falha virava `data = null` e
+// a resposta saía 200 — mesma família do bug corrigido na migration 121.
+//
+// As metas de verdade são as de `routes/metas.js` (/api/metas), com titulo /
+// valor_objetivo / valor_atual + aportes. O vínculo com investimento agora vive
+// em `investimentos.meta_id` (migration 147), gravado pelo PUT acima.
+//
+// Fica respondendo 410 em vez de sumir: se algo ainda chamar, queremos ver o
+// erro no lugar de um sucesso falso.
+router.post('/metas', auth, async (_req, res) => res.status(410).json({
+  erro: 'Rota descontinuada. Use POST /api/metas para criar a meta e PUT /api/investimentos/:id com meta_id para atrelar um investimento.',
+}));
+
+router.post('/metas-legado-desativado', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { phone, nome, valor_objetivo, prazo_anos, taxa_anual, investimento_id } = req.body;
     const grupoId = await getGrupoId(req);

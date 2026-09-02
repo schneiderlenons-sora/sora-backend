@@ -42,7 +42,41 @@ router.get('/:phone', auth, async (req, res) => {
       });
     }
 
-    const result = (metas || []).map(m => ({ ...m, aportes: aportesPorMeta[m.id] || [] }));
+    // Investimentos atrelados (migration 147).
+    // ⚠️ LEITURA TOLERANTE: enquanto a 147 não roda, a coluna não existe e o
+    // select falha INTEIRO — sem o try, a aba Metas voltaria vazia pra todo
+    // mundo. É a armadilha registrada no CLAUDE.md.
+    let invPorMeta = {};
+    if (ids.length) {
+      try {
+        const { data: invs, error: eInv } = await supabase.from('investimentos')
+          .select('id, nome, tipo, valor_atual, meta_id, is_reserva_emergencia')
+          .in('meta_id', ids);
+        if (!eInv) {
+          (invs || []).forEach((i) => {
+            if (!invPorMeta[i.meta_id]) invPorMeta[i.meta_id] = [];
+            invPorMeta[i.meta_id].push(i);
+          });
+        }
+      } catch { /* migration 147 pendente */ }
+    }
+
+    // ⚠️ O TOTAL É CALCULADO AQUI, NUNCA GRAVADO EM `metas.valor_atual`.
+    // Aquela coluna é alimentada por aporte/resgate; escrever a soma dos
+    // investimentos nela deixaria o número inflado PARA SEMPRE no instante em
+    // que alguém desvinculasse o investimento.
+    const result = (metas || []).map((m) => {
+      const investimentos = invPorMeta[m.id] || [];
+      const valorInvestido = investimentos.reduce((s, i) => s + (Number(i.valor_atual) || 0), 0);
+      return {
+        ...m,
+        aportes: aportesPorMeta[m.id] || [],
+        investimentos,
+        valor_investido: Math.round(valorInvestido * 100) / 100,
+        // O que a barra de progresso deve usar: guardado + investido.
+        valor_total: Math.round(((Number(m.valor_atual) || 0) + valorInvestido) * 100) / 100,
+      };
+    });
     res.json(result);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
