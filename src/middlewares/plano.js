@@ -41,12 +41,26 @@ function exigirPlano(...planosPermitidos) {
         return res.status(400).json({ erro: 'Não foi possível identificar o usuário.' });
       }
 
+      // ⚠️ REAPROVEITA A LINHA QUE O `auth` JÁ LEU, quando ela é do MESMO
+      // usuário. Antes esta middleware relia a mesma linha de `users` sempre —
+      // uma ida a mais ao Supabase em toda rota gated, e o Render (Oregon) está
+      // longe do banco (Ohio), então cada ida custa a travessia inteira.
+      //
+      // A comparação por `id` não é decoração: o `auth` pode não ter rodado
+      // (chamada interna sem JWT) ou a rota pode ter caído no ramo do telefone.
+      // Nesses casos `jaLida` é null e a consulta acontece como sempre.
+      const jaLida = userId && req.authUser?.row?.id === userId ? req.authUser.row : null;
+
       // JWT primeiro: é quem a requisição REALMENTE é. O telefone é só o
       // endereço, e nem toda rota carrega um.
-      const q = supabase.from('users').select('id, phone, plano, plano_valido_ate');
-      const { data: user } = userId
-        ? await q.eq('id', userId).maybeSingle()
-        : await q.eq('phone', String(phone).replace(/\D/g, '')).maybeSingle();
+      let user = jaLida;
+      if (!user) {
+        const q = supabase.from('users').select('id, phone, plano, plano_valido_ate');
+        const r = userId
+          ? await q.eq('id', userId).maybeSingle()
+          : await q.eq('phone', String(phone).replace(/\D/g, '')).maybeSingle();
+        user = r.data;
+      }
 
       if (!user) {
         return res.status(403).json({ erro: 'Usuário não encontrado' });

@@ -25,40 +25,49 @@ router.get('/:phone', auth, async (req, res) => {
       .order('created_at', { ascending: false });
     if (error) throw error;
 
-    // Aportes dos últimos 12 meses por meta (pra trajetória do chart)
+    // Aportes dos últimos 12 meses (trajetória do chart) e investimentos
+    // atrelados (migration 147).
+    //
+    // ⚠️ AS DUAS VÃO JUNTAS, DE PROPÓSITO. Elas dependem de `ids`, mas NÃO uma
+    // da outra — em série pagavam DUAS travessias até o Supabase, e o Render
+    // (Oregon) está longe do banco (Ohio), então cada ida custa dezenas de ms
+    // que não dependem do tamanho da query. Em paralelo é uma travessia só.
     const ids = (metas || []).map(m => m.id);
     let aportesPorMeta = {};
+    let invPorMeta = {};
+
     if (ids.length) {
       const doze = new Date();
       doze.setMonth(doze.getMonth() - 12);
-      const { data: ap } = await supabase.from('meta_aportes')
-        .select('meta_id, valor, tipo, data')
-        .in('meta_id', ids)
-        .gte('data', doze.toISOString().slice(0, 10))
-        .order('data', { ascending: true });
-      (ap || []).forEach(a => {
+
+      // ⚠️ CADA UMA COM O SEU catch. Com `Promise.all`, uma rejeição derruba a
+      // outra — e a de investimentos PODE falhar de propósito (ver abaixo).
+      const [ap, invs] = await Promise.all([
+        supabase.from('meta_aportes')
+          .select('meta_id, valor, tipo, data')
+          .in('meta_id', ids)
+          .gte('data', doze.toISOString().slice(0, 10))
+          .order('data', { ascending: true })
+          .then(r => r.data || [])
+          .catch(() => []),
+        // ⚠️ LEITURA TOLERANTE: enquanto a 147 não roda, a coluna não existe e
+        // o select falha INTEIRO — sem isto a aba Metas voltaria vazia pra todo
+        // mundo. É a armadilha registrada no CLAUDE.md.
+        supabase.from('investimentos')
+          .select('id, nome, tipo, valor_atual, meta_id, is_reserva_emergencia')
+          .in('meta_id', ids)
+          .then(r => (r.error ? [] : (r.data || [])))
+          .catch(() => []),
+      ]);
+
+      ap.forEach(a => {
         if (!aportesPorMeta[a.meta_id]) aportesPorMeta[a.meta_id] = [];
         aportesPorMeta[a.meta_id].push(a);
       });
-    }
-
-    // Investimentos atrelados (migration 147).
-    // ⚠️ LEITURA TOLERANTE: enquanto a 147 não roda, a coluna não existe e o
-    // select falha INTEIRO — sem o try, a aba Metas voltaria vazia pra todo
-    // mundo. É a armadilha registrada no CLAUDE.md.
-    let invPorMeta = {};
-    if (ids.length) {
-      try {
-        const { data: invs, error: eInv } = await supabase.from('investimentos')
-          .select('id, nome, tipo, valor_atual, meta_id, is_reserva_emergencia')
-          .in('meta_id', ids);
-        if (!eInv) {
-          (invs || []).forEach((i) => {
-            if (!invPorMeta[i.meta_id]) invPorMeta[i.meta_id] = [];
-            invPorMeta[i.meta_id].push(i);
-          });
-        }
-      } catch { /* migration 147 pendente */ }
+      invs.forEach((i) => {
+        if (!invPorMeta[i.meta_id]) invPorMeta[i.meta_id] = [];
+        invPorMeta[i.meta_id].push(i);
+      });
     }
 
     // ⚠️ O TOTAL É CALCULADO AQUI, NUNCA GRAVADO EM `metas.valor_atual`.

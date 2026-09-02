@@ -15,9 +15,16 @@ async function auth(req, res, next) {
     if (error || !user) return res.status(401).json({ erro: 'Sessão inválida' });
 
     // Dados básicos do usuário (pra autorização por posse)
+    //
+    // ⚠️ `plano` e `plano_valido_ate` VÊM JUNTO DE PROPÓSITO. O `exigirPlano`
+    // lia EXATAMENTE esta linha de novo, logo depois, só por essas duas colunas
+    // — uma segunda ida ao Supabase pra um dado que já estava na mão. O Render
+    // (Oregon) está longe do banco (Ohio), então o custo de uma ida é a
+    // travessia, não o tamanho da query: pedir duas colunas a mais aqui é de
+    // graça, e a leitura repetida lá custava uma viagem inteira.
     const { data: row } = await supabase
       .from('users')
-      .select('id, phone, grupo_ativo')
+      .select('id, phone, grupo_ativo, plano, plano_valido_ate')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -25,6 +32,11 @@ async function auth(req, res, next) {
       id:         user.id,
       phone:      row?.phone || null,
       grupoAtivo: row?.grupo_ativo || null,
+      // ⚠️ A linha CRUA, e não campos soltos: o `exigirPlano` precisa
+      // distinguir "plano é null no banco" de "não consegui ler a linha". Com
+      // campos soltos os dois casos ficariam `undefined` e um usuário sem linha
+      // em `users` seria tratado como plano inativo em vez de reconsultado.
+      row:        row || null,
     };
 
     // Anti-IDOR: rotas keyed por :phone na URL (ou ?phone=) resolvem o grupo
