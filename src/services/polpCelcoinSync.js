@@ -28,6 +28,7 @@
 const crypto   = require('crypto');
 const supabase = require('../db/supabase');
 const celcoin  = require('./polpCelcoin');
+const { normalizarMoeda, MOEDAS } = require('./moeda');
 const {
   categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA, CATEGORIA_ESTORNO,
   ehPagamentoFaturaDescricao, ehMovimentoInvestimento,
@@ -1874,6 +1875,31 @@ function normalizeInvestimento(inv) {
 // ⚠️ `consentId` (migration 133): sem ele, num grupo com 2+ bancos conectados
 // não há como saber de QUE banco é a carteira — e foi isso que impediu 16 dos
 // 29 cartões de receberem o nome "<Banco> Crédito".
+// ⚠️ A MOEDA DA CONTA VINDA DO BANCO — e por que ela precisa passar por aqui.
+//
+// `normalizeConta` já lia `currency` do payload, mas o `upsertWallet` NUNCA
+// gravava: toda conta criada pelo Open Finance nascia com o default 'BRL'. Numa
+// conta internacional (Wise, Nomad, Revolut, Avenue) isso mostraria US$ 1.200
+// como R$ 1.200 — e o patrimônio sairia errado sem nada na tela indicando.
+//
+// Medido em 03/09/2026 antes de corrigir: 93 carteiras de OF na base, TODAS
+// BRL, nenhuma internacional. Ou seja, o defeito era latente — a correção não
+// muda uma linha sequer hoje e passa a valer na primeira conta em outra moeda.
+//
+// ⚠️ Moeda que a Sora não suporta NÃO vira BRL em silêncio. `normalizarMoeda`
+// cai em BRL pra desconhecida, e aceitar isso calado transformaria pesos em
+// reais. Aqui a divergência é registrada no log, que é o sinal pra somar a
+// moeda na lista de `services/moeda.js` (é uma linha).
+function moedaDaConta(n) {
+  const bruta = String(n && n.moeda ? n.moeda : 'BRL').toUpperCase().trim();
+  const ok = normalizarMoeda(bruta);
+  if (bruta && bruta !== ok && !MOEDAS[bruta]) {
+    console.warn('[of] moeda "%s" não está na lista da Sora (conta %s) — caiu em %s. Some em services/moeda.js.',
+      bruta, n && n.nome, ok);
+  }
+  return ok;
+}
+
 async function upsertWallet(grupoId, userId, n, saldo, consentId) {
   const nome = (n.nome || 'Conta').toString().trim().slice(0, 60);
 
@@ -1913,9 +1939,18 @@ async function upsertWallet(grupoId, userId, n, saldo, consentId) {
   // update inteiro falha — e levaria o SALDO junto, zerando a fatura na tela.
   // Por isso: tenta com tudo e, no erro, repete só com o essencial.
   const atualizar = async (id) => {
+    // ⚠️ A moeda entra nas DUAS tentativas. O retry existe pra uma coluna de
+    // extras que a migration ainda não criou não derrubar o sync — mas
+    // `wallets.moeda` é da 144 e existe, então deixá-la só na primeira faria a
+    // conta internacional voltar a BRL justamente quando algo deu errado.
+    //
+    // ⚠️ E ela É atualizada, não só criada: numa conta conectada o banco é a
+    // fonte da verdade (mesma regra do saldo, que o CLAUDE.md chama de regra de
+    // ouro). Se o usuário trocou a moeda à mão, foi porque a nossa estava errada.
+    const moeda = moedaDaConta(n);
     const { error } = await supabase.from('wallets')
-      .update({ tipo: n.tipo, ...patchSaldo, ...extras }).eq('id', id);
-    if (error) await supabase.from('wallets').update({ tipo: n.tipo, ...patchSaldo }).eq('id', id);
+      .update({ tipo: n.tipo, moeda, ...patchSaldo, ...extras }).eq('id', id);
+    if (error) await supabase.from('wallets').update({ tipo: n.tipo, moeda, ...patchSaldo }).eq('id', id);
   };
 
   // ⚠️ `select('*')` de propósito: `datas_manuais` é da migration 114 e, se ela
@@ -1976,7 +2011,7 @@ async function upsertWallet(grupoId, userId, n, saldo, consentId) {
     return mesmoNome.nome;
   }
   const row = {
-    grupo_id: grupoId, nome, tipo: n.tipo, saldo: saldo ?? 0,
+    grupo_id: grupoId, nome, tipo: n.tipo, saldo: saldo ?? 0, moeda: moedaDaConta(n),
     of_conta_id: n.externalId, of_provider: PROVIDER,
     ...(consentId ? { of_consent_id: consentId } : {}), ...extras,
   };
