@@ -593,12 +593,51 @@ function interpretarRapido(message) {
   // "quanto gastei nas contas", "gastos por cartão e conta". Registro de gasto
   // ("gastei 50 no cartão nubank") já retornou lá em cima (tem valor). Só entra
   // aqui a PERGUNTA genérica sobre cartões/contas (não "conta de luz").
-  if (/\bgast\w+/i.test(msg)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ⚠️ AS REGRAS DE GASTO ABAIXO SÓ VALEM SE A FRASE FOR PERGUNTA.
+  //
+  // Antes elas eram um CATCH-ALL: qualquer frase contendo
+  // "gasto/gastei/gastar" que chegasse aqui virava `buscar` ou `resumo` —
+  // nunca `null`, então nunca alcançava a IA. Medido em 24 frases: as 10
+  // consultas legítimas acertavam, e TODAS as 14 outras intenções eram
+  // sequestradas. "quero cadastrar um gasto fixo" virava resumo do mês,
+  // "apaga o gasto do mercado" virava BUSCA, "o que é um gasto fixo" virava
+  // resumo.
+  //
+  // A inversão é o ponto: em vez de aceitar tudo que tem "gasto" e tentar
+  // excluir as exceções (lista infinita), agora se EXIGE um sinal de
+  // pergunta. O que não tiver sinal devolve `null` e segue pra IA, que
+  // entende a frase inteira — é a regra "nunca deixe o regex chutar".
+  //
+  // Os sinais, e por que cada um está aqui:
+  //  · `?` ou palavra interrogativa (quanto/qual/quais/quando/onde/quem);
+  //  · "no que / em que" — cobre "no que gasto mais";
+  //  · verbo de EXIBIR (mostra/lista/ver/traz/resume/total);
+  //  · a frase COMEÇAR falando de gastos ("meus gastos", "gastos com X") —
+  //    frase nominal sem verbo é pergunta por natureza. Registro que começa
+  //    com "gastei 50..." já retornou muito antes daqui, porque tem VALOR;
+  //  · "gast* mais/demais/muito" — as frases de análise.
+  //
+  // ⚠️ NÃO é uma lista de exclusão de verbos ("cadastrar", "editar", …). Essa
+  // foi a tentação: ela cresce pra sempre e erra em "quero VER meus gastos",
+  // que tem "quero" e é pergunta de verdade.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const PERGUNTA_DE_GASTO = new RegExp([
+    String.raw`\?`,
+    String.raw`\b(?:quanto|quantos|quanta|quantas|qual|quais|quando|onde|quem)\b`,
+    String.raw`\b(?:n[oa]|em)\s+que\b`,
+    String.raw`\b(?:mostr\w+|exib\w+|list\w+|ver|vejo|veja|v[eê]|traz\w*|trag\w+|resum\w+|total|extrato)\b`,
+    String.raw`^\s*(?:os\s+|as\s+|meus\s+|minhas\s+)?gast\w+`,
+    String.raw`\bgast\w*\s+(?:mais|demais|muito|bastante)\b`,
+  ].join('|'), 'i');
+  const ehPerguntaDeGasto = PERGUNTA_DE_GASTO.test(msg);
+
+  if (ehPerguntaDeGasto && /\bgast\w+/i.test(msg)
       && (/\bcart[ãa]o\b|\bcart[õo]es\b|\bcontas\b|\bconta\s+banc\w*/i.test(msg))) {
     return { acao: 'gastos_carteiras' };
   }
 
-  if (/\bgast(?:o|os|ei|ar|ando|amos|aria)\b/i.test(msg)) {
+  if (ehPerguntaDeGasto && /\bgast(?:o|os|ei|ar|ando|amos|aria)\b/i.test(msg)) {
     const mm = msg.match(/\bgast\w+\b[^?!.]*?\b(?:com|de|d[oa]s?|em|n[oa]s?|sobre)\s+(.+)$/i);
     if (mm) {
       // Sobra a categoria/lugar: filtro por PALAVRA INTEIRA (não usa \b, que em JS

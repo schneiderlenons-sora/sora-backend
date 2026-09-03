@@ -26,16 +26,22 @@ console.log('── 1. os 4 casos reais do print ──');
   eq(G.extrairTituloTarefa('Tarefa: corrigir recorrências do Open Dinance'),
      'Corrigir recorrências do Open Dinance', 'a) título sem o "Tarefa:"');
 
-  // (b) O interpretador de finanças SEQUESTRAVA esta mensagem antes do Grow —
-  // sozinho (sem o marcador) ele REALMENTE acha "buscar painel" (prova de que
-  // o bug é real e não foi "consertado" mudando o interpretador de finanças,
-  // que continua intacto). Quem resolve é o webhook: com marcador explícito,
-  // ele nunca chega a chamar interpretarRapido pra esta mensagem — só a
-  // ORDEM muda, por isso o teste do contrato real é no marcador, não aqui.
+  // (b) O interpretador de finanças SEQUESTRAVA esta mensagem antes do Grow.
+  //
+  // ⚠️ ISSO FOI CORRIGIDO NA ORIGEM (set/2026) — e estas asserções foram
+  // INVERTIDAS, não apagadas. Antes elas cobravam `buscar`/"painel" pra provar
+  // que o sequestro era real e que o conserto tinha sido só de ORDEM no webhook
+  // ("o interpretador de finanças continua intacto"). Hoje ele não está mais
+  // intacto: as regras de gasto passaram a exigir SINAL DE PERGUNTA e devolvem
+  // `null` quando a frase é outra intenção.
+  //
+  // Mantidas ao contrário porque agora testam algo mais forte: que o
+  // interpretador NÃO reivindica mais esta frase. O marcador explícito no
+  // webhook continua valendo como segunda linha de defesa — ele garante a
+  // ORDEM, e ordem certa não deixa de ser certa porque a origem foi corrigida.
   const msgB = 'Tarefa melhorar sistema de gastos fixos e recorrências automáticas do painel';
   const rb = interpretarRapido(msgB);
-  eq(rb && rb.acao, 'buscar', 'b) confirma a causa raiz: interpretarRapido sozinho AINDA acha "buscar" nesta frase');
-  eq(rb && rb.termo, 'painel', 'b) ...com termo "painel" (é por isso que o marcador precisa rodar ANTES dele)');
+  eq(rb, null, 'b) interpretarRapido NÃO sequestra mais esta frase (antes achava "buscar painel")');
   eq(G.temMarcadorTarefaExplicito(msgB), true,
      'b) marcador explícito detecta o "Tarefa" no início — no webhook.js real, isto faz capturaRapida rodar ANTES de interpretarRapido');
   eq(G.pareceTarefa(msgB), true, 'b) e capturaRapida reconhece como tarefa');
@@ -47,11 +53,12 @@ console.log('── 1. os 4 casos reais do print ──');
   eq(titC, 'Melhorar sistema de gastos fixos e recorrências automáticas do painel', 'c) prefixo dobrado sai inteiro');
   ok(!/^tarefa/i.test(titC), 'c) título não pode começar com "Tarefa"');
 
-  // (d) Sem "do painel" no fim — sozinho, o interpretador de finanças caía no
-  // fallback de "resumo" (mesma causa raiz de b), e o marcador resolve igual.
+  // (d) Sem "do painel" no fim — o interpretador caía no fallback de "resumo"
+  // (mesma causa raiz de b). Corrigido na origem junto com (b): sem sinal de
+  // pergunta, o fallback não reivindica mais a frase.
   const msgD = 'Tarefa: Tarefa melhorar sistema de gastos fixos e recorrências automáticas';
   const rd = interpretarRapido(msgD);
-  eq(rd && rd.acao, 'resumo', 'd) confirma a causa raiz: sozinho, cai no fallback de resumo do mês');
+  eq(rd, null, 'd) não cai mais no fallback de resumo do mês (antes caía)');
   eq(G.temMarcadorTarefaExplicito(msgD), true, 'd) marcador detecta e evita que isso aconteça no webhook real');
   eq(G.extrairTituloTarefa(msgD), 'Melhorar sistema de gastos fixos e recorrências automáticas', 'd) título limpo, sem "Tarefa" dobrado');
 }

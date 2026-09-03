@@ -136,14 +136,44 @@ const CASOS = [
   // Cadastro tem valor E dia: não pode ser engolido pela consulta.
   { msg: 'todo mês 1200 aluguel dia 5',       expect: { acao: 'set_recorrente' } },
   { msg: 'gastei 50 no mercado',              expect: { acao: 'salvar' } },
-  // ⚠️ QUIRK PRÉ-EXISTENTE (não é da listagem): a regra genérica de "gast\w+"
-  // (linha ~576) captura QUALQUER frase com "gasto" e devolve resumo do mês.
-  // Verificado no HEAD antes desta feature — as duas já se comportavam assim.
-  // Registrado aqui como comportamento ATUAL pra o eval não ficar com falha
-  // permanente (eval que sempre falha para de ser sinal). Corrigir exige mexer
-  // na regra ampla de gastos, que é risco à parte.
-  { msg: 'paguei o aluguel que é meu maior gasto fixo', expect: { acao: 'resumo' } },
-  { msg: 'quero cadastrar um gasto fixo',     expect: { acao: 'resumo' } },
+  // ⚠️ ESTES DOIS ERAM O BUG, REGISTRADO COMO "COMPORTAMENTO ATUAL".
+  //
+  // O comentário que estava aqui dizia: "a regra genérica de gast\w+ captura
+  // QUALQUER frase com gasto e devolve resumo do mês (…) corrigir exige mexer
+  // na regra ampla, que é risco à parte". A regra FOI corrigida (set/2026):
+  // as regras de gasto agora exigem um SINAL DE PERGUNTA e, sem ele, devolvem
+  // `null` pra a IA entender a frase inteira.
+  //
+  // ⚠️ Então o esperado mudou de `resumo` pra `null` porque o COMPORTAMENTO
+  // ficou certo — não porque o eval foi afrouxado pra passar. Medido em 24
+  // frases: as 10 consultas legítimas seguem consulta, e as 14 outras
+  // intenções (cadastrar/editar/apagar/planejar/perguntar o que é) pararam de
+  // ser sequestradas. Um resumo do mês era a pior resposta possível pra
+  // "quero cadastrar um gasto fixo".
+  { msg: 'paguei o aluguel que é meu maior gasto fixo', expect: null },
+  { msg: 'quero cadastrar um gasto fixo',     expect: null },
+  // ── Regressão da regra de gastos: o que TEM de continuar consulta ──
+  { msg: 'meus gastos',                       expect: { acao: 'resumo' } },
+  { msg: 'gastos do mes passado',             expect: { acao: 'resumo' } },
+  { msg: 'no que gasto mais',                 expect: { acao: 'resumo' } },
+  { msg: 'me mostra meus gastos',             expect: { acao: 'resumo' } },
+  { msg: 'gastos com alimentacao',            expect: { acao: 'buscar' } },
+  // ⚠️ "quero" NÃO pode excluir por si: aqui ele vem com "ver", que é pergunta
+  // de verdade. Foi por isso que a correção exige sinal POSITIVO em vez de
+  // manter uma lista de verbos proibidos.
+  { msg: 'quero ver meus gastos',             expect: { acao: 'resumo' } },
+  // ── E o que NÃO pode mais virar consulta ──
+  { msg: 'apaga o gasto do mercado',          expect: null },
+  { msg: 'editar o gasto de ontem',           expect: null },
+  { msg: 'o que e um gasto fixo',             expect: null },
+  { msg: 'quero gastar menos esse mes',       expect: null },
+  // ⚠️ ESTE SEGUE PRA IA aqui, mas é capturado DEPOIS pelo quick-capture do
+  // Grow: `preciso + <verbo>ar` é gatilho de tarefa (RE_TAREFA_NL). Ou seja,
+  // "preciso registrar um gasto" vira TAREFA pra quem tem Grow. Conferido, e
+  // registrado aqui de propósito — é leitura defensável da frase, e melhor que
+  // o resumo do mês que ela virava antes. Se um dia incomodar, o lugar de
+  // tratar é o RE_NAO_TAREFA do grow.js, não esta regra.
+  { msg: 'preciso registrar um gasto',        expect: null },
 
   // ── Cartão / parcelas / fatura ────────────────────────────────────────────
   { msg: 'comprei fone no nubank crédito em 3x de 150', expect: { acao: 'compra_parcelada' } },
