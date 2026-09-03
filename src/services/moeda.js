@@ -35,8 +35,18 @@ const MOEDAS = {
   CHF: { nome: 'Franco suíço',    simbolo: 'CHF', locale: 'de-CH' },
   CAD: { nome: 'Dólar canadense', simbolo: 'C$',  locale: 'en-CA' },
   AUD: { nome: 'Dólar australiano', simbolo: 'A$', locale: 'en-AU' },
-  JPY: { nome: 'Iene',            simbolo: '¥',   locale: 'ja-JP' },
+  JPY: { nome: 'Iene',            simbolo: '¥',   locale: 'ja-JP', casas: 0 },
   ARS: { nome: 'Peso argentino',  simbolo: 'AR$', locale: 'es-AR' },
+  MXN: { nome: 'Peso mexicano',   simbolo: 'MX$', locale: 'es-MX' },
+  // ⚠️ `casas: 0` — o peso chileno NÃO usa centavos. No Chile escreve-se
+  //    $1.250, nunca $1.250,00.
+  //
+  //    ⚠️ E o `locale` NÃO resolve isso sozinho: o `formatar` abaixo usa
+  //    sempre pt-BR (o leitor é brasileiro) e fixava 2 casas pra todo mundo.
+  //    Cheguei a escrever aqui que o locale resolvia — não resolve, e só
+  //    apareceu quando formatei um valor de verdade. O IENE tinha o mesmo
+  //    defeito desde sempre (¥ 1.250,00, que não existe) e foi junto.
+  CLP: { nome: 'Peso chileno',    simbolo: 'CLP$', locale: 'es-CL', casas: 0 },
   NOK: { nome: 'Coroa norueguesa', simbolo: 'kr', locale: 'nb-NO' },
 };
 
@@ -175,7 +185,10 @@ function camposTransacao(valorNativo, moeda, tabela) {
 function formatar(valor, moeda) {
   const m = normalizarMoeda(moeda);
   const n = Number(valor) || 0;
-  const txt = n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // `casas` só existe nas moedas sem centavos (iene, peso chileno); as
+  // outras seguem em 2, que é o padrão de quase todo lugar.
+  const casas = MOEDAS[m].casas ?? 2;
+  const txt = n.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
   return `${MOEDAS[m].simbolo} ${txt}`;
 }
 
