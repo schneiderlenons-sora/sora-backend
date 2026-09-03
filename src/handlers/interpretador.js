@@ -428,7 +428,13 @@ function interpretarRapido(message) {
   // --- GASTOS ---
   // carteira_nome fica NULL quando o usuário não cita banco — assim o handler
   // roda a lógica inteligente (wallet padrão / conta única / perguntar qual).
-  if ((m = msg.match(/(gastei|paguei|comprei)\s+(\d[\d.,]*)\s+(?:em\s+|no\s+|na\s+|de\s+|com\s+|pra\s+|para\s+|pelo\s+|pela\s+)?(.+?)(?:\s+(?:no|na|pelo|pela|com)\s+(.+))?$/i))) {
+  // ⚠️ "usando" / "via" / "através de" entram como separadores de CONTA.
+  // Antes só valiam `no|na|pelo|pela|com`, então "gastei 3 no mercado USANDO a
+  // conta inter" não achava banco nenhum: a frase inteira virava descrição e
+  // `carteira_nome` saía null. Sem conta citada, o handler usa a conta PADRÃO
+  // — e o usuário via o gasto cair no banco errado sem entender por quê
+  // (relato real: "registrou a conta como mercado pago").
+  if ((m = msg.match(/(gastei|paguei|comprei)\s+(\d[\d.,]*)\s+(?:em\s+|no\s+|na\s+|de\s+|com\s+|pra\s+|para\s+|pelo\s+|pela\s+)?(.+?)(?:\s+(?:no|na|pelo|pela|com|usando|via|atrav[eé]s\s+de)\s+(.+))?$/i))) {
     let descricao  = m[3].trim();
     let carteira   = m[4] ? m[4].trim() : null;
     // "loja, banco" — vírgula separa descrição do banco quando o usuário não
@@ -439,6 +445,22 @@ function interpretarRapido(message) {
       carteira  = partes.slice(1).join(',').trim() || null;
     }
     descricao = descricao.replace(/[,;]+$/, '').trim();
+    // ⚠️ A PONTUAÇÃO FINAL DA CARTEIRA — É O DEFEITO DO ÁUDIO.
+    //
+    // A linha acima limpava só a DESCRIÇÃO, e só `,` e `;`. Mas o Whisper
+    // termina a frase com PONTO ("...no mercado com Inter."), e o ponto ficava
+    // colado no nome: `carteira_nome: "inter."`. Aí `resolverCarteiraReal` não
+    // casava com a conta "Inter" e a Sora perguntava de qual conta foi — mesmo
+    // o usuário tendo dito o banco. Relato real de 03/09/2026, e por texto
+    // nunca aparecia, porque ninguém digita ponto no fim de "com inter".
+    //
+    // O artigo sai junto porque "usando A conta inter" captura "a conta inter".
+    if (carteira) {
+      carteira = carteira
+        .replace(/[.,;:!?]+$/, '')
+        .replace(/^(?:[ao]s?|um|uma)\s+/i, '')
+        .trim() || null;
+    }
     // Data da transação (ontem/dia 5/15-06/segunda) → remove da descrição e conta.
     const dInfo = parseDataGasto(msg);
     if (dInfo) {

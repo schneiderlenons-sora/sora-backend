@@ -31,6 +31,19 @@ const CASOS = [
   // três jeitos diferentes (buscar, resumo e null). Estes casos existem pra que
   // nenhum deles volte em silêncio.
   { msg: 'Gastei R$ 3,00 no mercado com Inter', expect: { acao: 'salvar', tipo: 'Gasto', valor: 3, categoria: 'Mercado', carteira_nome: 'inter' } },
+  // ⚠️ O PONTO FINAL DO ÁUDIO. O Whisper encerra a frase com ponto, e ele ficava
+  // colado no nome: `carteira_nome: "inter."`. O resolver não casava com a conta
+  // "Inter" e a Sora perguntava de qual conta foi — mesmo o usuário tendo dito.
+  // Relato de 03/09/2026. Por texto nunca aparecia: ninguém digita ponto ali.
+  { msg: 'Gastei R$ 3,00 no mercado com Inter.', expect: { acao: 'salvar', valor: 3, carteira_nome: 'inter' } },
+  // ⚠️ "usando" como separador de CONTA. Antes só valiam no|na|pelo|pela|com,
+  // então isto devolvia `carteira_nome: null` — e SEM conta citada o handler usa
+  // a conta PADRÃO. Foi o "registrou a conta como mercado pago" do relato: não
+  // era leitura errada de "inter", era a conta padrão entrando no lugar.
+  // O "conta" que sobra é removido pelo resolverCarteiraReal (passo sem-ruído).
+  { msg: 'gastei 3 reais no mercado usando a conta inter', expect: { acao: 'salvar', valor: 3, carteira_nome: 'conta inter' } },
+  { msg: 'gastei 3 reais no mercado via inter', expect: { acao: 'salvar', carteira_nome: 'inter' } },
+  { msg: 'gastei 3 reais no mercado através de inter', expect: { acao: 'salvar', carteira_nome: 'inter' } },
   { msg: 'Gastei R$3,00 no mercado',          expect: { acao: 'salvar', tipo: 'Gasto', valor: 3, categoria: 'Mercado' } },
   { msg: 'Gastei R$ 3 no mercado',            expect: { acao: 'salvar', tipo: 'Gasto', valor: 3, categoria: 'Mercado' } },
   // ⚠️ Milhar: o prefixo sai, mas o formato BR tem de sobreviver — 1.250,00
