@@ -11,7 +11,7 @@
 //      copiado igual em todas as partes.
 // =============================================================================
 const {
-  montarRateio, motivoRecusa, validarPartes, CHAVES_DE_ORIGEM,
+  montarRateio, montarDesfazer, motivoRecusa, validarPartes, CHAVES_DE_ORIGEM,
 } = require('../src/services/rateio');
 
 let falhas = 0;
@@ -123,6 +123,120 @@ console.log('\n── 7. descrição por parte ──');
   ]);
   eq(r.linhas[0].observacao, 'Compras do mês', 'usa a descrição da parte quando existe');
   eq(r.linhas[1].observacao, TX.observacao, 'cai na do original quando não existe');
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DESFAZER — "voltar ao normal"
+//
+// O que estes casos protegem:
+//   1. a categoria ORIGINAL volta (é pra isso que existe `rateio_origem`);
+//   2. o desfazer é NEUTRO NO SALDO — e por isso RECUSA quando as partes
+//      divergem em conta/tipo/pago/transferência;
+//   3. o valor é a soma de HOJE, não a de antes: editar uma parte já ajustou o
+//      saldo, e restaurar o valor velho deixaria a carteira errada;
+//   4. as chaves de dedup voltam pra linha unificada — sem elas o sync do Open
+//      Finance REIMPORTA a transação e duplica.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ORIGEM = { categoria: 'Supermercado', id_curto: 'ORIG01', valor: 300 };
+const parte = (o) => ({
+  id: o.id, grupo_id: 'g1', criado_por: 'u1', tipo: 'Gasto', carteira_nome: 'Nubank',
+  data: '2026-09-01', pago: true, transferencia: false,
+  created_at: o.created_at || '2026-09-01T10:00:00Z',
+  categoria: o.categoria, valor: o.valor, observacao: o.observacao ?? 'Supermercado',
+  rateio_grupo: 'grp', rateio_origem: o.origem === null ? null : ORIGEM,
+  ...(o.extra || {}),
+});
+
+console.log('\n── 8. desfazer devolve a categoria e o codigo originais ──');
+{
+  const r = montarDesfazer([
+    parte({ id: 'a', categoria: 'Alimentação', valor: 200, created_at: '2026-09-01T10:00:00Z' }),
+    parte({ id: 'b', categoria: 'Casa', valor: 100, created_at: '2026-09-01T10:00:01Z' }),
+  ]);
+  ok(!r.erro, 'nao recusa o caso normal');
+  eq(r.linha.categoria, 'Supermercado', 'volta a categoria ORIGINAL, nao a de uma parte');
+  eq(r.linha.id_curto, 'ORIG01', 'volta o id_curto original (o codigo usado no zap)');
+  eq(r.linha.valor, 300, 'valor = soma das partes');
+  eq(r.linha.rateio_grupo, null, 'a linha unificada nao fica marcada como rateada');
+  eq(r.linha.rateio_origem, null, 'nem carrega a origem adiante');
+  eq(r.ids.length, 2, 'devolve os ids das partes a apagar');
+  eq(r.aviso, null, 'sem aviso quando nada mudou');
+  ok(!('id' in r.linha), 'nao carrega id de nenhuma parte');
+}
+
+console.log('\n── 9. RECUSA quando juntar mudaria o saldo ──');
+{
+  const casos = [['carteira_nome', 'Itaú'], ['tipo', 'Recebimento'], ['pago', false], ['transferencia', true]];
+  for (const [campo, v] of casos) {
+    const r = montarDesfazer([
+      parte({ id: 'a', categoria: 'Alimentação', valor: 200 }),
+      parte({ id: 'b', categoria: 'Casa', valor: 100, extra: { [campo]: v } }),
+    ]);
+    ok(!!r.erro, `recusa quando ${campo} diverge entre as partes`);
+    ok(!r.linha, `e nao devolve linha quando ${campo} diverge`);
+  }
+}
+
+console.log('\n── 10. divergencia que NAO mexe em saldo passa ──');
+{
+  const r = montarDesfazer([
+    parte({ id: 'a', categoria: 'Alimentação', valor: 200, extra: { data: '2026-09-05' } }),
+    parte({ id: 'b', categoria: 'Casa', valor: 100 }),
+  ]);
+  ok(!r.erro, 'data diferente entre as partes NAO impede o desfazer');
+}
+
+console.log('\n── 11. parte editada: vale o valor de HOJE ──');
+{
+  const r = montarDesfazer([
+    parte({ id: 'a', categoria: 'Alimentação', valor: 250 }),   // era 200
+    parte({ id: 'b', categoria: 'Casa', valor: 100 }),
+  ]);
+  eq(r.linha.valor, 350, 'soma o que existe hoje, nao os 300 de origem');
+  ok(/valor mudou/i.test(r.aviso || ''), 'avisa que o total mudou desde a divisao');
+  ok(!r.erro, 'mas NAO recusa — a edicao foi de proposito e o saldo ja a refletiu');
+}
+
+console.log('\n── 12. uma parte so ainda e desfazivel ──');
+{
+  const r = montarDesfazer([parte({ id: 'a', categoria: 'Alimentação', valor: 200 })]);
+  ok(!r.erro, 'nao recusa com uma parte so (o usuario pode ter apagado as outras)');
+  eq(r.linha.categoria, 'Supermercado', 'devolve a categoria original mesmo assim');
+  eq(r.linha.valor, 200, 'valor = o que sobrou');
+}
+
+console.log('\n── 13. sem rateio_origem (152 nao rodou): cai na MAIOR parte ──');
+{
+  const r = montarDesfazer([
+    parte({ id: 'a', categoria: 'Alimentação', valor: 200, origem: null }),
+    parte({ id: 'b', categoria: 'Casa', valor: 100, origem: null }),
+  ]);
+  ok(!r.erro, 'ainda funciona sem a coluna');
+  eq(r.linha.categoria, 'Alimentação', 'usa a categoria da parte de MAIOR valor');
+  ok(/maior parte/i.test(r.aviso || ''), 'e avisa que foi palpite, nao a original');
+}
+
+console.log('\n── 14. as chaves de dedup VOLTAM pra linha unificada ──');
+{
+  const r = montarDesfazer([
+    parte({ id: 'a', categoria: 'Alimentação', valor: 200, extra: { of_tx_id: 'of-abc' } }),
+    parte({ id: 'b', categoria: 'Casa', valor: 100 }),
+  ]);
+  eq(r.linha.of_tx_id, 'of-abc', 'of_tx_id volta — sem ele o sync REIMPORTA e duplica');
+}
+{
+  // A parte que tinha a chave foi apagada: nao ha o que restaurar, e a linha
+  // NAO pode inventar uma chave.
+  const r = montarDesfazer([parte({ id: 'b', categoria: 'Casa', valor: 100 })]);
+  ok(r.linha.of_tx_id === undefined, 'nao inventa chave de dedup quando nenhuma parte tem');
+}
+
+console.log('\n── 15. entrada vazia nao explode ──');
+{
+  ok(!!montarDesfazer([]).erro, 'lista vazia vira erro explicado');
+  ok(!!montarDesfazer(null).erro, 'null vira erro explicado');
 }
 
 console.log(falhas ? `\n✗ ${falhas} falha(s)` : '\n✓ rateio: todos os casos passaram');

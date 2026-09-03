@@ -8,7 +8,7 @@ const { exigirPermissao } = require('../middlewares/permissao');
 const { calcularResumo, calcularResumoAnual } = require('../services/resumoTransacoes');
 // Rateio (migration 151): a aritmética e as recusas vivem no serviço, travadas
 // em `npm run eval:rateio`. Aqui fica só a persistência.
-const { montarRateio } = require('../services/rateio');
+const { montarRateio, montarDesfazer } = require('../services/rateio');
 const { randomUUID } = require('crypto');
 // Conta em moeda estrangeira (migration 144). `valor` continua SEMPRE em BRL;
 // o nativo e a taxa congelada do dia vão em colunas próprias.
@@ -500,12 +500,17 @@ router.post('/:id/rateio', auth, exigirPermissao('admin', 'escrita'), async (req
     let { data: criadas, error: eIns } = await supabase.from('transacoes')
       .insert(linhas).select('id');
     if (eIns) {
-      // Sem a 151 a coluna não existe: tenta de novo sem ela, pra a função
-      // valer mesmo antes da migration (o vínculo entre as partes é que fica
-      // de fora, e ele é só rótulo).
-      if (/rateio_grupo/i.test(eIns.message || '')) {
-        const semGrupo = linhas.map(({ rateio_grupo, ...resto }) => resto);
-        const retry = await supabase.from('transacoes').insert(semGrupo).select('id');
+      // Sem a 151/152 as colunas não existem: tenta de novo sem elas, pra a
+      // função valer mesmo antes das migrations. As duas são só RÓTULO — o que
+      // se perde é o vínculo entre as partes e a memória da categoria original
+      // (aí o desfazer cai no palpite da maior parte), nunca o dinheiro.
+      //
+      // ⚠️ Testa as DUAS colunas: quando só a 152 falta, a mensagem do Postgres
+      // cita `rateio_origem`, e um teste só de `rateio_grupo` não casaria — o
+      // rateio inteiro passaria a responder 500 pra todo mundo.
+      if (/rateio_grupo|rateio_origem/i.test(eIns.message || '')) {
+        const semRotulos = linhas.map(({ rateio_grupo, rateio_origem, ...resto }) => resto);
+        const retry = await supabase.from('transacoes').insert(semRotulos).select('id');
         if (retry.error) return res.status(500).json({ erro: retry.error.message });
         criadas = retry.data || [];
       } else {
@@ -527,6 +532,70 @@ router.post('/:id/rateio', auth, exigirPermissao('admin', 'escrita'), async (req
     }
 
     res.json({ ok: true, grupo, partes: (criadas || []).length });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// POST /api/transacoes/rateio/:grupo/desfazer — junta as partes de volta.
+//
+// ⚠️ MESMA ORDEM DE ESCRITA DO RATEIO, e pela mesma razão: INSERE a linha
+// unificada primeiro, APAGA as partes depois. Sem transação no Supabase, a
+// ordem é a única proteção — apagar antes e falhar ao inserir faria o
+// lançamento SUMIR. Contar em dobro por um instante é ruim; perder é pior.
+//
+// ⚠️ NÃO MEXE EM SALDO. A linha unificada tem a mesma carteira e o mesmo total
+// das partes, então o efeito líquido é ZERO. É por isso que `montarDesfazer`
+// RECUSA quando as partes divergem em conta/tipo/pago/transferência: aí o
+// efeito deixaria de ser zero e o saldo do usuário mudaria sem ele pedir.
+router.post('/rateio/:grupo/desfazer', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { data: partes, error: eGet } = await supabase.from('transacoes')
+      .select('*').eq('rateio_grupo', req.params.grupo).eq('grupo_id', req.grupoId);
+
+    // Sem a migration 151 não há como agrupar — é o único caso em que o
+    // desfazer não existe, e dizer isso é melhor que um 500 sem explicação.
+    if (eGet) {
+      if (/rateio_grupo/i.test(eGet.message || '')) {
+        return res.status(422).json({ erro: 'Este painel ainda não tem o vínculo entre as partes (migration 151 pendente).' });
+      }
+      return res.status(500).json({ erro: eGet.message });
+    }
+    if (!partes || !partes.length) {
+      return res.status(404).json({ erro: 'Lançamento dividido não encontrado.' });
+    }
+
+    const { erro, linha, ids, aviso } = montarDesfazer(partes);
+    if (erro) return res.status(422).json({ erro });
+
+    // 1) a linha unificada entra
+    let { data: criada, error: eIns } = await supabase.from('transacoes')
+      .insert(linha).select('id').single();
+    if (eIns) {
+      if (/rateio_grupo|rateio_origem/i.test(eIns.message || '')) {
+        const { rateio_grupo, rateio_origem, ...semRotulos } = linha;
+        const retry = await supabase.from('transacoes').insert(semRotulos).select('id').single();
+        if (retry.error) return res.status(500).json({ erro: retry.error.message });
+        criada = retry.data;
+      } else {
+        return res.status(500).json({ erro: eIns.message });
+      }
+    }
+    if (!criada) return res.status(500).json({ erro: 'Não consegui recriar o lançamento.' });
+
+    // 2) as partes saem
+    //
+    // ⚠️ Apaga por ID e restrito ao grupo. Apagar por `rateio_grupo` seria mais
+    // curto e ERRADO: entre a leitura e agora alguém do grupo compartilhado
+    // pode ter dividido de novo, e a lista de ids é a foto do que eu de fato
+    // conferi e somei.
+    const { error: eDel } = await supabase.from('transacoes')
+      .delete().in('id', ids).eq('grupo_id', req.grupoId);
+    if (eDel) {
+      // Desfaz a linha nova, pra não deixar o valor contado em dobro.
+      await supabase.from('transacoes').delete().eq('id', criada.id);
+      return res.status(500).json({ erro: `Não consegui remover as partes: ${eDel.message}` });
+    }
+
+    res.json({ ok: true, id: criada.id, partes: ids.length, aviso: aviso || null });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

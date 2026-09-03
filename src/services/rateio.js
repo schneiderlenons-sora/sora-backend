@@ -122,6 +122,19 @@ function montarRateio(tx, partes, grupoId) {
   const base = {};
   for (const c of HERDADOS) if (tx[c] !== undefined) base[c] = tx[c];
 
+  // ⚠️ O QUE ESTA DIVISÃO SUBSTITUIU (migration 152). O rateio APAGA a linha
+  // original, então sem isto a categoria dela se perde e o "voltar ao normal"
+  // não teria como devolver o lançamento como era.
+  //
+  // ⚠️ Vai IGUAL em TODAS as partes, não só na primeira: se ficasse só numa,
+  // apagar aquela parte levaria junto a única cópia da origem e o desfazer
+  // deixaria de funcionar pro resto do grupo.
+  const origem = {
+    categoria: tx.categoria || null,
+    id_curto:  tx.id_curto || null,
+    valor:     cent(tx.valor),
+  };
+
   const linhas = partes.map((p, i) => {
     const linha = {
       ...base,
@@ -132,6 +145,7 @@ function montarRateio(tx, partes, grupoId) {
       // "Supermercado" com categorias diferentes se explicam sozinhas.
       observacao: (p.observacao && String(p.observacao).trim()) || tx.observacao || '',
       rateio_grupo: grupo,
+      rateio_origem: origem,
     };
     // ⚠️ Só a PRIMEIRA herda as chaves de dedup — ver o cabeçalho.
     if (i === 0) for (const c of CHAVES_DE_ORIGEM) if (tx[c] != null) linha[c] = tx[c];
@@ -141,4 +155,126 @@ function montarRateio(tx, partes, grupoId) {
   return { linhas, grupo };
 }
 
-module.exports = { montarRateio, motivoRecusa, validarPartes, CHAVES_DE_ORIGEM, HERDADOS, cent, centavos };
+// =============================================================================
+// DESFAZER O RATEIO — "voltar ao normal"
+//
+// Junta as partes de um `rateio_grupo` de volta numa transação só. Igual ao
+// rateio, é SUBSTITUIÇÃO: entra a linha unificada, saem as partes.
+//
+// ⚠️ O VALOR É A SOMA DO QUE EXISTE HOJE, não o valor guardado em
+// `rateio_origem`. Se o usuário editou uma parte de 100 pra 150 depois de
+// dividir, esses 150 são reais — o saldo da carteira já foi ajustado por aquela
+// edição. Restaurar o valor antigo desfaria uma edição que ele fez de propósito
+// e deixaria o saldo errado. `rateio_origem.valor` serve só pra a tela avisar
+// quando a soma mudou.
+//
+// ⚠️ E POR ISSO O DESFAZER É NEUTRO NO SALDO, igual ao rateio: mesma carteira,
+// mesmo total. Quem chama NÃO deve mexer em `wallets.saldo` — passar pelos
+// POST/DELETE normais ajustaria o saldo duas vezes.
+// =============================================================================
+
+/**
+ * Campos que precisam ser IDÊNTICOS entre as partes pra elas ainda formarem um
+ * lançamento só.
+ *
+ * ⚠️ São exatamente os que definem o EFEITO NO SALDO. Se o usuário editou uma
+ * parte pra outra carteira, juntar tudo numa linha só moveria dinheiro entre
+ * contas sem ninguém pedir — o saldo das duas ficaria errado, e em silêncio.
+ * Melhor recusar e explicar do que "consertar" por conta própria.
+ *
+ * `data`, `categoria` e `observacao` ficam de FORA: divergir neles não mexe em
+ * saldo nenhum, e recusar por causa de uma data editada seria rigor sem motivo.
+ */
+const DEVEM_BATER = ['carteira_nome', 'tipo', 'pago', 'transferencia'];
+
+const ROTULO_CAMPO = {
+  carteira_nome: 'a conta',
+  tipo: 'o tipo (gasto/recebimento)',
+  pago: 'a situação de pagamento',
+  transferencia: 'a marcação de transferência',
+};
+
+/**
+ * Monta a linha que SUBSTITUI as partes. Não escreve nada — quem persiste é a
+ * rota, e é por isso que isto dá pra travar em eval.
+ *
+ * @param {Array} partes linhas do mesmo `rateio_grupo`, como estão no banco
+ * @returns {{erro:string}|{linha:object, ids:string[], aviso:string|null}}
+ */
+function montarDesfazer(partes) {
+  if (!Array.isArray(partes) || partes.length === 0) {
+    return { erro: 'Não encontrei as partes desse lançamento dividido.' };
+  }
+
+  // ⚠️ UMA PARTE SÓ AINDA É DESFAZÍVEL: o usuário pode ter apagado as outras à
+  // mão. Aí "voltar ao normal" é devolver a categoria original àquela linha —
+  // continua sendo exatamente o que ele pediu.
+  for (const c of DEVEM_BATER) {
+    const vistos = new Set(partes.map((p) => JSON.stringify(p[c] ?? null)));
+    if (vistos.size > 1) {
+      return {
+        erro: `As partes foram editadas e ${ROTULO_CAMPO[c]} não é mais a mesma em todas — ` +
+              `juntar num lançamento só mudaria seu saldo. Deixe ${ROTULO_CAMPO[c]} igual nas partes e tente de novo.`,
+      };
+    }
+  }
+
+  // A parte "principal" é a que carrega as chaves de origem (a 1ª do rateio).
+  // Se ela foi apagada, cai na mais antiga — o que importa é ser determinístico.
+  const ordenadas = [...partes].sort((a, b) => {
+    const ka = CHAVES_DE_ORIGEM.some((c) => a[c] != null) ? 0 : 1;
+    const kb = CHAVES_DE_ORIGEM.some((c) => b[c] != null) ? 0 : 1;
+    if (ka !== kb) return ka - kb;
+    return String(a.created_at || '').localeCompare(String(b.created_at || ''));
+  });
+  const principal = ordenadas[0];
+
+  const origem = principal.rateio_origem
+    || ordenadas.find((p) => p.rateio_origem)?.rateio_origem
+    || null;
+
+  // Fallback sem a migration 152: a categoria da MAIOR parte é o palpite menos
+  // ruim — é a que mais pesa no lançamento. A tela avisa que foi palpite.
+  const maior = [...partes].sort((a, b) => (Number(b.valor) || 0) - (Number(a.valor) || 0))[0];
+  const categoria = (origem && origem.categoria) || maior.categoria;
+
+  const total = cent(partes.reduce((s, p) => s + (Number(p.valor) || 0), 0));
+
+  const linha = {};
+  for (const c of HERDADOS) if (principal[c] !== undefined) linha[c] = principal[c];
+  linha.categoria  = categoria;
+  linha.valor      = total;
+  // Descrição da principal: juntar três descrições diferentes numa só viraria
+  // lixo, e como o rateio repete a do original quando a parte não personaliza,
+  // na prática ela já é a descrição certa.
+  linha.observacao = principal.observacao || '';
+  // ⚠️ O `id_curto` original volta: é o código que o usuário vê e usa no
+  // WhatsApp ("apaga a A1B2C3"). Devolver com código novo quebra a referência.
+  linha.id_curto      = (origem && origem.id_curto) || principal.id_curto || idCurto();
+  linha.rateio_grupo  = null;
+  linha.rateio_origem = null;
+
+  // ⚠️ AS CHAVES DE DEDUP VOLTAM pra linha unificada. Sem isso o sync do Open
+  // Finance deixaria de reconhecer a transação e a REIMPORTARIA — duplicando
+  // justamente o lançamento que o usuário acabou de juntar.
+  for (const c of CHAVES_DE_ORIGEM) {
+    const dono = ordenadas.find((p) => p[c] != null);
+    if (dono) linha[c] = dono[c];
+  }
+
+  // Aviso, não erro: o total mudou porque ele editou ou apagou parte depois de
+  // dividir. Ele precisa SABER, mas o desfazer segue com o valor de hoje.
+  let aviso = null;
+  if (origem && centavos(origem.valor) !== centavos(total)) {
+    aviso = `O valor mudou desde a divisão: era R$ ${Number(origem.valor).toFixed(2)} e as partes somam R$ ${total.toFixed(2)}. Vou juntar com o valor de hoje.`;
+  } else if (!origem) {
+    aviso = `Esta divisão foi feita antes de a Sora guardar a categoria original, então usei a da maior parte (${categoria}).`;
+  }
+
+  return { linha, ids: partes.map((p) => p.id), aviso };
+}
+
+module.exports = {
+  montarRateio, montarDesfazer, motivoRecusa, validarPartes,
+  CHAVES_DE_ORIGEM, HERDADOS, DEVEM_BATER, cent, centavos,
+};
