@@ -623,12 +623,35 @@ module.exports = async function handleTransacoes(data, ctx) {
         .eq('id', walletNova.id);
     } else {
       // Carteira não existe — cria automaticamente
-      await supabase.from('wallets').upsert({
+      const { error: eCria } = await supabase.from('wallets').upsert({
         grupo_id: grupoId,
         nome:     novaCarteira,
         tipo:     novaCarteira.toLowerCase().includes('crédito') ? 'Crédito' : 'Corrente',
         saldo:    tx.valor * mult,
       }, { onConflict: 'grupo_id,nome' });
+
+      // ⚠️ O ERRO PRECISA SER LIDO. Sem isto, uma falha aqui passava batida e a
+      // transação era renomeada logo abaixo pra uma carteira que NÃO EXISTE —
+      // conta-fantasma: a linha fica no banco sem pertencer a conta nenhuma,
+      // então não mexe em saldo, não aparece no extrato da conta e some de
+      // qualquer filtro por conta. Pro usuário é "o lançamento sumiu".
+      //
+      // Mesma família dos bugs já registrados no CLAUDE.md (investimentos da
+      // migration 121, meta↔investimento): `await` sem checar `error` responde
+      // sucesso por cima de uma gravação que não aconteceu.
+      if (eCria) {
+        console.error('[atualizar conta] falhei ao criar a carteira de destino:', eCria.message);
+        // Desfaz o estorno feito na carteira antiga: a transação vai FICAR nela.
+        if (walletAntiga) {
+          await supabase.from('wallets')
+            .update({ saldo: walletAntiga.saldo }).eq('id', walletAntiga.id);
+        }
+        await enviarTexto(phone,
+          `❌ Não consegui mover pra *${novaCarteira}* — a conta não existe e não deu pra criar.\n` +
+          `A transação continua em *${tx.carteira_nome}*. Cria a conta pelo painel e tenta de novo.`
+        );
+        return;
+      }
     }
 
     // Atualiza a transação

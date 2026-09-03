@@ -3,6 +3,7 @@ const { CATEGORIA_FATURA } = require('../services/categorizar');
 const supabase  = require('../db/supabase');
 const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
+const { garantirCarteira } = require('../services/carteiraGarantida');
 const { avisosLigados, briefingLigado } = require('../services/avisos');
 const { enviarProativo, enviarProativoDetalhado, provedor } = require('../services/proativo');
 const { falar, templateAgente, templateDoAviso, templateLista, aberturaDe } = require('../agentes');
@@ -384,10 +385,19 @@ cron.schedule('0 * * * *', async () => {
             .gte('data', inicioMes).limit(1);
           if (jaP && jaP.length) continue;
         }
+        // ⚠️ `recorrencias.carteira` é TEXTO e pode não corresponder a carteira
+        // nenhuma — conta renomeada depois, ou o fallback 'Dinheiro' num grupo
+        // que nunca teve essa carteira. Gravar o nome cru aqui criava transação
+        // ÓRFÃ: a linha existe, mas não pertence a conta alguma, não mexe em
+        // saldo e some do extrato da conta. Era a maior fonte das 20 órfãs
+        // medidas na base em 02/09/2026. Saldo inicial 0 porque este lançamento
+        // nasce `pago: false` — previsão não move saldo.
+        const contaPrev = await garantirCarteira(rec.grupo_id, rec.carteira || 'Dinheiro', 0);
         await supabase.from('transacoes').insert({
           id_curto: gerarId(), grupo_id: rec.grupo_id, tipo: rec.tipo,
           categoria: rec.categoria || 'Outros', valor: rec.valor || 0,
-          observacao: `[Previsto] ${rec.descricao}`, carteira_nome: rec.carteira || 'Dinheiro',
+          observacao: `[Previsto] ${rec.descricao}`,
+          carteira_nome: contaPrev || rec.carteira || 'Dinheiro',
           pago: false, data: new Date().toISOString(),
         });
         try { await supabase.from('recorrencias').update({ ultimo_previsto_ym: ymSP }).eq('id', rec.id); } catch {}
@@ -420,11 +430,22 @@ cron.schedule('0 * * * *', async () => {
       const contaConectada = modo === 'prever';
 
       const idCurto = gerarId();
+      // ⚠️ Mesma razão do bloco de previstos acima: sem garantir a carteira, o
+      // nome cru vira transação órfã. Aqui a busca logo acima (`wallet`) já diz
+      // se ela existe — só chamo o helper quando NÃO existe, pra não gastar uma
+      // consulta a mais no caminho normal (isto roda pra toda recorrência de
+      // todo grupo, todo dia).
+      // (a busca do `wallet` acima pede só id/saldo/of_conta_id, não o nome —
+      // por isso o nome usado quando ela existe continua sendo o da recorrência,
+      // que é justamente o que casou no `ilike`.)
+      const contaRec = wallet
+        ? (rec.carteira || 'Dinheiro')
+        : await garantirCarteira(rec.grupo_id, rec.carteira || 'Dinheiro', 0);
       await supabase.from('transacoes').insert({
         id_curto: idCurto, grupo_id: rec.grupo_id, tipo: rec.tipo,
         categoria: rec.categoria || 'Outros', valor: rec.valor,
         observacao: contaConectada ? `[Previsto] ${rec.descricao}` : `[Recorrente] ${rec.descricao}`,
-        carteira_nome: rec.carteira || 'Dinheiro',
+        carteira_nome: contaRec || rec.carteira || 'Dinheiro',
         // `recorrente` marca a linha como PREVISÃO reconciliável — sem ela, a
         // cobrança do banco não encontra o que substituir e duplica de novo.
         recorrente: contaConectada || undefined,

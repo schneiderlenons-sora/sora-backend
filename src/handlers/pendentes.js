@@ -60,6 +60,49 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
     await supabase.from('wallets')
       .update({ saldo: walletNova.saldo + (tx.valor * mult) })
       .eq('id', walletNova.id);
+  } else {
+    // ⚠️ A CARTEIRA DE DESTINO NÃO EXISTE — E ISSO NÃO PODE SER IGNORADO.
+    //
+    // Antes daqui saía direto pro update do `carteira_nome` logo abaixo: o
+    // saldo não era ajustado em lugar nenhum (não há carteira) e a transação
+    // passava a apontar pra um nome que não é wallet de ninguém. É a
+    // CONTA-FANTASMA do CLAUDE.md: a linha continua no banco, mas não pertence
+    // a conta nenhuma — não mexe em saldo, não aparece no extrato da conta e
+    // some de qualquer filtro por conta. Pro usuário, "o lançamento não
+    // sincronizou" (relato real de 02/09/2026: 2 de 4 transações órfãs).
+    //
+    // O gêmeo desta função (`handlers/transacoes.js`, fluxo "muda a conta da
+    // última transação") já criava a carteira nesse caso. Aqui não criava —
+    // eram duas metades da mesma regra, e só uma estava certa.
+    const tipo = /crédito|credito/i.test(novaCarteiraNome) ? 'Crédito'
+               : /carteira|dinheiro|cash/i.test(novaCarteiraNome) ? 'Dinheiro'
+               : 'Corrente';
+    const { error: eCria } = await supabase.from('wallets').upsert({
+      grupo_id: grupoId,
+      nome:     novaCarteiraNome,
+      tipo,
+      saldo:    tx.valor * mult,
+    }, { onConflict: 'grupo_id,nome' });
+
+    // ⚠️ E O ERRO É LIDO. Se nem criar deu certo, a transação FICA na carteira
+    // antiga (que é real): renomeá-la pra um nome órfão seria trocar um dado
+    // certo por um quebrado.
+    //
+    // ⚠️ Mas sair aqui exige DESFAZER o estorno feito lá em cima. O bloco
+    // anterior já tirou o valor da carteira antiga, contando que a transação
+    // sairia dela — como ela não vai mais sair, o saldo precisa voltar ao que
+    // era (`walletAntiga.saldo` é justamente o valor de ANTES do estorno).
+    // Sem isso, a falha deixaria o saldo da conta antiga errado, que é um
+    // estrago maior do que simplesmente não mover.
+    if (eCria) {
+      console.error('[moverCarteira] não consegui criar a carteira de destino:', eCria.message);
+      if (walletAntiga) {
+        await supabase.from('wallets')
+          .update({ saldo: walletAntiga.saldo })
+          .eq('id', walletAntiga.id);
+      }
+      return false;
+    }
   }
 
   await supabase.from('transacoes')
