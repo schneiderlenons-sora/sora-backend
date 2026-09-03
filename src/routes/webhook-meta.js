@@ -266,7 +266,22 @@ router.post('/', async (req, res) => {
       const mid = await wa.baixarMidia(m.mediaId);
       if (!mid) return wa.enviarTexto(m.from, '🎤 Não consegui baixar seu áudio. Tenta de novo?');
       let texto;
-      try { texto = await transcreverAudio(mid.buffer, m.from); }
+      // ⚠️ O VOCABULÁRIO VAI JUNTO — o 3º argumento não é opcional na prática.
+      // `transcreverAudio(src, phone, vocab)` usa os nomes das contas do
+      // usuário como dica de grafia pro Whisper. A rota do Z-API sempre
+      // passou; esta, que é a que roda hoje (Cloud API da Meta), chamava com
+      // dois argumentos — então "Nubank Crédito" saía como "no banco de
+      // crédito" e o interpretador não achava a conta. Áudio é justamente
+      // onde o nome do banco é mais fácil de transcrever errado.
+      let vocab = '';
+      try {
+        const { data: u } = await supabase.from('users').select('grupo_ativo').eq('phone', m.from).maybeSingle();
+        if (u?.grupo_ativo) {
+          const { data: ws } = await supabase.from('wallets').select('nome').eq('grupo_id', u.grupo_ativo);
+          vocab = (ws || []).map(w => w.nome).filter(Boolean).join(', ');
+        }
+      } catch {}   // dica de grafia é bônus: falhar aqui não pode matar o áudio
+      try { texto = await transcreverAudio(mid.buffer, m.from, vocab); }
       catch { return wa.enviarTexto(m.from, '🎤 Não consegui entender o áudio. Pode repetir?'); }
       await processarMensagem({ phone: m.from, mensagem: texto, imageUrl: null, legendaImg: '' });
 

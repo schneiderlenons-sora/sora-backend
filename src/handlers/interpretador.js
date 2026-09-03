@@ -132,7 +132,29 @@ function limparDescricao(txt) {
 function interpretarRapido(message) {
   // Remove a unidade de moeda logo após o número ("10 reais" → "10"), pra
   // não virar descrição. Ajuda especialmente áudios ("gastei 10 reais na...").
+  // ⚠️ TIRA O PREFIXO "R$" ANTES DE QUALQUER REGRA — É O CONSERTO DO ÁUDIO.
+  //
+  // A normalização abaixo já tirava a moeda DEPOIS do número ("10 reais" →
+  // "10"), mas nada tratava o PREFIXO. E o Whisper, ao transcrever fala, é
+  // exatamente quem escreve o valor assim: "três reais" vira "R$ 3,00".
+  //
+  // Sem esta linha, "Gastei R$ 3,00 no mercado" não casava a regra de SALVAR
+  // (que espera número nu) e caía numa regra de CONSULTA — o cliente recebia
+  // "Nenhum gasto encontrado para mercado". Medido em 11 formatos de fala:
+  // NOVE não viravam lançamento, caindo de três jeitos diferentes (buscar,
+  // resumo e null). Por TEXTO funcionava, porque ninguém digita "R$" — daí a
+  // queixa ser só de áudio.
+  //
+  // ⚠️ É aqui, na normalização, e não em cada regra: são dezenas de regexes
+  // esperando número nu, e remendar uma por uma deixaria as outras quebradas.
+  //
+  // ⚠️ O lookahead de dígito é o que impede estrago: só remove quando há um
+  // NÚMERO depois. Sem ele, um "$" solto em qualquer frase seria apagado.
+  //
+  // `parseValor` já cuida do resto do formato BR (tira o ponto de milhar e
+  // troca a vírgula decimal), então "R$ 1.250,00" chega como 1250, não 1,25.
   const msg = message.toLowerCase().trim()
+    .replace(/r?\$\s*(?=\d)/g, '')
     .replace(/(\d)\s+(?:reais|real|conto|contos|pila|pilas|mango|mangos|pau|paus|prata|pratas|din[\s-]?din|dinheiro)\b/gi, '$1');
 
   let m;

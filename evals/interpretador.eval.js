@@ -17,6 +17,32 @@
 const { interpretarRapido } = require('../src/handlers/interpretador');
 
 const CASOS = [
+  // ── VALOR COM PREFIXO "R$" — o formato que vem do ÁUDIO ───────────────────
+  //
+  // ⚠️ ESTE BLOCO É O RELATO DE 03/09/2026, e nasceu de um bug em produção.
+  // Um cliente disse que a Sora não registrava por ÁUDIO. Por texto funcionava.
+  // A causa: o Whisper escreve valor falado como "R$ 3,00", e a normalização do
+  // interpretador só tirava a moeda DEPOIS do número ("10 reais" → "10").
+  // Com o prefixo intacto, a regra de SALVAR (que espera número nu) não casava
+  // e a frase caía numa regra de CONSULTA: o cliente recebia "Nenhum gasto
+  // encontrado para mercado com inter".
+  //
+  // Medido na época: 9 de 11 formatos de fala NÃO viravam lançamento, caindo de
+  // três jeitos diferentes (buscar, resumo e null). Estes casos existem pra que
+  // nenhum deles volte em silêncio.
+  { msg: 'Gastei R$ 3,00 no mercado com Inter', expect: { acao: 'salvar', tipo: 'Gasto', valor: 3, categoria: 'Mercado', carteira_nome: 'inter' } },
+  { msg: 'Gastei R$3,00 no mercado',          expect: { acao: 'salvar', tipo: 'Gasto', valor: 3, categoria: 'Mercado' } },
+  { msg: 'Gastei R$ 3 no mercado',            expect: { acao: 'salvar', tipo: 'Gasto', valor: 3, categoria: 'Mercado' } },
+  // ⚠️ Milhar: o prefixo sai, mas o formato BR tem de sobreviver — 1.250,00
+  // precisa chegar como 1250, não como 1,25. É o `parseValor` que garante isso.
+  { msg: 'Gastei R$ 1.250,00 no aluguel',     expect: { acao: 'salvar', tipo: 'Gasto', valor: 1250, categoria: 'Aluguel' } },
+  { msg: 'Paguei R$ 89,90 na Netflix',        expect: { acao: 'salvar', tipo: 'Gasto', valor: 89.9, categoria: 'Assinaturas' } },
+  { msg: 'Recebi R$ 2.000,00 de salário',     expect: { acao: 'salvar', valor: 2000 } },
+  // ⚠️ E as CONSULTAS não podem ter virado lançamento junto: a correção mexeu na
+  // normalização, que TODA regra abaixo consome.
+  { msg: 'quanto gastei no mercado',          expect: { acao: 'buscar' } },
+  { msg: 'meus gastos',                       expect: { acao: 'resumo' } },
+
   // ── Registrar gasto (salvar) ──────────────────────────────────────────────
   { msg: 'gastei 50 no mercado',              expect: { acao: 'salvar', tipo: 'Gasto', valor: 50, categoria: 'Mercado' } },
   { msg: 'paguei 30 no uber',                 expect: { acao: 'salvar', tipo: 'Gasto', valor: 30, categoria: 'Transporte' } },
