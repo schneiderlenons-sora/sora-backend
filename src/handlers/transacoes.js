@@ -244,10 +244,10 @@ async function refinarCategoria(grupoId, texto) {
 // Detecta se o usuário citou uma conta existente no texto da mensagem.
 // Ex: "gastei 290 na shein nubank" → conta "Nubank" (mais longo primeiro
 // pra "Nubank Crédito" ganhar de "Nubank" quando aplicável).
-async function detectarContaNoTexto(grupoId, texto) {
+async function detectarContaNoTexto(grupoId, texto, contasInjetadas = null) {
   const t = normTxt(texto);
   if (!t) return null;
-  const contas = await listarContasAtivas(grupoId);
+  const contas = contasInjetadas || await listarContasAtivas(grupoId);
   const ord = [...contas].sort((a, b) => b.nome.length - a.nome.length);
   for (const c of ord) {
     if (temPalavra(t, normTxt(c.nome))) return c.nome;
@@ -261,10 +261,10 @@ async function detectarContaNoTexto(grupoId, texto) {
 // cai pra detecção no texto / padrão / pergunta (evita carteira-fantasma tipo
 // "conta nubank", que não existe e faz o saldo não ser ajustado). Retorna o
 // nome CANÔNICO da carteira real.
-async function resolverCarteiraReal(grupoId, nomeInformado) {
+async function resolverCarteiraReal(grupoId, nomeInformado, contasInjetadas = null) {
   const alvo = normTxt(nomeInformado);
   if (!alvo) return null;
-  const contas = await listarContasAtivas(grupoId);
+  const contas = contasInjetadas || await listarContasAtivas(grupoId);
   if (!contas.length) return null;
   // 1) match exato normalizado
   const exato = contas.find(c => normTxt(c.nome) === alvo);
@@ -972,3 +972,19 @@ module.exports = async function handleTransacoes(data, ctx) {
     return;
   }
 };
+// ─────────────────────────────────────────────────────────────────────────────
+// Expostos SÓ pra teste (aditivo — `module.exports` continua sendo o handler).
+//
+// ⚠️ EXISTE PRA TRAVAR A REGRA "mercado" ≠ "Mercado Pago" EM EVAL.
+//
+// A distinção é do usuário e é fina: dizer "no mercado" é o SUPERMERCADO; a
+// conta Mercado Pago só entra quando ele diz "mercado pago" por extenso. O
+// comportamento já era esse, e agora tem teste — antes dependia de ninguém
+// afrouxar o `temPalavra` (que exige o nome INTEIRO da carteira) nem o limiar do
+// fuzzy (0.8; "mercado" x "mercado pago" dá 0.58, e é isso que os separa).
+//
+// Mesmo padrão dos detectores expostos em `handlers/grow.js`.
+// ─────────────────────────────────────────────────────────────────────────────
+module.exports.resolverCarteiraReal   = resolverCarteiraReal;
+module.exports.detectarContaNoTexto   = detectarContaNoTexto;
+module.exports.listarContasAtivas     = listarContasAtivas;
