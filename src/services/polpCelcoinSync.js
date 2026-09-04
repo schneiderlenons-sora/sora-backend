@@ -1704,6 +1704,15 @@ function normalizeDivida(item, kind) {
     indexador: INDEXADOR_DIVIDA[(taxaIndexador || '').toString().toUpperCase()] || null,
     dia_vencimento: diaDoMes(c.first_instalment_due_date) || diaDoMes(c.due_date),
     proximo_vencimento: proximoVenc,
+
+    // ⚠️ O SALDO DEVEDOR DO BANCO, NÃO O NOSSO (migration 155).
+    //
+    // O painel calculava `(total - pagas) × parcela`, que mede outra coisa (a
+    // soma do que ainda será pago, juros futuros dentro) e ainda por cima
+    // depende de `parcelas_pagas` — contagem que o emissor manda furada.
+    // Resultado medido: R$ 28.165,88 no card contra R$ 9.069,95 que o próprio
+    // payload informa, e que a observação da dívida já imprimia ao lado.
+    saldo_devedor: saldoDevedor,
     data_inicio: ymd(c.contract_date),
     data_quitacao: ymd(c.settlement_date),
     status,
@@ -2393,8 +2402,10 @@ async function upsertDivida(grupoId, userId, d) {
   // ⚠️ SEPARADO do `base` de propósito: a coluna é da migration 154 e, se ela
   // ainda não rodou, mencioná-la faria o upsert inteiro falhar e a dívida
   // sumir do painel. Mesma lição da 138 (detalhes do investimento) e da 120.
-  const extra = d.proximo_vencimento ? { proximo_vencimento: d.proximo_vencimento } : {};
-  const semColuna = (e) => /proximo_vencimento/i.test(e && e.message || '');
+  const extra = {};
+  if (d.proximo_vencimento) extra.proximo_vencimento = d.proximo_vencimento;
+  if (d.saldo_devedor != null) extra.saldo_devedor = d.saldo_devedor;
+  const semColuna = (e) => /proximo_vencimento|saldo_devedor/i.test(e && e.message || '');
 
   const { data: ja } = await supabase.from('dividas')
     .select('id').eq('grupo_id', grupoId).eq('of_id', d.externalId).maybeSingle();
@@ -2429,7 +2440,7 @@ async function upsertDivida(grupoId, userId, d) {
   if (userId) row.criado_por = userId;
   let { error } = await supabase.from('dividas').insert(row);
   if (error && semColuna(error)) {
-    const { proximo_vencimento: _pv, ...semPv } = row;
+    const { proximo_vencimento: _pv, saldo_devedor: _sd, ...semPv } = row;
     ({ error } = await supabase.from('dividas').insert(semPv));
   }
   if (error && /of_id|of_provider|origem/i.test(error.message || '')) {

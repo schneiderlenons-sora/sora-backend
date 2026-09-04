@@ -36,7 +36,12 @@ router.get('/:phone', auth, async (req, res) => {
 
     // Resumo agregado
     const ativas = (dividas || []).filter(d => d.status === 'ativa' || d.status === 'em_atraso');
+    // Saldo do BANCO primeiro (migration 155): é o valor de quitação hoje. A
+    // conta local só entra quando ele não existe — dívida manual —, porque
+    // ela soma juros futuros e depende de `parcelas_pagas`, que vem furada
+    // do emissor.
     const total_devido = ativas.reduce((s, d) => {
+      if (d.saldo_devedor != null) return s + Number(d.saldo_devedor);
       const restantes = Math.max(0, (d.parcelas_total || 0) - (d.parcelas_pagas || 0));
       const saldo = restantes * (d.valor_parcela || 0);
       return s + (saldo || d.valor_total || 0);
