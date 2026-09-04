@@ -1663,7 +1663,17 @@ function normalizeDivida(item, kind) {
   // ANTECIPAÇÃO. Quem adianta parcelas fica com a próxima meses à frente,
   // enquanto o calendário segue apontando o mês que vem — foi exatamente o
   // relato ("vence só dia 06/10" contra "em 2 dias" na tela).
-  const proximoVenc = somaMeses(ymd(c.first_instalment_due_date), pagas, ymd(c.due_date));
+  // ⚠️ DESLIGADO. A derivacao `first_instalment_due_date + paid_instalments`
+  // ESTA ERRADA e foi pro ar: num contrato com 1a parcela em 06/08/2026 e
+  // `paid_instalments` = 8 ela devolveu 06/04/2027 — o card passou a dizer
+  // "proxima parcela em 214 dias", pior que os 30 dias de erro do bug
+  // original. Ou seja, `paid_instalments` NAO e o numero de parcelas do
+  // cronograma ja liquidadas; e outra coisa (a doc lista tambem
+  // `payments.paid_instalments` e `payments.releases[]` com `paidDate` e
+  // `isOverParcelPayment`, o que sugere contagem de PAGAMENTOS, nao de
+  // parcelas). Sem o payload real na mao, qualquer formula aqui e chute — e
+  // ja custou duas regressoes.
+  const proximoVenc = null;
 
   // Saldo devedor REAL do banco (antes calculávamos restantes × parcela).
   const saldoDevedor = money(pay.contract_outstanding_balance);

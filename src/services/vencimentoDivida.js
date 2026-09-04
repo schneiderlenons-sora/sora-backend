@@ -90,29 +90,24 @@ function proximoVencimento(divida, hoje = hojeSP()) {
   if (!dia || dia < 1 || dia > 31) return null;
   if (divida.status === 'quitada') return null;
 
-  // ── A DATA QUE O BANCO INFORMA VENCE QUALQUER DERIVAÇÃO (migration 154) ──
+  // ⚠️ AQUI MOROU UMA REGRESSÃO — ler antes de tentar de novo.
   //
-  // Relato: "a próxima parcela vence dia 06 de OUTUBRO" contra "em 2 dias"
-  // na tela. O resto desta função deriva a data do calendário — a próxima
-  // ocorrência do dia N que ainda não passou —, que é o melhor possível numa
-  // dívida lançada à mão e ERRADO numa do Open Finance: lá o emissor conhece
-  // o cronograma e a Sora não tem pagamento registrado pra corrigir o rumo
-  // (as parcelas pagas chegam como CONTAGEM, não como registro).
+  // A ideia era: dívida do Open Finance tem o cronograma no emissor, então a
+  // data dele deveria vencer a derivação por calendário. A ideia continua de
+  // pé; a DERIVAÇÃO é que estava errada. Calculei
+  // `first_instalment_due_date + paid_instalments meses` e num contrato com
+  // 1ª parcela em 06/08/2026 e 8 "pagas" isso deu 06/04/2027: o card passou a
+  // anunciar "próxima parcela em 214 dias" onde o banco diz 06/10 — erro MAIOR
+  // que o bug original, que era de um mês.
   //
-  // ⚠️ E o caso que quebra o calendário é o mais comum em empréstimo:
-  // ANTECIPAÇÃO. Quem adianta parcelas fica com a próxima meses à frente,
-  // enquanto o calendário segue apontando o mês que vem.
+  // Ou seja, `paid_instalments` NÃO é "quantas parcelas do cronograma já
+  // foram liquidadas". Antes de religar isto é preciso ver o payload real
+  // (/api/admin/of-debug com foco=dividas) e descobrir o que ele conta — a doc
+  // também expõe `payments.releases[]` com `paidDate` e `isOverParcelPayment`,
+  // o que sugere contagem de PAGAMENTOS, não de parcelas.
   //
-  // ⚠️ Só vale enquanto a data NÃO PASSOU. Cronograma do banco envelhece: se
-  // ele ficou pra trás (sync parado, parcela vencida e não paga), voltar a
-  // derivar do calendário é o comportamento honesto — melhor do que exibir
-  // uma data no passado como se fosse "a próxima".
-  const doBanco = divida && divida.proximo_vencimento
-    ? String(divida.proximo_vencimento).slice(0, 10)
-    : null;
-  if (doBanco && doBanco >= hoje) {
-    return { data: doBanco, dias: diffDias(hoje, doBanco), quitadaNoCiclo: false, fonte: 'banco' };
-  }
+  // Até lá vale o calendário abaixo, que erra por semanas e não por meses.
+
   const { Y, M } = partes(hoje);
 
   // 1) Próxima ocorrência que ainda não passou (hoje conta como "vence hoje").

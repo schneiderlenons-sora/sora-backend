@@ -193,49 +193,6 @@ console.log('── 8. emAtraso (selo do card) ──');
 }
 console.log('  ok');
 
-// ── 9. data do BANCO (migration 154) ─────────────────────────────────────
-//
-// BUG DE ORIGEM: "a próxima parcela do empréstimo vence dia 06 de OUTUBRO,
-// mas o app diz 06 de setembro". A derivação por calendário aponta a próxima
-// ocorrência do dia 6 — e quem ANTECIPA parcelas fica com a próxima meses à
-// frente, então o calendário sozinho nunca acerta esse caso.
-console.log('── 9. próximo vencimento informado pelo banco ──');
-{
-  const hoje = '2026-09-04';
-
-  // O caso do relato, com os números reais: 1ª parcela 06/02, 8 pagas.
-  const r = proximoVencimento(
-    { dia_vencimento: 6, status: 'ativa', proximo_vencimento: '2026-10-06' }, hoje);
-  eq(r.data, '2026-10-06', 'a data do banco vence o calendário');
-  eq(r.dias, 32, 'e os dias são contados a partir dela');
-  eq(r.fonte, 'banco', 'a origem fica explícita no retorno');
-
-  // Sem a coluna, TUDO tem de sair igual a antes — é a garantia de regressão
-  // zero pra toda dívida manual, que é a maioria da base.
-  const semColuna = proximoVencimento({ dia_vencimento: 6, status: 'ativa' }, hoje);
-  eq(semColuna.data, '2026-09-06', 'sem a data do banco, segue o calendário');
-  eq(semColuna.fonte, undefined, 'e não inventa origem');
-
-  // ⚠️ Cronograma do banco ENVELHECE. Data no passado (sync parado, parcela
-  // vencida) não pode ser exibida como "a próxima": volta pro calendário.
-  const velha = proximoVencimento(
-    { dia_vencimento: 6, status: 'ativa', proximo_vencimento: '2026-07-06' }, hoje);
-  eq(velha.data, '2026-09-06', 'data do banco no passado é descartada');
-  eq(velha.fonte, undefined, 'e o retorno volta a ser derivado');
-
-  // Vence HOJE ainda é futuro (mesma convenção do resto da função).
-  const hojeMesmo = proximoVencimento(
-    { dia_vencimento: 6, status: 'ativa', proximo_vencimento: hoje }, hoje);
-  eq(hojeMesmo.data, hoje, 'vence hoje: a data do banco vale');
-  eq(hojeMesmo.dias, 0, 'e dá 0 dias');
-
-  // Quitada continua sem vencimento, venha o que vier do banco.
-  eq(proximoVencimento(
-    { dia_vencimento: 6, status: 'quitada', proximo_vencimento: '2027-01-06' }, hoje),
-    null, 'dívida quitada não tem próxima parcela');
-}
-console.log('  ok');
-
 // ── Resultado ────────────────────────────────────────────────────────────
 console.log('');
 if (falhas.length) {
