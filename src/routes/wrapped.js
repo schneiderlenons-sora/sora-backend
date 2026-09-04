@@ -8,6 +8,17 @@ const { ehPagamentoFatura } = require('../services/categorizar');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
+const { exigirPlano } = require('../middlewares/plano');
+
+// ⚠️ O WRAPPED NÃO TINHA CHECAGEM DE PLANO NENHUMA — só `auth` e os mínimos
+// de volume de dados. Enquanto `inativo` era a única alternativa a pagar, o
+// `PaywallRedirect` do painel cobria; com o modo manual (migration 156) isso
+// deixou de bastar, e sem isto um `gratis` puxaria a retrospectiva pela API
+// mesmo com a aba escondida.
+//
+// Lista explícita em vez de "premium pra cima": Básico e Kit têm Wrapped
+// hoje, e tirar deles seria regressão em cima de quem paga.
+const PLANOS_WRAPPED = ['basico', 'kit', 'premium', 'platinum'];
 
 const MES_NOMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
@@ -64,7 +75,7 @@ function maiorSequencia(datasSet) {
 }
 
 // ─── FINANCE ──────────────────────────────────────────────────────────────
-router.get('/financas/:phone', auth, async (req, res) => {
+router.get('/financas/:phone', auth, exigirPlano(...PLANOS_WRAPPED), async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
@@ -133,7 +144,7 @@ router.get('/financas/:phone', auth, async (req, res) => {
 });
 
 // ─── GROW ───────────────────────────────────────────────────────────────────
-router.get('/grow/:phone', auth, async (req, res) => {
+router.get('/grow/:phone', auth, exigirPlano(...PLANOS_WRAPPED), async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });

@@ -316,14 +316,26 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     }
     const grupoId = user.grupo_ativo;
 
-    // ── 2.1. KIT (vitalício SEM WhatsApp): não atende pelo zap — empurra upgrade.
-    if (user.plano === 'kit') {
+    // ── 2.1. PLANOS SEM WHATSAPP: Kit (vitalício) e Grátis (modo manual).
+    //
+    // Os dois organizam pelo PAINEL; o zap é do plano pago recorrente. A
+    // resposta difere porque o caminho de saída é outro: o Kit já pagou e
+    // faz upgrade na /kit; o grátis nunca pagou e vai pra /planos.
+    //
+    // ⚠️ ESTE É O ÚNICO PONTO QUE SEGURA O WHATSAPP. Tudo abaixo daqui —
+    // interpretador, FAQ, Grow, agentes, Watson — já assume usuário com
+    // direito. Plano novo sem zap tem de entrar AQUI.
+    const SEM_WHATSAPP = { kit: `${APP_URL_WH}/kit`, gratis: `${APP_URL_WH}/planos` };
+    if (SEM_WHATSAPP[user.plano]) {
+      const ehKit = user.plano === 'kit';
       await enviarBotaoLink(phone, {
-        message:
-          '🔒 *Usar a Sora pelo WhatsApp é do plano Completo!*\n\n' +
-          'No seu *Kit* você organiza tudo pelo painel 💚 Pra lançar por aqui — texto, áudio e até foto da nota — e desbloquear Open Finance, painel do casal e o Sora Grow, é só fazer o upgrade:',
-        label: 'Fazer upgrade',
-        url: `${APP_URL_WH}/kit`,
+        message: ehKit
+          ? '🔒 *Usar a Sora pelo WhatsApp é do plano Completo!*\n\n'
+            + 'No seu *Kit* você organiza tudo pelo painel 💚 Pra lançar por aqui — texto, áudio e até foto da nota — e desbloquear Open Finance, painel do casal e o Sora Grow, é só fazer o upgrade:'
+          : '🔒 *Lançar pelo WhatsApp é dos planos pagos!*\n\n'
+            + 'No *modo manual* você organiza tudo pelo painel, de graça 💚 Pra mandar "gastei 50 no mercado" por aqui — em texto, áudio ou foto da nota — e ainda destravar Open Finance, Agenda e os Agentes, escolha um plano:',
+        label: ehKit ? 'Fazer upgrade' : 'Ver os planos',
+        url: SEM_WHATSAPP[user.plano],
       });
       return;
     }

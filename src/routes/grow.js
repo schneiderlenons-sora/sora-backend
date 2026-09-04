@@ -16,7 +16,10 @@ async function getUser(req) {
 // lista de compras, agenda).
 function temAcessoGrow(user) {
   if (!user) return false;
-  if (['basico', 'premium', 'platinum'].includes(user.plano)) return true;
+  // ⚠️ 'gratis' ENTRA AQUI. O modo manual mantém hábitos, tarefas e bem-estar;
+  // sem isto a API responderia 403 no Grow inteiro enquanto o painel mostrava
+  // as abas — o pior dos dois mundos. A AGENDA é que sai, por `requireAgenda`.
+  if (['gratis', 'basico', 'premium', 'platinum'].includes(user.plano)) return true;
   if (['grow_basico', 'grow_premium'].includes(user.plano_grow)) return true; // legado
   if (user.plano_grow === 'trial' && user.grow_trial_fim && new Date(user.grow_trial_fim) > new Date()) return true;
   return false;
@@ -37,6 +40,21 @@ async function requireGrow(req, res, next) {
   const user = await getUser(req);
   if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
   if (!temAcessoGrow(user)) return res.status(403).json({ erro: 'sem_acesso_grow', mensagem: 'Acesso ao Sora Grow indisponivel no seu plano.' });
+  req.userRow = user;
+  next();
+}
+
+// Pra a AGENDA — tudo do Grow base MENOS o modo manual.
+//
+// ⚠️ Guard próprio porque a Agenda é a única aba do Grow base que o `gratis`
+// não tem. Espelha a feature `grow_agenda` do frontend e a lista GROW_AGENDA
+// de config/planos.js.
+async function requireAgenda(req, res, next) {
+  const user = await getUser(req);
+  if (!user) return res.status(404).json({ erro: 'Usuario nao encontrado' });
+  if (!temAcessoGrow(user) || user.plano === 'gratis') {
+    return res.status(403).json({ erro: 'sem_acesso_agenda', mensagem: 'A Agenda esta disponivel a partir do plano Basico.' });
+  }
   req.userRow = user;
   next();
 }
@@ -878,7 +896,7 @@ router.post('/receitas/:id/cozinhar', auth, requirePremiumGrow, async (req, res)
 // ─── AGENDA / COMPROMISSOS ───────────────────────────────────────────
 const CATS_COMP = ['pessoal', 'trabalho', 'familia', 'saude', 'financas', 'estudos', 'outro'];
 
-router.get('/compromissos/:phone', auth, requireGrow, async (req, res) => {
+router.get('/compromissos/:phone', auth, requireAgenda, async (req, res) => {
   try {
     let q = supabase.from('compromissos')
       .select('*').eq('user_id', req.userRow.id);
@@ -889,7 +907,7 @@ router.get('/compromissos/:phone', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.post('/compromissos', auth, requireGrow, async (req, res) => {
+router.post('/compromissos', auth, requireAgenda, async (req, res) => {
   try {
     const { titulo, descricao, data, hora, local, categoria, cor, lembrete_ativo, lembrete_antecedencia } = req.body;
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Titulo obrigatorio' });
@@ -912,7 +930,7 @@ router.post('/compromissos', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.put('/compromissos/:id', auth, requireGrow, async (req, res) => {
+router.put('/compromissos/:id', auth, requireAgenda, async (req, res) => {
   try {
     const allowed = ['titulo', 'descricao', 'data', 'hora', 'local', 'categoria', 'cor', 'lembrete_ativo', 'lembrete_antecedencia'];
     const patch = { updated_at: new Date().toISOString() };
@@ -930,7 +948,7 @@ router.put('/compromissos/:id', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-router.delete('/compromissos/:id', auth, requireGrow, async (req, res) => {
+router.delete('/compromissos/:id', auth, requireAgenda, async (req, res) => {
   try {
     await supabase.from('compromissos').delete()
       .eq('id', req.params.id).eq('user_id', req.userRow.id);
@@ -942,7 +960,7 @@ router.delete('/compromissos/:id', auth, requireGrow, async (req, res) => {
 // Lógica em src/services/agendaFeed.js (reutilizada pelo briefing matinal).
 const { montarFeed, isoLocal } = require('../services/agendaFeed');
 
-router.get('/agenda/feed/:phone', auth, requireGrow, async (req, res) => {
+router.get('/agenda/feed/:phone', auth, requireAgenda, async (req, res) => {
   try {
     const hoje = new Date();
     const de  = req.query.de  || isoLocal(new Date(hoje.getTime() - 31 * 86400000));
@@ -955,7 +973,7 @@ router.get('/agenda/feed/:phone', auth, requireGrow, async (req, res) => {
 
 // ─── AGENDA: briefing matinal (opt-in) ───────────────────────────────
 // Lê/grava de forma tolerante: se a migration 036 não rodou, não quebra.
-router.get('/agenda/briefing/:phone', auth, requireGrow, async (req, res) => {
+router.get('/agenda/briefing/:phone', auth, requireAgenda, async (req, res) => {
   try {
     const { data } = await supabase.from('users')
       .select('agenda_briefing_ativo, agenda_briefing_horario')
@@ -966,7 +984,7 @@ router.get('/agenda/briefing/:phone', auth, requireGrow, async (req, res) => {
   }
 });
 
-router.post('/agenda/briefing', auth, requireGrow, async (req, res) => {
+router.post('/agenda/briefing', auth, requireAgenda, async (req, res) => {
   try {
     const patch = {};
     if ('ativo' in req.body)   patch.agenda_briefing_ativo = !!req.body.ativo;
