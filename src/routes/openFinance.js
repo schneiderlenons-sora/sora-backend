@@ -540,8 +540,20 @@ async function diagnosticoCelcoin(req, res) {
   // se o emissor não tem histórico, se o endpoint recusou, ou se o id está
   // errado. Sem cartão, sem conta, sem empréstimo: só o que decide essa tela.
   const soInvestimentos = req.query.foco === 'investimentos';
+  // ?foco=dividas — só EMPRÉSTIMOS e FINANCIAMENTOS, com o cronograma que
+  // decide a data da próxima parcela. Existe porque o card de dívida mostra
+  // "próxima parcela em N dias" derivando do `dia_vencimento` e do calendário:
+  // pra dívida do Open Finance não há pagamento registrado na Sora (as pagas
+  // vêm do banco como CONTAGEM, não como registro), então não dá pra saber
+  // daqui se a divergência é a contagem do emissor ou o cronograma real.
+  //
+  // ⚠️ Este foco imprime o cronograma MESMO SEM `?cru=1`: é justamente ele o
+  // objeto da investigação, e pedir dois parâmetros pra ver o que se veio ver
+  // só faz o diagnóstico falhar na primeira tentativa.
+  const soDividas = req.query.foco === 'dividas' || req.query.foco === 'emprestimos';
   const out = { consentId: id, hoje,
                 foco: soInvestimentos ? 'investimentos'
+                    : soDividas ? 'dividas'
                     : soSaldo ? 'saldo' : soCartoes ? 'cartoes' : 'completo',
                 contas: [], cartoes: [], dividas: [], investimentos: [] };
 
@@ -554,13 +566,13 @@ async function diagnosticoCelcoin(req, res) {
   try { out.resources = await celcoin.listarResources(id); }
   catch (e) { out.resources_erro = e.message; }
 
-  if (!soCartoes && !soSaldo && !soInvestimentos) {
+  if (!soCartoes && !soSaldo && !soInvestimentos && !soDividas) {
     try { out.sync_schedules = await celcoin.syncSchedules(id); }
     catch (e) { out.sync_schedules_erro = e.message; }
   }
 
   // CONTAS
-  if (!soCartoes && !soInvestimentos) try {
+  if (!soCartoes && !soInvestimentos && !soDividas) try {
     for (const raw of await celcoin.listarContas(id)) {
       const item = { normalizado: sync.normalizeConta(raw) };
       if (cru) item.cru = raw;
@@ -613,7 +625,7 @@ async function diagnosticoCelcoin(req, res) {
   } catch (e) { out.contas_erro = e.message; }
 
   // CARTÕES — o ponto mais crítico (fatura, fechamento, vencimento, limite)
-  if (!soSaldo && !soInvestimentos) try {
+  if (!soSaldo && !soInvestimentos && !soDividas) try {
     for (const raw of await celcoin.listarCartoes(id)) {
       const bills = await celcoin.listarFaturas(raw.id).catch(() => []);
       const n = sync.normalizeCartao(raw, bills, hoje);
@@ -886,10 +898,46 @@ async function diagnosticoCelcoin(req, res) {
   } catch (e) { out.cartoes_erro = e.message; }
 
   // EMPRÉSTIMOS / FINANCIAMENTOS → viram Dívidas
-  if (!soCartoes && !soSaldo && !soInvestimentos) for (const [kind, fn] of [["emprestimo", "listarEmprestimos"], ["financiamento", "listarFinanciamentos"]]) {
+  if (soDividas || (!soCartoes && !soSaldo && !soInvestimentos)) for (const [kind, fn] of [["emprestimo", "listarEmprestimos"], ["financiamento", "listarFinanciamentos"]]) {
     try {
       for (const raw of await celcoin[fn](id)) {
         const item = { kind, normalizado: sync.normalizeDivida(raw, kind) };
+
+        // O CRONOGRAMA, lado a lado com o que a Sora conclui dele. São os
+        // campos que respondem "por que o card diz dia X": a data da 1ª
+        // parcela (de onde sai o dia_vencimento), o último vencimento e as
+        // contagens do emissor.
+        //
+        // ⚠️ paid_instalments JÁ SE PROVOU NÃO CONFIÁVEL — num caso real o
+        // emissor informou 11 de 48 pagas num contrato de DOIS meses, com o
+        // saldo devedor MAIOR que o valor contratado. Por isso vai junto o
+        // meses_desde_o_contrato: é o teto aritmético do que pode ter sido
+        // pago, e passar dele prova que a contagem errada é a do banco.
+        if (soDividas) {
+          const c = raw.contract || {};
+          const sch = raw.scheduled_instalments || {};
+          const pay = raw.payments || {};
+          const ini = String(c.contract_date || '').slice(0, 10);
+          const mesesDesde = ini
+            ? (Number(hoje.slice(0, 4)) - Number(ini.slice(0, 4))) * 12
+              + (Number(hoje.slice(5, 7)) - Number(ini.slice(5, 7)))
+            : null;
+          const pagas = Number(sch.paid_instalments ?? pay.paid_instalments ?? 0);
+          item.cronograma = {
+            contract_date: c.contract_date || null,
+            first_instalment_due_date: c.first_instalment_due_date || null,
+            due_date: c.due_date || null,
+            next_instalment_amount: c.next_instalment_amount || null,
+            total_number_of_instalments: sch.total_number_of_instalments ?? null,
+            paid_instalments: sch.paid_instalments ?? pay.paid_instalments ?? null,
+            past_due_instalments: sch.past_due_instalments ?? null,
+            contract_outstanding_balance: pay.contract_outstanding_balance ?? null,
+            contract_amount: c.contract_amount ?? null,
+            meses_desde_o_contrato: mesesDesde,
+            contagem_impossivel: mesesDesde != null && pagas > mesesDesde,
+          };
+        }
+
         if (cru) item.cru = raw;
         out.dividas.push(item);
       }
@@ -898,7 +946,7 @@ async function diagnosticoCelcoin(req, res) {
 
   // INVESTIMENTOS (5 famílias) → viram linhas na aba Investimentos
   // (a mais cara do diagnóstico: 5 endpoints, cada um paginado)
-  if (!soCartoes && !soSaldo) try {
+  if (!soCartoes && !soSaldo && !soDividas) try {
     for (const raw of await celcoin.listarInvestimentos(id)) {
       const n = sync.normalizeInvestimento(raw);
       const item = { familia: raw.__familia, path: raw.__path, of_id: String(raw.id), normalizado: n };
