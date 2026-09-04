@@ -70,8 +70,15 @@ function exigirPlano(...planosPermitidos) {
       // uma linha esquecida cairia fora da lista e perderia acesso a tudo.
       let planoAtual = normalizarPlano(user.plano);
 
-      // Expira o plano automaticamente se valido_ate for passado
-      if (planoAtual !== 'inativo' && user.plano_valido_ate) {
+      // Expira o plano automaticamente se valido_ate for passado.
+      //
+      // ⚠️ `gratis` FICA DE FORA, junto do `inativo`. O modo manual não vence,
+      // e nada deveria gravar `plano_valido_ate` nele — mas se algo gravar
+      // (import, escrita manual no Supabase, rota futura), o usuário viraria
+      // `inativo` sozinho e cairia no paywall sem ter cancelado nada. Barato
+      // de proteger aqui, caro de descobrir depois.
+      const venceAlgumDia = planoAtual !== 'inativo' && planoAtual !== 'gratis';
+      if (venceAlgumDia && user.plano_valido_ate) {
         if (new Date(user.plano_valido_ate) < new Date()) {
           planoAtual = 'inativo';
           // Atualiza em background sem bloquear a requisição.

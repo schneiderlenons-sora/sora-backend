@@ -12,7 +12,11 @@
 // black esquecido perderia TODAS as features de uma vez.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PLANOS = ['inativo', 'basico', 'kit', 'premium', 'platinum'];
+// ⚠️ 'gratis' (migration 156) = modo manual: o painel do Básico MENOS WhatsApp,
+// Saúde, Open Finance, Drive, Wrapped, Agenda e Agentes. NÃO confundir com
+// 'inativo', que é paywall — os dois existem separados pra o /admin não contar
+// como churn quem nunca pagou.
+const PLANOS = ['inativo', 'gratis', 'basico', 'kit', 'premium', 'platinum'];
 
 /** Black → premium (equivalentes desde sempre). Valor desconhecido → inativo. */
 function normalizarPlano(plano) {
@@ -47,8 +51,24 @@ function temNegocios(user) {
 /** Planos com acesso ao Sora Grow completo (saúde, estudos, casa, coleções). */
 const GROW_COMPLETO = ['premium', 'platinum'];
 
-/** Planos com acesso base ao Grow (hábitos, tarefas, agenda, bem-estar). */
-const GROW_BASE = ['basico', 'premium', 'platinum'];
+/**
+ * Planos com acesso base ao Grow (hábitos, tarefas, bem-estar).
+ *
+ * ⚠️ 'gratis' ENTRA AQUI, e a Agenda sai por checagem própria. O modo manual
+ * mantém hábitos, tarefas e bem-estar; se ele ficasse fora desta lista o
+ * `requireGrow` trancaria a seção inteira, que não é o combinado.
+ */
+const GROW_BASE = ['gratis', 'basico', 'premium', 'platinum'];
+
+/**
+ * Planos que enxergam a AGENDA do Grow.
+ *
+ * ⚠️ Existe só pra excluir o 'gratis'. Espelha a feature `grow_agenda` de
+ * `lib/plans.ts` — que também é uma lista de "todo mundo menos gratis",
+ * porque a aba hoje é aberta a qualquer plano e restringi-la a Premium
+ * tiraria a Agenda de quem já paga.
+ */
+const GROW_AGENDA = ['basico', 'premium', 'platinum'];
 
 /** Premium ou acima — o degrau que libera OCR, Drive, compartilhamento etc. */
 function ehPremiumOuAcima(plano) {
@@ -58,6 +78,7 @@ function ehPremiumOuAcima(plano) {
 module.exports = {
   PLANOS,
   GROW_BASE,
+  GROW_AGENDA,
   GROW_COMPLETO,
   normalizarPlano,
   temNegocios,

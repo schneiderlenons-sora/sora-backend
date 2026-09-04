@@ -123,8 +123,13 @@ router.post('/trocar', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// Limite de membros por plano
-const LIMITE_MEMBROS = { inativo: 1, basico: 1, premium: 5, platinum: 5 };
+// Limite de membros por plano.
+//
+// Todo plano está listado de propósito, mesmo os que valem 1: os dois usos
+// abaixo caem em `|| 1`, então plano faltando funcionava por acidente — e
+// bastaria alguém trocar o fallback pra virar bug silencioso. `kit` e
+// `gratis` não compartilham: gestão em grupo é Premium pra cima.
+const LIMITE_MEMBROS = { inativo: 1, gratis: 1, basico: 1, kit: 1, premium: 5, platinum: 5 };
 
 // POST /criar — cria um novo grupo (somente premium/platinum)
 router.post('/criar', auth, async (req, res) => {
