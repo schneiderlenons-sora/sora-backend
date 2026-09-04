@@ -934,8 +934,25 @@ async function diagnosticoCelcoin(req, res) {
             contract_outstanding_balance: pay.contract_outstanding_balance ?? null,
             contract_amount: c.contract_amount ?? null,
             meses_desde_o_contrato: mesesDesde,
-            contagem_impossivel: mesesDesde != null && pagas > mesesDesde,
           };
+
+          // ⚠️ OS DOIS OBJETOS CRUS, E NÃO UM RESUMO MEU.
+          //
+          // A primeira versão deste diagnóstico resumiu os campos que EU achava
+          // que importavam — e colapsou `scheduled_instalments.paid_instalments`
+          // com `payments.paid_instalments` num campo só, além de omitir
+          // `releases[]`. Foi o bastante pra eu derivar a próxima parcela da
+          // contagem errada e mandar pro ar um card dizendo "em 214 dias".
+          //
+          // `releases[]` é o que realmente responde a pergunta: ela traz
+          // `paidDate`, `paidAmount`, `instalmentId` e `isOverParcelPayment` —
+          // ou seja, QUAIS parcelas foram quitadas e quando, que é exatamente o
+          // registro de pagamento que falta na Sora pra dívida de Open Finance.
+          // São objetos pequenos; despejar inteiros custa nada e evita mais uma
+          // ida e volta.
+          item.scheduled_instalments_cru = sch;
+          item.payments_cru = pay;
+
         }
 
         if (cru) item.cru = raw;
