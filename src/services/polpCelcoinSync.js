@@ -128,6 +128,63 @@ function somaMeses(inicio, n, teto) {
   return teto && out > teto ? teto : out;
 }
 
+/**
+ * Índices das parcelas JÁ QUITADAS, lidos de `payments.releases[]`.
+ *
+ * ⚠️ O FORMATO NÃO ESTÁ NA DOC — foi medido no payload real. `instalmentId`
+ * é o ÍNDICE da parcela (base 0) CONCATENADO com o `paymentId`:
+ *
+ *   instalmentId "3569fdee3e-2180-…"  =  índice 35  +  paymentId "69fdee3e-2180-…"
+ *
+ * Por isso o índice sai tirando o `paymentId` do fim, e não pegando os
+ * dígitos da frente: o uuid começa com dígito com frequência, e "0" seguido
+ * de "69fdee24…" leria como índice 69. Se o sufixo não casar, a release é
+ * IGNORADA — formato desconhecido não vira palpite.
+ *
+ * Um mesmo pagamento pode quitar várias parcelas (medido: um `paymentId`
+ * aparecendo em 3 releases, índices 17, 18 e 19), daí o Set.
+ */
+function indicesPagos(releases) {
+  const fora = new Set();
+  for (const r of releases || []) {
+    const id = String((r && r.instalmentId) || "");
+    const pid = String((r && r.paymentId) || "");
+    if (!id || !pid || !id.endsWith(pid)) continue;
+    const prefixo = id.slice(0, id.length - pid.length);
+    if (!prefixo.length || prefixo.length > 4) continue;
+    let digitos = true;
+    for (const ch of prefixo) if (ch < "0" || ch > "9") digitos = false;
+    if (!digitos) continue;
+    fora.add(Number(prefixo));
+  }
+  return fora;
+}
+
+/**
+ * Vencimento da PRÓXIMA parcela em aberto.
+ *
+ * ⚠️ NÃO É `primeira + quantidade de pagas`. Essa foi a versão que subiu
+ * errada e anunciou "próxima parcela em 214 dias": ela assume que as pagas
+ * são as N PRIMEIRAS, e não são. Quem antecipa no Nubank amortiza pelo FIM —
+ * medido nesta conta, um contrato de 36 parcelas com 8 pagas tinha os índices
+ * 0, 1 e 30..35 quitados. A próxima é a de índice 2, não a de índice 8.
+ *
+ * A regra certa é o MENOR índice que ninguém pagou.
+ *
+ * Sem release nenhuma devolve null: aí o painel volta a derivar do calendário,
+ * que é o comportamento de sempre. Melhor não afirmar do que afirmar errado.
+ */
+function proximaParcelaAberta(releases, primeira, total, ultima) {
+  if (!primeira) return null;
+  const pagos = indicesPagos(releases);
+  if (!pagos.size) return null;
+  let i = 0;
+  while (pagos.has(i)) i += 1;
+  const limite = Number(total) || 0;
+  if (limite && i >= limite) return null;   // não sobrou parcela em aberto
+  return somaMeses(primeira, i, ultima);
+}
+
 // ── Categoria: taxonomia Celcoin → categorias da Sora (v3) ──────────────────
 // A descrição da transação decide primeiro (pega marca BR: iFood, Netflix…);
 // este mapa entra como 2ª opção, e é bem mais preciso que adivinhar.
@@ -1663,17 +1720,21 @@ function normalizeDivida(item, kind) {
   // ANTECIPAÇÃO. Quem adianta parcelas fica com a próxima meses à frente,
   // enquanto o calendário segue apontando o mês que vem — foi exatamente o
   // relato ("vence só dia 06/10" contra "em 2 dias" na tela).
-  // ⚠️ DESLIGADO. A derivacao `first_instalment_due_date + paid_instalments`
-  // ESTA ERRADA e foi pro ar: num contrato com 1a parcela em 06/08/2026 e
-  // `paid_instalments` = 8 ela devolveu 06/04/2027 — o card passou a dizer
-  // "proxima parcela em 214 dias", pior que os 30 dias de erro do bug
-  // original. Ou seja, `paid_instalments` NAO e o numero de parcelas do
-  // cronograma ja liquidadas; e outra coisa (a doc lista tambem
-  // `payments.paid_instalments` e `payments.releases[]` com `paidDate` e
-  // `isOverParcelPayment`, o que sugere contagem de PAGAMENTOS, nao de
-  // parcelas). Sem o payload real na mao, qualquer formula aqui e chute — e
-  // ja custou duas regressoes.
-  const proximoVenc = null;
+  // ── PRÓXIMA PARCELA, PELO CRONOGRAMA DO EMISSOR (migration 154) ─────────
+  //
+  // O card derivava a data do calendário — "a próxima ocorrência do dia N que
+  // ainda não passou". Isso é o melhor possível numa dívida lançada à mão e
+  // erra aqui, porque a Sora não registra pagamento de dívida do Open Finance
+  // (as pagas chegam do banco como contagem) e ANTECIPAÇÃO é comum: o cliente
+  // adianta parcelas e a próxima pula meses à frente.
+  //
+  // ⚠️ E AMORTIZAR NÃO É PAGAR AS PRIMEIRAS. No Nubank a antecipação quita as
+  // ÚLTIMAS parcelas: medido nesta conta, 8 pagas de 36 eram os índices 0, 1 e
+  // 30..35. Por isso a data sai do MENOR índice em aberto (2 → 06/10/2026, que
+  // é o que o app do banco mostra) e não de "primeira + 8", que dava 06/04/2027.
+  const proximoVenc = proximaParcelaAberta(
+    pay.releases, ymd(c.first_instalment_due_date), totalParcelas, ymd(c.due_date),
+  );
 
   // Saldo devedor REAL do banco (antes calculávamos restantes × parcela).
   const saldoDevedor = money(pay.contract_outstanding_balance);

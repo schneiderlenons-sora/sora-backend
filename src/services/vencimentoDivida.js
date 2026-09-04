@@ -90,23 +90,30 @@ function proximoVencimento(divida, hoje = hojeSP()) {
   if (!dia || dia < 1 || dia > 31) return null;
   if (divida.status === 'quitada') return null;
 
-  // ⚠️ AQUI MOROU UMA REGRESSÃO — ler antes de tentar de novo.
+  // ── A DATA DO BANCO VENCE A DERIVAÇÃO POR CALENDÁRIO (migration 154) ────
   //
-  // A ideia era: dívida do Open Finance tem o cronograma no emissor, então a
-  // data dele deveria vencer a derivação por calendário. A ideia continua de
-  // pé; a DERIVAÇÃO é que estava errada. Calculei
-  // `first_instalment_due_date + paid_instalments meses` e num contrato com
-  // 1ª parcela em 06/08/2026 e 8 "pagas" isso deu 06/04/2027: o card passou a
-  // anunciar "próxima parcela em 214 dias" onde o banco diz 06/10 — erro MAIOR
-  // que o bug original, que era de um mês.
+  // Relato: "a próxima parcela vence dia 06 de OUTUBRO" contra "em 2 dias"
+  // na tela. O resto desta função deriva a data do calendário — a próxima
+  // ocorrência do dia N que ainda não passou —, que é o melhor possível numa
+  // dívida lançada à mão e errado numa do Open Finance: lá o emissor conhece
+  // o cronograma e a Sora não registra pagamento nenhum.
   //
-  // Ou seja, `paid_instalments` NÃO é "quantas parcelas do cronograma já
-  // foram liquidadas". Antes de religar isto é preciso ver o payload real
-  // (/api/admin/of-debug com foco=dividas) e descobrir o que ele conta — a doc
-  // também expõe `payments.releases[]` com `paidDate` e `isOverParcelPayment`,
-  // o que sugere contagem de PAGAMENTOS, não de parcelas.
+  // ⚠️ ANTECIPAÇÃO é o caso que o calendário nunca acerta — e a primeira
+  // tentativa de resolver isso também errou, por supor que as parcelas pagas
+  // fossem as N PRIMEIRAS. No Nubank a antecipação amortiza pelo FIM: 8 pagas
+  // de 36 eram os índices 0, 1 e 30..35. Quem calcula a data é
+  // `proximaParcelaAberta` no sync (menor índice em aberto); aqui só se
+  // CONSOME o resultado.
   //
-  // Até lá vale o calendário abaixo, que erra por semanas e não por meses.
+  // ⚠️ Só vale enquanto a data NÃO PASSOU. Cronograma de banco envelhece (sync
+  // parado, parcela vencida e não paga), e exibir data no passado como "a
+  // próxima" seria pior do que voltar a derivar do calendário.
+  const doBanco = divida && divida.proximo_vencimento
+    ? String(divida.proximo_vencimento).slice(0, 10)
+    : null;
+  if (doBanco && doBanco >= hoje) {
+    return { data: doBanco, dias: diffDias(hoje, doBanco), quitadaNoCiclo: false, fonte: 'banco' };
+  }
 
   const { Y, M } = partes(hoje);
 
