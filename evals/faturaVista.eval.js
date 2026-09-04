@@ -280,6 +280,47 @@ console.log('── 6. simulado igual ao limite usado ──');
 }
 console.log('  ok');
 
+  // ── 7. PAGAMENTO NO CICLO QUE O SIMULADO NÃO CONHECE ────────────────────
+  //
+  // RELATO: fatura do Mercado Pago R$ 3.363,39 na Sora contra R$ 908,31 no
+  // app do banco. Quem reproduz o banco AO CENTAVO é a NOSSA soma do ciclo
+  // (3.763,01) menos o pagamento de 2.854,70 feito em 01/09 — o simulado não
+  // desconta esse pagamento e ainda conta a partir de um fechamento velho.
+  //
+  // ⚠️ ESTE BLOCO EXISTE PRA IMPEDIR A CORREÇÃO INGÊNUA. Trocar o simulado
+  // pela nossa conta SEMPRE que houver pagamento quebra 3 dos 4 cartões que
+  // a base tem nessa situação — os três casos abaixo são os reais.
+  console.log('── 7. pagamento no ciclo × simulado ──');
+  {
+    const cartao = (saldo) => ({ ...CARTAO_OF, saldo });
+
+    // (a) O caso do relato: nossa soma é MAIOR que o simulado (não falta nada)
+    //     e o pagamento cabe na fatura → usa a nossa conta.
+    const a = await valorExibido(cartao(-3363.39), '2026-09', st(3763.01, 2854.70), semDeps);
+    eq(a.restante, 908.31, 'usa a nossa conta e bate com o app do banco');
+    eq(a.fonte, 'ciclo-pago', 'e diz de onde veio');
+
+    // (b) `platinum`: nossa soma é 4× MENOR que o simulado — nos falta
+    //     lançamento, o banco sabe mais. Trocar aqui levaria 6.005,07 pra
+     //    1.574,99 e esconderia R$ 4,4 mil de fatura.
+    const b = await valorExibido(cartao(-6005.07), '2026-09', st(1604.98, 29.99), semDeps);
+    eq(b.restante, 6005.07, 'soma menor que o simulado → mantém o banco');
+    eq(b.fonte, 'simulada', 'e continua marcada como simulada');
+
+    // (c) `gold`: o pagamento registrado é MAIOR que o ciclo inteiro — sinal
+    //     de que ele quitou a fatura ANTERIOR. Descontar aqui zeraria uma
+    //     fatura que existe.
+    const c = await valorExibido(cartao(-1381.16), '2026-09', st(1409.12, 1793.62), semDeps);
+    eq(c.restante, 1381.16, 'pagamento maior que o ciclo → mantém o banco');
+
+    // (d) Sem pagamento nenhum na competência nada muda — é o caminho de 24
+    //     dos 28 cartões que caem neste ramo.
+    const d = await valorExibido(cartao(-3363.39), '2026-09', st(3763.01, 0), semDeps);
+    eq(d.restante, 3363.39, 'sem pagamento → simulado intocado');
+    eq(d.fonte, 'simulada', 'sem pagamento → fonte segue simulada');
+  }
+  console.log('  ok');
+
 } // fim do main
 
 // ── Resultado ────────────────────────────────────────────────────────────

@@ -137,10 +137,49 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
       //
       // A regra: o banco é a FONTE. A projeção não corrige a fonte, ela só
       // preenche onde a fonte não existe (ramo 3, abaixo).
-      fatura   = cent(-cartao.saldo);
-      pago     = 0;                          // simulado já é líquido de pagamentos
-      restante = fatura;
-      fonte    = 'simulada';
+      const simulado = cent(-cartao.saldo);
+
+      // ── EXCEÇÃO MEDIDA: pagamento no ciclo que o simulado não conhece ────
+      //
+      // RELATO: fatura do Mercado Pago R$ 3.363,39 na Sora contra R$ 908,31
+      // no app do banco. A conta que reproduz o banco AO CENTAVO é a NOSSA:
+      // soma do ciclo 3.763,01 − pagamento de 2.854,70 feito em 01/09.
+      //
+      // Duas coisas quebram o simulado aqui. Ele não desconta esse pagamento
+      // — a premissa de que "já vem líquido" vale pra fatura PUBLICADA, não
+      // pra ele. E a janela dele está ancorada num fechamento VELHO: a
+      // diferença de R$ 399,62 pra nossa soma é exatamente as compras de 09 a
+      // 11/08, ou seja ele conta a partir de 12/08 (o ciclo antigo do MP, que
+      // fechava dia 12) enquanto o cartão hoje fecha dia 8.
+      //
+      // ⚠️ O GUARD É ESTREITO PORQUE A VERSÃO INGÊNUA QUEBRA 3 DE 4 CARTÕES.
+      // Medido na base: 28 cartões caem neste ramo, 4 têm pagamento na
+      // competência. Trocar em todos levaria `platinum` de 6.005,07 pra
+      // 1.574,99 (nossa soma é 4× menor — nos falta lançamento, o simulado
+      // sabe mais) e zeraria `gold` e outro `Mercado Pago`, onde o pagamento
+      // registrado é MAIOR que o ciclo inteiro, sinal de que ele quitou a
+      // fatura anterior. As duas condições abaixo separam exatamente esses:
+      //
+      //   · soma >= simulado → não estamos perdendo lançamento nenhum;
+      //   · 0 < pago <= soma → o pagamento cabe NESTA fatura.
+      //
+      // Com elas, dos 4 só o do relato muda — e vai pro número do banco.
+      // Mantém de pé a regra deste arquivo: o banco é a fonte, e a nossa
+      // conta só entra onde ela é comprovadamente mais completa.
+      const somaCompleta = st.fatura >= simulado - 0.005;
+      const pagoCabe     = st.pago > 0.005 && st.pago <= st.fatura + 0.005;
+
+      if (somaCompleta && pagoCabe) {
+        fatura   = cent(st.fatura);
+        pago     = cent(st.pago);
+        restante = Math.max(0, cent(fatura - pago));
+        fonte    = 'ciclo-pago';
+      } else {
+        fatura   = simulado;
+        pago     = 0;                        // simulado já é líquido de pagamentos
+        restante = fatura;
+        fonte    = 'simulada';
+      }
     } else if (deps.parcelasPrevistas) {
       // ── 3. Nem publicada nem simulada (fatura futura): soma do ciclo mais as
       //      parcelas que só o banco conhece.
