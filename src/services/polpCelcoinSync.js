@@ -95,6 +95,39 @@ function diaDoMes(iso) {
   return d >= 1 && d <= 31 ? d : null;
 }
 
+/**
+ * Soma `n` meses a uma data ISO, com CLAMP no último dia do mês e teto opcional.
+ *
+ * ⚠️ CLAMP, NÃO ROLLOVER. `new Date(2026, 0, 31)` + 1 mês vira 03/03 no JS,
+ * porque 31/02 não existe e a data "transborda". Parcela que vence dia 31
+ * vence em 28/02 — é a mesma regra que o ciclo de fatura e o vencimento de
+ * dívida já seguem, e ela existe porque 10 cartões da base fecham 29/30/31.
+ *
+ * `teto` é o último vencimento do contrato: a próxima parcela nunca pode cair
+ * depois da última: se a contagem de pagas passar do total (o emissor erra
+ * isso, e antecipação inflaciona), o resultado seria uma data inventada anos
+ * à frente.
+ */
+function somaMeses(inicio, n, teto) {
+  // Validação sem regex de propósito: a data vem do emissor e só interessa
+  // que ela seja YYYY-MM-DD parseável.
+  const iso = String(inicio || '').slice(0, 10);
+  if (iso.length !== 10 || Number.isNaN(Date.parse(iso))) return null;
+  const meses = Number(n);
+  if (!Number.isFinite(meses) || meses < 0) return null;
+
+  const Y = Number(iso.slice(0, 4));
+  const M = Number(iso.slice(5, 7)) - 1 + meses;
+  const dia = Number(iso.slice(8, 10));
+  const ano = Y + Math.floor(M / 12);
+  const mes = ((M % 12) + 12) % 12;
+  const ultimo = new Date(Date.UTC(ano, mes + 1, 0)).getUTCDate();
+  const d = String(Math.min(dia, ultimo)).padStart(2, '0');
+  const out = `${ano}-${String(mes + 1).padStart(2, '0')}-${d}`;
+
+  return teto && out > teto ? teto : out;
+}
+
 // ── Categoria: taxonomia Celcoin → categorias da Sora (v3) ──────────────────
 // A descrição da transação decide primeiro (pega marca BR: iFood, Netflix…);
 // este mapa entra como 2ª opção, e é bem mais preciso que adivinhar.
@@ -1574,8 +1607,35 @@ const INDEXADOR_DIVIDA = {
  * `kind` = 'emprestimo' | 'financiamento'.
  * Devolve `null` se não houver valor contratado (a tabela exige valor_total > 0).
  */
+/**
+ * ⚠️ CAMPOS DO CONTRATO NA RAIZ; `contract` É LEGADO.
+ *
+ * A doc da Celcoin é explícita: "contract legado — preferir os campos do
+ * contrato na raiz" e "contract, warranties, scheduled_instalments e payments
+ * PODEM SER NULL se ainda não sincronizados". Este ponto lia SÓ o legado, e
+ * quando ele vinha vazio ou defasado a dívida perdia as datas do cronograma
+ * de uma vez — inclusive a da 1ª parcela, de onde sai o dia de vencimento.
+ *
+ * É a MESMA armadilha que já tinha custado os investimentos (produtoDe lê raiz
+ * primeiro, legado como último recurso). Aqui só faltava aplicar.
+ */
+function contratoDe(item) {
+  const legado = item.contract || {};
+  const CAMPOS = [
+    'contract_number', 'ipoc_code', 'product_name', 'product_type', 'product_sub_type',
+    'product_sub_type_category', 'contract_date', 'contract_amount', 'instalment_periodicity',
+    'cet', 'amortization_scheduled', 'interest_rates', 'contracted_fees',
+    'contracted_finance_charges', 'disbursement_dates', 'settlement_date', 'currency',
+    'due_date', 'first_instalment_due_date', 'next_instalment_amount',
+    'has_insurance_contracted', 'cnpj_consignee',
+  ];
+  const out = {};
+  for (const k of CAMPOS) out[k] = item[k] ?? legado[k] ?? null;
+  return out;
+}
+
 function normalizeDivida(item, kind) {
-  const c   = item.contract || {};
+  const c   = contratoDe(item);
   const sch = item.scheduled_instalments || {};
   const pay = item.payments || {};
 
@@ -1591,6 +1651,19 @@ function normalizeDivida(item, kind) {
   const vencidas = Number(sch.past_due_instalments) || 0;
 
   const status = c.settlement_date ? 'quitada' : vencidas > 0 ? 'em_atraso' : 'ativa';
+
+  // ── PRÓXIMA PARCELA, PELO CRONOGRAMA DO EMISSOR (migration 154) ──────────
+  //
+  // Sem isto o card derivava a data de "próxima ocorrência do dia N no
+  // calendário", que é o melhor possível numa dívida lançada à mão e ERRADO
+  // aqui: o banco conhece o cronograma e a Sora não registra pagamento
+  // nenhum (as pagas chegam como CONTAGEM, não como registro).
+  //
+  // ⚠️ E o caso que quebra o calendário é o mais comum em empréstimo:
+  // ANTECIPAÇÃO. Quem adianta parcelas fica com a próxima meses à frente,
+  // enquanto o calendário segue apontando o mês que vem — foi exatamente o
+  // relato ("vence só dia 06/10" contra "em 2 dias" na tela).
+  const proximoVenc = somaMeses(ymd(c.first_instalment_due_date), pagas, ymd(c.due_date));
 
   // Saldo devedor REAL do banco (antes calculávamos restantes × parcela).
   const saldoDevedor = money(pay.contract_outstanding_balance);
@@ -1620,6 +1693,7 @@ function normalizeDivida(item, kind) {
     taxa_juros: cetParaMensal(c.cet),
     indexador: INDEXADOR_DIVIDA[(taxaIndexador || '').toString().toUpperCase()] || null,
     dia_vencimento: diaDoMes(c.first_instalment_due_date) || diaDoMes(c.due_date),
+    proximo_vencimento: proximoVenc,
     data_inicio: ymd(c.contract_date),
     data_quitacao: ymd(c.settlement_date),
     status,
@@ -2306,10 +2380,17 @@ async function upsertDivida(grupoId, userId, d) {
     data_quitacao: d.data_quitacao, status: d.status, observacao: d.observacao,
   };
 
+  // ⚠️ SEPARADO do `base` de propósito: a coluna é da migration 154 e, se ela
+  // ainda não rodou, mencioná-la faria o upsert inteiro falhar e a dívida
+  // sumir do painel. Mesma lição da 138 (detalhes do investimento) e da 120.
+  const extra = d.proximo_vencimento ? { proximo_vencimento: d.proximo_vencimento } : {};
+  const semColuna = (e) => /proximo_vencimento/i.test(e && e.message || '');
+
   const { data: ja } = await supabase.from('dividas')
     .select('id').eq('grupo_id', grupoId).eq('of_id', d.externalId).maybeSingle();
   if (ja) {
-    await supabase.from('dividas').update(base).eq('id', ja.id);
+    const { error } = await supabase.from('dividas').update({ ...base, ...extra }).eq('id', ja.id);
+    if (error && semColuna(error)) await supabase.from('dividas').update(base).eq('id', ja.id);
     return 'atualizada';
   }
 
@@ -2325,15 +2406,22 @@ async function upsertDivida(grupoId, userId, d) {
   // e o lembrete que o usuário já tinha continuam valendo.
   const gemea = await gemeaManual(grupoId, d);
   if (gemea) {
-    await supabase.from('dividas')
-      .update({ ...base, of_id: d.externalId, of_provider: PROVIDER, origem: 'of' })
-      .eq('id', gemea.id);
+    const of = { of_id: d.externalId, of_provider: PROVIDER, origem: 'of' };
+    const { error } = await supabase.from('dividas')
+      .update({ ...base, ...extra, ...of }).eq('id', gemea.id);
+    if (error && semColuna(error)) {
+      await supabase.from('dividas').update({ ...base, ...of }).eq('id', gemea.id);
+    }
     return 'adotada';
   }
 
-  const row = { ...base, of_id: d.externalId, of_provider: PROVIDER, origem: 'of' };
+  const row = { ...base, ...extra, of_id: d.externalId, of_provider: PROVIDER, origem: 'of' };
   if (userId) row.criado_por = userId;
   let { error } = await supabase.from('dividas').insert(row);
+  if (error && semColuna(error)) {
+    const { proximo_vencimento: _pv, ...semPv } = row;
+    ({ error } = await supabase.from('dividas').insert(semPv));
+  }
   if (error && /of_id|of_provider|origem/i.test(error.message || '')) {
     // Migration 100 ainda não rodou: grava sem os campos OF (sem dedup, mas o
     // usuário vê a dívida). O aviso sai no retorno do sync.
