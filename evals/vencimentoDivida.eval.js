@@ -16,7 +16,7 @@
 // Rodar:  npm run eval:vencimento-divida
 // =============================================================================
 const {
-  proximoVencimento, vencimentoCoberto, ocorrencia, diffDias,
+  proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, emAtraso,
 } = require('../src/services/vencimentoDivida');
 
 const falhas = [];
@@ -162,6 +162,34 @@ console.log('── 7. ritmo mensal ao longo do ano ──');
   eq(new Set(meses).size, 12, 'pagando todo mês, cada vencimento cai num mês diferente (sem repetir nem pular)');
   eq(datas[0], '2026-01-10', 'começa em janeiro');
   eq(datas[11], '2026-12-10', 'termina em dezembro');
+}
+console.log('  ok');
+
+// ── 8. emAtraso: o BADGE do card ─────────────────────────────────────────
+//
+// BUG DE ORIGEM: quatro dívidas pagas no mesmo dia continuavam com o selo
+// "EM ATRASO" enquanto a linha logo abaixo, no MESMO card, dizia
+// "Parcela paga · próxima em 36 dias". O selo lia a coluna `status`, que o
+// cron escrevia e ninguém nunca apagava.
+//
+// ⚠️ E O TESTE ÓBVIO ESTÁ ERRADO: usar `quitadaNoCiclo` aqui só limparia o
+// selo de quem pagou ADIANTADO. Quem paga NO DIA ou COM ATRASO — exatamente
+// quem acabou de se acertar e vai olhar o selo — continuaria marcado.
+console.log('── 8. emAtraso (selo do card) ──');
+{
+  const casos = [
+    ['pagou adiantado, antes de vencer',      { dia_vencimento: 10, ultimo_pagamento: '2026-09-04' }, '2026-09-04', false],
+    ['pagou mês passado, este ainda não veio', { dia_vencimento: 10, ultimo_pagamento: '2026-08-07' }, '2026-09-04', false],
+    ['pagou NO DIA do vencimento',            { dia_vencimento: 10, ultimo_pagamento: '2026-09-10' }, '2026-09-10', false],
+    ['pagou ATRASADO (se acertou hoje)',      { dia_vencimento: 10, ultimo_pagamento: '2026-09-15' }, '2026-09-15', false],
+    ['atraso REAL: último pgto cobre 10/07',  { dia_vencimento: 10, ultimo_pagamento: '2026-07-07' }, '2026-09-04', true],
+    ['sem pagamento registrado (Open Finance)', { dia_vencimento: 10, ultimo_pagamento: null },       '2026-09-04', false],
+    ['quitada nunca atrasa',                  { dia_vencimento: 10, ultimo_pagamento: '2020-01-01', status: 'quitada' }, '2026-09-04', false],
+    ['antes da 1ª parcela (contrato deste mês)', { dia_vencimento: 10, data_inicio: '2026-09-01', ultimo_pagamento: '2026-09-02' }, '2026-09-20', false],
+  ];
+  for (const [nome, divida, hoje, esperado] of casos) {
+    eq(emAtraso(divida, hoje), esperado, `emAtraso — ${nome}`);
+  }
 }
 console.log('  ok');
 

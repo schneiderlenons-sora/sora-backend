@@ -4,7 +4,7 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta } = require('../services/contaDebito');
-const { proximoVencimento, ultimoPagamentoPorDivida, hojeSP } = require('../services/vencimentoDivida');
+const { proximoVencimento, ultimoPagamentoPorDivida, hojeSP, emAtraso } = require('../services/vencimentoDivida');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -238,7 +238,35 @@ router.post('/:id/pagar', auth, exigirPermissao('admin', 'escrita'), async (req,
     // Atualiza contadores
     const novasPagas = (divida.parcelas_pagas || 0) + (tipo === 'antecipacao' ? 1 : (tipo === 'juros_atraso' ? 0 : 1));
     const totalParcelas = divida.parcelas_total || 0;
-    const novoStatus = totalParcelas > 0 && novasPagas >= totalParcelas ? 'quitada' : divida.status;
+
+    // ⚠️ 'em_atraso' ERA UMA FLAG DE MÃO ÚNICA. O cron a escrevia (jobs/index.js)
+    // e NADA nunca a apagava: aqui o status simplesmente se preservava
+    // (`: divida.status`), então uma dívida marcada em atraso continuava
+    // "EM ATRASO" pra sempre depois de paga — até ser quitada por inteiro.
+    // O card, logo abaixo do badge, já dizia "Parcela paga · próxima em Nd",
+    // porque a LINHA usa `proximoVencimento` e o BADGE lia a coluna crua. Duas
+    // regras pro mesmo fato, se contradizendo no mesmo cartão.
+    //
+    // Agora o badge passa a sair da MESMA fonte canônica que a linha:
+    // `quitadaNoCiclo` = o pagamento cobriu a parcela do ciclo corrente.
+    let novoStatus = divida.status;
+    if (totalParcelas > 0 && novasPagas >= totalParcelas) {
+      novoStatus = 'quitada';
+    } else if (divida.status === 'em_atraso') {
+      try {
+        // Relê o último pagamento em vez de confiar no que veio no corpo: o
+        // helper já exclui `juros_atraso` (pagar juros não anda parcela, logo
+        // não pode tirar ninguém do atraso) e pega o MAIOR, não o mais recente
+        // inserido — registrar um pagamento antigo não pode "despiorar" nada.
+        const mapa = await ultimoPagamentoPorDivida([req.params.id]);
+        const alvo = { ...divida, parcelas_pagas: novasPagas, ultimo_pagamento: mapa[req.params.id] };
+        if (!emAtraso(alvo)) novoStatus = 'ativa';
+      } catch (e) {
+        // Falhar aqui não pode derrubar o registro do pagamento — no pior caso
+        // o badge continua como estava.
+        console.warn('[dividas/pagar] status:', e.message);
+      }
+    }
     const dataQuitacao = novoStatus === 'quitada' ? new Date().toISOString().slice(0, 10) : null;
 
     const { data: atualizada } = await supabase.from('dividas').update({

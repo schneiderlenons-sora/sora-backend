@@ -151,7 +151,45 @@ async function ultimoPagamentoPorDivida(ids) {
   return mapa;
 }
 
+/**
+ * A dívida está ATRASADA hoje? — ou seja: existe uma parcela que JÁ VENCEU e
+ * cujo pagamento nunca foi registrado.
+ *
+ * ⚠️ NÃO CONFUNDIR COM `proximoVencimento().quitadaNoCiclo`. Aquele responde
+ * "o pagamento cobriu a parcela que ainda vai vencer", que só é verdade pra
+ * quem pagou ADIANTADO. Usá-lo como teste de atraso deixava marcado quem pagou
+ * NO DIA ou COM ATRASO — que são justamente os casos em que a pessoa acabou de
+ * se acertar e olha pro badge esperando ver que se acertou.
+ *
+ * A comparação é entre duas ocorrências do mesmo `dia`:
+ *   · `ultimaVencida` — a última que já passou (hoje conta como vencida);
+ *   · `coberta`       — qual delas o último pagamento quitou
+ *                        (`vencimentoCoberto`, a mesma regra do card).
+ * Em dia quando `coberta >= ultimaVencida`.
+ *
+ * Sem pagamento registrado devolve `false`: é o caso de TODA dívida do Open
+ * Finance (as parcelas pagas vêm do banco como contagem, não como registro), e
+ * afirmar atraso sem prova nenhuma seria alarme falso.
+ */
+function emAtraso(divida, hoje = hojeSP()) {
+  const dia = Number(divida && divida.dia_vencimento);
+  if (!dia || dia < 1 || dia > 31) return false;
+  if (divida.status === 'quitada') return false;
+
+  const pago = divida.ultimo_pagamento ? String(divida.ultimo_pagamento).slice(0, 10) : null;
+  if (!pago) return false;
+
+  const { Y, M } = partes(hoje);
+  let ultimaVencida = ocorrencia(Y, M, dia);
+  if (ultimaVencida > hoje) ultimaVencida = ocorrencia(Y, M - 1, dia);
+
+  // A 1ª parcela nunca vence no mês do contrato — antes disso não há atraso.
+  if (divida.data_inicio && ultimaVencida <= String(divida.data_inicio).slice(0, 10)) return false;
+
+  return vencimentoCoberto(pago, dia) < ultimaVencida;
+}
+
 module.exports = {
   proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, ultimoDiaDoMes, hojeSP,
-  ultimoPagamentoPorDivida,
+  ultimoPagamentoPorDivida, emAtraso,
 };
