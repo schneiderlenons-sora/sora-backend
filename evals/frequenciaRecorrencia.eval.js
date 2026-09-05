@@ -8,7 +8,7 @@
 // Rodar:  npm run eval:frequencia
 // =============================================================================
 const {
-  venceHoje, lembreteHoje, calcularDataFim, ultimoDiaDoMes,
+  venceHoje, lembreteHoje, calcularDataFim, ultimoDiaDoMes, primeiraOcorrencia,
 } = require('../src/services/frequenciaRecorrencia');
 
 const falhas = [];
@@ -151,6 +151,89 @@ console.log('── 8. lembrete com antecedência ──');
   // Atravessa o mês: 2 dias antes do dia 1 de outubro é 29/09.
   eq(lembreteHoje({ dia_vencimento: 1, lembrete_dias: 2 }, '2026-09-29'), true,
     'a antecedência atravessa o mês');
+}
+console.log('  ok');
+
+// ── 9. A DURAÇÃO ENTREGA O NÚMERO PEDIDO ───────────────────────────────────
+//
+// ⚠️ ESTA É A SEÇÃO QUE PEGOU UM BUG REAL. As §5 e §6 conferiam a data final
+// isoladamente e passavam — mas ninguém contava QUANTAS VEZES a recorrência
+// dispara de fato entre o início e essa data. Medido antes do conserto:
+// "3x" semanal disparava 2 e "12x" mensal disparava 11. Sempre a ÚLTIMA
+// parcela, que é justo a que a pessoa lembraria de conferir.
+console.log('── 9. duração: N escolhido = N disparos ──');
+{
+  /** Conta os disparos reais varrendo dia a dia por 4 anos. */
+  const contar = (rec, inicio) => {
+    let n = 0;
+    const [y, m, d] = inicio.split('-').map(Number);
+    for (let i = 0; i < 1461; i += 1) {
+      const dt = new Date(y, m - 1, d + i);
+      const s = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      if (venceHoje(rec, s)) n += 1;
+    }
+    return n;
+  };
+
+  const casos = [
+    // [rótulo, frequencia, repeticoes, dataInicio, diaVencimento, diaSemana, mesVencimento]
+    ['semanal 3x criada numa SEXTA, alvo segunda', 'semanal', 3, '2026-09-04', null, 1, null],
+    ['semanal 3x criada no PRÓPRIO dia alvo',      'semanal', 3, '2026-09-07', null, 1, null],
+    ['semanal 12x',                                'semanal', 12, '2026-09-04', null, 5, null],
+    ['mensal 12x com o dia JÁ PASSADO no mês',     'mensal', 12, '2026-09-20', 5,  null, null],
+    ['mensal 12x com o dia AINDA POR VIR',         'mensal', 12, '2026-09-02', 5,  null, null],
+    ['mensal 12x criada NO próprio dia',           'mensal', 12, '2026-09-05', 5,  null, null],
+    ['mensal 6x dia 31 (atravessa fevereiro)',     'mensal', 6,  '2026-01-15', 31, null, null],
+    ['mensal 1x',                                  'mensal', 1,  '2026-09-20', 5,  null, null],
+    ['anual 3x com o mês JÁ PASSADO',              'anual', 3,  '2026-09-01', 10, null, 3],
+    ['anual 3x com o mês AINDA POR VIR',           'anual', 3,  '2026-01-01', 10, null, 3],
+  ];
+
+  for (const [rotulo, frequencia, repeticoes, dataInicio, diaVencimento, diaSemana, mesVencimento] of casos) {
+    const data_fim = calcularDataFim({
+      frequencia, repeticoes, dataInicio, diaVencimento, diaSemana, mesVencimento,
+    });
+    const rec = {
+      frequencia,
+      dia_vencimento: diaVencimento,
+      dia_semana: diaSemana,
+      mes_vencimento: mesVencimento,
+      data_inicio: dataInicio,
+      data_fim,
+    };
+    eq(contar(rec, dataInicio), repeticoes, `${rotulo} (fim ${data_fim})`);
+  }
+
+  // ⚠️ "Sempre" não pode ganhar data de fim por acidente — seria a conta fixa
+  //    da pessoa parando sozinha um dia.
+  eq(calcularDataFim({ frequencia: 'mensal', repeticoes: null, dataInicio: '2026-09-20', diaVencimento: 5 }),
+    null, 'sem repetições continua sendo pra sempre');
+}
+console.log('  ok');
+
+// ── 10. `primeiraOcorrencia` ────────────────────────────────────────────────
+console.log('── 10. primeira ocorrência ──');
+{
+  eq(primeiraOcorrencia({ frequencia: 'semanal', dataInicio: '2026-09-04', diaSemana: 1 }),
+    '2026-09-07', 'sexta → a segunda seguinte');
+  eq(primeiraOcorrencia({ frequencia: 'semanal', dataInicio: '2026-09-07', diaSemana: 1 }),
+    '2026-09-07', 'no próprio dia alvo, é hoje (não a semana que vem)');
+  eq(primeiraOcorrencia({ frequencia: 'mensal', dataInicio: '2026-09-20', diaVencimento: 5 }),
+    '2026-10-05', 'dia já passado → mês seguinte');
+  eq(primeiraOcorrencia({ frequencia: 'mensal', dataInicio: '2026-09-05', diaVencimento: 5 }),
+    '2026-09-05', 'no próprio dia, é hoje');
+  // ⚠️ Vira o ano: dezembro + 1 mês é JANEIRO do ano seguinte, não o mês 13.
+  eq(primeiraOcorrencia({ frequencia: 'mensal', dataInicio: '2026-12-20', diaVencimento: 5 }),
+    '2027-01-05', 'dezembro vira janeiro do ano seguinte');
+  // ⚠️ Clamp na primeira ocorrência também: dia 31 em fevereiro é 28.
+  eq(primeiraOcorrencia({ frequencia: 'mensal', dataInicio: '2026-02-01', diaVencimento: 31 }),
+    '2026-02-28', 'dia 31 em fevereiro cai no último dia');
+  eq(primeiraOcorrencia({ frequencia: 'anual', dataInicio: '2026-09-01', diaVencimento: 10, mesVencimento: 3 }),
+    '2027-03-10', 'mês já passado → ano seguinte');
+  // Sem o campo que a frequência exige, cai na data de início — que é o
+  // comportamento antigo, e é o que mantém a regressão em zero.
+  eq(primeiraOcorrencia({ frequencia: 'semanal', dataInicio: '2026-09-04' }),
+    '2026-09-04', 'semanal sem dia_semana volta pra data de início');
 }
 console.log('  ok');
 

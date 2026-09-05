@@ -80,18 +80,24 @@ async function criarRecorrencia({
   // lançamento manual ou um restore. A data é imutável depois de escrita.
   const hojeSP = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   const freq = ['semanal', 'mensal', 'anual'].includes(frequencia) ? frequencia : 'mensal';
+  const diaSem = freq === 'semanal' ? Math.max(0, Math.min(6, parseInt(dia_semana, 10) || 0)) : null;
+  const mesVen = freq === 'anual'   ? Math.max(1, Math.min(12, parseInt(mes_vencimento, 10) || 1)) : null;
   const extra157 = {
     frequencia: freq,
-    dia_semana:     freq === 'semanal' ? Math.max(0, Math.min(6, parseInt(dia_semana, 10) || 0)) : null,
-    mes_vencimento: freq === 'anual'   ? Math.max(1, Math.min(12, parseInt(mes_vencimento, 10) || 1)) : null,
+    dia_semana:     diaSem,
+    mes_vencimento: mesVen,
     repeticoes:     Number(repeticoes) > 0 ? Math.min(999, parseInt(repeticoes, 10)) : null,
     lembrete_dias:  Math.max(0, Math.min(30, parseInt(lembrete_dias, 10) || 0)),
     data_inicio:    hojeSP,
+    // ⚠️ `diaSemana`/`mesVencimento` VÃO JUNTO: sem eles a data final conta
+    // a partir de HOJE em vez da primeira ocorrência, e "12x" entrega 11.
     data_fim: calcularDataFim({
       frequencia: freq,
       repeticoes,
       dataInicio: hojeSP,
       diaVencimento: base.dia_vencimento,
+      diaSemana: diaSem,
+      mesVencimento: mesVen,
     }),
   };
 

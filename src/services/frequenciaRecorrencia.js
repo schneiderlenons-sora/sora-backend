@@ -101,27 +101,84 @@ function venceHoje(rec, hojeStr) {
   return diaBate(rec.dia_vencimento, hojeStr);
 }
 
-/**
- * Data em que a recorrência deve PARAR, a partir do número de repetições.
- *
- * Devolve `null` para "sempre" — e null é o default, então nada muda para quem
- * já existe.
- */
-function calcularDataFim({ frequencia, repeticoes, dataInicio, diaVencimento }) {
-  const n = Number(repeticoes);
-  if (!Number.isFinite(n) || n <= 0) return null;      // sempre
+/** Junta ano/mês/dia numa string ISO. */
+function iso(ano, mes, dia) {
+  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+}
 
+/**
+ * PRIMEIRA vez que esta recorrência vai disparar, a partir de `dataInicio`.
+ *
+ * ⚠️ É O ANCORADOURO DA DURAÇÃO, e ignorá-lo custava uma repetição INTEIRA.
+ * Medido: conta fixa do dia 5 criada no dia 20 (o dia 5 deste mês já passou)
+ * marcada como "12x" disparava 11 vezes; semanal "3x" criada numa sexta com
+ * alvo na segunda disparava 2. A pessoa escolhe um número e recebe outro —
+ * e o que fica faltando é a última parcela, que é justamente a que ela
+ * lembraria de conferir.
+ *
+ * Sem o campo que a frequência exige (`diaSemana` no semanal, `mesVencimento`
+ * no anual), devolve a própria `dataInicio`: é o comportamento antigo, e é o
+ * que mantém os casos que já existiam idênticos.
+ */
+function primeiraOcorrencia({ frequencia, dataInicio, diaVencimento, diaSemana, mesVencimento }) {
   const base = String(dataInicio || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) return null;
   const { ano, mes, dia } = partes(base);
   const freq = frequencia || 'mensal';
 
-  // A ÚLTIMA ocorrência é a de índice n-1 a partir do início.
+  if (freq === 'semanal') {
+    const alvo = Number(diaSemana);
+    if (!Number.isInteger(alvo) || alvo < 0 || alvo > 6) return base;
+    const adiante = (alvo - diaDaSemana(base) + 7) % 7;   // 0 = hoje mesmo
+    const d = new Date(ano, mes - 1, dia + adiante);
+    return iso(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  }
+
+  if (freq === 'anual') {
+    const mAlvo = Number(mesVencimento);
+    if (!Number.isInteger(mAlvo) || mAlvo < 1 || mAlvo > 12) return base;
+    const dAlvo = Number(diaVencimento) || dia;
+    const candidato = iso(ano, mAlvo, Math.min(dAlvo, ultimoDiaDoMes(ano, mAlvo)));
+    if (candidato >= base) return candidato;
+    return iso(ano + 1, mAlvo, Math.min(dAlvo, ultimoDiaDoMes(ano + 1, mAlvo)));
+  }
+
+  const dAlvo = Number(diaVencimento) || dia;
+  const candidato = iso(ano, mes, Math.min(dAlvo, ultimoDiaDoMes(ano, mes)));
+  if (candidato >= base) return candidato;
+  const proxAno = mes === 12 ? ano + 1 : ano;
+  const proxMes = mes === 12 ? 1 : mes + 1;
+  return iso(proxAno, proxMes, Math.min(dAlvo, ultimoDiaDoMes(proxAno, proxMes)));
+}
+
+/**
+ * Data em que a recorrência deve PARAR, a partir do número de repetições.
+ *
+ * Devolve `null` para "sempre" — e null é o default, então nada muda para quem
+ * já existe.
+ *
+ * ⚠️ Conta a partir da PRIMEIRA OCORRÊNCIA, não da data de criação. Ver a
+ * nota em `primeiraOcorrencia`.
+ */
+function calcularDataFim({
+  frequencia, repeticoes, dataInicio, diaVencimento, diaSemana, mesVencimento,
+}) {
+  const n = Number(repeticoes);
+  if (!Number.isFinite(n) || n <= 0) return null;      // sempre
+
+  const primeira = primeiraOcorrencia({
+    frequencia, dataInicio, diaVencimento, diaSemana, mesVencimento,
+  });
+  if (!primeira) return null;
+  const { ano, mes, dia } = partes(primeira);
+  const freq = frequencia || 'mensal';
+
+  // A ÚLTIMA ocorrência é a de índice n-1 a partir da primeira.
   const passos = n - 1;
 
   if (freq === 'semanal') {
     const d = new Date(ano, mes - 1, dia + passos * 7);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return iso(d.getFullYear(), d.getMonth() + 1, d.getDate());
   }
 
   const mesesAdiante = freq === 'anual' ? passos * 12 : passos;
@@ -131,9 +188,8 @@ function calcularDataFim({ frequencia, repeticoes, dataInicio, diaVencimento }) 
   // Mesmo clamp do disparo: dia 31 em fevereiro vira o último dia.
   const alvo = Number(diaVencimento) || dia;
   const diaFim = Math.min(alvo, ultimoDiaDoMes(anoFim, mesFim));
-  return `${anoFim}-${String(mesFim).padStart(2, '0')}-${String(diaFim).padStart(2, '0')}`;
+  return iso(anoFim, mesFim, diaFim);
 }
-
 /**
  * O lembrete desta recorrência sai hoje?
  *
@@ -152,6 +208,6 @@ function lembreteHoje(rec, hojeStr) {
 }
 
 module.exports = {
-  venceHoje, lembreteHoje, calcularDataFim, jaTerminou,
+  venceHoje, lembreteHoje, calcularDataFim, jaTerminou, primeiraOcorrencia,
   diaBate, diaDaSemana, ultimoDiaDoMes,
 };

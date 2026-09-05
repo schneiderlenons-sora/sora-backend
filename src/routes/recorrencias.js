@@ -148,7 +148,7 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     // ⚠️ Select tolerante: pedir colunas da 157 antes da migration derruba a
     // leitura inteira, e com ela a propagação de categoria que já funcionava.
     let { data: antes } = await supabase.from('recorrencias')
-      .select('categoria, descricao, dia_vencimento, frequencia, repeticoes, data_inicio')
+      .select('categoria, descricao, dia_vencimento, frequencia, repeticoes, data_inicio, dia_semana, mes_vencimento')
       .eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
     if (!antes) ({ data: antes } = await supabase.from('recorrencias')
       .select('categoria, descricao, dia_vencimento')
@@ -188,6 +188,10 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
         repeticoes: patch157.repeticoes,
         dataInicio: (antes?.data_inicio && String(antes.data_inicio).slice(0, 10)) || hojeSP,
         diaVencimento: patch.dia_vencimento ?? antes?.dia_vencimento,
+        // ⚠️ Sem estes dois a contagem parte da data de criação, não da
+        // primeira ocorrência — e "12x" vira 11.
+        diaSemana: patch157.dia_semana ?? antes?.dia_semana,
+        mesVencimento: patch157.mes_vencimento ?? antes?.mes_vencimento,
       });
     }
 
