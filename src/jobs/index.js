@@ -1,4 +1,5 @@
 const cron      = require('node-cron');
+const { venceHoje, lembreteHoje } = require('../services/frequenciaRecorrencia');
 const { CATEGORIA_FATURA } = require('../services/categorizar');
 const supabase  = require('../db/supabase');
 const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageiro');
@@ -323,13 +324,25 @@ cron.schedule('0 * * * *', async () => {
   const ymSP   = sp.dataStr.slice(0, 7);       // 'YYYY-MM'
   if (horaSP >= 8 && horaSP <= 10) {
     const [ySP, mSP] = sp.dataStr.split('-').map(Number);
-    const diaHojeSP  = mSP && sp.dataStr ? parseInt(sp.dataStr.slice(8, 10), 10) : 1;
-    const diasNoMes  = new Date(ySP, mSP, 0).getDate();
-    const diasAlvo   = [diaHojeSP];
-    if (diaHojeSP === diasNoMes) for (let d = diaHojeSP + 1; d <= 31; d++) diasAlvo.push(d);
+    // ⚠️ A QUERY NÃO FILTRA MAIS POR DIA, e essa é a mudança que permitiu
+    // frequência semanal e anual existirem: com `.in('dia_vencimento', …)` o
+    // BANCO decidia quem vencia hoje, e nenhuma recorrência semanal seria
+    // sequer carregada. Quem julga agora é `venceHoje`, em
+    // `services/frequenciaRecorrencia.js`, com eval próprio comparando 11.315
+    // combinações contra a regra antiga — zero divergências.
+    //
+    // O custo é trazer as ativas da base inteira uma vez por hora na janela da
+    // manhã. Medido: 324 linhas. Se um dia isso pesar, o filtro volta pro
+    // banco como um `or(...)` por frequência, não como o `in` de antes.
+    const { data: todasRecorrencias } = await supabase
+      .from('recorrencias').select('*').eq('ativa', true);
 
-    const { data: recorrencias } = await supabase
-      .from('recorrencias').select('*').in('dia_vencimento', diasAlvo).eq('ativa', true);
+    // Duas perguntas diferentes no mesmo dia: quem VENCE hoje (lança/avisa) e
+    // quem só precisa de AVISO ANTECIPADO (`lembrete_dias`).
+    const recorrencias = (todasRecorrencias || []).filter((r) => venceHoje(r, sp.dataStr));
+    const avisosAntecipados = (todasRecorrencias || []).filter(
+      (r) => !venceHoje(r, sp.dataStr) && lembreteHoje(r, sp.dataStr),
+    );
 
     // Acumula por telefone → UMA mensagem. Um balde por MODO, porque o que a
     // Sora promete é diferente em cada um e prometer errado a faz parecer
@@ -338,9 +351,12 @@ cron.schedule('0 * * * *', async () => {
     //   aguardando → 'prever': lançou como previsão, o valor final vem do banco;
     //   soLembrete → 'nao_lancar': ela NÃO lançou nada, só está avisando;
     //   confirmar  → variável: precisa que o usuário responda o valor.
+    //   antecipados→ `lembrete_dias`: ainda NÃO venceu, é aviso com antecedência.
     const porPhone = new Map();
     const bucket = (p) => {
-      if (!porPhone.has(p)) porPhone.set(p, { lancados: [], confirmar: [], aguardando: [], soLembrete: [] });
+      if (!porPhone.has(p)) {
+        porPhone.set(p, { lancados: [], confirmar: [], aguardando: [], soLembrete: [], antecipados: [] });
+      }
       return porPhone.get(p);
     };
 
@@ -468,8 +484,30 @@ cron.schedule('0 * * * *', async () => {
 
     // UMA mensagem por telefone: o que a Sora lançou + o que falta confirmar.
     const money = (v) => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    for (const [phone, { lancados, confirmar, aguardando, soLembrete }] of porPhone) {
-      if (!lancados.length && !confirmar.length && !aguardando.length && !soLembrete.length) continue;
+    // ── AVISO ANTECIPADO (`lembrete_dias`, migration 157) ──────────────────
+    //
+    // ⚠️ NÃO LANÇA NADA. A conta ainda não venceu — o ponto de avisar antes é
+    // dar tempo de fazer algo (transferir, cancelar, negociar). Lançar aqui
+    // debitaria o saldo dias antes de o dinheiro sair de verdade.
+    //
+    // Dedup pelo MESMO `ultimo_lembrete_dia` do modo "não lançar": os dois
+    // nunca caem no mesmo dia (um é o vencimento, o outro é N dias antes),
+    // então uma coluna só resolve — e o cron roda 3× na janela da manhã.
+    for (const rec of avisosAntecipados) {
+      if (rec.ultimo_lembrete_dia === sp.dataStr) continue;
+      const phoneA = await phoneDoUser(rec.criado_por, rec.grupo_id);
+      if (!phoneA || !(await avisosLigados(rec.criado_por))) continue;
+      bucket(phoneA).antecipados.push({
+        descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo,
+        dias: Number(rec.lembrete_dias) || 0,
+      });
+      try {
+        await supabase.from('recorrencias').update({ ultimo_lembrete_dia: sp.dataStr }).eq('id', rec.id);
+      } catch { /* tolerante: no pior caso o aviso repete na próxima hora */ }
+    }
+
+    for (const [phone, { lancados, confirmar, aguardando, soLembrete, antecipados }] of porPhone) {
+      if (!lancados.length && !confirmar.length && !aguardando.length && !soLembrete.length && !antecipados.length) continue;
       const partes = [];
       if (lancados.length) {
         partes.push('✅ *Lancei automaticamente:*');
@@ -490,6 +528,22 @@ cron.schedule('0 * * * *', async () => {
         if (partes.length) partes.push('');
         partes.push('🔔 *Vence hoje* (não lancei — só te lembrando):');
         for (const it of soLembrete) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${money(it.valor)}`);
+      }
+      if (antecipados.length) {
+        // ⚠️ AGRUPADO POR PRAZO. Duas contas podem cair no mesmo aviso com
+        // antecedências diferentes (uma "3 dias antes", outra "7 dias antes");
+        // um cabeçalho só, tirado do primeiro item, dataria a segunda errado —
+        // e prazo errado num aviso de conta é pior do que não avisar.
+        const porPrazo = new Map();
+        for (const it of antecipados) {
+          if (!porPrazo.has(it.dias)) porPrazo.set(it.dias, []);
+          porPrazo.get(it.dias).push(it);
+        }
+        for (const d of [...porPrazo.keys()].sort((a, b) => a - b)) {
+          if (partes.length) partes.push('');
+          partes.push(`⏳ *Vence em ${d} ${d === 1 ? 'dia' : 'dias'}* (pra você se organizar):`);
+          for (const it of porPrazo.get(d)) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${money(it.valor)}`);
+        }
       }
       if (confirmar.length) {
         if (partes.length) partes.push('');
@@ -1145,7 +1199,7 @@ cron.schedule('0 9 * * *', async () => {
 
     // Janelas: 3 dias antes, no dia, ou atrasada (>=1 dia depois do venc do mês passado)
     let mensagem = null;
-    let venceHoje = false;
+    let dividaVenceHoje = false;
     // Campos do template `baleone_divida` — montados no MESMO ramo da mensagem
     // pra assunto, prazo e ação nunca discordarem do texto rico.
     // {{1}} assunto · {{2}} abertura · {{3}} dívida · {{4}} parcela · {{5}} prazo · {{6}} ação
@@ -1165,7 +1219,7 @@ cron.schedule('0 9 * * *', async () => {
         acaoDivida,
       ];
     } else if (diffDias === 0) {
-      venceHoje = true; // o "vence hoje" é do briefing; aqui só se briefing off (ver abaixo)
+      dividaVenceHoje = true; // o "vence hoje" é do briefing; aqui só se briefing off (ver abaixo)
       mensagem = `🚨 *VENCE HOJE*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : 'sem valor de parcela'}\n\nNão esqueça! Para pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*`;
       camposDivida = [
         'Dívida vence hoje',
@@ -1214,7 +1268,7 @@ cron.schedule('0 9 * * *', async () => {
       if (!(await avisosLigados(m.id))) continue; // kill-switch
       // "Vence hoje" é do briefing matinal — se ligado, não duplica aqui (só
       // antecedência de 3 dias e atraso seguem no cron). Briefing off → manda.
-      if (venceHoje && await briefingLigado(m.id)) continue;
+      if (dividaVenceHoje && await briefingLigado(m.id)) continue;
       await lembrete(m.phone, mensagem, null, {
         id: 'don-baleone', aviso: 'dividas', seed: d.id,
         campos: camposDivida,

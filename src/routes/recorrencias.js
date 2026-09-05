@@ -74,7 +74,9 @@ router.get('/:phone', auth, async (req, res) => {
       .order('dia_vencimento', { ascending: true });
     // Tolerante às migrations 066 (valor_variavel) e 112 (modo/lembrete):
     // tenta com tudo e vai tirando o que o banco ainda não tem.
-    let { data, error } = await listar(`${cols}, valor_variavel, modo_lancamento, lembrete`);
+    const c157 = 'frequencia, dia_semana, mes_vencimento, repeticoes, data_inicio, data_fim, lembrete_dias';
+    let { data, error } = await listar(`${cols}, valor_variavel, modo_lancamento, lembrete, ${c157}`);
+    if (error) ({ data, error } = await listar(`${cols}, valor_variavel, modo_lancamento, lembrete`));
     if (error) ({ data, error } = await listar(`${cols}, valor_variavel`));
     if (error) ({ data, error } = await listar(cols));
     if (error) throw error;
@@ -84,6 +86,15 @@ router.get('/:phone', auth, async (req, res) => {
       ...r,
       modo_lancamento: r.modo_lancamento || 'lancar',
       lembrete: r.lembrete === undefined || r.lembrete === null ? true : r.lembrete,
+      // Migration 157. ⚠️ Os defaults DESCREVEM o comportamento de sempre —
+      // mensal, para sempre, avisa no dia — pra a tela não desenhar controle
+      // vazio (que a pessoa leria como "não configurado") antes da migration.
+      frequencia:     r.frequencia || 'mensal',
+      dia_semana:     r.dia_semana ?? null,
+      mes_vencimento: r.mes_vencimento ?? null,
+      repeticoes:     r.repeticoes ?? null,
+      data_fim:       r.data_fim ?? null,
+      lembrete_dias:  r.lembrete_dias ?? 0,
     })));
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -94,6 +105,7 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     const {
       tipo, categoria, valor, dia_vencimento, descricao, carteira, valor_variavel,
       modo_lancamento, lembrete,
+      frequencia, dia_semana, mes_vencimento, repeticoes, lembrete_dias,
     } = req.body;
     const { criarRecorrencia } = require('../services/recorrencias');
     const row = await criarRecorrencia({
@@ -101,6 +113,7 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       criadoPor: req.authUser?.id || req.userId || null,
       tipo, categoria, valor, dia_vencimento, descricao, carteira, valor_variavel,
       modo_lancamento, lembrete,
+      frequencia, dia_semana, mes_vencimento, repeticoes, lembrete_dias,
     });
     res.json(row);
   } catch (err) { res.status(500).json({ erro: err.message }); }
@@ -116,7 +129,10 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 // assim um ajuste manual naquela transação específica é preservado).
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { categoria, valor, dia_vencimento, descricao, carteira, modo_lancamento, lembrete } = req.body;
+    const {
+      categoria, valor, dia_vencimento, descricao, carteira, modo_lancamento, lembrete,
+      frequencia, dia_semana, mes_vencimento, repeticoes, lembrete_dias,
+    } = req.body;
     const MODOS = ['lancar', 'prever', 'nao_lancar'];
     const patch = {};
     if (valor !== undefined)          patch.valor          = parseFloat(valor) || 0;
@@ -129,8 +145,51 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (lembrete !== undefined) patch112.lembrete = !!lembrete;
 
     // Estado ANTES da edição — precisamos da categoria/descrição antigas.
-    const { data: antes } = await supabase.from('recorrencias')
-      .select('categoria, descricao').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+    // ⚠️ Select tolerante: pedir colunas da 157 antes da migration derruba a
+    // leitura inteira, e com ela a propagação de categoria que já funcionava.
+    let { data: antes } = await supabase.from('recorrencias')
+      .select('categoria, descricao, dia_vencimento, frequencia, repeticoes, data_inicio')
+      .eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+    if (!antes) ({ data: antes } = await supabase.from('recorrencias')
+      .select('categoria, descricao, dia_vencimento')
+      .eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle());
+
+    // ── Migration 157 ──────────────────────────────────────────────────────
+    const patch157 = {};
+    if (frequencia !== undefined && ['semanal', 'mensal', 'anual'].includes(frequencia)) {
+      patch157.frequencia = frequencia;
+      // ⚠️ Trocar de frequência tem de LIMPAR o campo da outra. Uma semanal que
+      // virou mensal com o `dia_semana` sobrando dispararia toda semana pra
+      // sempre: a coluna velha continuaria casando dentro de `venceHoje`.
+      if (frequencia !== 'semanal') patch157.dia_semana = null;
+      if (frequencia !== 'anual')   patch157.mes_vencimento = null;
+    }
+    if (dia_semana !== undefined && dia_semana !== null) {
+      patch157.dia_semana = Math.max(0, Math.min(6, parseInt(dia_semana, 10) || 0));
+    }
+    if (mes_vencimento !== undefined && mes_vencimento !== null) {
+      patch157.mes_vencimento = Math.max(1, Math.min(12, parseInt(mes_vencimento, 10) || 1));
+    }
+    if (lembrete_dias !== undefined) {
+      patch157.lembrete_dias = Math.max(0, Math.min(30, parseInt(lembrete_dias, 10) || 0));
+    }
+
+    // ⚠️ `data_fim` é DERIVADA, nunca vem do cliente — e sai da `data_inicio`
+    // ORIGINAL, não de hoje. Recalcular a partir de hoje faria "12x" reiniciar
+    // a contagem a cada edição: uma recorrência que já rodou 10 meses ganharia
+    // mais 12 sem ninguém ter pedido.
+    if (repeticoes !== undefined || frequencia !== undefined) {
+      const { calcularDataFim } = require('../services/frequenciaRecorrencia');
+      const hojeSP = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      const reps = repeticoes !== undefined ? repeticoes : antes?.repeticoes;
+      patch157.repeticoes = Number(reps) > 0 ? Math.min(999, parseInt(reps, 10)) : null;
+      patch157.data_fim = calcularDataFim({
+        frequencia: patch157.frequencia || antes?.frequencia || 'mensal',
+        repeticoes: patch157.repeticoes,
+        dataInicio: (antes?.data_inicio && String(antes.data_inicio).slice(0, 10)) || hojeSP,
+        diaVencimento: patch.dia_vencimento ?? antes?.dia_vencimento,
+      });
+    }
 
     // ⚠️ Categoria passa pela validação contra o CATÁLOGO do grupo. Sem isso,
     // salvar um nome que não existe (herdado do rebuild 084→087) fazia o
@@ -139,12 +198,17 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
       const { categoriaValida } = require('../services/recorrencias');
       patch.categoria = await categoriaValida(req.grupoId, categoria || 'Outros');
     }
-    if (!Object.keys(patch).length && !Object.keys(patch112).length) return res.json({ ok: true });
+    if (!Object.keys(patch).length && !Object.keys(patch112).length && !Object.keys(patch157).length) {
+      return res.json({ ok: true });
+    }
 
     const salvar = (p) => supabase.from('recorrencias').update(p)
       .eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
-    let { data, error } = await salvar({ ...patch, ...patch112 });
-    // Migration 112 pendente: grava o resto em vez de derrubar a edição inteira.
+    // ⚠️ Cascata de MIGRATION PENDENTE, do mais completo pro mais antigo: sem a
+    // 157 (ou sem a 112) o que dá pra salvar é salvo, em vez de a edição inteira
+    // ser recusada por um erro de coluna que o usuário não tem como interpretar.
+    let { data, error } = await salvar({ ...patch, ...patch112, ...patch157 });
+    if (error && Object.keys(patch157).length) ({ data, error } = await salvar({ ...patch, ...patch112 }));
     if (error && /modo_lancamento|lembrete/i.test(error.message || '') && Object.keys(patch).length) {
       ({ data, error } = await salvar(patch));
     }

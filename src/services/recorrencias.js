@@ -8,6 +8,7 @@
 // =====================================================================
 const supabase = require('../db/supabase');
 const { categorizarDescricao } = require('./categorizar');
+const { calcularDataFim } = require('./frequenciaRecorrencia');
 
 /**
  * Confere se a categoria EXISTE no catálogo do grupo; se não, tenta sem o
@@ -41,6 +42,7 @@ async function categoriaValida(grupoId, nome) {
 async function criarRecorrencia({
   grupoId, criadoPor, tipo, categoria, valor, dia_vencimento, descricao, carteira, valor_variavel,
   modo_lancamento, lembrete,
+  frequencia, dia_semana, mes_vencimento, repeticoes, lembrete_dias,
 }) {
   const ehReceita = tipo === 'Recebimento';
   const desc = (descricao || '').toString().slice(0, 120);
@@ -69,8 +71,36 @@ async function criarRecorrencia({
   // a Sora não precisa inventar linha); o resto nasce 'lancar', como sempre foi.
   const modo = { modo_lancamento: modo_lancamento || await modoPadrao(grupoId, carteira), lembrete: lembrete !== false };
 
+  // ── Frequência, duração e antecedência (migration 157) ────────────────────
+  //
+  // ⚠️ O QUE O CRON CONSULTA É `data_fim`, NÃO `repeticoes`. As duas são
+  // gravadas: `repeticoes` existe só pra a tela reexibir a escolha ("12x") na
+  // edição. Encerrar por contagem exigiria um contador incrementado a cada
+  // lançamento, e ele sai de sincronia com um restart no meio do laço, um
+  // lançamento manual ou um restore. A data é imutável depois de escrita.
+  const hojeSP = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const freq = ['semanal', 'mensal', 'anual'].includes(frequencia) ? frequencia : 'mensal';
+  const extra157 = {
+    frequencia: freq,
+    dia_semana:     freq === 'semanal' ? Math.max(0, Math.min(6, parseInt(dia_semana, 10) || 0)) : null,
+    mes_vencimento: freq === 'anual'   ? Math.max(1, Math.min(12, parseInt(mes_vencimento, 10) || 1)) : null,
+    repeticoes:     Number(repeticoes) > 0 ? Math.min(999, parseInt(repeticoes, 10)) : null,
+    lembrete_dias:  Math.max(0, Math.min(30, parseInt(lembrete_dias, 10) || 0)),
+    data_inicio:    hojeSP,
+    data_fim: calcularDataFim({
+      frequencia: freq,
+      repeticoes,
+      dataInicio: hojeSP,
+      diaVencimento: base.dia_vencimento,
+    }),
+  };
+
   // Vai removendo as colunas que o banco ainda não tiver (112, 066, 052).
-  let ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, ...modo, criado_por: criadoPor }).select().single();
+  // ⚠️ A camada da 157 vem PRIMEIRO, e a antiga continua logo abaixo: sem a
+  // migration a recorrência ainda é criada (mensal e pra sempre, como antes)
+  // em vez de o cadastro inteiro falhar.
+  let ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, ...modo, ...extra157, criado_por: criadoPor }).select().single();
+  if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, ...modo, criado_por: criadoPor }).select().single();
   if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, criado_por: criadoPor }).select().single();
   if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel }).select().single();
   if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, criado_por: criadoPor }).select().single();

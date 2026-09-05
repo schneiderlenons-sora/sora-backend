@@ -50,7 +50,8 @@
     "eval:regras-completas": "node evals/regrasCompletas.eval.js",
     "eval:rateio": "node evals/rateio.eval.js",
     "eval:conta-mercado-pago": "node evals/contaMercadoPago.eval.js",
-    "eval:proxima-parcela-of": "node evals/proximaParcelaOF.eval.js"
+    "eval:proxima-parcela-of": "node evals/proximaParcelaOF.eval.js",
+    "eval:frequencia": "node evals/frequenciaRecorrencia.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
