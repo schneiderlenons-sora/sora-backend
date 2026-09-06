@@ -28,7 +28,9 @@ const oneLine = (s) => String(s || '').replace(/\s*[\r\n\t]+\s*/g, ' ').trim();
 // os pontos sem mudar nada no que é entregue hoje.
 const lembrete = async (phone, texto, core, agente) => {
   const vestida = agente
-    ? falar(agente.id, agente.aviso, { texto, core, seed: agente.seed })
+    // `direto` = voz CURTA. Repassado aqui senão o aviso diario continua
+    // saindo com abertura e fecho — que e o texto que cansa.
+    ? falar(agente.id, agente.aviso, { texto, core, seed: agente.seed, direto: agente.direto })
     : { texto, core };
 
   // ── CADEIA DE TEMPLATES, do mais bonito pro mais garantido ────────────────
@@ -703,7 +705,7 @@ cron.schedule('* * * * *', async () => {
 
   const { data: meds } = await supabase
     .from('medicamentos')
-    .select('id, grupo_id, user_id, nome, dosagem, horarios, dias_semana, estoque_atual, estoque_alerta, lembrete_ativo')
+    .select('id, grupo_id, user_id, nome, dosagem, horarios, dias_semana, estoque_atual, estoque_alerta, lembrete_ativo, created_at')
     .eq('ativo', true)
     .eq('lembrete_ativo', true);
 
@@ -727,23 +729,46 @@ cron.schedule('* * * * *', async () => {
       if (!user?.phone) continue;
       if (!(await avisosLigados(med.user_id))) continue; // kill-switch
 
-      const estoqueAviso = med.estoque_atual != null && med.estoque_atual <= (med.estoque_alerta || 5)
-        ? `\n⚠️ Estoque baixo: ${med.estoque_atual} restantes`
-        : '';
-      const txt =
-        `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''}\n` +
-        `Quando tomar, responda *tomei ${med.nome}* pra eu marcar.${estoqueAviso}`;
+      const estoqueBaixo = med.estoque_atual != null && med.estoque_atual <= (med.estoque_alerta || 5);
+      const estoqueAviso = estoqueBaixo ? `\n⚠️ Estoque baixo: ${med.estoque_atual} restantes` : '';
+
+      // ⚠️ A SEMENTE PRECISA DO DIA. Ela era só `med.id` — constante — então
+      // `hash(id) % 3` caía SEMPRE na mesma frase, e o lembrete chegava
+      // idêntico todo santo dia. O comentário do sorteio dizia "evita repetir
+      // no mesmo dia": era a intenção certa, faltava o dia na conta. Com a
+      // data junto, varia entre dias e continua estável DENTRO do dia (os 2
+      // minutos de janela não mudam o texto no meio).
+      const semente = `${med.id}.${sp.dataStr}`;
+
+      // ⚠️ DEPOIS DO PRIMEIRO DIA, A VOZ ENCURTA. Este é o único aviso da casa
+      // que chega TODO dia no mesmo horário com o mesmo conteúdo: o texto que
+      // apresenta o personagem na estreia vira parede de texto na terceira
+      // semana, e parede de texto a pessoa desliga. Primeiro dia explica o
+      // combinado; do segundo em diante é remédio, horário e um empurrão.
+      //
+      // Sai de `created_at` — sem coluna nova. Remédio cadastrado hoje ganha a
+      // versão completa; o que já existe há meses já passou dessa fase.
+      const criadoEm = String(med.created_at || '').slice(0, 10);
+      const direto = !!criadoEm && criadoEm < sp.dataStr;
+
+      const comoMarcar = med.estoque_atual != null
+        ? `Assim que tomar, responda *tomei ${med.nome}* que eu marco no seu histórico e dou baixa no estoque.`
+        : `Assim que tomar, responda *tomei ${med.nome}* que eu marco no seu histórico.`;
+
+      const txt = direto
+        ? `💊 *${med.nome}*${med.dosagem ? ` ${med.dosagem}` : ''}\n🕐 ${h}${estoqueAviso}\n\n${comoMarcar}`
+        : `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''}\n${comoMarcar}${estoqueAviso}`;
+
       await lembrete(user.phone, txt,
-        `💊 *Hora de tomar ${med.nome}* ${med.dosagem || ''} — quando tomar, responda *tomei ${med.nome}*.${estoqueAviso}`,
+        `💊 *${med.nome}* ${med.dosagem || ''} às ${h} — quando tomar, responda *tomei ${med.nome}*.${estoqueAviso}`,
         {
-          id: 'dr-house', aviso: 'medicamentos', seed: med.id,
+          id: 'dr-house', aviso: 'medicamentos', seed: semente, direto,
           // ⚠️ {{3}} carrega horário + estoque: o aviso de estoque é opcional
           // e não pode virar parâmetro próprio (vazio derruba o envio).
           campos: [
-            aberturaDe('dr-house', 'medicamentos', med.id),
+            aberturaDe('dr-house', 'medicamentos', semente, direto),
             `${med.nome}${med.dosagem ? ` ${med.dosagem}` : ''}`,
-            `${h}${med.estoque_atual != null && med.estoque_atual <= (med.estoque_alerta || 5)
-              ? ` · ⚠️ estoque baixo: ${med.estoque_atual} restantes` : ''}`,
+            `${h}${estoqueBaixo ? ` · ⚠️ estoque baixo: ${med.estoque_atual} restantes` : ''}`,
             `tomei ${med.nome}`,
           ],
         });

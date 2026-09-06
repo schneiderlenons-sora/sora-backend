@@ -189,6 +189,18 @@ const VOZES = {
     fecha: ['Eu diria que pular invalida o tratamento, mas você já sabe disso.',
             'Todo mundo mente sobre ter tomado. Não seja todo mundo.',
             'Não é sugestão, é prescrição.'],
+    // ⚠️ O LEMBRETE DE REMÉDIO É DIÁRIO — e é o único aviso desta casa que
+    // chega TODO santo dia, no mesmo horário, com o mesmo conteúdo. O que é
+    // charmoso na primeira semana vira ruído na terceira, e ruído a pessoa
+    // desliga. Por isso ele tem uma voz CURTA: uma linha só, no lugar da
+    // abertura e do fecho. Ver `falar({ direto: true })`.
+    curtas: ['Não esquece, hein?',
+             'Passou do horário. Bora.',
+             'Só faltava isso pra fechar o dia direito.',
+             'Chegou a hora. Sem drama.',
+             'Trinta segundos e tá feito.',
+             'Aquele de sempre, no horário de sempre.',
+             'Toma que eu paro de falar.'],
   },
   'dr-house.consultas': {
     abre: ['Anota na agenda antes que esqueça:', 'Diagnóstico da sua semana:',
@@ -221,28 +233,37 @@ const escolher = (lista, seed) =>
  * @returns {{texto: string, core: string}} — devolve o original quando a voz
  *          está desligada ou quando não existe fala pra esse aviso.
  */
-function falar(agenteId, avisoId, { texto = '', core = '', seed } = {}) {
+/**
+ * @param {object} opts
+ * @param {boolean} [opts.direto]  usa a voz CURTA (uma linha, sem fecho).
+ *        Para aviso que se repete todo dia: a piada boa na primeira semana
+ *        é ruído na terceira, e ruído a pessoa desliga.
+ */
+function falar(agenteId, avisoId, { texto = '', core = '', seed, direto = false } = {}) {
   const voz = VOZES[`${agenteId}.${avisoId}`];
   const agente = AGENTES[agenteId];
   if (!VOZ_LIGADA || !voz || !agente) return { texto, core };
 
   const s = seed == null ? null : `${agenteId}.${avisoId}.${seed}`;
-  const abre = escolher(voz.abre, s);
-  const fecha = escolher(voz.fecha, s == null ? null : `${s}.f`);
+  const curto = direto && voz.curtas?.length ? escolher(voz.curtas, s) : null;
+  const abre = curto || escolher(voz.abre, s);
+  const fecha = curto ? null : escolher(voz.fecha, s == null ? null : `${s}.f`);
   const nome = `${agente.emoji} *${agente.nome}*`;
 
-  const textoNovo = `${nome}\n_${abre}_\n\n${texto}\n\n_${fecha}_`;
+  const textoNovo = fecha
+    ? `${nome}\n_${abre}_\n\n${texto}\n\n_${fecha}_`
+    : `${nome}\n\n${texto}\n\n_${abre}_`;
 
   // O core vai como parâmetro de template: UMA linha e com teto de tamanho.
   const baseCore = core || texto;
-  const comFecho = `${agente.emoji} ${agente.nome}: ${abre} ${baseCore} ${fecha}`;
+  const comFecho = `${agente.emoji} ${agente.nome}: ${abre} ${baseCore}${fecha ? ` ${fecha}` : ''}`;
   const semFecho = `${agente.emoji} ${agente.nome}: ${abre} ${baseCore}`;
   const coreNovo = comFecho.length <= MAX_CORE ? comFecho : semFecho;
 
   // `coreAgente` = o MESMO recado SEM o "emoji Nome:" na frente. É o que vai no
   // template `agente_aviso`, onde o nome já é o {{1}} e a foto é o cabeçalho —
   // repetir o nome no corpo ficaria "Don Baleone: Don Baleone: ...".
-  const agComFecho = `${abre} ${baseCore} ${fecha}`;
+  const agComFecho = `${abre} ${baseCore}${fecha ? ` ${fecha}` : ''}`;
   const coreAgente = agComFecho.length <= MAX_CORE ? agComFecho : `${abre} ${baseCore}`;
 
   return { texto: textoNovo, core: coreNovo, coreAgente };
@@ -348,10 +369,12 @@ function capaDe(agenteId) {
  * CAMPO OBRIGATÓRIO do corpo; mandar vazio faz a Meta recusar o envio. A flag
  * controla o texto rico in-window, não a existência do parâmetro.
  */
-function aberturaDe(agenteId, avisoId, seed) {
+function aberturaDe(agenteId, avisoId, seed, direto = false) {
   const voz = VOZES[`${agenteId}.${avisoId}`];
   if (!voz || !voz.abre.length) return 'Passando pra te avisar:';
-  return escolher(voz.abre, seed == null ? null : `${agenteId}.${avisoId}.${seed}`);
+  const s = seed == null ? null : `${agenteId}.${avisoId}.${seed}`;
+  if (direto && voz.curtas?.length) return escolher(voz.curtas, s);
+  return escolher(voz.abre, s);
 }
 
 /**

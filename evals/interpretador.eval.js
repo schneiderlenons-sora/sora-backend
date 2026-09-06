@@ -14,7 +14,7 @@
 //                            (match parcial: só checa os campos que estão em expect)
 // =============================================================================
 
-const { interpretarRapido } = require('../src/handlers/interpretador');
+const { interpretarRapido, parsePeriodoExtenso } = require('../src/handlers/interpretador');
 
 const CASOS = [
   // ── VALOR COM PREFIXO "R$" — o formato que vem do ÁUDIO ───────────────────
@@ -237,6 +237,31 @@ const CASOS = [
   { msg: 'me mostra o que saiu de mercado',   expect: null },
   { msg: 'qual a capital da frança',          expect: null },
   { msg: 'bom dia',                           expect: null },
+  // ── "QUANTO GASTEI COM X EM <PERÍODO>" ─────────────────────────────────
+  //
+  // ⚠️ O PERÍODO TEM DE SAIR DE DENTRO DO TERMO. A regra casava o assunto até
+  // o fim da frase, então "quanto gastei com mercado livre em setembro" ia
+  // procurar por "mercado livre em setembro" — nome que não existe em
+  // transação nenhuma. A resposta era "nenhum gasto encontrado", e parecia
+  // que a Sora não sabia responder quando na verdade ela procurou errado.
+  { msg: 'Quanto gastei com mercado livre em setembro?', expect: { acao: 'buscar', termo: 'mercado livre' } },
+  { msg: 'quanto gastei com ifood esse mês?', expect: { acao: 'buscar', termo: 'ifood', periodo: 'mes' } },
+  { msg: 'quanto gastei com uber mês passado?', expect: { acao: 'buscar', termo: 'uber', periodo: 'mes_passado' } },
+  { msg: 'quanto gastei com farmácia nos últimos 3 meses?', expect: { acao: 'buscar', termo: 'farmácia' } },
+  { msg: 'quanto gastei com netflix em julho e agosto?', expect: { acao: 'buscar', termo: 'netflix' } },
+  { msg: 'quanto gastei com alimentação em março?', expect: { acao: 'buscar', termo: 'alimentação' } },
+  // Abreviação só depois de preposição — ver a nota em ABREV_PT.
+  { msg: 'quanto gastei com padaria em ago?', expect: { acao: 'buscar', termo: 'padaria' } },
+
+  // ⚠️ SEM PERÍODO CITADO, NADA MUDA. É a metade que prova que o parser novo
+  //    não sequestrou as buscas que já funcionavam.
+  { msg: 'quanto gastei com mercado?', expect: { acao: 'buscar', termo: 'mercado' } },
+  { msg: 'gastos com alimentação', expect: { acao: 'buscar', termo: 'alimentação' } },
+
+  // ⚠️ E O QUE NÃO É PERGUNTA DE PERÍODO CONTINUA ONDE ESTAVA.
+  { msg: 'quanto gastei esse mês?', expect: { acao: 'resumo', periodo: 'mes' } },
+  { msg: 'no que gasto mais?', expect: { acao: 'resumo' } },
+  { msg: 'quero cadastrar um gasto fixo', expect: null },
 ];
 
 // Match parcial: cada campo de `expect` precisa bater no resultado.
@@ -259,7 +284,58 @@ for (const { msg, expect } of CASOS) {
   console.log(`${passou ? '  ok ' : 'FALHA'}  ${alvo.padEnd(18)} « ${msg} »`);
 }
 
-const total = CASOS.length;
+// ── PERÍODO POR EXTENSO: as DATAS ───────────────────────────────────────────
+//
+// Os casos acima conferem a AÇÃO e o TERMO, que não dependem de hoje. As datas
+// dependem — então aqui elas são calculadas a partir da data de hoje, e não
+// cravadas. Cravar faria o eval passar hoje e falhar em outubro.
+console.log('\n── período por extenso (datas) ──');
+const [Y, M] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+const primeiro = (ano, mes) => new Date(Date.UTC(ano + Math.floor((mes - 1) / 12), ((mes - 1) % 12 + 12) % 12, 1, 3)).toISOString();
+const dia = (d) => (d ? d.toISOString() : null);
+
+const CASOS_PERIODO = [
+  // frase, início esperado, fim esperado, rótulo
+  ['gastei com x em setembro', primeiro(9 > M ? Y - 1 : Y, 9), primeiro(9 > M ? Y - 1 : Y, 10), 'EM SETEMBRO'],
+  // ⚠️ MÊS QUE AINDA NÃO CHEGOU É DO ANO PASSADO. Perguntar quanto se gastou
+  //    num mês futuro não é pergunta que alguém faz; devolver R$ 0,00 seria
+  //    resposta boba pra uma pergunta que era sobre o passado.
+  ['gastei com x em dezembro', primeiro(12 > M ? Y - 1 : Y, 12), primeiro(12 > M ? Y : Y + 1, 1), 'EM DEZEMBRO'],
+  // Dois meses viram UM intervalo contíguo, não dois pedaços.
+  ['gastei com x em julho e agosto', primeiro(7 > M ? Y - 1 : Y, 7), primeiro(8 > M ? Y - 1 : Y, 9), 'EM JULHO E AGOSTO'],
+  // Ordem invertida dá o mesmo intervalo — quem fala não ordena.
+  ['gastei com x em agosto e julho', primeiro(7 > M ? Y - 1 : Y, 7), primeiro(8 > M ? Y - 1 : Y, 9), 'EM JULHO E AGOSTO'],
+  // "Últimos N" INCLUI o mês corrente.
+  ['gastei com x nos últimos 3 meses', primeiro(Y, M - 2), primeiro(Y, M + 1), 'NOS ÚLTIMOS 3 MESES'],
+  ['gastei com x nos últimos 6 meses', primeiro(Y, M - 5), primeiro(Y, M + 1), 'NOS ÚLTIMOS 6 MESES'],
+  ['gastei com x nos últimos 12 meses', primeiro(Y, M - 11), primeiro(Y, M + 1), 'NOS ÚLTIMOS 12 MESES'],
+];
+
+for (const [frase, ini, fim, rotulo] of CASOS_PERIODO) {
+  const r = parsePeriodoExtenso(frase);
+  const bateu = r && dia(r.inicio) === ini && dia(r.fim) === fim && r.label === rotulo;
+  if (bateu) ok += 1;
+  else falhas.push({ msg: frase, expect: { inicio: ini, fim, label: rotulo }, got: r && { inicio: dia(r.inicio), fim: dia(r.fim), label: r.label } });
+  console.log(`${bateu ? '  ok ' : 'FALHA'}  ${String(rotulo).padEnd(22)} « ${frase} »`);
+}
+
+// ⚠️ ABREVIAÇÃO SOLTA NÃO É MÊS. "mar", "set" e "ago" são palavras comuns:
+//    sem preposição na frente, "gastei no mar" viraria um filtro de março.
+const NAO_E_PERIODO = [
+  'quanto gastei no mar',
+  'quanto gastei com passeio de mar',
+  'quanto gastei com mercado',
+  'quanto gastei esse mês',
+];
+for (const frase of NAO_E_PERIODO) {
+  const r = parsePeriodoExtenso(frase);
+  const bateu = r === null;
+  if (bateu) ok += 1;
+  else falhas.push({ msg: frase, expect: null, got: r && r.label });
+  console.log(`${bateu ? '  ok ' : 'FALHA'}  ${'(sem período)'.padEnd(22)} « ${frase} »`);
+}
+
+const total = CASOS.length + CASOS_PERIODO.length + NAO_E_PERIODO.length;
 console.log(`\n${ok}/${total} certas` + (falhas.length ? ` · ${falhas.length} FALHA(S) ❌` : ' · tudo passou ✅'));
 
 if (falhas.length) {

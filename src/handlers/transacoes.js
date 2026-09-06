@@ -24,7 +24,25 @@ const { ehTransferencia } = require('../services/resumoTransacoes');
 // Intervalo de datas de um período de consulta (resumo/busca), no fuso de São
 // Paulo (UTC-3, sem horário de verão). fim=null → até agora. Retorna null quando
 // não há período (a query fica sem filtro de data — mostra os recentes).
-function intervaloPeriodo(p) {
+/**
+ * @param {string|null} p          rótulo fixo ("mes", "hoje", …)
+ * @param {{inicio:string,fim:string,label:string}} [explicito]
+ *        Intervalo já resolvido pelo interpretador — "em setembro", "julho
+ *        e agosto", "últimos 3 meses".
+ *
+ * ⚠️ O EXPLÍCITO VENCE. Esses períodos não cabem no enum daqui: um rótulo
+ * por combinação de mês seria uma lista sem fim (e "julho e agosto" nem
+ * rótulo tem). Quem sabe resolvê-los é o parser de linguagem, então ele
+ * manda as DATAS prontas e este switch continua cuidando só do que é fixo.
+ */
+function intervaloPeriodo(p, explicito) {
+  if (explicito?.inicio && explicito?.fim) {
+    return {
+      inicio: new Date(explicito.inicio),
+      fim: new Date(explicito.fim),
+      label: explicito.label || 'NO PERÍODO',
+    };
+  }
   if (!p) return null;
   const [Y, M, D] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
   const spIni = (y, mo, d) => new Date(Date.UTC(y, mo - 1, d, 3, 0, 0)); // meia-noite SP em UTC
@@ -713,7 +731,7 @@ module.exports = async function handleTransacoes(data, ctx) {
 
   // ── BUSCAR (opcionalmente por período) ──────────────────────────
   if (data.acao === 'buscar') {
-    const intervalo = intervaloPeriodo(data.periodo); // null = sem filtro de data
+    const intervalo = intervaloPeriodo(data.periodo, data.intervalo); // null = sem filtro de data
     const sufPeriodo = intervalo ? ` ${intervalo.label.toLowerCase()}` : '';
     const arvore = await arvoreDoGrupo(grupoId);
 
@@ -938,13 +956,39 @@ module.exports = async function handleTransacoes(data, ctx) {
       ? `\n🔄 _Movimentado (fatura/transferência): R$ ${movimentado.toFixed(2)} — não conta como gasto_`
       : '';
 
+    // ── MONTAGEM, EM TRÊS BLOCOS SEPARADOS POR LINHA ──────────────────────
+    //
+    // ⚠️ O resumo virou uma parede: categorias, contas, totais, patrimônio e
+    // pendentes emendados, sem nada dizendo onde uma coisa acaba e a outra
+    // começa. No WhatsApp não há negrito de seção nem tabela — o que separa é
+    // linha em branco e régua. Os três blocos respondem perguntas diferentes:
+    //
+    //   ONDE foi   → por categoria e por conta
+    //   QUANTO deu → gastos, receitas, saldo, patrimônio
+    //   O QUE VEM  → o que ainda vence no mês
+    //
+    // ⚠️ A régua só entra ENTRE blocos que existem. Resumo de quem não tem
+    // conta fixa cadastrada terminaria com um traço solto no fim da mensagem.
+    const REGUA = '────────────────────';
+
+    // "Por categoria:" só quando há categoria — cabeçalho sem lista embaixo
+    // é pior que lista sem cabeçalho.
+    const blocoCategorias = catOrdenadas ? `*Por categoria:*\n${catOrdenadas}` : '';
+
+    const blocoOnde = `${blocoCategorias}${blocoCarteiras}${blocoMembros}`.trim();
+
+    const blocoQuanto =
+      `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
+      `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
+      `💰 *${labelSaldo}: R$ ${saldo.toFixed(2)}*${statusMeta}${blocoMovimentado}` +
+      `${blocoPatrimonio}`;
+
+    const partesResumo = [blocoOnde, blocoQuanto, blocoPendentes.trim()]
+      .map((b) => b.trim())
+      .filter(Boolean);
+
     await enviarBotaoLink(phone, {
-      message:
-        `📊 *RESUMO ${label}*\n\n${catOrdenadas}${blocoCarteiras}${blocoMembros}\n\n` +
-        `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
-        `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
-        `💰 *${labelSaldo}: R$ ${saldo.toFixed(2)}*${statusMeta}${blocoMovimentado}` +
-        `${blocoPatrimonio}${blocoPendentes}`,
+      message: `📊 *RESUMO ${label}*\n\n` + partesResumo.join(`\n\n${REGUA}\n\n`),
       label: 'Ver no painel',
       url: `${APP_URL_TX}/dashboard`,
     });

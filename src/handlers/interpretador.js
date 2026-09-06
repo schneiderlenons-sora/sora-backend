@@ -68,6 +68,116 @@ function detectarPeriodo(texto) {
   return null;
 }
 
+// ── PERÍODO POR EXTENSO ─────────────────────────────────────────────────────
+//
+// "em setembro", "nos últimos 3 meses", "em julho e agosto". O `detectarPeriodo`
+// acima resolve os relativos ("hoje", "esse mês", "mês passado") e devolve um
+// RÓTULO; este resolve os que não cabem num rótulo fixo e devolve as DATAS.
+//
+// ⚠️ SEMPRE PRA TRÁS. "quanto gastei em dezembro" em setembro é dezembro do ano
+// PASSADO — perguntar quanto se gastou num mês que ainda não chegou não é uma
+// pergunta que alguém faz, e devolver R$ 0,00 seria uma resposta boba pra uma
+// pergunta que na verdade era sobre o passado.
+const MESES_PT = [
+  'janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
+// ⚠️ ABREVIAÇÃO SÓ DEPOIS DE PREPOSIÇÃO — E "mar"/"dez" FICAM DE FORA.
+//
+// A preposição sozinha NÃO resolve, e o eval provou: "quanto gastei no mar"
+// e "quanto gastei com passeio de mar" casavam `no|de + mar` e viravam um
+// filtro de MARÇO. "mar" (o mar) e "dez" (o número) são palavras comuns em
+// português; as outras dez abreviações não são, e com preposição na frente a
+// intenção fica inequívoca.
+//
+// Quem escrever "em mar" querendo março cai na IA, que lê a frase inteira —
+// que é o certo: regex não pode chutar entre "o mar" e "março".
+const ABREV_PT = ['jan', 'fev', null, 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', null];
+// A lista acima é SEM ACENTO porque é ela que casa com o texto já
+// normalizado; esta é a que aparece pro usuário.
+const MESES_EXIBE = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+/** Data (UTC) da meia-noite de São Paulo no 1º dia de `ano`/`mes` (1..12). */
+function primeiroDiaSP(ano, mes) {
+  const y = ano + Math.floor((mes - 1) / 12);
+  const m = ((mes - 1) % 12 + 12) % 12;
+  return new Date(Date.UTC(y, m, 1, 3, 0, 0));
+}
+
+/**
+ * Resolve o período por extenso de uma pergunta.
+ *
+ * @returns {{inicio: Date, fim: Date, label: string, casou: string[]}|null}
+ *          `casou` = os trechos consumidos, pra quem monta o TERMO poder
+ *          removê-los (senão "mercado livre em setembro" vira o termo buscado).
+ */
+function parsePeriodoExtenso(texto) {
+  const t = ' ' + String(texto || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') + ' ';
+  const [Y, M] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    .split('-').map(Number);
+
+  // ── "últimos N meses" ─────────────────────────────────────────────────────
+  // Inclui o mês CORRENTE: "nos últimos 3 meses" em setembro é jul+ago+set. É
+  // como se fala — quem quer só os fechados diz "nos 3 meses passados", e essa
+  // forma não é reconhecida aqui de propósito (na dúvida, vai pra IA).
+  const mUlt = t.match(/\b(?:ultim[oa]s|nos\s+ultimos)\s+(\d{1,2})\s+(mes|meses)\b/);
+  if (mUlt) {
+    const n = Math.min(24, Math.max(1, parseInt(mUlt[1], 10)));
+    return {
+      inicio: primeiroDiaSP(Y, M - (n - 1)),
+      fim: primeiroDiaSP(Y, M + 1),
+      label: `NOS ÚLTIMOS ${n} MESES`,
+      casou: [mUlt[0].trim()],
+    };
+  }
+
+  // ── Meses nomeados ────────────────────────────────────────────────────────
+  // Varre a frase inteira e guarda cada mês citado com a POSIÇÃO, pra "julho e
+  // agosto" virar um intervalo só e não dois pedaços soltos.
+  const achados = [];
+  for (let i = 0; i < 12; i += 1) {
+    const cheio = new RegExp(`\\b${MESES_PT[i]}\\b`, 'g');
+    let m;
+    while ((m = cheio.exec(t)) !== null) achados.push({ mes: i + 1, trecho: m[0], pos: m.index });
+    // A abreviação exige preposição colada antes — e nem toda mês tem uma
+    // (ver ABREV_PT: "mar" e "dez" são `null` de propósito).
+    if (!ABREV_PT[i]) continue;
+    const abrev = new RegExp(`\\b(?:em|de|do|no|entre)\\s+(${ABREV_PT[i]})\\b`, 'g');
+    while ((m = abrev.exec(t)) !== null) achados.push({ mes: i + 1, trecho: m[1], pos: m.index });
+  }
+  if (!achados.length) return null;
+
+  // Cada mês citado vira o ano da OCORRÊNCIA MAIS RECENTE que já passou.
+  const resolvidos = achados.map((a) => ({
+    ...a,
+    ano: a.mes > M ? Y - 1 : Y,
+  }));
+
+  const chaves = resolvidos.map((r) => r.ano * 12 + r.mes);
+  const menor = Math.min(...chaves);
+  const maior = Math.max(...chaves);
+
+  const anoIni = Math.floor((menor - 1) / 12);
+  const mesIni = ((menor - 1) % 12) + 1;
+  const anoFim = Math.floor((maior - 1) / 12);
+  const mesFim = ((maior - 1) % 12) + 1;
+
+  const nomes = [...new Set(resolvidos
+    .sort((a, b) => (a.ano * 12 + a.mes) - (b.ano * 12 + b.mes))
+    .map((r) => MESES_EXIBE[r.mes - 1]))];
+  const rotulo = nomes.length === 1
+    ? `EM ${nomes[0].toUpperCase()}`
+    : `EM ${nomes.slice(0, -1).join(', ').toUpperCase()} E ${nomes[nomes.length - 1].toUpperCase()}`;
+
+  return {
+    inicio: primeiroDiaSP(anoIni, mesIni),
+    fim: primeiroDiaSP(anoFim, mesFim + 1),
+    label: rotulo,
+    casou: [...new Set(resolvidos.map((r) => r.trecho))],
+  };
+}
+
 // Detecta a data de uma transação no texto (interpretação pro PASSADO).
 // "ontem", "anteontem", "3 dias atrás", "dia 5", "15/06", "segunda".
 // Retorna { iso:'YYYY-MM-DD', matched:'...' } ou null (= hoje).
@@ -662,14 +772,45 @@ function interpretarRapido(message) {
   if (ehPerguntaDeGasto && /\bgast(?:o|os|ei|ar|ando|amos|aria)\b/i.test(msg)) {
     const mm = msg.match(/\bgast\w+\b[^?!.]*?\b(?:com|de|d[oa]s?|em|n[oa]s?|sobre)\s+(.+)$/i);
     if (mm) {
+      // ⚠️ O PERÍODO SAI DE DENTRO DO TERMO. "quanto gastei com mercado livre
+      // EM SETEMBRO" casava o termo até o fim da frase e ia buscar por
+      // "mercado livre em setembro" — nome que não existe em transação
+      // nenhuma, então a resposta era "nenhum gasto encontrado". O mês tem de
+      // sair do termo E virar filtro de data.
+      const extenso = parsePeriodoExtenso(msg);
+
       // Sobra a categoria/lugar: filtro por PALAVRA INTEIRA (não usa \b, que em JS
       // corta vogal acentuada — "alimentação" viraria "alimentaçã").
       const STOP = new Set(['o','a','os','as','um','uma','meu','minha','meus','minhas',
         'esse','essa','este','esta','mes','mês','semana','hoje','ontem','ano','dia',
-        'passado','passada','atual','geral']);
+        'passado','passada','atual','geral',
+        // Preposições e ligações que sobram quando o período sai do meio da
+        // frase ("mercado livre EM setembro", "iFood NOS ÚLTIMOS 3 meses").
+        'em','no','na','nos','nas','de','do','da','dos','das','e','entre','ultimo','ultimos',
+        'último','últimos','ultima','ultimas','última','últimas','meses']);
+
+      // Tira do termo os trechos que o parser já consumiu (o nome do mês, o
+      // "últimos 3 meses"), comparando sem acento pra "março" bater com "marco".
+      const semAcento = (s) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const consumidos = new Set((extenso?.casou || []).map(semAcento));
+
       const termo = mm[1].replace(/[?!.,;:]+/g, ' ').trim()
-        .split(/\s+/).filter((w) => w && !STOP.has(w.toLowerCase())).join(' ').trim();
-      if (termo) return { acao: 'buscar', termo, periodo: detectarPeriodo(msg) || undefined };
+        .split(/\s+/)
+        .filter((w) => w && !STOP.has(w.toLowerCase()) && !consumidos.has(semAcento(w))
+          && !/^\d{1,2}$/.test(w))
+        .join(' ').trim();
+
+      if (termo) {
+        return {
+          acao: 'buscar',
+          termo,
+          periodo: detectarPeriodo(msg) || undefined,
+          // ⚠️ Vai como DATAS, não como rótulo: "julho e agosto" e "últimos 3
+          // meses" não cabem no enum de `intervaloPeriodo`, e inventar rótulo
+          // novo pra cada combinação de mês seria uma lista sem fim.
+          ...(extenso ? { intervalo: { inicio: extenso.inicio.toISOString(), fim: extenso.fim.toISOString(), label: extenso.label } } : {}),
+        };
+      }
     }
     return { acao: 'resumo', periodo: detectarPeriodo(msg) || 'mes' };
   }
@@ -678,4 +819,4 @@ function interpretarRapido(message) {
   return null;
 }
 
-module.exports = { interpretarRapido, detectarCategoria, detectarPeriodo };
+module.exports = { interpretarRapido, detectarCategoria, detectarPeriodo, parsePeriodoExtenso };
