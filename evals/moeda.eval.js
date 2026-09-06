@@ -161,6 +161,44 @@ console.log('── N. lançamento em moeda estrangeira ──');
   eq(semTaxa.taxa_brl, null, 'com a taxa em null, pra dar pra corrigir depois');
 }
 console.log('  ok');
+
+// ── N+1. MOVER DE CONTA PODE MUDAR A MOEDA ─────────────────────────────────
+//
+// O caminho mais comum de quem tem várias contas: manda "gastei 200" sem dizer
+// de onde, a Sora salva em "Dinheiro" (real) e PERGUNTA. Se a resposta for uma
+// conta em coroa, o número passa a ser coroa.
+//
+// ⚠️ REINTERPRETA, NÃO CONVERTE. 200 vira 200 kr (≈ R$ 110), não R$ 200 dentro
+// de uma conta em coroa. O que a pessoa digitou é um NÚMERO; a conta é que diz
+// de que moeda ele é. Converter aqui (200 BRL → 363 kr) seria inventar um valor
+// que ela nunca falou.
+//
+// ⚠️ E É POR ISSO QUE O SALDO DAS DUAS CARTEIRAS ANDA PELO MESMO NATIVO: sai
+// 200 da antiga e entra 200 na nova. Usar o BRL no estorno deixaria a conta de
+// origem errada — erro que não estoura e que ninguém confere.
+console.log('── N+1. mover de conta muda a moeda ──');
+{
+  const t = { NOK: 0.55032 };
+
+  // Dinheiro (BRL) → conta em coroa: o 200 vira 200 kr.
+  const paraNok = M.camposTransacao(200, 'NOK', t);
+  eq(paraNok.valor, 110.06, 'transacoes.valor passa a ser R$ 110,06');
+  eq(paraNok.valor_moeda, 200, 'e o nativo continua sendo o 200 que ela falou');
+
+  // O caminho de volta: conta em coroa → conta em real. O nativo é o que manda.
+  const veioDeNok = { valor: 110.06, moeda: 'NOK', valor_moeda: 200, taxa_brl: 0.55032 };
+  const nativo = veioDeNok.valor_moeda ?? veioDeNok.valor;
+  eq(nativo, 200, 'o número que a pessoa falou sai de valor_moeda, não de valor');
+  const paraBrl = M.camposTransacao(nativo, 'BRL', t);
+  eq(paraBrl.valor, 200, 'em conta de real o mesmo 200 volta a ser R$ 200');
+  eq(paraBrl.moeda, null, '⚠️ e a moeda é LIMPA — senão a linha ficaria NOK numa conta em real');
+  eq(paraBrl.valor_moeda, null, 'idem o nativo');
+
+  // Transação que nunca teve moeda: o nativo é o próprio valor.
+  const semMoeda = { valor: 200, moeda: null, valor_moeda: null };
+  eq(semMoeda.valor_moeda ?? semMoeda.valor, 200, 'sem valor_moeda, o nativo é o valor');
+}
+console.log('  ok');
 console.log('');
 if (falhas.length) {
   console.error(`❌ ${falhas.length} falha(s):`);

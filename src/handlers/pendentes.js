@@ -17,6 +17,14 @@ const supabase = require('../db/supabase');
 const { ehPagamentoFatura } = require('../services/categorizar');
 const { enviarTexto } = require('../services/mensageiro');
 const { criarPendente, removerPendente } = require('../services/pendentes');
+// Conta em moeda estrangeira (migration 144): mover uma transação de conta
+// pode mudar a MOEDA dela — ver `moverCarteira`.
+const {
+  normalizarMoeda: normalizarMoedaMv,
+  taxas: taxasMv,
+  camposTransacao: camposTransacaoMv,
+  formatar: fmtMoedaMv,
+} = require('../services/moeda');
 
 const TIPOS_CONTA = ['Corrente', 'Poupança', 'Vale Alimentação', 'Dinheiro'];
 const BANDEIRAS   = ['Visa', 'Mastercard', 'Elo', 'Amex', 'Hipercard'];
@@ -38,7 +46,32 @@ const PERGUNTAS_CARTAO = {
 async function moverCarteira(txId, novaCarteiraNome, grupoId) {
   const { data: tx } = await supabase
     .from('transacoes').select('*').eq('id', txId).single();
-  if (!tx) return false;
+  if (!tx) return { ok: false, conversao: null };
+
+  // ── A CONTA NOVA PODE TER OUTRA MOEDA ───────────────────────────────────
+  //
+  // ⚠️ A REGRA DA CASA É "o valor está na moeda DA CONTA". Quando a Sora não
+  // sabe de qual conta foi, ela salva em "Dinheiro" (real) e PERGUNTA; se a
+  // resposta for uma conta em coroa, o número que a pessoa falou passa a ser
+  // coroa — senão a linha fica gravada como R$ 200 onde ela quis dizer
+  // 200 kr (~R$ 110), inflando o gasto dela em 82%.
+  //
+  // O ponto de ENTRADA já convertia (handlers/transacoes.js); o valor é que
+  // não era seguido até o fim da máquina de estados — e este é justamente o
+  // caminho mais comum de quem tem várias contas.
+  //
+  // ⚠️ REINTERPRETA, não converte: 200 vira 200 kr, não R$ 200 em coroa. O
+  // que a pessoa digitou é um NÚMERO; a conta é que diz de que moeda ele é.
+  // Por isso o saldo das duas carteiras anda pelo MESMO nativo.
+  const nativo = Number(tx.valor_moeda ?? tx.valor) || 0;
+
+  const { data: walletDestino } = await supabase.from('wallets')
+    .select('*').eq('grupo_id', grupoId).ilike('nome', novaCarteiraNome).maybeSingle();
+  const moedaNova = normalizarMoedaMv(walletDestino?.moeda);
+  const tabelaMv  = moedaNova === 'BRL' ? {} : await taxasMv([moedaNova]);
+  const campos    = camposTransacaoMv(nativo, moedaNova, tabelaMv);
+  // Só vale avisar quando a moeda REALMENTE mudou de lado.
+  const mudouMoeda = normalizarMoedaMv(tx.moeda) !== moedaNova;
 
   const mult = tx.tipo === 'Gasto' ? -1 : 1;
 
@@ -48,7 +81,9 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
     .eq('grupo_id', grupoId).ilike('nome', tx.carteira_nome).single();
   if (walletAntiga) {
     await supabase.from('wallets')
-      .update({ saldo: walletAntiga.saldo - (tx.valor * mult) })
+      // ⚠️ NATIVO: é por ele que o saldo andou na entrada (o BRL fica só na
+      // transação). Estornar o BRL aqui deixaria a conta antiga errada.
+      .update({ saldo: walletAntiga.saldo - (nativo * mult) })
       .eq('id', walletAntiga.id);
   }
 
@@ -58,7 +93,7 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
     .eq('grupo_id', grupoId).ilike('nome', novaCarteiraNome).single();
   if (walletNova) {
     await supabase.from('wallets')
-      .update({ saldo: walletNova.saldo + (tx.valor * mult) })
+      .update({ saldo: walletNova.saldo + (nativo * mult) })
       .eq('id', walletNova.id);
   } else {
     // ⚠️ A CARTEIRA DE DESTINO NÃO EXISTE — E ISSO NÃO PODE SER IGNORADO.
@@ -81,7 +116,7 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
       grupo_id: grupoId,
       nome:     novaCarteiraNome,
       tipo,
-      saldo:    tx.valor * mult,
+      saldo:    nativo * mult,
     }, { onConflict: 'grupo_id,nome' });
 
     // ⚠️ E O ERRO É LIDO. Se nem criar deu certo, a transação FICA na carteira
@@ -101,15 +136,35 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
           .update({ saldo: walletAntiga.saldo })
           .eq('id', walletAntiga.id);
       }
-      return false;
+      return { ok: false, conversao: null };
     }
   }
 
-  await supabase.from('transacoes')
-    .update({ carteira_nome: novaCarteiraNome })
-    .eq('id', txId);
+  // ⚠️ Grava os campos de moeda SEMPRE — inclusive como null quando o destino
+  // é em real. Sem limpar, uma transação vinda de conta em coroa ficaria
+  // marcada NOK dentro de uma conta em real.
+  const patch = {
+    carteira_nome: novaCarteiraNome,
+    valor:         campos.valor,          // SEMPRE BRL
+    moeda:         campos.moeda,
+    valor_moeda:   campos.valor_moeda,
+    taxa_brl:      campos.taxa_brl,
+  };
+  const { error: eUpd } = await supabase.from('transacoes').update(patch).eq('id', txId);
+  // Sem a migration 144 as colunas não existem: move do mesmo jeito, só sem
+  // registrar a moeda. Perder o movimento seria pior que perder o rótulo.
+  if (eUpd) {
+    await supabase.from('transacoes')
+      .update({ carteira_nome: novaCarteiraNome, valor: campos.valor }).eq('id', txId);
+  }
 
-  return true;
+  return {
+    ok: true,
+    // O que a resposta do WhatsApp precisa pra explicar a mudança.
+    conversao: mudouMoeda && campos.moeda
+      ? { texto: `${fmtMoedaMv(campos.valor_moeda, campos.moeda)} (≈ ${fmtMoedaMv(campos.valor, 'BRL')})` }
+      : null,
+  };
 }
 
 /**
@@ -207,14 +262,21 @@ async function resolverPendente(pendente, mensagem, ctx) {
       return false;
     }
 
+    let movida = null;
     const txId = pendente.contexto?.transacao_id;
     if (txId) {
-      await moverCarteira(txId, escolhida.nome, grupoId);
+      movida = await moverCarteira(txId, escolhida.nome, grupoId);
     }
     await removerPendente(pendente.id);
 
     await enviarTexto(phone,
-      `✅ Atualizei pra *${escolhida.nome}*!\n\n` +
+      `✅ Atualizei pra *${escolhida.nome}*!\n` +
+      // ⚠️ Dizer o valor novo NÃO é detalhe: ela acabou de ver "Anotei
+      // R$ 200,00" e o número mudou. Calado, isso parece erro.
+      (movida?.conversao
+        ? `💱 Essa conta é em outra moeda, então lancei ${movida.conversao.texto}.\n`
+        : '') +
+      `\n` +
       `⭐ Quer marcar *${escolhida.nome}* como sua conta principal?\n` +
       `Assim eu uso ela automaticamente quando você não disser o banco.\n\n` +
       `Responde *sim* ou *não*.`
