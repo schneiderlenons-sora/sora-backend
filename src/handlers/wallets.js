@@ -5,6 +5,7 @@ const { registrarAjuste } = require('../services/ajusteSaldo');
 // Conta em moeda estrangeira (migration 144). Cada linha sai NA MOEDA DELA; o
 // total converte pra BRL, porque somar dólar com real seria mentira.
 const { normalizarMoeda, taxas: taxasDe, somarSaldos, formatar: fmtMoeda } = require('../services/moeda');
+const { aPagarCartoes, avisoParcial: avisoParcialCartoes } = require('../services/aPagarCartoes');
 
 // Soma os gastos de uma carteira (conta/cartão) num intervalo [ini, fimExcl).
 // excluirTransfer = ignora transferências (elas não são gasto de verdade).
@@ -283,7 +284,7 @@ module.exports = async function handleWallets(data, ctx) {
   // ── VER SALDOS ──────────────────────────────────────────────────
   if (data.acao === 'ver_saldos') {
     const { data: wallets } = await supabase.from('wallets')
-      .select('nome, saldo, tipo').eq('grupo_id', grupoId).order('nome');
+      .select('*').eq('grupo_id', grupoId).order('nome');
 
     if (!wallets?.length) {
       await enviarTexto(phone, '🏦 Nenhuma conta cadastrada.\nCrie com: "nubank 1000"');
@@ -295,33 +296,52 @@ module.exports = async function handleWallets(data, ctx) {
     const temEstrangeira = wallets.some(w => normalizarMoeda(w.moeda) !== 'BRL');
     const tabela = temEstrangeira ? await taxasDe(wallets.map(w => w.moeda)) : {};
 
+
+    const contas  = wallets.filter(w => w.tipo !== 'Crédito');
+    const rc = somarSaldos(contas, tabela);
+    const emContas = rc.total;
+
+    // ⚠️ MESMA CORREÇÃO DO `resumo`: o cartão não sai de `−saldo`. Aquilo é a
+    // fatura BRUTA (sem descontar `pagamentos_fatura`) e, no cartão manual, o
+    // saldo ACUMULADO em vez da fatura do ciclo em curso. Fonte única em
+    // services/aPagarCartoes.js — a mesma do painel e do Oráculo.
+    const rk = await aPagarCartoes(grupoId, wallets, tabela);
+    const aPagar = rk.total;
+
+    // ⚠️ Se alguma conta ficou de fora por falta de câmbio, o total é PARCIAL e
+    // tem de dizer isso. Number redondo escondendo dinheiro é pior que aviso.
+    const avisoCambio = avisoParcialCartoes({
+      semCambio: rc.semCambio + rk.semCambio,
+      semFatura: rk.semFatura,
+    });
+
+    // ⚠️ NO CARTÃO A LINHA MOSTRA A FATURA, NÃO O `saldo`. Sem isto a
+    // mensagem se contradiz sozinha: a lista diria "Mercado Pago (OF):
+    // −R$ 3.496,13" e o rodapé logo abaixo "A pagar: R$ 1.041,05". Duas
+    // respostas pra mesma pergunta na mesma tela é pior que uma errada.
+    // Por isso a lista é montada DEPOIS do cálculo, não antes.
+    const faturaDe = new Map(rk.porCartao.map(c => [c.id, c.restante]));
     const linhas = wallets.map(w => {
       const emoji = w.tipo === 'Crédito' ? '💳' : w.tipo === 'Poupança' ? '🐷' : w.tipo === 'Dinheiro' ? '💵' : '🏦';
+      if (w.tipo === 'Crédito') {
+        // ⚠️ Cartão cuja fatura não pôde ser calculada DIZ ISSO. Cair de volta
+        // no `saldo` aqui reimprimiria o número errado, calado, justamente no
+        // cartão em que já se sabe que algo falhou.
+        const f = faturaDe.get(w.id);
+        return f === undefined
+          ? `${emoji} *${w.nome}:* fatura indisponível agora`
+          : `${emoji} *${w.nome}:* ${fmtMoeda(f, w.moeda)} _(fatura)_`;
+      }
       // A linha mostra o valor NA MOEDA DA CONTA — é o número que o cliente vê
       // no app do banco dele. Converter aqui esconderia quanto ele tem de fato.
       return `${emoji} *${w.nome}:* ${fmtMoeda(w.saldo, w.moeda)}`;
     }).join('\n');
 
-    const contas  = wallets.filter(w => w.tipo !== 'Crédito');
-    const cartoes = wallets.filter(w => w.tipo === 'Crédito');
-    const rc = somarSaldos(contas,  tabela);
-    const rk = somarSaldos(cartoes, tabela);
-    const emContas  = rc.total;
-    const saldoCard = rk.total;   // negativo = a pagar
-    const aPagar    = saldoCard < 0 ? -saldoCard : 0;
-
-    // ⚠️ Se alguma conta ficou de fora por falta de câmbio, o total é PARCIAL e
-    // tem de dizer isso. Number redondo escondendo dinheiro é pior que aviso.
-    const faltando = rc.semCambio + rk.semCambio;
-    const avisoCambio = faltando > 0
-      ? `\n⚠️ ${faltando} conta(s) fora do total: câmbio indisponível agora.`
-      : '';
-
     // Com cartão a pagar, mostra o líquido (contas − fatura). Sem cartão, só o total.
     const rodape = (aPagar > 0
       ? `💵 Total em contas: R$ ${emContas.toFixed(2)}\n` +
         `💳 A pagar no cartão: R$ ${aPagar.toFixed(2)}\n` +
-        `💰 *Saldo líquido: R$ ${(emContas + saldoCard).toFixed(2)}*`
+        `💰 *Saldo líquido: R$ ${(emContas - aPagar).toFixed(2)}*`
       : `💵 *Total: R$ ${emContas.toFixed(2)}*`) + avisoCambio;
 
     await enviarTexto(phone, `💰 *SEUS SALDOS:*\n\n${linhas}\n\n${rodape}`);

@@ -15,6 +15,10 @@ const {
   taxas: taxasTx,
   somarSaldos: somarSaldosTx,
 } = require('../services/moeda');
+const {
+  aPagarCartoes,
+  avisoParcial: avisoParcialCartoes,
+} = require('../services/aPagarCartoes');
 // Emoji e hierarquia das categorias vêm do BANCO (o mapa daqui é só fallback).
 const { arvoreDoGrupo, emojiPara, familiaDe, limpar: limparCat } = require('../services/categoriasArvore');
 // Regra canônica do que NÃO é consumo — a mesma do painel. Duplicar a regra aqui
@@ -909,15 +913,26 @@ module.exports = async function handleTransacoes(data, ctx) {
       const temEstrangeira = ws.some(w => normalizarMoedaTx(w.moeda) !== 'BRL');
       const tabela = temEstrangeira ? await taxasTx(ws.map(w => w.moeda)) : {};
       const rc = somarSaldosTx(ws.filter(w => w.tipo !== 'Crédito'), tabela);
-      const rk = somarSaldosTx(ws.filter(w => w.tipo === 'Crédito'), tabela);
-      const emContas  = rc.total;
-      const saldoCard = rk.total;   // negativo = a pagar
-      const aPagar    = saldoCard < 0 ? -saldoCard : 0;
+      const emContas = rc.total;
+
+      // ⚠️ O CARTÃO NÃO SAI DE `−saldo`. Isso somava a fatura BRUTA, sem
+      // descontar `pagamentos_fatura`, e no cartão manual somava o saldo
+      // ACUMULADO em vez da fatura do CICLO. Medido numa conta real: o zap
+      // dizia "a pagar R$ 3.663,42 · saldo real −R$ 2.286,49" enquanto o
+      // painel mostrava R$ 1.041,05 de fatura, no mesmo minuto — havia
+      // R$ 2.854,70 já pagos ainda pesando como dívida.
+      // A conta certa mora em services/aPagarCartoes.js, que é a MESMA que o
+      // painel e o Oráculo usam (faturaVista).
+      const rk = await aPagarCartoes(grupoId, ws, tabela);
+      const aPagar = rk.total;
+
       // ⚠️ Total parcial tem de se declarar parcial — mesmo aviso de wallets.js.
-      const faltando = rc.semCambio + rk.semCambio;
-      const aviso = faltando > 0 ? `\n⚠️ ${faltando} conta(s) fora: câmbio indisponível.` : '';
+      const aviso = avisoParcialCartoes({
+        semCambio: rc.semCambio + rk.semCambio,
+        semFatura: rk.semFatura,
+      });
       blocoPatrimonio = (aPagar > 0
-        ? `\n\n🏦 Em contas: R$ ${emContas.toFixed(2)}\n💳 A pagar no cartão: R$ ${aPagar.toFixed(2)}\n💰 *Saldo real: R$ ${(emContas + saldoCard).toFixed(2)}*`
+        ? `\n\n🏦 Em contas: R$ ${emContas.toFixed(2)}\n💳 A pagar no cartão: R$ ${aPagar.toFixed(2)}\n💰 *Saldo real: R$ ${(emContas - aPagar).toFixed(2)}*`
         : `\n\n🏦 *Saldo em contas: R$ ${emContas.toFixed(2)}*`) + aviso;
     }
 
