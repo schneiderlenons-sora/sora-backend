@@ -242,10 +242,40 @@ function valorNativo(tx) {
   return Number(tx?.valor) || 0;
 }
 
+/**
+ * Anexa `moeda`, `saldo_brl` e `taxa_brl` numa lista de carteiras.
+ *
+ * ⚠️ FONTE ÚNICA — vivia dentro de `routes/wallets.js` e por isso só a ABA DE
+ * CONTAS convertia. O `/api/dashboard` monta a própria lista de carteiras e
+ * devolvia elas CRUAS: o painel de contas mostrava os saldos convertidos e o
+ * dashboard, no mesmo minuto, dizia "câmbio indisponível" nas três contas
+ * estrangeiras e somava só as em real (R$ 12.202,18 de um total de
+ * R$ 15.590,01). Duas telas, dois números, no mesmo dado.
+ *
+ * ⚠️ `saldo_brl` é null quando o câmbio falhou — NUNCA 0. Quem soma precisa
+ * saber a diferença entre "vale zero" e "não sei quanto vale".
+ */
+async function comSaldoBRL(lista) {
+  const ws = lista || [];
+  if (!ws.some((w) => normalizarMoeda(w.moeda) !== PADRAO)) {
+    // Caminho de 99% dos grupos: nenhuma conta estrangeira, nenhuma ida de
+    // rede, nenhum campo novo além do espelho do saldo.
+    return ws.map((w) => ({ ...w, moeda: normalizarMoeda(w.moeda), saldo_brl: Number(w.saldo) || 0 }));
+  }
+  const tabela = await taxas(ws.map((w) => w.moeda));
+  return ws.map((w) => ({
+    ...w,
+    moeda: normalizarMoeda(w.moeda),
+    saldo_brl: saldoEmBRL({ saldo: w.saldo, moeda: w.moeda }, tabela),
+    taxa_brl: tabela[normalizarMoeda(w.moeda)] ?? null,
+  }));
+}
+
 module.exports = {
   PADRAO, MOEDAS,
   normalizarMoeda, ehEstrangeira,
   taxa, taxas, paraBRL,
   saldoEmBRL, somarSaldos,
   camposTransacao, valorNativo, formatar,
+  comSaldoBRL,
 };

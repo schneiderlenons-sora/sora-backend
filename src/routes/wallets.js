@@ -22,28 +22,11 @@ const { lerPrevistas: parcelasPrevistasDe } = require('../services/parcelasPrevi
 // o painel recebe `saldo_brl` pronto e não precisa buscar câmbio no navegador —
 // senão cada uma das 5 telas que somam saldo teria a sua própria cotação, e
 // elas divergiriam entre si.
-const { normalizarMoeda, taxas: taxasDe, saldoEmBRL } = require('../services/moeda');
+const { normalizarMoeda, taxas: taxasDe, saldoEmBRL, comSaldoBRL } = require('../services/moeda');
 
-/**
- * Anexa `moeda` e `saldo_brl` em cada carteira.
- * ⚠️ `saldo_brl` é null quando o câmbio falhou — NUNCA 0. Quem soma precisa
- * saber a diferença entre "vale zero" e "não sei quanto vale".
- */
-async function comMoeda(lista) {
-  const ws = lista || [];
-  if (!ws.some((w) => normalizarMoeda(w.moeda) !== 'BRL')) {
-    // Caminho de 99% dos grupos: nenhuma conta estrangeira, nenhuma ida ao
-    // Yahoo, nenhum campo novo além do espelho do saldo.
-    return ws.map((w) => ({ ...w, moeda: normalizarMoeda(w.moeda), saldo_brl: Number(w.saldo) || 0 }));
-  }
-  const tabela = await taxasDe(ws.map((w) => w.moeda));
-  return ws.map((w) => ({
-    ...w,
-    moeda: normalizarMoeda(w.moeda),
-    saldo_brl: saldoEmBRL({ saldo: w.saldo, moeda: w.moeda }, tabela),
-    taxa_brl: tabela[normalizarMoeda(w.moeda)] ?? null,
-  }));
-}
+// A conversão mora em `services/moeda.js` (comSaldoBRL) — o `/api/dashboard`
+// precisa da MESMA, e enquanto ela viveu aqui só esta rota convertia.
+const comMoeda = comSaldoBRL;
 
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
 function variantesPhone(phone) {

@@ -15,6 +15,9 @@ const express  = require('express');
 const arquivadas = require('../services/arquivadas');
 const router   = express.Router();
 const supabase = require('../db/supabase');
+// Conta em moeda estrangeira (migration 144): o painel recebe `saldo_brl`
+// pronto — a conversão é a MESMA de `/api/wallets`.
+const { comSaldoBRL } = require('../services/moeda');
 const auth     = require('../middlewares/auth');
 const { calcularResumo } = require('../services/resumoTransacoes');
 
@@ -139,7 +142,11 @@ router.get('/:phone', auth, async (req, res) => {
     res.json({
       resumo:     val(resumo,    resumoVazio),
       resumoAnt:  val(resumoAnt, resumoVazio),
-      wallets:    (val(wallets,    { data: [] }).data) || [],
+      // ⚠️ CONVERTE. Sem isto o dashboard devolve o saldo NATIVO e a tela o
+      // exibe como real (ou, depois da correção do painel, como "câmbio
+      // indisponível") — enquanto a aba de contas, que passa por
+      // `/api/wallets`, mostra o valor certo. Mesmo dado, duas respostas.
+      wallets:    await comSaldoBRL((val(wallets, { data: [] }).data) || []),
       txsRec:     val(txsRec, { transacoes: [], total: 0 }),
       txsMes:     val(txsMes, { transacoes: [], total: 0 }),
       categorias: (val(categorias, { data: [] }).data) || [],
