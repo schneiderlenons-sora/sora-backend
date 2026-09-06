@@ -199,6 +199,62 @@ console.log('── N+1. mover de conta muda a moeda ──');
   eq(semMoeda.valor_moeda ?? semMoeda.valor, 200, 'sem valor_moeda, o nativo é o valor');
 }
 console.log('  ok');
+
+// ── N+2. "CÂMBIO INDISPONÍVEL" NÃO PODE APARECER ───────────────────────────
+//
+// Exigência do dono depois do relato do cliente: a cotação tem de funcionar
+// SEMPRE. São quatro camadas, e cada uma cobre a falha da anterior:
+//
+//   1. cache em memória (1h)          → não sobrevive à hibernação do Render
+//   2. três fontes em cascata          → yahoo bloqueia IP de datacenter
+//   3. `cotacoes_moeda` (migration 159) → última conhecida, sobrevive a restart
+//   4. cron diário `aquecerCotacoes`    → garante que a linha EXISTA antes do
+//                                         primeiro uso de cada moeda
+//
+// ⚠️ A CAMADA 4 É A QUE FECHA O BURACO. O banco só salva quem já tem linha lá,
+// e a linha nasce na primeira conversão bem-sucedida — ou seja, a PRIMEIRA vez
+// que alguém usa uma moeda nova era a única sem rede de segurança.
+//
+// MEDIDO em 06/09/2026: as 11 moedas estrangeiras do catálogo respondem nas
+// TRÊS fontes (nenhuma depende de uma só). E com as três derrubadas na marra,
+// as contas do cliente continuaram convertendo pela tabela — 6 tentativas
+// externas bloqueadas, zero "câmbio indisponível", total R$ 15.600,42.
+console.log('── N+2. as camadas contra "câmbio indisponível" ──');
+{
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/services/moeda.js'), 'utf8');
+
+  // Camada 3: o fallback do banco existe e vem DEPOIS do de memória.
+  ok(/async function lerTaxaSalva/.test(src), 'lê a última cotação salva no banco');
+  ok(/async function salvarTaxa/.test(src), 'e grava a cada conversão bem-sucedida');
+  ok(src.indexOf('if (hit) return hit.taxa;') < src.indexOf('await lerTaxaSalva'),
+    'memória primeiro (mais nova), banco depois');
+
+  // ⚠️ O null tem de continuar existindo: é ele que impede a tela de mentir
+  // quando REALMENTE não há valor nenhum. "Nunca aparecer" se conquista tendo
+  // sempre um valor guardado, não apagando o aviso.
+  ok(/return null;/.test(src.slice(src.indexOf('async function taxa('))),
+    'sem NADA guardado ainda devolve null — nunca 0, nunca 1');
+
+  // Camada 4: o aquecimento cobre TODO o catálogo, não uma lista à parte.
+  ok(/async function aquecerCotacoes/.test(src), 'existe a rotina de aquecimento');
+  ok(/Object\.keys\(MOEDAS\)/.test(src.slice(src.indexOf('async function aquecerCotacoes'))),
+    '⚠️ varre Object.keys(MOEDAS) — moeda nova no catálogo entra sozinha');
+  ok(/taxaParaBRLDetalhe/.test(src.slice(src.indexOf('async function aquecerCotacoes'))),
+    'e vai direto na fonte, ignorando o cache (senão não refresca nada)');
+
+  // Camada 2: as três fontes, na ordem.
+  const cot = require('fs').readFileSync(require('path').join(__dirname, '../src/services/cotacoes.js'), 'utf8');
+  const fontes = (cot.match(/nome: '(\w[\w-]*)'/g) || []).length;
+  eq(fontes, 3, 'três fontes de câmbio cadastradas');
+  ok(/CAMBIO_TIMEOUT_MS/.test(cot), 'com timeout — fonte pendurada não trava a tela');
+  ok(cot.indexOf("nome: 'yahoo'") < cot.indexOf("nome: 'awesomeapi'"), 'yahoo primeiro');
+
+  // E o cron que roda tudo isso.
+  const jobs = require('fs').readFileSync(require('path').join(__dirname, '../src/jobs/index.js'), 'utf8');
+  ok(/aquecerCotacoes/.test(jobs), 'o cron chama o aquecimento');
+  ok(/cron\.schedule\('0 5 \* \* \*'/.test(jobs), 'todo dia às 05:00, antes do horário de uso');
+}
+console.log('  ok');
 console.log('');
 if (falhas.length) {
   console.error(`❌ ${falhas.length} falha(s):`);

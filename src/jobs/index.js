@@ -1860,6 +1860,29 @@ cron.schedule('*/30 * * * *', async () => {
 });
 console.log(`   • A cada 30min — recuperação de cadastro sem pagamento (1º + 2º lembrete) ${process.env.RECUPERACAO_ATIVA === '1' ? '' : '(DESATIVADA)'}`);
 
+// ─────────────────────────────────────────────────────────────────
+// JOB 1M — Todo dia às 05:00: AQUECE AS COTAÇÕES de câmbio
+//
+// ⚠️ É o que faz "câmbio indisponível" nunca aparecer. Sem linha guardada em
+// `cotacoes_moeda` (migration 159), a única defesa contra as três fontes
+// fora do ar é o cache de memória — que o plano free do Render apaga a cada
+// hibernação. Aquecendo de madrugada, toda moeda do catálogo já tem valor
+// gravado antes do primeiro usuário do dia.
+//
+// ⚠️ Roda ANTES do horário de uso (05:00 SP) e não manda mensagem nenhuma —
+// é manutenção, não lembrete.
+// ─────────────────────────────────────────────────────────────────
+cron.schedule('0 5 * * *', async () => {
+  try {
+    const { aquecerCotacoes } = require('../services/moeda');
+    const r = await aquecerCotacoes();
+    console.log(`💱 Cotações aquecidas: ${r.ok} ok${r.falhas.length ? ` · falharam: ${r.falhas.join(', ')}` : ''}`);
+  } catch (e) {
+    console.log('💱 Aquecimento de cotações falhou:', e.message);
+  }
+});
+console.log('   • Todo dia 05:00 — aquece as cotações de câmbio');
+
 // Exportado SÓ pra teste (evals/lembreteFila.eval.js). O arquivo registra crons
 // ao ser exigido, então o eval stuba `node-cron` antes de importar.
 module.exports = { lembrete };

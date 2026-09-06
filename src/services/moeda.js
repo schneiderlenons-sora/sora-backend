@@ -271,11 +271,45 @@ async function comSaldoBRL(lista) {
   }));
 }
 
+/**
+ * Busca e GRAVA a cotação de todas as moedas suportadas.
+ *
+ * ⚠️ EXISTE PRA QUE "câmbio indisponível" NUNCA APAREÇA. O fallback do banco
+ * só salva quem já tem linha lá, e a linha só nasce na primeira conversão
+ * bem-sucedida — ou seja, a PRIMEIRA vez que alguém usa uma moeda nova é
+ * justamente a única em que não há rede de segurança. Rodando isto todo dia,
+ * toda moeda do catálogo já tem um valor guardado antes de o primeiro
+ * usuário precisar dela.
+ *
+ * ⚠️ IGNORA O CACHE DE MEMÓRIA de propósito (`taxaParaBRLDetalhe` direto): o
+ * objetivo aqui é REFRESCAR o que está no banco, e passar por `taxa()`
+ * devolveria o valor de uma hora atrás sem gravar nada.
+ *
+ * Tolerante por moeda: uma fonte fora do ar não impede as outras moedas.
+ * Devolve `{ ok, falhas }` pro log do cron dizer o que aconteceu.
+ */
+async function aquecerCotacoes() {
+  const moedas = Object.keys(MOEDAS).filter((m) => m !== PADRAO);
+  let ok = 0;
+  const falhas = [];
+  for (const m of moedas) {
+    try {
+      const { taxa: t, fonte } = await taxaParaBRLDetalhe(m);
+      if (t && Number.isFinite(t) && t > 0) {
+        cache.set(m, { taxa: t, em: Date.now() });
+        await salvarTaxa(m, t, fonte);
+        ok += 1;
+      } else falhas.push(m);
+    } catch { falhas.push(m); }
+  }
+  return { ok, falhas };
+}
+
 module.exports = {
   PADRAO, MOEDAS,
   normalizarMoeda, ehEstrangeira,
   taxa, taxas, paraBRL,
   saldoEmBRL, somarSaldos,
   camposTransacao, valorNativo, formatar,
-  comSaldoBRL,
+  comSaldoBRL, aquecerCotacoes,
 };
