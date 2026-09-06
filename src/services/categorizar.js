@@ -192,9 +192,21 @@ const REGRAS = [
   //    despesa de comida e sairia da conta de transferência. Medido na base.
   { cat: 'Alimentação',    kws: ['aliment'] },
 
+  // ── Benefício de academia (Gympass) ──
+  //
+  // ⚠️ VÊM ANTES DA ACADEMIA, e a ordem é o que faz a regra existir: a lista
+  // da Academia contém "wellhub", "gympass" e "totalpass", e quem casa
+  // primeiro vence. Deixadas lá embaixo, estas duas nunca seriam alcançadas.
+  //
+  // ⚠️ Wellhub É o Gympass — a empresa trocou de nome em 2024 — e por isso as
+  // duas palavras caem na MESMA subcategoria. TotalPass é concorrente, não faz
+  // parte do Gympass; ela mora aqui por ser o mesmo tipo de despesa (benefício
+  // de academia), que é como quem paga enxerga.
+  { cat: 'Wellhub',        kws: ['wellhub', 'gympass', 'gym pass'] },
+  { cat: 'TotalPass',      kws: ['totalpass', 'total pass'] },
   // ── Academia / Fitness ──
   { cat: 'Academia',       kws: ['academia', 'smartfit', 'smart fit', 'bodytech', 'bioritmo', 'bio ritmo', 'selfit', 'bluefit',
-      'crossfit', 'personal trainer', 'pilates', 'tecnofit', 'totalpass', 'gympass', 'wellhub',
+      'crossfit', 'personal trainer', 'pilates', 'tecnofit',
       // Franquias que faltavam — todas NOMES DE MARCA, nunca palavra genérica.
       //
       // ⚠️ 'fitness' JÁ ESTEVE AQUI e foi REMOVIDO: "Dellas Fitness" é uma LOJA,

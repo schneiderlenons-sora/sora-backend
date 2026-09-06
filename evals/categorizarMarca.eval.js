@@ -105,6 +105,36 @@ console.log('── 6. assinatura de categorizar() ──');
 }
 console.log('  ok');
 
+// ── 7. Benefício de academia × academia de verdade ─────────────────────────
+//
+// Wellhub (ex-Gympass) e TotalPass são MENSALIDADE DE PLATAFORMA, não academia:
+// quem paga não escolheu uma academia, comprou acesso a várias. Por isso viram
+// subcategorias próprias de "Gympass" (migration 158).
+//
+// ⚠️ A ORDEM É O TESTE. As duas regras precisam vir ANTES da regra de Academia
+// no arquivo — a primeira que casa vence, e "gympass"/"totalpass" estavam na
+// lista de palavras dela. Trocar a ordem faz tudo voltar pra Academia sem erro
+// nenhum aparecer, que é o modo de falha silencioso que este bloco tranca.
+console.log('── 7. Wellhub / TotalPass ──');
+{
+  // Descrições REAIS da base (as 8 linhas que a 158 mediu).
+  cat('Wellhub', 'Wellhub');
+  cat('TOTALPASS', 'TotalPass');
+  cat('TOTALPASS                SAO PAULO    BR', 'TotalPass', '(descritor de adquirente)');
+
+  // A empresa trocou de nome em 2024 e a cobrança ainda chega das duas formas.
+  cat('GYMPASS *MENSALIDADE', 'Wellhub', '(nome antigo → mesma subcategoria)');
+  cat('Gym Pass', 'Wellhub');
+  cat('Total Pass BR', 'TotalPass');
+
+  // ⚠️ Academia de verdade continua Academia — é a regressão que a ordem causa.
+  cat('Smart Fit', 'Academia');
+  cat('Bluefit mensalidade', 'Academia');
+  cat('crossfit box', 'Academia');
+  cat('academia do bairro', 'Academia');
+}
+console.log('  ok');
+
 console.log('');
 if (falhas.length) {
   console.error(`❌ ${falhas.length} falha(s):`);
