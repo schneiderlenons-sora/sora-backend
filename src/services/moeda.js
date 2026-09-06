@@ -21,7 +21,8 @@
 // `null` — nunca 0. Somar 0 apagaria o dinheiro do cliente da tela sem avisar,
 // que é infinitamente pior do que mostrar "câmbio indisponível".
 // =============================================================================
-const { taxaParaBRL } = require('./cotacoes');
+const { taxaParaBRLDetalhe } = require('./cotacoes');
+const supabase = require('../db/supabase');
 
 const PADRAO = 'BRL';
 
@@ -72,6 +73,35 @@ function ehEstrangeira(moeda) {
 const TTL_MS = 60 * 60 * 1000;
 const cache = new Map();   // moeda → { taxa, em }
 
+// ── A última cotação conhecida, PERSISTIDA (migration 159) ────────────────
+//
+// ⚠️ O cache em memória não sobrevive ao Render free, que HIBERNA: a cada
+// cold start o Map volta vazio, e aí toda visita depende de uma chamada
+// externa nova dar certo naquele instante. Foi assim que um cliente com
+// contas em coroa viu "câmbio indisponível" nos dois saldos.
+//
+// ⚠️ AS DUAS PONTAS SÃO TOLERANTES. Sem a migration 159 a tabela não existe,
+// o erro é engolido e o comportamento é exatamente o de antes — cache só em
+// memória. Isto AUMENTA a resiliência, não habilita a feature; é o que
+// impede a família de bugs em que a gravação falha calada porque a migration
+// não rodou.
+async function lerTaxaSalva(m) {
+  try {
+    const { data } = await supabase.from('cotacoes_moeda')
+      .select('taxa_brl').eq('moeda', m).maybeSingle();
+    const v = Number(data?.taxa_brl);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  } catch { return null; }
+}
+
+async function salvarTaxa(m, valor, fonte) {
+  try {
+    await supabase.from('cotacoes_moeda')
+      .upsert({ moeda: m, taxa_brl: valor, fonte, atualizado: new Date().toISOString() },
+              { onConflict: 'moeda' });
+  } catch { /* sem a 159 a tabela não existe — segue com o cache em memória */ }
+}
+
 async function taxa(moeda) {
   const m = normalizarMoeda(moeda);
   if (m === PADRAO) return 1;
@@ -80,17 +110,26 @@ async function taxa(moeda) {
   if (hit && Date.now() - hit.em < TTL_MS) return hit.taxa;
 
   try {
-    const t = await taxaParaBRL(m);
+    const { taxa: t, fonte } = await taxaParaBRLDetalhe(m);
     if (t && Number.isFinite(t) && t > 0) {
       cache.set(m, { taxa: t, em: Date.now() });
+      // Sem `await`: gravar a rede de segurança não pode atrasar a resposta.
+      salvarTaxa(m, t, fonte);
       return t;
     }
-  } catch { /* cai no fallback abaixo */ }
+  } catch { /* cai nos fallbacks abaixo */ }
 
   // ⚠️ Cotação falhou. Devolve a ÚLTIMA conhecida, por velha que seja — um
-  // número de ontem é muito melhor que sumir com o saldo. Sem cache nenhum,
-  // devolve null e quem chama decide (nunca 0).
-  return hit ? hit.taxa : null;
+  // número de ontem é muito melhor que sumir com o saldo. Memória primeiro
+  // (mais nova), depois o banco, que é quem sobrevive ao restart.
+  if (hit) return hit.taxa;
+  const salva = await lerTaxaSalva(m);
+  if (salva) {
+    cache.set(m, { taxa: salva, em: Date.now() });
+    return salva;
+  }
+  // Sem nada: null. Quem chama decide — NUNCA 0, nunca 1.
+  return null;
 }
 
 /**

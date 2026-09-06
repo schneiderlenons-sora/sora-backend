@@ -118,14 +118,83 @@ async function buscarCriptos(q) {
   }
 }
 
-// Taxa de conversão de uma moeda estrangeira → BRL (1 se já for BRL).
-// Usa o par cambial do Yahoo (ex.: USDBRL=X).
-async function taxaParaBRL(moeda) {
-  if (!moeda || moeda === 'BRL') return 1;
+// ── Câmbio: TRÊS FONTES, porque uma só decide se o cliente vê o dinheiro ──
+//
+// Relato de 06/09/2026: cliente com contas em NOK marcou a moeda certa e o
+// painel passou a dizer "câmbio indisponível agora" nos dois saldos. Medido
+// aqui, o par NOKBRL=X do Yahoo responde 0,55032 — ou seja, a cotação existe;
+// o que falhou foi a CHAMADA a partir do servidor.
+//
+// ⚠️ Yahoo bloqueia/limita IP de datacenter, e o Render é exatamente isso.
+// Com uma fonte só, uma recusa dela apaga o saldo do usuário — e o efeito é
+// pior num plano free que HIBERNA: o cache é um Map em memória, some a cada
+// cold start, e aí toda visita depende de uma chamada nova dar certo.
+//
+// As três concordaram na medição (0,55032 · 0,55057 · 0,5491), então a ordem
+// é por confiabilidade, não por preferência de valor. A primeira que
+// responder um número plausível vence.
+//
+// ⚠️ TIMEOUT CURTO E OBRIGATÓRIO. Sem ele, uma fonte pendurada trava a página
+// de contas inteira — trocaria "número faltando" por "tela que não carrega".
+const CAMBIO_TIMEOUT_MS = 4000;
+
+// Uma cotação plausível: número finito e positivo. Serve de guarda contra
+// resposta 200 com corpo de erro, que as APIs gratuitas fazem.
+const taxaValida = (v) => Number.isFinite(v) && v > 0;
+
+async function buscarJson(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), CAMBIO_TIMEOUT_MS);
   try {
-    const q = await yahooFinance.quote(`${moeda}BRL=X`, {}, SEM_VALIDACAO);
-    return q?.regularMarketPrice || null;
-  } catch { return null; }
+    const r = await fetch(url, { signal: ctrl.signal });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; } finally { clearTimeout(t); }
+}
+
+const FONTES_CAMBIO = [
+  // 1. Yahoo — a de sempre. Continua primeiro: é a mesma que cota as ações,
+  //    então quando ela responde tudo no app fala pela mesma régua.
+  { nome: 'yahoo', async ler(m) {
+    const q = await yahooFinance.quote(`${m}BRL=X`, {}, SEM_VALIDACAO);
+    return q?.regularMarketPrice;
+  } },
+  // 2. AwesomeAPI — brasileira, sem chave, cota par a par contra o real.
+  { nome: 'awesomeapi', async ler(m) {
+    const j = await buscarJson(`https://economia.awesomeapi.com.br/last/${m}-BRL`);
+    const k = j && Object.keys(j)[0];
+    return k ? Number(j[k].bid) : null;
+  } },
+  // 3. open.er-api.com — sem chave, cobertura ampla; a rede de segurança.
+  { nome: 'er-api', async ler(m) {
+    const j = await buscarJson(`https://open.er-api.com/v6/latest/${m}`);
+    return j && j.result === 'success' ? Number(j.rates?.BRL) : null;
+  } },
+];
+
+/**
+ * Taxa de conversão de uma moeda estrangeira → BRL (1 se já for BRL).
+ * `null` quando NENHUMA fonte respondeu — nunca 0, nunca 1.
+ *
+ * ⚠️ Devolver 1 no fracasso seria o pior resultado possível: somaria coroa
+ * como se fosse real, calado. É o defeito que o painel já teve.
+ */
+async function taxaParaBRLDetalhe(moeda) {
+  if (!moeda || moeda === 'BRL') return { taxa: 1, fonte: 'padrao' };
+  for (const f of FONTES_CAMBIO) {
+    try {
+      const v = Number(await f.ler(moeda));
+      if (taxaValida(v)) return { taxa: v, fonte: f.nome };
+    } catch { /* próxima fonte */ }
+  }
+  // Log com a moeda: sem ele o diagnóstico começa do zero na próxima vez.
+  console.warn('[cambio] nenhuma fonte cotou %s→BRL', moeda);
+  return { taxa: null, fonte: null };
+}
+
+// Só o número — assinatura antiga, usada por routes/investimentos.js.
+async function taxaParaBRL(moeda) {
+  return (await taxaParaBRLDetalhe(moeda)).taxa;
 }
 
 module.exports = {
@@ -135,5 +204,5 @@ module.exports = {
   buscarCotacaoCripto,
   buscarCriptos,
   listarCriptos,
-  taxaParaBRL,
+  taxaParaBRL, taxaParaBRLDetalhe,
 };
