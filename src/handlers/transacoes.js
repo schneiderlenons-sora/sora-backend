@@ -14,6 +14,8 @@ const {
   normalizarMoeda: normalizarMoedaTx,
   taxas: taxasTx,
   somarSaldos: somarSaldosTx,
+  camposTransacao,
+  formatar: fmtMoedaTx,
 } = require('../services/moeda');
 const {
   aPagarCartoes,
@@ -465,19 +467,61 @@ module.exports = async function handleTransacoes(data, ctx) {
       }
     }
 
+    // ── Moeda da conta (migration 144) — ESPELHA `routes/transacoes.js` ─────
+    //
+    // ⚠️ O CAMINHO DO ZAP NÃO CONVERTIA. O painel já lia o valor na moeda da
+    // CONTA desde a 144, mas aqui não: "gastei 200" numa conta em coroa
+    // gravava R$ 200 em vez de 200 kr (~R$ 110). O mesmo valor significava
+    // coisas diferentes conforme o canal, e errava pra MENOS — dinheiro
+    // sumindo do gasto, calado.
+    //
+    // ⚠️ `transacoes.valor` é BRL e `wallets.saldo` é NATIVO. São grandezas
+    // diferentes na mesma operação: a linha guarda o convertido, e o saldo
+    // da conta anda pelo valor que a pessoa falou. Somar o BRL no saldo
+    // nativo corromperia a conta dela.
+    //
+    // Em conta BRL devolve `{ valor, moeda:null, ... }` e tudo fica idêntico
+    // ao de antes — nenhuma ida de rede, nenhum campo novo.
+    const walletDaTx = (await supabase.from('wallets')
+      .select('*').eq('grupo_id', grupoId).ilike('nome', carteiraNome).maybeSingle()).data;
+    const moedaTx  = normalizarMoedaTx(walletDaTx?.moeda);
+    const tabelaTx = moedaTx === 'BRL' ? {} : await taxasTx([moedaTx]);
+    const campoMoeda = camposTransacao(valor, moedaTx, tabelaTx);
+
+    // ⚠️ A CONFIRMAÇÃO TEM DE FALAR A MOEDA QUE A PESSOA FALOU. Responder
+    // "Anotei R$ 200,00" a quem disse 200 em conta de coroa faz o lançamento
+    // CERTO parecer errado — e é o momento em que ela decide se confia. Mostra
+    // o nativo e o equivalente em real ao lado, que é a conta que ela faria.
+    const valorTxt = campoMoeda.moeda
+      ? `${fmtMoedaTx(campoMoeda.valor_moeda, campoMoeda.moeda)} (≈ ${fmtMoedaTx(campoMoeda.valor, 'BRL')})`
+      : `R$ ${valor.toFixed(2)}`;
+
     // Salva a transação (mesmo se precisaPerguntar, registramos pra ter id)
-    const { data: txCriada } = await supabase.from('transacoes').insert({
+    const linhaTx = {
       id_curto:     idCurto,
       grupo_id:     grupoId,
       criado_por:   user?.id || null,   // quem lançou (avatar em grupos)
       tipo:         data.tipo,
       categoria:    data.categoria || 'Outros',
-      valor,
+      valor: campoMoeda.valor,   // SEMPRE BRL (congelado, ver moeda.js)
       observacao:   data.observacao || '',
       carteira_nome: carteiraNome,
       pago:         true,
       data:         dataTsISO
-    }).select().single();
+    };
+    // Só em conta estrangeira. Sem a 144 as colunas não existem, e o retry
+    // logo abaixo salva a transação sem elas em vez de perder o lançamento.
+    if (campoMoeda.moeda) {
+      linhaTx.moeda       = campoMoeda.moeda;
+      linhaTx.valor_moeda = campoMoeda.valor_moeda;
+      linhaTx.taxa_brl    = campoMoeda.taxa_brl;
+    }
+    let { data: txCriada, error: erroTx } = await supabase.from('transacoes')
+      .insert(linhaTx).select().single();
+    if (erroTx && campoMoeda.moeda) {
+      delete linhaTx.moeda; delete linhaTx.valor_moeda; delete linhaTx.taxa_brl;
+      ({ data: txCriada } = await supabase.from('transacoes').insert(linhaTx).select().single());
+    }
 
     // Atualiza saldo da carteira (mesmo a temporária)
     const mult = data.tipo === 'Gasto' ? -1 : 1;
@@ -490,12 +534,14 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     if (wallet) {
       await supabase.from('wallets')
-        .update({ saldo: wallet.saldo + (valor * mult) })
+        // ⚠️ NATIVO, não BRL: gastar 200 kr tira 200 do saldo da conta em
+        // coroa, não os R$ 110 que isso vale hoje. Mesma regra da rota.
+        .update({ saldo: wallet.saldo + (campoMoeda.valor_moeda ?? campoMoeda.valor) * mult })
         .eq('id', wallet.id);
     } else if (carteiraNome === 'Dinheiro') {
       await supabase.from('wallets').upsert({
         grupo_id: grupoId, nome: 'Dinheiro', tipo: 'Dinheiro',
-        saldo: valor * mult
+        saldo: (campoMoeda.valor_moeda ?? campoMoeda.valor) * mult
       }, { onConflict: 'grupo_id,nome' });
     }
 
@@ -510,7 +556,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     // ── CASO 4: sem contas — orienta criar ────────────────────────
     if (carteiraNome === 'Dinheiro' && !precisaPerguntar && contasAtivas.length === 0) {
       const msg =
-        `✅ Anotei R$ ${valor.toFixed(2)} em ${data.categoria || 'Outros'}.\n\n` +
+        `✅ Anotei ${valorTxt} em ${data.categoria || 'Outros'}.\n\n` +
         `⚠️ Você ainda não tem contas cadastradas, então registrei em *Dinheiro*.\n\n` +
         `🏦 *Crie suas contas* pra eu organizar direito.\n` +
         `Recomendo criar pelo painel (botão abaixo), onde dá pra escolher o tipo (corrente, poupança, crédito).\n\n` +
@@ -542,9 +588,9 @@ module.exports = async function handleTransacoes(data, ctx) {
 
       // Intro diferente quando o user CITOU uma conta que não bateu com nenhuma.
       const intro = contaCitadaNaoResolvida
-        ? `✅ Anotei R$ ${valor.toFixed(2)} em ${data.categoria || 'Outros'}.\n\n` +
+        ? `✅ Anotei ${valorTxt} em ${data.categoria || 'Outros'}.\n\n` +
           `🤔 Não encontrei a conta que você mencionou entre as suas.`
-        : `✅ Anotei R$ ${valor.toFixed(2)} em ${data.categoria || 'Outros'}.`;
+        : `✅ Anotei ${valorTxt} em ${data.categoria || 'Outros'}.`;
 
       const msg =
         `${intro}\n\n` +

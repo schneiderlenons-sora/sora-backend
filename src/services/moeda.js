@@ -206,7 +206,12 @@ function camposTransacao(valorNativo, moeda, tabela) {
     return { valor: v, moeda: m, valor_moeda: v, taxa_brl: null };
   }
   return {
-    valor: v * t,          // BRL congelado
+    // ⚠️ ARREDONDA EM CENTAVOS. `4090.34 * 0.55032` dá 2250.9959088 em ponto
+    //    flutuante; gravar isso põe 7 casas decimais dentro de um campo de
+    //    dinheiro e faz somas divergirem por centavos, que é o tipo de erro
+    //    que o cliente confere na mão e não perdoa. A TAXA fica inteira (é ela
+    //    que reproduz a conta depois); só o resultado em real é arredondado.
+    valor: Math.round(v * t * 100) / 100,   // BRL congelado
     moeda: m,
     valor_moeda: v,        // nativo
     taxa_brl: t,

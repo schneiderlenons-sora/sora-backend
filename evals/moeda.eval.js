@@ -117,6 +117,50 @@ console.log('── 4. entradas degeneradas ──');
 }
 console.log('  ok');
 
+
+// ── N. LANÇAMENTO EM MOEDA ESTRANGEIRA — as DUAS grandezas ─────────────────
+//
+// Pedido do cliente com contas em coroa: "seria possível adicionar uma receita
+// em moeda estrangeira? qualquer tipo de lançamento, despesas e receitas".
+// A máquina já existia (migration 144) e o PAINEL já usava; o WhatsApp NÃO —
+// "gastei 200" numa conta em coroa gravava R$ 200 em vez de 200 kr (~R$ 110).
+// O mesmo valor significava coisas diferentes conforme o canal, errando pra
+// MENOS: dinheiro sumindo do gasto, calado.
+//
+// ⚠️ A REGRA QUE NÃO PODE REGREDIR: `transacoes.valor` é BRL e `wallets.saldo`
+// é NATIVO. São grandezas diferentes na MESMA operação. Somar o BRL no saldo
+// nativo corrompe a conta do usuário — e é o erro fácil aqui, porque as duas
+// saem da mesma chamada.
+console.log('── N. lançamento em moeda estrangeira ──');
+{
+  const t = { NOK: 0.55032, EUR: 5.9496 };
+
+  const nok = M.camposTransacao(200, 'NOK', t);
+  eq(nok.valor, 110.06, 'transacoes.valor: 200 kr viram R$ 110,06');
+  eq(nok.valor_moeda, 200, 'valor_moeda guarda o NATIVO, que é o que a pessoa falou');
+  eq(nok.taxa_brl, 0.55032, 'e a taxa do dia fica congelada na linha');
+  // O saldo da carteira anda pelo nativo — este é o valor que o handler soma.
+  eq(nok.valor_moeda ?? nok.valor, 200, 'wallets.saldo anda 200, NÃO 110,06');
+
+  // ⚠️ ARREDONDA EM CENTAVOS. Sem isso, 4090.34 × 0.55032 grava 2250.9959088 —
+  // sete casas decimais num campo de dinheiro, e somas divergindo por centavos.
+  eq(M.camposTransacao(4090.34, 'NOK', t).valor, 2251, 'converte e arredonda em centavos');
+  eq(M.camposTransacao(4090.34, 'NOK', t).taxa_brl, 0.55032, 'a TAXA fica inteira, não arredondada');
+
+  // Conta em real: a linha sai IDÊNTICA à de antes — nenhum campo novo.
+  const brl = M.camposTransacao(200, 'BRL', t);
+  eq(brl.valor, 200, 'em real o valor não muda');
+  eq(brl.moeda, null, 'e não grava moeda');
+  eq(brl.valor_moeda, null, 'nem valor nativo');
+
+  // ⚠️ SEM CÂMBIO, O DINHEIRO NÃO SOME. Grava o nativo com taxa null e REGISTRA
+  // a moeda — o número fica provisório e a tela mostra que não é real.
+  const semTaxa = M.camposTransacao(200, 'NOK', {});
+  eq(semTaxa.valor, 200, 'sem cotação, guarda o nativo em vez de zerar');
+  eq(semTaxa.moeda, 'NOK', 'e diz qual moeda é');
+  eq(semTaxa.taxa_brl, null, 'com a taxa em null, pra dar pra corrigir depois');
+}
+console.log('  ok');
 console.log('');
 if (falhas.length) {
   console.error(`❌ ${falhas.length} falha(s):`);
