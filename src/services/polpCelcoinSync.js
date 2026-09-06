@@ -58,6 +58,9 @@ function money(v) {
 }
 const money0 = (v) => money(v) ?? 0;
 const moeda  = (v) => (v && typeof v === 'object' && v.currency) || 'BRL';
+// Igual ao de cima, mas devolve null quando o campo não veio — quem decide o
+// que fazer com a ausência é `moedaDoSaldo`, não este helper.
+const moedaCrua = (v) => (v && typeof v === 'object' && v.currency) || null;
 const cent   = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 /**
@@ -279,6 +282,44 @@ const TIPO_CONTA = {
   CONTA_PAGAMENTO_PRE_PAGA: 'Corrente',
 };
 
+// ── De qual moeda é o saldo que estamos gravando ───────────────────────────
+//
+// ⚠️ QUEM MANDA É A MOEDA COLADA NO VALOR, não a do cadastro da conta.
+// `saldo` sai de `available_amount` + `automatically_invested_amount`, e cada
+// um vem como `{ amount, currency }` — a moeda ali DESCREVE aquele número.
+// O campo do cadastro descreve a conta, e os dois podem discordar.
+//
+// Isso não é hipótese: em 06/09/2026 havia 6 carteiras marcadas USD na base,
+// todas "Banco Inter", todas com extrato inequivocamente em real — "Pix
+// enviado - Planeta Hamburger", "Crédito Evento B3 - Dividendos", "Aplicação
+// - Mapfre Confianza". Pix e B3 não existem em dólar. Como o painel converte
+// pelo campo, o saldo delas aparecia multiplicado pela cotação do dólar.
+// Apareceram depois de 0e592fb (03/09), o commit que passou a gravar a moeda
+// do banco — antes dele a base inteira era BRL.
+//
+// ⚠️ O `identification` É LEGADO. A doc da Celcoin (accounts__show): "Campos
+// de identification (subtype, currency, etc.) estão na RAIZ. O objeto
+// identification é legado." Era o único lido aqui — mesma armadilha que já
+// custou os investimentos (`product` aninhado, no CLAUDE.md). Agora a raiz
+// vem antes, e o legado só como último recurso.
+//
+// ⚠️ Sem `bal` não há saldo pra rotular (`saldo` sai null), então o campo do
+// cadastro só decide quando não há valor nenhum em jogo.
+function moedaDoSaldo(acc, ident, bal) {
+  const doValor = bal && (moedaCrua(bal.available_amount) || moedaCrua(bal.automatically_invested_amount));
+  const daRaiz  = (acc && acc.currency) || null;
+  const legado  = (ident && ident.currency) || null;
+  const cadastro = daRaiz || legado;
+  if (doValor) {
+    if (cadastro && String(cadastro).toUpperCase() !== String(doValor).toUpperCase()) {
+      console.warn('[of] conta %s: cadastro diz %s, o saldo vem em %s — vale o do saldo.',
+        (acc && acc.id), cadastro, doValor);
+    }
+    return doValor;
+  }
+  return cadastro || 'BRL';
+}
+
 function normalizeConta(acc, instituicao) {
   const ident = acc.identification || {};
   const bal   = acc.balance || null;
@@ -345,7 +386,7 @@ function normalizeConta(acc, instituicao) {
     nome,
     tipo,
     saldo,                                 // null = ainda não sincronizado
-    moeda: ident.currency || moeda(bal && bal.available_amount),
+    moeda: moedaDoSaldo(acc, ident, bal),
     extras: {
       // Cheque especial contratado (a Sora já tem esse conceito — migration 094).
       cheque_especial: over ? money(over.overdraft_contracted_limit) : null,

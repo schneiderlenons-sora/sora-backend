@@ -193,6 +193,54 @@ ok(c2.saldo === null && c2.sincronizado === false, 'sem balance → saldo null (
 ok(c2.tipo === 'Poupança' && c2.nome === 'Nubank Poupança', 'poupança identificada no nome');
 console.log('  ok');
 
+
+// ── 6D. A MOEDA SAI DO VALOR, NÃO DO CADASTRO ──────────────────────────────
+//
+// Medido em 06/09/2026: 6 carteiras marcadas USD na base, todas "Banco Inter",
+// todas com extrato inequivocamente em real ("Pix enviado - Planeta
+// Hamburger", "Crédito Evento B3 - Dividendos", "Aplicação - Mapfre
+// Confianza"). Pix e B3 não existem em dólar. O painel converte pelo campo,
+// então o saldo delas aparecia multiplicado pela cotação do dólar.
+//
+// ⚠️ O `identification` É LEGADO — a doc diz "campos de identification estão
+// na RAIZ; o objeto identification é legado" —, e era o ÚNICO lido aqui.
+console.log('── 6D. moeda: valor > raiz > legado ──');
+{
+  const comSaldo = (extra) => ({
+    id: 'm1', brand_name: 'Inter', type: 'CONTA_DEPOSITO_A_VISTA',
+    balance: { available_amount: { amount: '2659.47', currency: 'BRL' } },
+    ...extra,
+  });
+
+  // O caso real: cadastro diz USD, o dinheiro vem em BRL. Vale o do dinheiro.
+  ok(S.normalizeConta(comSaldo({ identification: { currency: 'USD' } })).moeda === 'BRL',
+    'legado USD × saldo BRL: tem de valer BRL');
+  ok(S.normalizeConta(comSaldo({ currency: 'USD' })).moeda === 'BRL',
+    'raiz USD × saldo BRL: tem de valer BRL');
+
+  // Conta internacional de verdade continua funcionando — é o que a 0e592fb
+  // veio resolver, e não pode regredir.
+  const gringa = S.normalizeConta({
+    id: 'm2', brand_name: 'Wise', type: 'CONTA_DEPOSITO_A_VISTA',
+    balance: { available_amount: { amount: '1200.00', currency: 'USD' } },
+  });
+  ok(gringa.moeda === 'USD', 'saldo em USD continua USD');
+
+  // Só o investido automático veio: é ele que rotula.
+  const soAplicado = S.normalizeConta({
+    id: 'm3', brand_name: 'X', type: 'CONTA_DEPOSITO_A_VISTA',
+    balance: { automatically_invested_amount: { amount: '500.00', currency: 'EUR' } },
+  });
+  ok(soAplicado.moeda === 'EUR', 'sem available_amount, vale o investido automático');
+
+  // ⚠️ RAIZ ANTES DO LEGADO (a doc manda). Sem saldo não há valor pra rotular.
+  ok(S.normalizeConta({ id: 'm4', currency: 'EUR', identification: { currency: 'USD' } }).moeda === 'EUR',
+    'sem saldo, a RAIZ vence o legado');
+  ok(S.normalizeConta({ id: 'm5', identification: { currency: 'USD' } }).moeda === 'USD',
+    'sem saldo e sem raiz, o legado ainda serve');
+  ok(S.normalizeConta({ id: 'm6' }).moeda === 'BRL', 'sem nada, BRL');
+}
+console.log('  ok');
 // ── 7. CARTÃO + FATURA (o núcleo — datas que a Pluggy não dava) ────────────
 console.log('── 7. normalizeCartao() ──');
 const CARD = {
