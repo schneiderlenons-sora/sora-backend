@@ -462,6 +462,9 @@ cron.schedule('0 * * * *', async () => {
       await supabase.from('transacoes').insert({
         id_curto: idCurto, grupo_id: rec.grupo_id, tipo: rec.tipo,
         categoria: rec.categoria || 'Outros', valor: rec.valor,
+        // Conta fixa em moeda estrangeira (migration 160): a transação nasce
+        // com os MESMOS campos da recorrência — `valor` em BRL, nativo ao lado.
+        ...(rec.moeda ? { moeda: rec.moeda, valor_moeda: rec.valor_moeda, taxa_brl: rec.taxa_brl } : {}),
         observacao: contaConectada ? `[Previsto] ${rec.descricao}` : `[Recorrente] ${rec.descricao}`,
         carteira_nome: contaRec || rec.carteira || 'Dinheiro',
         // `recorrente` marca a linha como PREVISÃO reconciliável — sem ela, a
@@ -475,7 +478,11 @@ cron.schedule('0 * * * *', async () => {
       // o saldo é do banco — debitar aqui deixaria ele errado até o próximo sync.
       if (wallet && !contaConectada) {
         const mult = rec.tipo === 'Gasto' ? -1 : 1;
-        await supabase.from('wallets').update({ saldo: wallet.saldo + (rec.valor * mult) }).eq('id', wallet.id);
+        // ⚠️ NATIVO: `wallets.saldo` está na moeda da conta e `rec.valor` em
+        // BRL. Numa conta em coroa, somar o BRL aqui encolheria o saldo dela
+        // a cada mês — o salário entraria como 11.000 em vez de 20.000.
+        const passo = rec.valor_moeda ?? rec.valor;
+        await supabase.from('wallets').update({ saldo: wallet.saldo + (passo * mult) }).eq('id', wallet.id);
       }
       const phone = await phoneDoUser(rec.criado_por, rec.grupo_id);
       if (phone && querLembrete && await avisosLigados(rec.criado_por)) {
@@ -1874,9 +1881,15 @@ console.log(`   • A cada 30min — recuperação de cadastro sem pagamento (1�
 // ─────────────────────────────────────────────────────────────────
 cron.schedule('0 5 * * *', async () => {
   try {
-    const { aquecerCotacoes } = require('../services/moeda');
+    const { aquecerCotacoes, atualizarRecorrenciasEstrangeiras } = require('../services/moeda');
     const r = await aquecerCotacoes();
     console.log(`💱 Cotações aquecidas: ${r.ok} ok${r.falhas.length ? ` · falharam: ${r.falhas.join(', ')}` : ''}`);
+    // ⚠️ E ATUALIZA O BRL DAS CONTAS FIXAS EM MOEDA ESTRANGEIRA. Um salário
+    // de kr 20.000 vale um real diferente a cada mês; sem isto a projeção dos
+    // Previstos usaria pra sempre a cotação do dia do cadastro. É o único
+    // lugar que mexe nesse campo — os 22 consumidores seguem só LENDO `valor`.
+    const { atualizadas, erros } = await atualizarRecorrenciasEstrangeiras();
+    if (atualizadas || erros) console.log(`💱 Contas fixas em moeda estrangeira: ${atualizadas} atualizadas${erros ? ` · ${erros} com erro` : ''}`);
   } catch (e) {
     console.log('💱 Aquecimento de cotações falhou:', e.message);
   }

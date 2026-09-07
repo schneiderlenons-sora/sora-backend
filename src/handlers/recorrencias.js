@@ -1,4 +1,12 @@
 const supabase = require('../db/supabase');
+// Conta em moeda estrangeira (migrations 144/160): o valor confirmado está na
+// moeda da CONTA, e o saldo dela também.
+const {
+  normalizarMoeda: normalizarMoedaRec,
+  taxas: taxasRec,
+  camposTransacao: camposTransacaoRec,
+  formatar: fmtMoedaRec,
+} = require('../services/moeda');
 const { enviarTexto } = require('../services/mensageiro');
 
 const norm = (s) => (s || '').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
@@ -157,22 +165,50 @@ module.exports = async function handleRecorrencias(data, ctx) {
     }
 
     const descLimpa = semPrefixo(alvo.observacao);
-    await supabase.from('transacoes')
-      .update({ valor, pago: true, observacao: descLimpa }).eq('id', alvo.id);
+
+    // ── Moeda da conta ──────────────────────────────────────────────────────
+    //
+    // ⚠️ O VALOR CONFIRMADO É NOVO, e está na moeda DA CONTA — é o número que
+    // a pessoa acabou de digitar ("confirmar luz 243"). Não dá pra reaproveitar
+    // o `valor_moeda` que o cron projetou: aquele é o valor ANTIGO, e usá-lo
+    // gravaria a previsão no lugar da conta real que chegou.
+    //
+    // ⚠️ E as duas grandezas continuam separadas: `transacoes.valor` em BRL,
+    // `wallets.saldo` no nativo. Numa conta em coroa, mexer no saldo com o BRL
+    // erra ~45%.
+    const { data: wallet } = await supabase.from('wallets')
+      .select('id, saldo, moeda').eq('grupo_id', grupoId).ilike('nome', alvo.carteira_nome || 'Dinheiro').maybeSingle();
+    const moedaConf  = normalizarMoedaRec(wallet?.moeda);
+    const tabelaConf = moedaConf === 'BRL' ? {} : await taxasRec([moedaConf]);
+    const camposConf = camposTransacaoRec(valor, moedaConf, tabelaConf);
+
+    const patchTx = { valor: camposConf.valor, pago: true, observacao: descLimpa };
+    if (camposConf.moeda) {
+      patchTx.moeda = camposConf.moeda;
+      patchTx.valor_moeda = camposConf.valor_moeda;
+      patchTx.taxa_brl = camposConf.taxa_brl;
+    }
+    let { error: eConf } = await supabase.from('transacoes').update(patchTx).eq('id', alvo.id);
+    // Sem a migration 144 as colunas não existem: confirma do mesmo jeito.
+    if (eConf) {
+      await supabase.from('transacoes')
+        .update({ valor: camposConf.valor, pago: true, observacao: descLimpa }).eq('id', alvo.id);
+    }
 
     const ehGasto = alvo.tipo === 'Gasto';
     const mult = ehGasto ? -1 : 1;
-    const { data: wallet } = await supabase.from('wallets')
-      .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', alvo.carteira_nome || 'Dinheiro').maybeSingle();
     if (wallet) {
-      await supabase.from('wallets').update({ saldo: (wallet.saldo || 0) + (valor * mult) }).eq('id', wallet.id);
+      const passoConf = camposConf.valor_moeda ?? camposConf.valor;
+      await supabase.from('wallets').update({ saldo: (wallet.saldo || 0) + (passoConf * mult) }).eq('id', wallet.id);
     }
 
     const linhaConta = wallet
       ? ` · ${ehGasto ? 'debitado de' : 'creditado em'} *${alvo.carteira_nome}*`
       : '';
     await enviarTexto(phone,
-      `✅ *Confirmado!* ${ehGasto ? '🔴' : '🟢'} ${descLimpa} — R$ ${valor.toFixed(2)}${linhaConta}.`);
+      `✅ *Confirmado!* ${ehGasto ? '🔴' : '🟢'} ${descLimpa} — ${camposConf.moeda
+        ? `${fmtMoedaRec(camposConf.valor_moeda, camposConf.moeda)} (≈ ${fmtMoedaRec(camposConf.valor, 'BRL')})`
+        : `R$ ${valor.toFixed(2)}`}${linhaConta}.`);
     return;
   }
 

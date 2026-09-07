@@ -9,6 +9,9 @@
 const supabase = require('../db/supabase');
 const { categorizarDescricao } = require('./categorizar');
 const { calcularDataFim } = require('./frequenciaRecorrencia');
+// Conta fixa em moeda estrangeira (migration 160): o valor informado está na
+// moeda DA CARTEIRA, igual à transação avulsa. Ver `moedaDaCarteira` abaixo.
+const { normalizarMoeda, taxas, camposTransacao } = require('./moeda');
 
 /**
  * Confere se a categoria EXISTE no catálogo do grupo; se não, tenta sem o
@@ -39,6 +42,24 @@ async function categoriaValida(grupoId, nome) {
   } catch { return alvo; }
 }
 
+/**
+ * Em que moeda está o valor de uma conta fixa: a da CARTEIRA dela.
+ *
+ * ⚠️ Mesma regra da transação avulsa — "o valor está na moeda da conta". Sem
+ * isto, quem tem conta em coroa cadastrava "salário 20000" e a Sora guardava
+ * R$ 20.000 onde ele quis dizer kr 20.000 (≈ R$ 11.000).
+ *
+ * Falha de leitura cai em BRL: é o comportamento de sempre, e chutar moeda
+ * estrangeira num erro de rede seria muito pior que chutar real.
+ */
+async function moedaDaCarteira(grupoId, carteira) {
+  try {
+    const { data } = await supabase.from('wallets')
+      .select('moeda').eq('grupo_id', grupoId).ilike('nome', carteira || 'Dinheiro').maybeSingle();
+    return normalizarMoeda(data?.moeda);
+  } catch { return 'BRL'; }
+}
+
 async function criarRecorrencia({
   grupoId, criadoPor, tipo, categoria, valor, dia_vencimento, descricao, carteira, valor_variavel,
   modo_lancamento, lembrete,
@@ -56,7 +77,7 @@ async function criarRecorrencia({
       grupoId,
       categoria || (ehReceita ? 'Salário' : (categorizarDescricao(desc) || 'Outros')),
     ),
-    valor:          parseFloat(valor) || 0,
+    valor:          0,   // preenchido logo abaixo (pode ser conversão)
     // 1–31. Dia que não existe no mês (29/30/31 em fev, 31 em abr…) o cron dispara
     // no ÚLTIMO dia do mês — mesma semântica do ocorrenciasMensais (Agenda). Travar
     // em 28 mudava a intenção do usuário calada ("dia 29" virava dia 28).
@@ -65,6 +86,21 @@ async function criarRecorrencia({
     carteira:       carteira || 'Dinheiro',
     ativa:          true,
   };
+
+  // ── Moeda da carteira (migration 160) ───────────────────────────────────
+  // ⚠️ `valor` fica SEMPRE em BRL: 22 arquivos somam esse campo (projeção dos
+  // Previstos, saldo projetado, agenda, Oráculo, resumo do zap…). Converter na
+  // leitura obrigaria os 22 a conhecer cotação — a receita das cópias
+  // divergentes. O nativo vai ao lado, e o JOB 1M mantém o BRL atualizado.
+  const moedaRec = await moedaDaCarteira(grupoId, carteira);
+  const tabelaRec = moedaRec === 'BRL' ? {} : await taxas([moedaRec]);
+  const camposRec = camposTransacao(parseFloat(valor) || 0, moedaRec, tabelaRec);
+  base.valor = camposRec.valor;
+  // Só em conta estrangeira; sem a 160 o insert cai na camada seguinte.
+  const extraMoeda = camposRec.moeda
+    ? { moeda: camposRec.moeda, valor_moeda: camposRec.valor_moeda, taxa_brl: camposRec.taxa_brl }
+    : {};
+
   const variavel = { valor_variavel: !!valor_variavel };
   // Migration 112. Se não veio escolha, o padrão é decidido pela CARTEIRA: conta
   // ligada ao Open Finance nasce 'nao_lancar' (o banco já traz a cobrança real,
@@ -105,7 +141,9 @@ async function criarRecorrencia({
   // ⚠️ A camada da 157 vem PRIMEIRO, e a antiga continua logo abaixo: sem a
   // migration a recorrência ainda é criada (mensal e pra sempre, como antes)
   // em vez de o cadastro inteiro falhar.
-  let ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, ...modo, ...extra157, criado_por: criadoPor }).select().single();
+  // ⚠️ A camada de MOEDA vem junto da 157, e a linha de baixo já é o retrocesso:
+  // sem a migration 160 a conta fixa ainda é criada, só sem registrar a moeda.
+  let ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, ...modo, ...extra157, ...extraMoeda, criado_por: criadoPor }).select().single();
   if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, ...modo, criado_por: criadoPor }).select().single();
   if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, criado_por: criadoPor }).select().single();
   if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel }).select().single();
@@ -125,4 +163,4 @@ async function modoPadrao(grupoId, carteira) {
   } catch { return 'lancar'; }
 }
 
-module.exports = { criarRecorrencia, categoriaValida, modoPadrao };
+module.exports = { criarRecorrencia, categoriaValida, modoPadrao, moedaDaCarteira };

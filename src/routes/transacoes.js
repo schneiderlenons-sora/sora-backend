@@ -761,7 +761,9 @@ router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res
         .select('id, saldo').eq('grupo_id', t.grupo_id).ilike('nome', t.carteira_nome).maybeSingle();
       if (wallet) {
         await supabase.from('wallets')
-          .update({ saldo: (wallet.saldo || 0) + (t.valor * mult) }).eq('id', wallet.id);
+        // ⚠️ NATIVO: `wallets.saldo` está na moeda da conta e `valor` em BRL.
+        //    Estornar o BRL deixaria a conta em coroa errada ao apagar a linha.
+        .update({ saldo: (wallet.saldo || 0) + ((t.valor_moeda ?? t.valor) * mult) }).eq('id', wallet.id);
       }
     }
 

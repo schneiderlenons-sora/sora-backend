@@ -305,11 +305,47 @@ async function aquecerCotacoes() {
   return { ok, falhas };
 }
 
+/**
+ * Recalcula o `valor` (BRL) das contas fixas em moeda estrangeira.
+ *
+ * ⚠️ ESTE É O ÚNICO LUGAR QUE ESCREVE ESSE CAMPO por causa de câmbio, e é o
+ * que permite os outros 22 consumidores continuarem apenas LENDO `valor` como
+ * real. A alternativa — converter na leitura — espalharia cotação por toda a
+ * projeção dos Previstos, saldo projetado, agenda, Oráculo e resumo do zap.
+ *
+ * ⚠️ O NATIVO É A FONTE. Recalcular a partir do `valor` (que já é BRL) faria
+ * a conta encolher a cada dia, multiplicando a cotação sobre si mesma.
+ *
+ * Sem a migration 160 a coluna não existe: a consulta falha, devolve zero e
+ * o cron segue — nada quebra.
+ */
+async function atualizarRecorrenciasEstrangeiras() {
+  let atualizadas = 0;
+  let erros = 0;
+  try {
+    const { data } = await supabase.from('recorrencias')
+      .select('id, valor, valor_moeda, moeda').not('moeda', 'is', null);
+    for (const r of data || []) {
+      const nativo = Number(r.valor_moeda);
+      if (!Number.isFinite(nativo) || !r.moeda) continue;
+      const t = await taxa(r.moeda);
+      // Sem cotação, NÃO mexe: o valor de ontem é melhor que um zero.
+      if (!t) { erros += 1; continue; }
+      const brl = Math.round(nativo * t * 100) / 100;
+      if (brl === Number(r.valor)) continue;   // nada mudou, não escreve
+      const { error } = await supabase.from('recorrencias')
+        .update({ valor: brl, taxa_brl: t }).eq('id', r.id);
+      if (error) erros += 1; else atualizadas += 1;
+    }
+  } catch { /* sem a 160 a coluna não existe — segue sem atualizar */ }
+  return { atualizadas, erros };
+}
+
 module.exports = {
   PADRAO, MOEDAS,
   normalizarMoeda, ehEstrangeira,
   taxa, taxas, paraBRL,
   saldoEmBRL, somarSaldos,
   camposTransacao, valorNativo, formatar,
-  comSaldoBRL, aquecerCotacoes,
+  comSaldoBRL, aquecerCotacoes, atualizarRecorrenciasEstrangeiras,
 };

@@ -677,7 +677,9 @@ module.exports = async function handleTransacoes(data, ctx) {
       .eq('grupo_id', grupoId).ilike('nome', tx.carteira_nome).single();
     if (walletAntiga) {
       await supabase.from('wallets')
-        .update({ saldo: walletAntiga.saldo - (tx.valor * mult) })
+        // ⚠️ NATIVO: `wallets.saldo` está na moeda da conta e `valor` em BRL.
+        //    Numa conta em coroa, mexer no saldo com o BRL erra ~45%.
+        .update({ saldo: walletAntiga.saldo - ((tx.valor_moeda ?? tx.valor) * mult) })
         .eq('id', walletAntiga.id);
     }
 
@@ -687,7 +689,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       .eq('grupo_id', grupoId).ilike('nome', novaCarteira).single();
     if (walletNova) {
       await supabase.from('wallets')
-        .update({ saldo: walletNova.saldo + (tx.valor * mult) })
+        .update({ saldo: walletNova.saldo + ((tx.valor_moeda ?? tx.valor) * mult) })
         .eq('id', walletNova.id);
     } else {
       // Carteira não existe — cria automaticamente
@@ -760,7 +762,9 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     if (wallet) {
       await supabase.from('wallets')
-        .update({ saldo: wallet.saldo + (tx.valor * mult) })
+        // ⚠️ NATIVO: `wallets.saldo` está na moeda da conta e `valor` em BRL.
+        //    Numa conta em coroa, mexer no saldo com o BRL erra ~45%.
+        .update({ saldo: wallet.saldo + ((tx.valor_moeda ?? tx.valor) * mult) })
         .eq('id', wallet.id);
     }
 

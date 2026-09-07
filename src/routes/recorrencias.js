@@ -140,6 +140,38 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (descricao !== undefined)      patch.descricao      = String(descricao).trim().slice(0, 120);
     if (carteira !== undefined)       patch.carteira       = carteira || 'Dinheiro';
     // Migration 112 — separados do resto pra poder cair fora se a coluna não existir.
+
+    // ── Moeda da carteira (migration 160) ─────────────────────────────────
+    //
+    // ⚠️ MUDAR A CONTA MUDA A MOEDA, e não só o valor. Editar a conta fixa de
+    // uma carteira em real pra uma em coroa (ou o contrário) tem de
+    // reinterpretar o número — mesma regra do `moverCarteira` no WhatsApp.
+    // Por isso o recálculo dispara quando QUALQUER um dos dois muda.
+    //
+    // ⚠️ E o nativo é a base do cálculo, não o `valor` (que é BRL): sem isso,
+    // editar só o dia de vencimento de um salário em coroa converteria o BRL
+    // de novo, encolhendo o valor a cada edição.
+    const patchMoeda = {};
+    if (valor !== undefined || carteira !== undefined) {
+      try {
+        const { moedaDaCarteira } = require('../services/recorrencias');
+        const { taxas, camposTransacao } = require('../services/moeda');
+        const { data: atual } = await supabase.from('recorrencias')
+          .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+        const contaFinal = carteira !== undefined ? (carteira || 'Dinheiro') : atual?.carteira;
+        const nativoAtual = atual?.valor_moeda ?? atual?.valor ?? 0;
+        const base = valor !== undefined ? (parseFloat(valor) || 0) : Number(nativoAtual) || 0;
+        const m = await moedaDaCarteira(req.grupoId, contaFinal);
+        const tab = m === 'BRL' ? {} : await taxas([m]);
+        const c = camposTransacao(base, m, tab);
+        patch.valor = c.valor;
+        // Grava também como null ao voltar pra conta em real — senão a linha
+        // ficaria marcada NOK dentro de uma carteira em BRL.
+        patchMoeda.moeda = c.moeda;
+        patchMoeda.valor_moeda = c.valor_moeda;
+        patchMoeda.taxa_brl = c.taxa_brl;
+      } catch { /* sem a 160 segue sem os campos de moeda */ }
+    }
     const patch112 = {};
     if (modo_lancamento !== undefined && MODOS.includes(modo_lancamento)) patch112.modo_lancamento = modo_lancamento;
     if (lembrete !== undefined) patch112.lembrete = !!lembrete;
@@ -211,7 +243,11 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     // ⚠️ Cascata de MIGRATION PENDENTE, do mais completo pro mais antigo: sem a
     // 157 (ou sem a 112) o que dá pra salvar é salvo, em vez de a edição inteira
     // ser recusada por um erro de coluna que o usuário não tem como interpretar.
-    let { data, error } = await salvar({ ...patch, ...patch112, ...patch157 });
+    // ⚠️ A camada de MOEDA (160) entra na tentativa mais completa e cai junto
+    //    com a 157 se a coluna não existir — `patch.valor` já vai convertido
+    //    de qualquer jeito, então a edição não perde a conversão, só o rótulo.
+    let { data, error } = await salvar({ ...patch, ...patch112, ...patch157, ...patchMoeda });
+    if (error && Object.keys(patchMoeda).length) ({ data, error } = await salvar({ ...patch, ...patch112, ...patch157 }));
     if (error && Object.keys(patch157).length) ({ data, error } = await salvar({ ...patch, ...patch112 }));
     if (error && /modo_lancamento|lembrete/i.test(error.message || '') && Object.keys(patch).length) {
       ({ data, error } = await salvar(patch));
