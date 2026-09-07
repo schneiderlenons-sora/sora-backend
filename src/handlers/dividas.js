@@ -36,7 +36,11 @@ async function encontrarDivida(grupoId, termo) {
   const t = (termo || '').trim();
   if (!t) return [];
   const { data } = await supabase.from('dividas')
-    .select('*')
+    // ⚠️ NÃO `select('*')`. `dividas.imagem_url` guarda a FOTO em base64 direto
+    // na coluna (até ~130 KB por linha) — a resposta aqui é só texto no
+    // WhatsApp, então baixar a imagem do banco pra Render é puro desperdício
+    // de egress, em TODA mensagem que cita uma dívida pelo nome.
+    .select('id, titulo, credor, valor_parcela, parcelas_pagas, parcelas_total, status')
     .eq('grupo_id', grupoId)
     .in('status', ['ativa', 'em_atraso'])
     .or(`titulo.ilike.%${t}%,credor.ilike.%${t}%`);
@@ -117,7 +121,10 @@ module.exports = async function handleDividas(data, ctx) {
   // ── LISTAR DÍVIDAS ─────────────────────────────────────────────
   if (data.acao === 'listar_dividas') {
     const { data: dividas } = await supabase.from('dividas')
-      .select('*').eq('grupo_id', grupoId)
+      // ⚠️ Mesmo motivo de `encontrarDivida`: a lista é só texto, e
+      // `imagem_url` chegaria a ~1,5 MB por chamada nos grupos que têm foto
+      // cadastrada em várias dívidas.
+      .select('titulo, credor, valor_parcela, valor_total, parcelas_total, parcelas_pagas, dia_vencimento, lembretes_ativos')
       .in('status', ['ativa', 'em_atraso'])
       .order('dia_vencimento', { ascending: true });
 
