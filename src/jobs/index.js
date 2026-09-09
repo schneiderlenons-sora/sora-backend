@@ -8,7 +8,10 @@ const { garantirCarteira } = require('../services/carteiraGarantida');
 const { avisosLigados, briefingLigado } = require('../services/avisos');
 const { enviarProativo, enviarProativoDetalhado, provedor } = require('../services/proativo');
 const { falar, templateAgente, templateDoAviso, templateLista, aberturaDe } = require('../agentes');
-const yahooFinance    = require('yahoo-finance2').default;
+// ⚠️ NADA de `require('yahoo-finance2').default` direto aqui — é o padrão da
+// v2, que quebrou na v3 ("Call `new YahooFinance()` first"). O cliente CERTO
+// já existe em services/cotacoes.js (é o mesmo que services/moeda.js usa pro
+// câmbio); reaproveitar em vez de manter um segundo cliente.
 
 // Gera ID curto de 6 caracteres
 const gerarId = () => Math.random().toString(36).substring(2,8).toUpperCase();
@@ -1432,17 +1435,22 @@ cron.schedule('0 3 * * *', async () => {
     try {
       // validateResult:false → o Yahoo mudou campos e a lib rejeitava a
       // resposta por schema, derrubando a atualização de preços.
-      const quote = await yahooFinance.quote(inv.ticker, {}, { validateResult: false });
-      const precoAtual  = quote.regularMarketPrice;
+      // ⚠️ ESTE JOB ESTAVA 100% QUEBRADO — todo ticker, todo dia, falhando
+      // ANTES de qualquer chamada de rede ("Call new YahooFinance() first").
+      // Os preços de ações/FIIs dos clientes ficaram CONGELADOS o tempo
+      // inteiro em que isso passou despercebido — nunca chegava no update.
+      const { buscarCotacaoAcao, buscarDividendos } = require('../services/cotacoes');
+      const cot = await buscarCotacaoAcao(inv.ticker);
+      if (!cot || cot.precoAtual == null) throw new Error('cotação indisponível');
+      const precoAtual  = cot.precoAtual;
       const novoValor   = precoAtual * inv.quantidade;
 
-      // Busca dividendos desde a data de compra
+      // Busca dividendos desde a data de compra (por AÇÃO — multiplica pela
+      // quantidade, igual o job fazia antes de quebrar).
       let dividendos = inv.dividendos_acumulados || 0;
       try {
-        const hist = await yahooFinance.historical(inv.ticker, {
-          period1: inv.data_compra, events: 'dividends'
-        }, { validateResult: false });
-        dividendos = (hist || []).reduce((s, h) => s + (h.dividends || 0), 0) * inv.quantidade;
+        const porAcao = await buscarDividendos(inv.ticker, inv.data_compra);
+        dividendos = (porAcao || 0) * inv.quantidade;
       } catch { /* sem dividendos para esse ativo */ }
 
       const rentabilidade = inv.valor_aportado > 0
