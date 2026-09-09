@@ -282,7 +282,13 @@ router.post('/conexoes/:externalId/sincronizar', auth, exigirPermissao('admin', 
     if (!p.configurado()) {
       return res.status(503).json({ erro: `Open Finance (${p.rotulo}) não está configurado no servidor.` });
     }
+    // ⚠️ Mesma instrumentação do sync automático (webhookCelcoin.js) — este
+    // caminho puxa o DOBRO da janela (180 dias contra 90) e não tem o
+    // debounce de 20s que o webhook tem. O botão se protege contra duplo
+    // clique no cliente, mas nada impede uso repetido de verdade.
+    const t0 = Date.now();
     const r = await p.sincronizar(req.params.externalId, { dias: 180 });
+    console.log(`🔄 [of-manual] sync ${req.params.externalId} (${p.provider}) → ${Date.now() - t0}ms`);
     res.json({ ok: !(r && r.erro), provider: p.provider, ...r });
   } catch (err) {
     console.error('[open-finance/sync]', err.message);

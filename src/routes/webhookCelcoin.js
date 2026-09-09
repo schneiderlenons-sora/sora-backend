@@ -71,9 +71,23 @@ function agendarSync(consentId, motivo) {
   const timer = setTimeout(async () => {
     agendados.delete(id);
     try {
+      // ⚠️ INSTRUMENTAÇÃO — nao muda o comportamento, so mede.
+      //
+      // Investigando um pico de egress do Supabase (08/09/2026, ~1GB num só
+      // dia), este era o suspeito nº 1: todo webhook do banco dispara um sync
+      // de 90 DIAS. Sem numero por trás disso era so palpite. Agora cada
+      // sync loga quantas transacoes ele PUXOU do banco (nao so as novas —
+      // e o proxy mais direto do que ele fez o Supabase ler/gravar) e quanto
+      // tempo levou. Junta os logs de um dia e da pra saber se este caminho
+      // e ou nao o culpado, sem depender da retencao de 1 dia do Supabase
+      // (o log fica no Render, que guarda mais).
+      const t0 = Date.now();
       const r = await celcoinSync.sincronizarConsentimento(id, { dias: 90 });
+      const ms = Date.now() - t0;
+      const txContas   = (r?.contas   || []).reduce((s, c) => s + (c.txs || 0), 0);
+      const txCartoes  = (r?.cartoes  || []).reduce((s, c) => s + (c.txs || 0), 0);
       const resumo = r && r.erro ? `erro: ${r.erro}` : `${(r && r.novas) || 0} transação(ões) nova(s)`;
-      console.log(`🔄 [celcoin] sync ${id} (${motivo}) → ${resumo}`);
+      console.log(`🔄 [celcoin] sync ${id} (${motivo}) → ${resumo} · ${ms}ms · puxou ${txContas + txCartoes} tx (${txContas} contas + ${txCartoes} cartões)`);
     } catch (e) {
       console.warn(`[celcoin] sync ${id} falhou:`, e.message);
     }
