@@ -1482,6 +1482,29 @@ function dataDeLancamento(valor) {
 }
 
 /**
+ * MÊS DE FATURAMENTO declarado pelo emissor (`bill_forecast_date`, AAAA-MM).
+ *
+ * ⚠️ SÓ COLETA (migration 162). Nenhum cálculo lê isto ainda — é o campo que a
+ * doc da Celcoin descreve como "sempre preenchido, inclusive para parcelas
+ * futuras e lançamentos agendados", ou seja, exatamente o que `cicloFatura` +
+ * `bill_post_date` + as regras de borda reconstroem na mão hoje. Guardar
+ * primeiro, medir contra a nossa reconstrução, e só então considerar trocar.
+ *
+ * ⚠️ Aceita 'AAAA-MM' e 'AAAA-MM-DD' (a doc diz AAAA-MM, mas payload real de
+ * data costuma vir completo) e devolve sempre 'AAAA-MM'. A sentinela
+ * '0001-01-01' que a Celcoin usa em data não lançada morre no teste do ano.
+ */
+function mesDeFaturamento(valor) {
+  const s = String(valor || '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(s)) return null;
+  const ano = Number(s.slice(0, 4));
+  const mes = Number(s.slice(5, 7));
+  if (!(ano >= 2000 && ano <= 2100)) return null;
+  if (!(mes >= 1 && mes <= 12)) return null;
+  return s;
+}
+
+/**
  * Data em que a parcela N é cobrada = compra + (N−1) meses.
  * Clampa o dia em 28 e ancora ao meio-dia UTC — MESMA regra do parcelamento
  * manual (handlers/parcelas.js), pra compra parcelada digitada e importada
@@ -1685,6 +1708,9 @@ function normalizeTxCartao(tx, hoje) {
     // Guardada à parte de propósito — `data` continua sendo a da COMPRA, que é
     // a que o usuário reconhece e que o resto do painel usa.
     billPostDate: dataDeLancamento(tx.bill_post_date),
+    // ⚠️ SÓ COLETA (migration 162) — nenhum cálculo lê. É o mês de faturamento
+    // que o EMISSOR declara; guardado pra medir contra a nossa reconstrução.
+    billForecast: mesDeFaturamento(tx.bill_forecast_date),
   };
 }
 
@@ -2250,6 +2276,37 @@ async function upsertWallet(grupoId, userId, n, saldo, consentId) {
  *
  * Tolerante: sem a migration, não faz nada e o sync segue igual.
  */
+/**
+ * BACKFILL do mês de faturamento declarado pelo emissor (migration 162).
+ *
+ * Irmão do `backfillBillPostDate` logo abaixo, e SEPARADO de propósito: se a
+ * 162 ainda não rodou, o update desta coluna falha — e num update conjunto ele
+ * levaria junto o preenchimento do `of_bill_post_date`, que já funciona.
+ *
+ * ⚠️ ADITIVO E SÓ ISSO: preenche onde está NULL, nunca sobrescreve, e nenhum
+ * cálculo lê esta coluna. Rodar isto não muda um centavo em tela nenhuma — é
+ * coleta pra poder MEDIR o campo do emissor contra a nossa reconstrução.
+ */
+async function backfillBillForecast(grupoId, normalizadas) {
+  const linhas = (normalizadas || []).filter((t) => t && t.externalId && t.billForecast);
+  if (!linhas.length) return 0;
+  let n = 0;
+  for (const t of linhas) {
+    try {
+      const { data: atual, error } = await supabase.from('transacoes')
+        .select('id, of_bill_forecast')
+        .eq('grupo_id', grupoId).eq('of_tx_id', t.externalId).maybeSingle();
+      if (error) return n;                     // migration 162 pendente: para
+      if (!atual || atual.of_bill_forecast) continue;   // já tem, não mexe
+      const { error: e2 } = await supabase.from('transacoes')
+        .update({ of_bill_forecast: t.billForecast }).eq('id', atual.id);
+      if (e2) return n;                        // coluna ausente: para, sem ruído
+      n++;
+    } catch { return n; }
+  }
+  return n;
+}
+
 async function backfillBillPostDate(grupoId, normalizadas) {
   const linhas = (normalizadas || []).filter((t) => t && t.externalId && t.billPostDate);
   if (!linhas.length) return 0;
@@ -2389,6 +2446,7 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     of_card: t.card || null,
     of_bill_id: t.billId || null,
     of_bill_post_date: t.billPostDate || null,
+    of_bill_forecast: t.billForecast || null,
     parcela_num: t.parcelaNum ?? null,
     parcela_total: t.parcelaTotal ?? null,
     parcela_grupo: t.parcelaGrupo ?? null,
@@ -2418,10 +2476,13 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
   // derrubar a sincronização inteira — são extras, não o dado principal.
   // ⚠️ Colunas de migration: se alguma não existir, o insert INTEIRO falha e a
   // importação perde o lote. Aqui o erro é reconhecido e o lote repetido sem
-  // elas. `of_bill_post_date` é a 130.
-  const COLUNAS_OPCIONAIS = /of_bill_id|of_bill_post_date|parcela_num|parcela_total|parcela_grupo/i;
+  // elas. `of_bill_post_date` é a 130; `of_bill_forecast` é a 162.
+  const COLUNAS_OPCIONAIS = /of_bill_id|of_bill_post_date|of_bill_forecast|parcela_num|parcela_total|parcela_grupo/i;
   const semOpcionais = (r) => {
-    const { of_bill_id, of_bill_post_date, parcela_num, parcela_total, parcela_grupo, ...resto } = r;
+    const {
+      of_bill_id, of_bill_post_date, of_bill_forecast,
+      parcela_num, parcela_total, parcela_grupo, ...resto
+    } = r;
     return resto;
   };
 
@@ -2843,6 +2904,10 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // Preenche a data de lançamento do emissor no histórico já importado
         // (migration 130). Aditivo: só onde está null.
         const bpdPreenchidas = await backfillBillPostDate(grupoId, normalizadas);
+        // Idem pro mês de faturamento declarado pelo emissor (migration 162).
+        // ⚠️ SÓ COLETA — nenhum cálculo lê essa coluna; ver o comentário da
+        // função. Não altera valor de fatura nenhuma.
+        await backfillBillForecast(grupoId, normalizadas);
         novasTx += novas;
 
         // ⚠️ A fatura AINDA ABERTA quase nunca tem `bill_total_amount` — o banco
