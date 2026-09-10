@@ -21,7 +21,7 @@
 // original já contou no mês dela). SEM juros (decisão de produto).
 // =============================================================================
 const supabase = require('../db/supabase');
-const { cicloPorCompetencia, competenciaVizinha, dataDaFatura } = require('./cicloFatura');
+const { cicloPorCompetencia, competenciaVizinha, dataDaFatura, hojeSP } = require('./cicloFatura');
 const { somarFatura } = require('./valorFatura');
 
 const TZ = 'America/Sao_Paulo';
@@ -54,21 +54,148 @@ function mesSeguinte(ym) {
 // `data` entre `ini` e `fimExcl` nunca leria a linha de 07/08 que o banco
 // lançou em 08/08 — ela ficaria de fora antes de a regra ser aplicada. Os 8
 // dias de folga cobrem com sobra o teto de 7 do helper.
-async function somaFaturaCiclo(grupoId, cartaoNome, ciclo) {
+// ⚠️ `of_bill_post_date` VAZIO NUM CICLO QUE JÁ FOI FATURADO SIGNIFICA "NÃO
+// ENTROU NESTA FATURA" — e é essa leitura que faltava.
+//
+// `dataDaFatura` usa o `bill_post_date` quando ele EXISTE. Mas o emissor só o
+// preenche na linha que ele já lançou numa fatura; a compra que ficou pra
+// próxima vem com o campo VAZIO, e aí o helper cai na data da compra — que,
+// sendo do dia do fechamento, devolve a linha justamente pra fatura de onde o
+// banco a tirou.
+//
+// RELATO (set/2026, cartão do dono): banco R$ 472,66, painel R$ 4.091,58.
+// Medido no cartão, na virada do ciclo que fechou em 08/09:
+//
+//   03/09 FACEBK 117,60 ... post_date 2026-09-08  → entrou na fatura de set
+//   05/09 GOOGLE 132,74 ... post_date 2026-09-08  → entrou
+//   07/09 ELÓI     5,49 ... post_date 2026-09-08  → entrou
+//   08/09 IFOOD   41,14 ... post_date VAZIO       → o banco jogou pra outubro
+//   08/09 APPLE    5,00 ... post_date VAZIO       → idem
+//
+// Sem estas duas, setembro soma 4.018,54 — EXATAMENTE o que foi pago
+// (2.854,70 + 1.163,84) — e outubro fica 426,52 + 46,14 = **472,66**, o
+// número que o app do banco mostra. Ao centavo, dos dois lados.
+//
+// ⚠️ A REGRA SÓ VALE ONDE HÁ REFERÊNCIA. Se NENHUMA linha do trecho tem
+// post_date, não dá pra afirmar nada (é o caso da maioria do histórico, e de
+// todo ciclo ainda ABERTO, que o emissor não faturou) — e aí nada muda. Isso é
+// o que mantém a mudança inerte fora da borda: medido nas 502 competências com
+// fatura publicada, só 2 linhas se movem, 1 competência fica mais perto do
+// banco e NENHUMA piora.
+//
+// ⚠️ E o corte é `>= maiorPost`, não "sem post_date". Linha antiga sem o campo
+// (o histórico anterior à coleta) fica onde está — só a que é POSTERIOR ao
+// último lançamento conhecido do ciclo é candidata a ter ficado de fora.
+// ⚠️ E VAZIO NEM SEMPRE QUER DIZER "AINDA NÃO FATURADO" — ÀS VEZES É SÓ VELHO.
+//
+// O sync dedupa por `of_tx_id` e NUNCA reescreve linha existente (regra que
+// protege a categoria corrigida à mão). Então o `bill_post_date` é gravado UMA
+// VEZ, no import: a linha que chegou antes de o emissor faturá-la fica com o
+// campo vazio PARA SEMPRE, mesmo depois de ser cobrada.
+//
+// Medido no mesmo cartão, um mês antes: APPLE.COM/BILL de 08/08 (dia do
+// fechamento) também está com o campo vazio. Sem esta guarda ela seria
+// "empurrada" pra setembro e a fatura fecharia R$ 5,00 acima do banco.
+//
+// O que separa os dois casos é o RELÓGIO DO EMISSOR, não o nosso: se já existe
+// lançamento posterior à linha por mais de meio ciclo, o emissor evidentemente
+// já faturou aquele período — o vazio dela é resíduo do import, não informação.
+// Na linha de 08/09 o lançamento mais recente conhecido é 08/09, então o vazio
+// ainda significa "não faturada". Na de 08/08, o mais recente é 08/09 — um mês
+// depois —, então ela já foi cobrada e fica onde está.
+const MEIO_CICLO_DIAS = 20;
+
+function separarEmpurradas(linhas, ini, fimExcl, ultimoPostConhecido) {
+  const doTrecho = (linhas || []).filter((t) => {
+    const d = dataDaFatura(t);
+    return d >= ini && d < fimExcl;
+  });
+  const posts = doTrecho
+    .map((t) => (t.of_bill_post_date ? String(t.of_bill_post_date).slice(0, 10) : null))
+    .filter(Boolean)
+    .sort();
+  const maiorPost = posts[posts.length - 1];
+  if (!maiorPost) return { fica: doTrecho, sai: [] };
+
+  const fica = [], sai = [];
+  for (const t of doTrecho) {
+    const dia = String(t.data).slice(0, 10);
+    const semPost = !t.of_bill_post_date;
+    // Vazio obsoleto: o emissor já faturou período MUITO posterior a esta
+    // linha, logo ela não está "esperando" fatura nenhuma.
+    const vazioVelho = semPost && ultimoPostConhecido &&
+      (new Date(ultimoPostConhecido) - new Date(dia)) / 86400000 > MEIO_CICLO_DIAS;
+
+    if (semPost && !vazioVelho && dia >= maiorPost) sai.push(t);
+    else fica.push(t);
+  }
+  return { fica, sai };
+}
+
+async function somaFaturaCiclo(grupoId, cartaoNome, ciclo, cicloAnterior) {
   const folga = (dia, n) => {
     const d = new Date(`${dia}T12:00:00Z`);
     d.setUTCDate(d.getUTCDate() + n);
     return d.toISOString().slice(0, 10);
   };
-  const { data } = await supabase.from('transacoes')
-    .select('valor, tipo, categoria, transferencia, data, of_bill_post_date, parcela_num')
-    .eq('grupo_id', grupoId).ilike('carteira_nome', cartaoNome)
-    .gte('data', folga(ciclo.ini, -8)).lt('data', folga(ciclo.fimExcl, 8));
-  const doCiclo = (data || []).filter((t) => {
-    const d = dataDaFatura(t);
-    return d >= ciclo.ini && d < ciclo.fimExcl;
-  });
-  return somarFatura(doCiclo);
+  // ⚠️ HERDA DO CICLO ANTERIOR DE VERDADE, NUNCA DE "35 DIAS ATRÁS".
+  //
+  // Primeira versão disto usava uma janela fixa pra trás, e ela ATRAVESSA dois
+  // ciclos: num cartão a fatura de novembro herdou o mês de outubro INTEIRO e
+  // dobrou (R$ 1.340,85 → R$ 2.681,70). O trecho de origem tem de ser
+  // exatamente [anterior.ini, anterior.fimExcl).
+  //
+  // ⚠️ E SÓ CICLO JÁ FECHADO EMPURRA. Ciclo aberto não foi faturado por
+  // ninguém, então não tem como ter deixado nada de fora — era o que fazia
+  // fatura FUTURA ganhar valor do nada (três cartões, R$ 67,11 e R$ 254,29).
+  const anterior = cicloAnterior && cicloAnterior.ini && cicloAnterior.fimExcl <= ciclo.ini
+    && cicloAnterior.fim < hojeSP()
+    ? cicloAnterior
+    : null;
+  const inicioBusca = anterior ? anterior.ini : ciclo.ini;
+  // ⚠️ A JANELA ABRE 35 DIAS ANTES, não 8. Além da folga do `dataDaFatura`,
+  // ela precisa alcançar o CICLO ANTERIOR INTEIRO — é lá que se descobre qual
+  // foi o último lançamento dele e, portanto, o que ele empurrou pra cá. Com
+  // só 8 dias, o `maiorPost` do trecho anterior sairia de um pedaço do ciclo e
+  // poderia não existir.
+  // ⚠️ AS DUAS CONSULTAS SAEM JUNTAS (`Promise.all`). Render (Oregon) e
+  // Supabase (Ohio) — o custo aqui é a TRAVESSIA, não a query; em série isso
+  // seriam duas idas pra cada fatura calculada.
+  const [{ data }, { data: ult }] = await Promise.all([
+    supabase.from('transacoes')
+      .select('valor, tipo, categoria, transferencia, data, of_bill_post_date, parcela_num')
+      .eq('grupo_id', grupoId).ilike('carteira_nome', cartaoNome)
+      .gte('data', folga(inicioBusca, -8)).lt('data', folga(ciclo.fimExcl, 8)),
+    // ⚠️ O RELÓGIO DO EMISSOR É DO CARTÃO, NUNCA DA JANELA — e essa distinção
+    // é o que impede uma linha de SUMIR das duas faturas.
+    //
+    // Tirando o `ultimoPost` da janela deslizante, agosto e setembro
+    // enxergavam relógios diferentes para a MESMA linha: no cálculo de agosto
+    // (janela até 16/08) ela parecia "ainda não faturada" e era empurrada pra
+    // frente; no de setembro (janela até 17/09, já com lançamento de 08/09) ela
+    // parecia "vazio velho" e não era herdada. Resultado: R$ 5,00 saíam de
+    // agosto e não entravam em setembro — dinheiro evaporando entre faturas.
+    supabase.from('transacoes')
+      .select('of_bill_post_date')
+      .eq('grupo_id', grupoId).ilike('carteira_nome', cartaoNome)
+      .not('of_bill_post_date', 'is', null)
+      .order('of_bill_post_date', { ascending: false }).limit(1),
+  ]);
+
+  const ultimoPost = ult && ult[0] && ult[0].of_bill_post_date
+    ? String(ult[0].of_bill_post_date).slice(0, 10)
+    : null;
+
+  // O que é deste ciclo, menos o que o emissor empurrou pra frente…
+  const { fica } = separarEmpurradas(data, ciclo.ini, ciclo.fimExcl, ultimoPost);
+  // …mais o que o ciclo ANTERIOR empurrou pra cá. As duas metades usam a MESMA
+  // função e o MESMO `ultimoPost` de propósito: o que sai de um lado tem de
+  // entrar do outro, senão a linha desaparece das duas faturas.
+  const { sai: herdadas } = anterior
+    ? separarEmpurradas(data, anterior.ini, anterior.fimExcl, ultimoPost)
+    : { sai: [] };
+
+  return somarFatura([...fica, ...herdadas]);
 }
 
 async function pagoDaFatura(cartaoId, ym) {
@@ -85,7 +212,14 @@ const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
 // pra quem chama poder exibir o período sem recalcular.
 async function statusFatura(grupoId, cartao, ym) {
   const ciclo = cicloPorCompetencia(cartao, ym);
-  const fatura = cent(await somaFaturaCiclo(grupoId, cartao.nome, ciclo));
+  // O ciclo anterior entra porque o emissor pode ter empurrado linhas DELE pra
+  // esta fatura (ver `somaFaturaCiclo`). Tolerante: se a vizinhança falhar, a
+  // soma segue valendo sem a herança, que é o comportamento de antes.
+  let anterior = null;
+  try {
+    anterior = cicloPorCompetencia(cartao, competenciaVizinha(cartao, ym, -1));
+  } catch { anterior = null; }
+  const fatura = cent(await somaFaturaCiclo(grupoId, cartao.nome, ciclo, anterior));
   const pago = cent(await pagoDaFatura(cartao.id, ym));
   const restante = Math.max(0, cent(fatura - pago));
   return { fatura, pago, restante, ciclo };
@@ -258,3 +392,5 @@ module.exports.competenciaDoPagamento = competenciaDoPagamento;
 module.exports.registrarPagamentosDoOF = registrarPagamentosDoOF;
 module.exports.pagamentosDaFatura = pagamentosDaFatura;
 module.exports.quitadaDepoisDoFechamento = quitadaDepoisDoFechamento;
+// Exposto pra eval: a regra de "o emissor empurrou esta linha pra fatura seguinte".
+module.exports.separarEmpurradas = separarEmpurradas;

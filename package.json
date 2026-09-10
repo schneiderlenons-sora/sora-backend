@@ -52,6 +52,7 @@
     "eval:conta-mercado-pago": "node evals/contaMercadoPago.eval.js",
     "eval:proxima-parcela-of": "node evals/proximaParcelaOF.eval.js",
     "eval:frequencia": "node evals/frequenciaRecorrencia.eval.js",
+    "eval:fatura-empurradas": "node evals/faturaEmpurradas.eval.js",
     "eval:a-pagar-cartoes": "node evals/aPagarCartoes.eval.js"
   },
   "engines": {
