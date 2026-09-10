@@ -321,6 +321,54 @@ console.log('  ok');
   }
   console.log('  ok');
 
+  // ── 7B. LACUNA PEQUENA NÃO PODE DESCARTAR O PAGAMENTO INTEIRO ───────────
+  //
+  // RELATO (set/2026, cartão do dono): banco R$ 472,66, painel R$ 4.091,58 —
+  // "não tenho nem limite pra isso". Medido no cartão real:
+  //
+  //   simulado (banco) ......... 4.091,58
+  //   nossa soma do ciclo ...... 4.064,68   ← 26,90 a menos (0,7%)
+  //   pagamentos registrados ... 4.018,54
+  //   sobra de verdade .........    46,14
+  //
+  // O §7(a) exigia que a nossa soma fosse `>=` o simulado. Faltando 0,7%, ela
+  // era reprovada inteira e o ramo `simulada` DESCARTAVA os R$ 4.018,54 já
+  // pagos (`pago = 0`), exibindo a fatura BRUTA. Uma lacuna de R$ 26,90 virava
+  // um erro de R$ 4.045,44 — oitenta vezes maior que ela.
+  //
+  // A prova de que a nossa conta é a certa está no ciclo seguinte:
+  // 426,52 + 46,14 (a sobra que o banco rolou) = 472,66, ao centavo.
+  //
+  // ⚠️ A TOLERÂNCIA É 5% E FOI MEDIDA: dos 16 cartões neste ramo, os desvios
+  // são 0% (×4), 0,7%, 9,8%, 25,2%, 25,2%, 27,1%, 59,3%, 70,3%, 86,3% e 100%
+  // (×4). O do relato é o único abaixo de 5%, o vizinho mais próximo está em
+  // 9,8%, e o §7(b) — 73% de desvio — continua vindo do banco.
+  console.log('── 7B. lacuna pequena × pagamento registrado ──');
+  {
+    const cartao = (saldo) => ({ ...CARTAO_OF, saldo });
+
+    // O caso do relato, com os números reais do cartão.
+    const a = await valorExibido(cartao(-4091.58), '2026-09', st(4064.68, 4018.54), semDeps);
+    eq(a.restante, 46.14, 'lacuna de 0,7% não descarta o pagamento');
+    eq(a.fonte, 'ciclo-pago', 'e passa a usar a nossa conta');
+
+    // ⚠️ AS DUAS BORDAS DA TOLERÂNCIA — é aqui que um "afrouxa só mais um
+    //    pouquinho" futuro aparece como falha em vez de virar bug de dinheiro.
+    const dentro = await valorExibido(cartao(-1000), '2026-09', st(960, 500), semDeps);
+    eq(dentro.restante, 460, '96% do simulado → dentro da tolerância');
+
+    const fora = await valorExibido(cartao(-1000), '2026-09', st(900, 500), semDeps);
+    eq(fora.restante, 1000, '90% do simulado → fora, mantém o banco');
+    eq(fora.fonte, 'simulada', 'fora da tolerância segue simulada');
+
+    // Sem pagamento a tolerância não pode mudar NADA — é o caminho de 15 dos
+    // 16 cartões, e o que garante regressão zero neles.
+    const semPg = await valorExibido(cartao(-4091.58), '2026-09', st(4064.68, 0), semDeps);
+    eq(semPg.restante, 4091.58, 'sem pagamento, a tolerância é inerte');
+    eq(semPg.fonte, 'simulada', 'sem pagamento → fonte segue simulada');
+  }
+  console.log('  ok');
+
 } // fim do main
 
 // ── Resultado ────────────────────────────────────────────────────────────

@@ -166,7 +166,41 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
       // Com elas, dos 4 só o do relato muda — e vai pro número do banco.
       // Mantém de pé a regra deste arquivo: o banco é a fonte, e a nossa
       // conta só entra onde ela é comprovadamente mais completa.
-      const somaCompleta = st.fatura >= simulado - 0.005;
+      // ⚠️ A COMPLETUDE É POR TOLERÂNCIA, NÃO POR IGUALDADE — e a diferença
+      // entre as duas coisas custou R$ 4.045,44 numa fatura real.
+      //
+      // RELATO (set/2026, cartão do dono): banco R$ 472,66, painel
+      // R$ 4.091,58 — "não tenho nem limite pra isso". Medido no cartão:
+      //
+      //   simulado (banco) ......... 4.091,58
+      //   nossa soma do ciclo ...... 4.064,68   ← 26,90 a menos (0,7%)
+      //   pagamentos registrados ... 4.018,54   (2.854,70 em 01/09 + 1.163,84 em 09/09)
+      //   sobra de verdade .........    46,14
+      //
+      // Com a exigência de `>=` estrita, esses 0,7% de diferença reprovavam a
+      // nossa soma inteira — e o `else` abaixo então DESCARTA os R$ 4.018,54
+      // já pagos (`pago = 0`), exibindo a fatura BRUTA. Ou seja: uma lacuna de
+      // R$ 26,90 virava um erro de R$ 4.045,44, oitenta vezes maior que ela.
+      //
+      // A prova de que a nossa conta é a certa aqui está no ciclo seguinte:
+      // 426,52 (nossa soma) + 46,14 (a sobra que o banco rolou) = **472,66**,
+      // exatamente o que o app do banco mostra. Ao centavo.
+      //
+      // ⚠️ 5% SEPARA OS DOIS MUNDOS COM FOLGA, e isso foi MEDIDO, não
+      // escolhido no olho: dos 56 cartões de OF, 16 caem neste ramo, e os
+      // desvios são 0%, 0%, 0%, 0%, **0,7%**, 9,8%, 25,2%, 25,2%, 27,1%,
+      // 59,3%, 70,3%, 86,3% e 100% (×4). O caso do relato é o único abaixo de
+      // 5%; o vizinho mais próximo está em 9,8%. Os casos grandes são aqueles
+      // em que realmente FALTA lançamento pra nós (o `platinum` com a nossa
+      // soma 4× menor, citado logo acima) e seguem usando o número do banco,
+      // como devem.
+      //
+      // ⚠️ E a tolerância SÓ TEM EFEITO junto com `pagoCabe`. Sem pagamento
+      // registrado os dois ramos entregam o mesmo número, então nada muda pra
+      // quem não pagou nada — medido: **1 dos 16 cartões** muda de valor, e é
+      // o do relato (4.091,58 → 46,14). Zero regressão nos outros 15.
+      const TOLERANCIA_SOMA = 0.95;
+      const somaCompleta = st.fatura >= simulado * TOLERANCIA_SOMA - 0.005;
       const pagoCabe     = st.pago > 0.005 && st.pago <= st.fatura + 0.005;
 
       if (somaCompleta && pagoCabe) {
