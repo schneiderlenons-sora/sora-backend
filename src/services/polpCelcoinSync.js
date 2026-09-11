@@ -3107,6 +3107,24 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
       require('./duplicadas').avisarDuplicadasEmBackground(grupoId, null);
     }
 
+    // BAIXA AUTOMATICA DAS PREVISOES (migration 165).
+    //
+    // ⚠️ SO AGE COM A CHAVE LIGADA, que nasce `false` — pra quem nao ligou,
+    // esta linha e um SELECT e nada mais. E mesmo ligada, ela nunca cria
+    // transacao: a cobranca do banco JA E o pagamento, e criar outra linha
+    // seria a duplicata que este trabalho existe pra eliminar. Ela so amarra
+    // a transacao existente a ocorrencia.
+    //
+    // ⚠️ Ambiguidade e conta de valor variavel continuam esperando
+    // confirmacao humana — ver as travas em `services/casarPrevisao.js`.
+    //
+    // Tolerante de proposito: e conveniencia no fim do sync; derrubar a
+    // sincronizacao inteira por causa dela trocaria um problema pequeno por
+    // um grande.
+    try {
+      await require('./baixaPrevisao').aplicarBaixaAutomatica(grupoId, userId);
+    } catch { /* nunca derruba o sync */ }
+
     return { novas: novasTx, ...relatorio };
   } catch (e) {
     await supabase.from('of_conexoes').update({
