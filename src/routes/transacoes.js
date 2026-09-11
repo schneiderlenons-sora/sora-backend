@@ -602,7 +602,10 @@ router.post('/rateio/:grupo/desfazer', auth, exigirPermissao('admin', 'escrita')
 // PUT /api/transacoes/:id — edita (update PARCIAL: só os campos enviados)
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { tipo, categoria, valor, observacao, carteira_nome, data, pago } = req.body;
+    const {
+      tipo, categoria, valor, observacao, carteira_nome, data, pago,
+      recorrencia_id, competencia,
+    } = req.body;
     const patch = {};
     if (tipo !== undefined)          patch.tipo = tipo;
     if (categoria !== undefined)     patch.categoria = categoria;
@@ -611,6 +614,32 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (carteira_nome !== undefined) patch.carteira_nome = carteira_nome;
     if (data !== undefined)          patch.data = data;
     if (pago !== undefined)          patch.pago = pago;
+
+    // ── Vínculo com a OCORRÊNCIA (migration 165) ────────────────────────────
+    //
+    // Permite que UMA chamada corrija a linha E a amarre à conta fixa que ela
+    // resolve. Serve às linhas que o cron criou ANTES da Fase B (sem vínculo):
+    // ao corrigi-las, elas ganham o vínculo e param de depender do casamento
+    // por texto.
+    //
+    // ⚠️ A RECORRÊNCIA TEM DE SER DO MESMO GRUPO. O resto da rota já se protege
+    // por `grupo_id`, mas este campo aponta pra OUTRA tabela — sem a checagem,
+    // dava pra amarrar a própria transação a uma conta fixa alheia.
+    if (recorrencia_id !== undefined) {
+      if (recorrencia_id === null) {
+        patch.recorrencia_id = null;
+        patch.competencia = null;
+      } else {
+        const { data: rec } = await supabase.from('recorrencias')
+          .select('id').eq('id', recorrencia_id).eq('grupo_id', req.grupoId).maybeSingle();
+        if (!rec) return res.status(404).json({ erro: 'conta fixa nao encontrada neste grupo' });
+        if (!/^\d{4}-\d{2}$/.test(competencia || '')) {
+          return res.status(400).json({ erro: 'competencia (YYYY-MM) obrigatoria ao vincular' });
+        }
+        patch.recorrencia_id = recorrencia_id;
+        patch.competencia = competencia;
+      }
+    }
 
     // Estado ANTES (pra reconciliar o saldo da carteira pela diferença).
     const { data: antes } = await supabase.from('transacoes')
@@ -632,8 +661,19 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
         const ajustar = async (nome, delta) => {
           if (!delta || !nome) return;
           const { data: w } = await supabase.from('wallets')
-            .select('id, saldo').eq('grupo_id', req.grupoId).ilike('nome', nome).maybeSingle();
-          if (w) await supabase.from('wallets').update({ saldo: (w.saldo || 0) + delta }).eq('id', w.id);
+            .select('id, saldo, of_conta_id').eq('grupo_id', req.grupoId).ilike('nome', nome).maybeSingle();
+          // ⚠️ REGRA DE OURO: em carteira de Open Finance o saldo é do BANCO.
+          //
+          // Mexer nele aqui produz um número que ninguém pediu e que o próximo
+          // sync desfaz — ou seja, um valor errado que aparece, some sozinho e
+          // não deixa rastro pra ninguém entender o que houve. Medido: 131 das
+          // 601 carteiras da base (22%) são de OF.
+          //
+          // A transação continua sendo editada normalmente; o que deixa de
+          // acontecer é a Sora discordar do extrato do banco.
+          if (w && !w.of_conta_id) {
+            await supabase.from('wallets').update({ saldo: (w.saldo || 0) + delta }).eq('id', w.id);
+          }
         };
         if (normNome(antes.carteira_nome) === normNome(tx.carteira_nome)) {
           await ajustar(tx.carteira_nome, efeito(tx) - efeito(antes));

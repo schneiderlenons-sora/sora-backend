@@ -327,6 +327,25 @@ cron.schedule('0 * * * *', async () => {
   const sp = agoraSP();                        // { dataStr:'YYYY-MM-DD', minutos }
   const horaSP = Math.floor(sp.minutos / 60);
   const ymSP   = sp.dataStr.slice(0, 7);       // 'YYYY-MM'
+
+  /**
+   * Insere a transacao AMARRADA a ocorrencia (migration 165).
+   *
+   * ⚠️ A CHAVE E recorrencia_id + competencia, nao a data. E o que permite,
+   * depois, corrigir o dia/valor ou dizer "ainda nao paguei" sem que a
+   * previsao daquele mes reapareca em dobro.
+   *
+   * ⚠️ FALLBACK OBRIGATORIO. Este cron cria as transacoes de TODOS os
+   * usuarios todo dia. Se por qualquer motivo as colunas novas nao
+   * estiverem la, insistir nelas faria as contas fixas pararem de ser
+   * lancadas — em silencio, pra base inteira. Na falha, grava sem o
+   * vinculo: o comportamento volta a ser o de antes, que funciona.
+   */
+  async function inserirLancamento(linha, recId) {
+    const comVinculo = { ...linha, recorrencia_id: recId, competencia: ymSP };
+    const r = await supabase.from('transacoes').insert(comVinculo);
+    if (r && r.error) await supabase.from('transacoes').insert(linha);
+  }
   if (horaSP >= 8 && horaSP <= 10) {
     const [ySP, mSP] = sp.dataStr.split('-').map(Number);
     // ⚠️ A QUERY NÃO FILTRA MAIS POR DIA, e essa é a mudança que permitiu
@@ -414,13 +433,13 @@ cron.schedule('0 * * * *', async () => {
         // medidas na base em 02/09/2026. Saldo inicial 0 porque este lançamento
         // nasce `pago: false` — previsão não move saldo.
         const contaPrev = await garantirCarteira(rec.grupo_id, rec.carteira || 'Dinheiro', 0);
-        await supabase.from('transacoes').insert({
+        await inserirLancamento({
           id_curto: gerarId(), grupo_id: rec.grupo_id, tipo: rec.tipo,
           categoria: rec.categoria || 'Outros', valor: rec.valor || 0,
           observacao: `[Previsto] ${rec.descricao}`,
           carteira_nome: contaPrev || rec.carteira || 'Dinheiro',
           pago: false, data: new Date().toISOString(),
-        });
+        }, rec.id);
         try { await supabase.from('recorrencias').update({ ultimo_previsto_ym: ymSP }).eq('id', rec.id); } catch {}
         const phoneP = await phoneDoUser(rec.criado_por, rec.grupo_id);
         if (phoneP && querLembrete && await avisosLigados(rec.criado_por)) {
@@ -462,7 +481,7 @@ cron.schedule('0 * * * *', async () => {
       const contaRec = wallet
         ? (rec.carteira || 'Dinheiro')
         : await garantirCarteira(rec.grupo_id, rec.carteira || 'Dinheiro', 0);
-      await supabase.from('transacoes').insert({
+      await inserirLancamento({
         id_curto: idCurto, grupo_id: rec.grupo_id, tipo: rec.tipo,
         categoria: rec.categoria || 'Outros', valor: rec.valor,
         // Conta fixa em moeda estrangeira (migration 160): a transação nasce
@@ -475,7 +494,7 @@ cron.schedule('0 * * * *', async () => {
         recorrente: contaConectada || undefined,
         pago: !contaConectada,
         data: new Date().toISOString(),
-      });
+      }, rec.id);
 
       // Saldo só se movimenta no que a Sora de fato lançou. Em conta conectada
       // o saldo é do banco — debitar aqui deixaria ele errado até o próximo sync.
