@@ -54,6 +54,129 @@ function parseValor(str) {
   return parseFloat(str.replace(/\./g, '').replace(',', '.'));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPRA PARCELADA — como a pessoa REALMENTE fala
+//
+// ⚠️ ESTE BLOCO NASCEU DE UM RELATO EM PRODUÇÃO (set/2026): "não salva compra
+// parcelada nem por texto nem por áudio". Medido no parser antigo, com a frase
+// do relato e variações naturais, 8 de 10 falhavam — e o pior modo de falha era
+// SILENCIOSO: a frase escapava da regra de parcelamento e caía na regra
+// genérica de gasto, registrando UMA despesa no valor da PARCELA. A pessoa
+// achava que tinha lançado 3x de 79,80 e tinha lançado 79,80 avulso.
+//
+// Os quatro defeitos do regex antigo
+// (`comprei (.+?) (?:no|na|pelo) ([\w\s]+?…) em (\d+)x de (\d[\d.,]*)`):
+//   1. `[\w\s]` NÃO casa acento — "itaú crédito" não existia pra ele e a frase
+//      inteira caía fora. Sem acento ("itau credito") funcionava. Foi o relato.
+//   2. `(\d+)x` exige o "x" colado: "3 x", "3 vezes" e "3 parcelas" morriam.
+//   3. exigia `de <valor>`: "em 10x" com o total dito antes não casava.
+//   4. exigia o cartão ANTES do "em Nx": "em 12x de 250 no itaú" não casava, e
+//      "parcelado em 4x" (palavra no meio) também não.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Tira acento SEM MUDAR O COMPRIMENTO — 1 caractere entra, 1 caractere sai. É
+// isso que deixa casar a regex no texto achatado e depois fatiar o texto
+// ORIGINAL pelos MESMOS índices, preservando "itaú"/"sofá" no nome do cartão e
+// na descrição.
+// ⚠️ `normalize('NFD')` NÃO serve aqui: ele decompõe "á" em dois code points e
+// desalinha todo índice seguinte — a fatia sairia deslocada.
+const MAPA_ACENTO = {
+  á: 'a', à: 'a', â: 'a', ã: 'a', ä: 'a', é: 'e', è: 'e', ê: 'e', ë: 'e',
+  í: 'i', ì: 'i', î: 'i', ï: 'i', ó: 'o', ò: 'o', ô: 'o', õ: 'o', ö: 'o',
+  ú: 'u', ù: 'u', û: 'u', ü: 'u', ç: 'c', ñ: 'n',
+};
+function achatar(s) {
+  return String(s || '').replace(/[áàâãäéèêëíìîïóòôõöúùûüçñ]/gi, (c) => {
+    const base = MAPA_ACENTO[c.toLowerCase()];
+    if (!base) return c;
+    return c === c.toLowerCase() ? base : base.toUpperCase();
+  });
+}
+
+// Quantidade de parcelas escrita por extenso. Vai até 24 de propósito: acima
+// disso ninguém escreve por extenso, e alternativa maior só aumenta a chance de
+// casar besteira.
+const QTD_EXTENSO = {
+  um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6,
+  sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12, treze: 13,
+  quatorze: 14, catorze: 14, quinze: 15, dezesseis: 16, dezessete: 17,
+  dezoito: 18, dezenove: 19, vinte: 20, 'vinte e quatro': 24,
+};
+// Mais longo primeiro: senão "vinte" casaria antes de "vinte e quatro".
+const QTD_ALT = Object.keys(QTD_EXTENSO)
+  .sort((a, b) => b.length - a.length).join('|');
+
+/**
+ * Acha a CLÁUSULA DE PARCELAMENTO na frase.
+ *
+ * Cobre: "em 3x de 79,80" · "em 3 x de 150" · "em 6 vezes de 300" ·
+ *        "em 3 parcelas de 100" · "parcelado em 4x de 99,90" ·
+ *        "dividir em duas parcelas" · "dividido em 12x".
+ *
+ * @returns {{n:number, valorParcela:number|null, ini:number, fim:number}|null}
+ *          `ini`/`fim` são índices na string ORIGINAL (ver `achatar`), pra quem
+ *          chama conseguir RECORTAR a cláusula e ler o resto da frase.
+ *
+ * ⚠️ EXIGE a unidade (x | vezes | parcelas). Sem ela, "em 3 meses" e "em 2
+ * lojas" virariam parcelamento — "em <número>" sozinho é ambíguo demais.
+ *
+ * ⚠️ n >= 2. "em 1x" é compra à vista, não parcelamento: tratá-la como
+ * parcelamento criaria uma transação não-paga numa fatura futura por engano.
+ */
+function acharParcelamento(msg) {
+  const plano = achatar(msg);
+  const re = new RegExp(
+    '\\b(?:parcelad[oa]s?\\s+em|divid(?:ir|ido|ida|indo)\\s+em|em)\\s+' +
+    `(\\d{1,2}|${QTD_ALT})\\s*` +
+    '(?:x\\b|vezes?\\b|parcelas?\\b)' +
+    '(?:\\s+(?:de|a)\\s+(?:r\\$\\s*)?(\\d[\\d.,]*))?',
+    'i',
+  );
+  const m = plano.match(re);
+  if (!m) return null;
+  const bruto = String(m[1]).toLowerCase();
+  const n = /^\d+$/.test(bruto) ? parseInt(bruto, 10) : QTD_EXTENSO[bruto];
+  if (!(n >= 2 && n <= 60)) return null;
+  return {
+    n,
+    valorParcela: m[2] ? parseValor(m[2]) : null,
+    ini: m.index,
+    fim: m.index + m[0].length,
+  };
+}
+
+/**
+ * O valor TOTAL dito FORA da cláusula de parcelamento.
+ *
+ * Serve pro formato "comprei celular de 3000 no itaú crédito em 10x" e pro
+ * "comprei 50 reais em roupas dividir em duas parcelas": o número é o total e a
+ * parcela sai da divisão.
+ *
+ * ⚠️ A ORDEM DE PREFERÊNCIA EXISTE POR CAUSA DE "2 CAMISAS DE 30". Pegar o
+ * primeiro número da frase acharia a QUANTIDADE (2) e lançaria R$ 2,00. Então:
+ * primeiro o número marcado como dinheiro (R$ / "reais"), depois o precedido de
+ * "de", e só então o MAIOR — que é o desempate certo nesse exemplo (30 > 2).
+ */
+function acharValorTotalFora(msg, ini, fim) {
+  const plano = achatar(msg);
+  const fora = plano.slice(0, ini) + ' '.repeat(fim - ini) + plano.slice(fim);
+  const cands = [];
+  const re = /(r\$\s*)?(\d[\d.,]*)(\s*reais)?/gi;
+  let m;
+  while ((m = re.exec(fora)) !== null) {
+    const v = parseValor(m[2]);
+    if (!Number.isFinite(v) || v <= 0) continue;
+    const antes = fora.slice(Math.max(0, m.index - 4), m.index).toLowerCase();
+    cands.push({ v, dinheiro: !!(m[1] || m[3]), aposDe: /\bde\s*$/.test(antes) });
+  }
+  if (!cands.length) return null;
+  const marcado = cands.filter((c) => c.dinheiro);
+  if (marcado.length) return Math.max(...marcado.map((c) => c.v));
+  const comDe = cands.filter((c) => c.aposDe);
+  if (comDe.length) return Math.max(...comDe.map((c) => c.v));
+  return Math.max(...cands.map((c) => c.v));
+}
+
 // Detecta o período de uma pergunta de resumo ("quanto gastei HOJE / ESSA
 // SEMANA / MÊS PASSADO"). Ordem importa: "semana passada" antes de "semana".
 function detectarPeriodo(texto) {
@@ -394,24 +517,97 @@ function interpretarRapido(message) {
     }
   }
 
-  // --- PARCELAS ---
-  if ((m = msg.match(/(?:comprei|fiz uma compra de)\s+(.+?)\s+(?:no|na|pelo)\s+([\w\s]+?(?:\s+cr[eé]dito)?)\s+em\s+(\d+)x\s+de\s+(\d[\d.,]*)/i))) {
-    const numParcelas  = parseInt(m[3]);
-    const valorParcela = parseValor(m[4]);
-    let descricao = m[1].trim();
-    // Data da compra (ontem/dia 5/15-06) → base da 1ª parcela; limpa da descrição.
-    const dInfo = parseDataGasto(msg);
-    if (dInfo) descricao = descricao.replace(new RegExp(`\\b${dInfo.matched.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'), '').replace(/\s+/g, ' ').trim();
-    return {
-      acao: 'compra_parcelada',
-      descricao,
-      carteira:     m[2].trim(),
-      numParcelas,
-      valorParcela,
-      valorTotal:   numParcelas * valorParcela,
-      dataTx:       dInfo ? dInfo.iso : null,
-      categoria:    detectarCategoria(descricao)
-    };
+  // --- PARCELAS (compra parcelada no cartão) ---
+  //
+  // Duas formas de dizer o dinheiro, e elas significam COISAS DIFERENTES:
+  //   "em 3x de 79,80"                      → 79,80 é a PARCELA (total 239,40)
+  //   "comprei de 3000 … em 10x"            → 3000  é o TOTAL   (parcela 300)
+  //   "comprei 50 reais … em duas parcelas" → 50    é o TOTAL   (parcela 25)
+  // ⚠️ Trocar uma pela outra multiplica ou divide o lançamento por N — o erro
+  // mais caro possível aqui. Por isso a regra é literal: tem "de <valor>" na
+  // cláusula ⇒ aquilo é a parcela; não tem ⇒ o valor solto da frase é o total.
+  {
+    const p = acharParcelamento(msg);
+    if (p) {
+      // Recorta a cláusula e lê o que sobrou — assim o cartão é reconhecido
+      // tanto ANTES ("no itaú crédito em 3x de 79,80") quanto DEPOIS
+      // ("em 12x de 250 no itaú crédito") dela.
+      const resto = (msg.slice(0, p.ini) + ' ' + msg.slice(p.fim))
+        .replace(/\s+/g, ' ').trim();
+      const mResto = achatar(resto).match(
+        /^(?:comprei|compra\s+de|parcelei|fiz\s+uma\s+compra\s+de|paguei)\s+(.*)$/i,
+      );
+      if (mResto) {
+        const corpo = resto.slice(resto.length - mResto[1].length);
+        const corpoPlano = achatar(corpo);
+
+        // Separa "descrição" de "cartão" no ÚLTIMO conectivo: "fone do trabalho
+        // no nubank crédito" tem dois, e o cartão é sempre o do fim.
+        let descricao = corpo;
+        let carteira = null;
+        const reConect = /\s(?:no|na|nos|nas|pelo|pela|com|usando|cartao|cartão)\s+/gi;
+        let mc; let ultimo = null;
+        while ((mc = reConect.exec(corpoPlano)) !== null) ultimo = mc;
+        if (ultimo) {
+          descricao = corpo.slice(0, ultimo.index).trim();
+          carteira = corpo.slice(ultimo.index + ultimo[0].length).trim();
+        }
+
+        // ⚠️ Tira o "de" das DUAS pontas: "comprei celular de 3000 … em 10x"
+        // deixa "celular de" pendurado quando o valor sai do meio da frase.
+        const limpa = (s) => (s || '')
+          .replace(/^(?:de|da|do)\s+/i, '')
+          .replace(/[,.;:]+$/, '')
+          .replace(/\s+(?:de|da|do|por)$/i, '')
+          .replace(/\s+/g, ' ').trim();
+        descricao = limpa(descricao);
+        carteira = limpa(carteira);
+
+        // Tira o valor da descrição ("50 reais em roupas" → "roupas"), senão
+        // ele vira parte do nome do lançamento.
+        // ⚠️ `limpa` DE NOVO depois: tirar o número do MEIO da frase deixa a
+        // preposição órfã ("celular de 3000" → "celular de").
+        descricao = limpa(descricao
+          .replace(/\b(?:r\$\s*)?\d[\d.,]*\s*(?:reais|conto|pila)?\s*(?:em|de)?\s*/i, '')
+          .replace(/\s+/g, ' ').trim());
+
+        const numParcelas = p.n;
+        let valorParcela = p.valorParcela;
+        let valorTotal;
+        if (valorParcela != null) {
+          valorTotal = Math.round(numParcelas * valorParcela * 100) / 100;
+        } else {
+          const total = acharValorTotalFora(msg, p.ini, p.fim);
+          // Sem valor nenhum não dá pra lançar — vai pra IA em vez de chutar.
+          if (!Number.isFinite(total) || total <= 0) return null;
+          valorTotal = Math.round(total * 100) / 100;
+          valorParcela = Math.round((valorTotal / numParcelas) * 100) / 100;
+        }
+
+        // Data da compra (ontem/dia 5/15-06) → base da 1ª parcela; some da
+        // descrição pra não virar nome do lançamento.
+        const dInfo = parseDataGasto(msg);
+        if (dInfo) {
+          const alvo = dInfo.matched.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          descricao = descricao
+            .replace(new RegExp(`\\b${alvo}\\b`, 'i'), '')
+            .replace(/\s+/g, ' ').trim();
+        }
+
+        return {
+          acao: 'compra_parcelada',
+          descricao: descricao || 'Compra parcelada',
+          // `null` = a pessoa não disse o cartão. O handler PERGUNTA em vez de
+          // adivinhar — parcelamento mora sempre num cartão específico.
+          carteira: carteira || null,
+          numParcelas,
+          valorParcela,
+          valorTotal,
+          dataTx: dInfo ? dInfo.iso : null,
+          categoria: detectarCategoria(descricao || msg),
+        };
+      }
+    }
   }
 
   // Antecipar/pagar parcela: "antecipar parcela do fone", "pagar parcela fone",

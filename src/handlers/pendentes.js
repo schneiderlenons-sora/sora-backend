@@ -239,6 +239,44 @@ async function resolverPendente(pendente, mensagem, ctx) {
     return false; // não bate — deixa a mensagem seguir
   }
 
+  // ─── ESCOLHER O CARTÃO DE UMA COMPRA PARCELADA ─────────────────
+  //
+  // A pessoa disse "comprei 50 em roupas em 2x" sem citar cartão, ou citou um
+  // nome que não é cartão. A compra INTEIRA fica no contexto, então aqui ela só
+  // precisa dizer o cartão — nada de repetir a frase.
+  //
+  // ⚠️ Não usa `resolverCarteiraReal` de propósito: as opções já são a lista
+  // FECHADA de cartões que a Sora mostrou, e o fuzzy dele poderia eleger um
+  // cartão fora dela. O que não bate com a lista não é escolha — e a mensagem
+  // segue o fluxo normal (pode ser um gasto novo, não a resposta).
+  if (pendente.tipo_pergunta === 'escolher_cartao_parcelado') {
+    const opcoes = pendente.contexto?.opcoes || [];
+    const compra = pendente.contexto?.compra;
+    if (!compra || !opcoes.length) { await removerPendente(pendente.id); return false; }
+
+    const semAcento = (s) => String(s || '').toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    const alvo = semAcento(msg);
+
+    let escolhido = null;
+    const n = parseInt(msg, 10);
+    if (!isNaN(n) && n >= 1 && n <= opcoes.length) {
+      escolhido = opcoes[n - 1];
+    } else {
+      escolhido = opcoes.find((o) => semAcento(o) === alvo)
+        || opcoes.find((o) => semAcento(o).includes(alvo) || alvo.includes(semAcento(o)));
+    }
+    if (!escolhido) return false;   // não é resposta à pergunta — deixa seguir
+
+    await removerPendente(pendente.id);
+    // Reentra no MESMO handler, agora com o cartão preenchido: existe um
+    // caminho só pra criar parcelamento, então a regra de valor, data e
+    // centavos não é duplicada aqui.
+    const handleParcelas = require('./parcelas');
+    await handleParcelas({ ...compra, carteira: escolhido }, ctx);
+    return true;
+  }
+
   // ─── TIPO 1: ESCOLHER_CONTA ────────────────────────────────────
   if (pendente.tipo_pergunta === 'escolher_conta') {
     const opcoes = pendente.contexto?.opcoes || [];

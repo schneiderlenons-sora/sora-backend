@@ -191,6 +191,75 @@ const CASOS = [
   // ── Cartão / parcelas / fatura ────────────────────────────────────────────
   { msg: 'comprei fone no nubank crédito em 3x de 150', expect: { acao: 'compra_parcelada' } },
   { msg: 'pagar fatura',                      expect: { acao: 'pagar_fatura' } },
+
+  // ── COMPRA PARCELADA: as formas que a pessoa REALMENTE usa ────────────────
+  //
+  // ⚠️ ESTE BLOCO É O RELATO DE set/2026 — "não salva compra parcelada nem por
+  // texto nem por áudio" — e o modo de falha era SILENCIOSO: a frase escapava
+  // da regra e virava UMA despesa no valor da PARCELA. Quem mandou "3x de
+  // 79,80" via R$ 79,80 lançado e achava que estava tudo certo.
+  //
+  // Medido no parser antigo: 8 destas 10 falhavam. Cada caso abaixo é um
+  // defeito distinto, não variação decorativa.
+
+  // 1. ACENTO NO NOME DO CARTÃO — o relato literal. `[\w\s]` não casa "ú", e a
+  //    frase inteira caía fora. Sem acento funcionava; com acento, não.
+  { msg: 'Comprei uma cama no itaú crédito em 3x de 79,80',
+    expect: { acao: 'compra_parcelada', carteira: 'itaú crédito', numParcelas: 3, valorParcela: 79.8, valorTotal: 239.4 } },
+  { msg: 'Comprei uma cama no itau credito em 3x de 79,80',
+    expect: { acao: 'compra_parcelada', numParcelas: 3, valorParcela: 79.8 } },
+
+  // 2. "x" SEPARADO E SINÔNIMOS DA UNIDADE.
+  { msg: 'comprei fone no nubank credito em 3 x de 150',
+    expect: { acao: 'compra_parcelada', numParcelas: 3, valorParcela: 150 } },
+  { msg: 'comprei sofá no mercado pago crédito em 6 vezes de 300',
+    expect: { acao: 'compra_parcelada', numParcelas: 6, valorParcela: 300, valorTotal: 1800 } },
+  { msg: 'comprei mesa no nubank crédito em 4 parcelas de 125',
+    expect: { acao: 'compra_parcelada', numParcelas: 4, valorParcela: 125 } },
+  //    ⚠️ "TRÊS" COM ACENTO — este caso existe porque a quebra deliberada do
+  //    achatamento passou despercebida sem ele: todo o resto do vocabulário
+  //    ("x", "vezes", "parcelas", "no", "de") é ASCII, então só o número por
+  //    extenso acentuado exercita de fato a normalização.
+  { msg: 'comprei geladeira no nubank crédito em três parcelas de 200',
+    expect: { acao: 'compra_parcelada', numParcelas: 3, valorParcela: 200, valorTotal: 600 } },
+  { msg: 'comprei tv no itaú crédito em três vezes de 100',
+    expect: { acao: 'compra_parcelada', carteira: 'itaú crédito', numParcelas: 3, valorParcela: 100 } },
+
+  // 3. CARTÃO DEPOIS DA CLÁUSULA, e "parcelado em" no meio.
+  { msg: 'comprei uma geladeira em 12x de 250 no itaú crédito',
+    expect: { acao: 'compra_parcelada', carteira: 'itaú crédito', numParcelas: 12, valorParcela: 250 } },
+  { msg: 'comprei tênis no nubank crédito parcelado em 4x de 99,90',
+    expect: { acao: 'compra_parcelada', numParcelas: 4, valorParcela: 99.9 } },
+
+  // 4. ⚠️ VALOR TOTAL × VALOR DA PARCELA — o erro mais caro possível aqui.
+  //    "em 10x de 300" é parcela (total 3000). "de 3000 … em 10x" é TOTAL
+  //    (parcela 300). Trocar um pelo outro multiplica/divide o lançamento por N.
+  { msg: 'comprei celular de 3000 no itaú crédito em 10x',
+    expect: { acao: 'compra_parcelada', numParcelas: 10, valorParcela: 300, valorTotal: 3000 } },
+  //    Frase do usuário do relato, por extenso e sem cartão citado.
+  { msg: 'Comprei 50 reais em roupas dividir em duas parcelas',
+    expect: { acao: 'compra_parcelada', numParcelas: 2, valorParcela: 25, valorTotal: 50, carteira: null, categoria: 'Vestuário' } },
+  //    ⚠️ "2 camisas de 30" — pegar o PRIMEIRO número acharia a quantidade e
+  //    lançaria R$ 2,00. O total certo é 30.
+  { msg: 'comprei 2 camisas de 30 no nubank crédito em 3x',
+    expect: { acao: 'compra_parcelada', numParcelas: 3, valorTotal: 30, valorParcela: 10 } },
+
+  // 5. ⚠️ O QUE NÃO PODE VIRAR PARCELAMENTO. A cláusula exige a unidade
+  //    (x|vezes|parcelas) justamente pra "em N <coisa>" não ser sequestrado.
+  { msg: 'comprei pão em 2 padarias',          expect: null },
+  //    "1x" é compra à vista — tratar como parcelamento criaria transação
+  //    não-paga numa fatura futura.
+  { msg: 'comprei uma tv em 1x de 500 no nubank crédito', expect: null },
+  //    Sem cartão E sem valor não dá pra lançar nada: vai pra IA.
+  { msg: 'comprei em 3x',                      expect: null },
+
+  // 6. ⚠️ NÃO PODE ROUBAR O "SEM CARTÃO" (parcelamento vira dívida) nem os
+  //    comandos de consulta/pagamento de parcela — eles vêm antes e continuam.
+  { msg: 'comprei uma tv sem cartão em 3x de 200',
+    expect: { acao: 'criar_divida', tipo: 'parcelamento', parcelas_total: 3, valor_parcela: 200 } },
+  { msg: 'parcelei o notebook com joão em 5x de 300',
+    expect: { acao: 'criar_divida', tipo: 'parcelamento', credor: 'joão' } },
+  { msg: 'quitar parcelas da tv',              expect: { acao: 'antecipar_parcela' } },
   // Listar compras parceladas (comando novo + variações naturais)
   { msg: 'parcelas',                          expect: { acao: 'listar_parcelas' } },
   { msg: 'minhas parcelas',                   expect: { acao: 'listar_parcelas' } },

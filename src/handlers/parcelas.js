@@ -11,6 +11,60 @@ const gerarId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 // em 28 e estouravam o mês — 10 cartões da base fecham depois do dia 28.
 const { competenciaAtual, competenciaVizinha, cicloPorCompetencia } = require('../services/cicloFatura');
 
+// ── CARTÃO DA COMPRA PARCELADA ───────────────────────────────────────────────
+//
+// ⚠️ Importado de `transacoes.js` de propósito: é o resolvedor CANÔNICO de
+// carteira do projeto (exato → sem ruído → palavra → fuzzy), o mesmo que o
+// lançamento avulso usa. Ter uma segunda regra aqui foi exatamente o que
+// produziu o relato de "cartão não encontrado" pra um cartão existente.
+const { resolverCarteiraReal } = require('./transacoes');
+
+const ehCredito = (w) => /cr[eé]dito/i.test(String(w && w.tipo || ''));
+
+/** Só os cartões de crédito ATIVOS do grupo. */
+async function listarCartoes(grupoId) {
+  const { data } = await supabase.from('wallets')
+    .select('id, nome, tipo, saldo, arquivada')
+    .eq('grupo_id', grupoId)
+    .order('created_at', { ascending: true });
+  return (data || []).filter((w) => !w.arquivada && ehCredito(w));
+}
+
+/**
+ * Acha o cartão que a pessoa citou.
+ *
+ * ⚠️ SEGUNDA TENTATIVA COM " crédito" COLADO, e ela existe por um motivo real:
+ * quem tem a conta "Nubank" E o cartão "Nubank Crédito" costuma dizer só
+ * "comprei no nubank em 3x". O resolvedor canônico devolveria a CONTA (é o
+ * nome exato), e parcelamento não existe em conta de débito. Como aqui a
+ * intenção já é inequívoca — parcelar —, procurar o cartão homônimo é o certo.
+ */
+async function acharCartao(grupoId, termo, cartoes) {
+  const nome = await resolverCarteiraReal(grupoId, termo, cartoes);
+  if (nome) return cartoes.find((c) => c.nome === nome) || null;
+
+  const nome2 = await resolverCarteiraReal(grupoId, `${termo} crédito`, cartoes);
+  if (nome2) return cartoes.find((c) => c.nome === nome2) || null;
+  return null;
+}
+
+/** Pergunta em qual cartão lançar, guardando a compra pra próxima mensagem. */
+async function pedirCartao(ctx, data, cartoes, motivo) {
+  const { phone, user } = ctx;
+  const lista = cartoes.map((c, i) => `${i + 1}. ${c.nome}`).join('\n');
+  await criarPendente({
+    userId: user?.id,
+    tipoPergunta: 'escolher_cartao_parcelado',
+    // O payload inteiro volta na resposta — assim a pessoa não precisa repetir
+    // a frase, só dizer o cartão.
+    contexto: { compra: data, opcoes: cartoes.map((c) => c.nome) },
+  });
+  await enviarTexto(phone,
+    `${motivo ? `${motivo}\n\n` : ''}💳 *Em qual cartão* foi essa compra de ` +
+    `${data.numParcelas}x de R$ ${Number(data.valorParcela).toFixed(2)}?\n\n${lista}\n\n` +
+    'Responde com o número ou o nome.');
+}
+
 module.exports = async function handleParcelas(data, ctx) {
   const { phone, grupoId, user } = ctx;
 
@@ -115,25 +169,41 @@ module.exports = async function handleParcelas(data, ctx) {
   if (data.acao === 'compra_parcelada') {
     const { descricao, numParcelas, valorParcela, valorTotal, categoria } = data;
 
-    // Normaliza nome do cartão de crédito
-    let carteiraNome = data.carteira.trim();
-    if (!carteiraNome.toLowerCase().includes('crédito') &&
-        !carteiraNome.toLowerCase().includes('credito')) {
-      await enviarTexto(phone, '⚠️ Compras parceladas só são permitidas em contas de *crédito*.\nEx: "comprei fone no nubank crédito em 3x de 150"');
+    // ── QUAL CARTÃO ─────────────────────────────────────────────────
+    //
+    // ⚠️ ISTO ERA UM `ilike('%' + nome + '%')` CRU, E FOI METADE DO RELATO DE
+    // set/2026. `ilike` compara byte a byte: "itau credito" (como a pessoa
+    // digita, e como o Whisper transcreve) NÃO casa com "Itaú Crédito" — a
+    // Sora respondia "cartão não encontrado, crie primeiro com itau credito 0",
+    // mandando criar um cartão que já existia.
+    //
+    // `resolverCarteiraReal` é o resolvedor canônico do projeto e já resolve
+    // isso: normaliza acento/caixa, tira ruído ("cartão", "conta"), casa por
+    // palavra e cai num fuzzy com limiar alto. E o `.single()` de antes
+    // ESTOURAVA quando o termo casava com dois cartões.
+    const cartoes = (await listarCartoes(grupoId));
+    if (!cartoes.length) {
+      await enviarTexto(phone, '❌ Você ainda não tem nenhum *cartão de crédito* cadastrado.\nCrie com: "nubank crédito 0" e tente de novo.');
       return;
     }
 
-    // Busca o cartão de crédito
-    const { data: wallet } = await supabase.from('wallets')
-      .select('id, nome, saldo')
-      .eq('grupo_id', grupoId)
-      .ilike('nome', `%${carteiraNome}%`)
-      .single();
+    // Sem cartão citado ("comprei 50 em roupas em 2x") → PERGUNTA, não chuta.
+    // Parcelamento mora sempre num cartão específico; escolher sozinho poderia
+    // pendurar 12 parcelas no cartão errado.
+    if (!data.carteira) {
+      await pedirCartao(ctx, data, cartoes);
+      return;
+    }
 
+    const wallet = await acharCartao(grupoId, data.carteira, cartoes);
     if (!wallet) {
-      await enviarTexto(phone, `❌ Cartão *${carteiraNome}* não encontrado.\nCrie primeiro com: "${carteiraNome.toLowerCase()} 0"`);
+      // Pode ser conta de DÉBITO citada ("no nubank" quando só existe a conta):
+      // aí o caminho é escolher um cartão, não mandar criar um que já existe.
+      await pedirCartao(ctx, data, cartoes,
+        `❓ Não achei um *cartão de crédito* chamado "${data.carteira}".`);
       return;
     }
+    const carteiraNome = wallet.nome;
     // Gera N transações futuras (uma por fatura/mês). Cada parcela é um Gasto
     // não-pago no cartão, com data no mês da respectiva fatura. Assim o painel
     // (que lê transações) reflete o limite comprometido, mostra faturas futuras
@@ -147,6 +217,16 @@ module.exports = async function handleParcelas(data, ctx) {
     const bY = base.getUTCFullYear(), bM = base.getUTCMonth(), bD = base.getUTCDate();
     const dataParcela = i => new Date(Date.UTC(bY, bM + i, Math.min(bD, 28), 12));
 
+    // ⚠️ O RESTO DOS CENTAVOS VAI NA PRIMEIRA PARCELA — é o que o banco faz, e
+    // sem isso a soma das parcelas não fecha com o total. Vale pro formato em
+    // que a pessoa diz o TOTAL ("100 em 3 parcelas"): 100/3 = 33,33, e três
+    // vezes 33,33 dá 99,99. A fatura ficaria 1 centavo menor pra sempre.
+    const cent = (v) => Math.round((Number(v) || 0) * 100);
+    const sobra = cent(valorTotal) - cent(valorParcela) * numParcelas;
+    const valorDaParcela = (i) => (i === 0
+      ? (cent(valorParcela) + sobra) / 100
+      : valorParcela);
+
     // Mesmo schema do painel (migration 071): parcela_num/total/grupo — assim o
     // "listar parcelas", a badge "1/3" e o "excluir todas" funcionam igual.
     const grupoParcela = 'P' + Math.random().toString(36).substring(2, 10).toUpperCase();
@@ -158,7 +238,7 @@ module.exports = async function handleParcelas(data, ctx) {
         criado_por:    user?.id || null,
         tipo:          'Gasto',
         categoria:     categoria || 'Outros',
-        valor:         valorParcela,
+        valor:         valorDaParcela(i),
         observacao:    descricao,
         carteira_nome: wallet.nome,
         pago:          false,
