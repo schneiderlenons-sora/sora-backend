@@ -303,8 +303,18 @@ router.get('/:grupo_id/membros', auth, async (req, res) => {
     if (!(await papelNoGrupo(req.params.grupo_id, req.authUser?.id))) {
       return res.status(403).json({ erro: 'Você não participa deste grupo.' });
     }
+    // ⚠️ `avatar_url` VEM DAQUI, e só daqui. A foto é um data URL em base64
+    // (medido: 19 KB em média, 43 KB no maior) e ela ANTES vinha embutida no
+    // `criador` de CADA transação — o PostgREST repete o objeto embutido linha
+    // a linha, então uma listagem de 500 transações carregava 500 cópias da
+    // MESMA foto. Medido na base: 12,42 MB numa única abertura de /transacoes,
+    // contra 0,41 MB sem ela; 56,5 MB somando os 17 usuários que têm foto — e
+    // isso rodava no /transacoes, no /relatorios, no dashboard e no prefetch.
+    //
+    // Aqui são 1–5 linhas por grupo, então a foto sai UMA vez. A tela casa por
+    // `criador.id` e desenha igual.
     const { data, error } = await supabase.from('grupo_membros')
-      .select('id, papel, created_at, user_id, users(id, name, phone, plano)')
+      .select('id, papel, created_at, user_id, users(id, name, phone, plano, avatar_url, avatar_preset, avatar_cor)')
       .eq('grupo_id', req.params.grupo_id)
       .order('created_at', { ascending: true });
     if (error) return res.status(500).json({ erro: error.message });

@@ -63,7 +63,7 @@ async function listarTransacoes(grupoId, { mes, tipo, limit, ate, colunas }) {
   }
 
   let query = supabase.from('transacoes')
-    .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url, avatar_preset, avatar_cor)', { count: 'exact' })
+    .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_preset, avatar_cor)', { count: 'exact' })
     .eq('grupo_id', grupoId)
     .order('data', { ascending: false })
     .range(0, Number(limit) - 1);
@@ -78,7 +78,7 @@ async function listarTransacoes(grupoId, { mes, tipo, limit, ate, colunas }) {
     // Fallback: mantém o criador, mas só com colunas que existem sem a
     // migration 048 (preset/cor). Assim o avatar do autor não some.
     let q2 = supabase.from('transacoes')
-      .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url)', { count: 'exact' })
+      .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone)', { count: 'exact' })
       .eq('grupo_id', grupoId)
       .order('data', { ascending: false })
       .range(0, Number(limit) - 1);

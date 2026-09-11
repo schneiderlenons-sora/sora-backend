@@ -139,7 +139,7 @@ router.get('/:phone', auth, async (req, res) => {
 
     // Tenta com JOIN — se a FK não existir no schema, cai para SELECT * sem join
     let query = supabase.from('transacoes')
-      .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url, avatar_preset, avatar_cor)', { count: 'exact' })
+      .select('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_preset, avatar_cor)', { count: 'exact' })
       .eq('grupo_id', grupoId)
       .order('data', { ascending: false })
       .range(Number(offset), Number(offset) + Number(limit) - 1);
@@ -188,7 +188,7 @@ router.get('/:phone', auth, async (req, res) => {
         else if (criado_por_me === 'true') q = q.eq('criado_por', user.id);
         return q;
       };
-      let r = await baseQ2('*, criador:users!transacoes_criado_por_fkey(id, name, phone, avatar_url)');
+      let r = await baseQ2('*, criador:users!transacoes_criado_por_fkey(id, name, phone)');
       if (r.error) r = await baseQ2('*');
       data = r.data; count = r.count;
     }
