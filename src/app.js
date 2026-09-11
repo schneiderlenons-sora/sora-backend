@@ -47,6 +47,7 @@ app.use('/api/categorias',   require('./routes/categorias'));
 app.use('/api/marcas',       require('./routes/marcas'));
 app.use('/api/regras',       require('./routes/regras'));
 app.use('/api/limites',      require('./routes/limites'));
+app.use('/api/previstos',    require('./routes/previstos'));
 app.use('/api/investimentos',require('./routes/investimentos'));
 app.use('/api/metas',        require('./routes/metas'));
 app.use('/api/dividas',      require('./routes/dividas'));
