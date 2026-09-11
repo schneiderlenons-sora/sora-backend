@@ -33,6 +33,77 @@ async function contexto(req) {
 const COMPETENCIA = /^\d{4}-\d{2}$/;
 const DIA         = /^\d{4}-\d{2}-\d{2}$/;
 
+const { casar, JANELA_DIAS } = require('../services/casarPrevisao');
+const { venceHoje } = require('../services/frequenciaRecorrencia');
+
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * As previsões AINDA ABERTAS na janela — o que o extrato desenharia.
+ *
+ * ⚠️ QUEM DECIDE SE UMA RECORRÊNCIA VENCE NUM DIA É `venceHoje`, a função
+ * canônica do backend (a mesma que o cron usa pra lançar). Reimplementar
+ * "cai no dia 10" aqui criaria a enésima cópia de uma regra de data nesta base
+ * — e a divergência apareceria como o extrato sugerindo baixa pra uma
+ * ocorrência que o cron não considera existir.
+ */
+async function previsoesAbertas(grupoId, de, ate, quitacoes, ajustes) {
+  const { data: recs } = await supabase.from('recorrencias')
+    .select('id, descricao, tipo, valor, dia_vencimento, carteira, valor_variavel, frequencia, dia_semana, mes_vencimento, data_inicio, data_fim, ativo')
+    .eq('grupo_id', grupoId);
+  if (!recs || !recs.length) return [];
+
+  const jaResolvida = new Set([
+    ...quitacoes.map((q) => `${q.recorrenciaId}:${q.competencia}`),
+    ...ajustes.map((a) => `${a.recorrenciaId}:${a.competencia}`),
+  ]);
+
+  const inicio = new Date(`${de}-01T12:00:00`);
+  const [ay, am] = ate.split('-').map(Number);
+  const fim = new Date(ay, am, 0, 12);
+
+  const out = [];
+  for (const r of recs) {
+    if (r.ativo === false) continue;
+    if (!(Number(r.valor) > 0)) continue;
+    const cur = new Date(inicio);
+    for (let i = 0; cur <= fim && i < 400; i++, cur.setDate(cur.getDate() + 1)) {
+      const dia = iso(cur);
+      if (!venceHoje(r, dia)) continue;
+      const comp = dia.slice(0, 7);
+      if (jaResolvida.has(`${r.id}:${comp}`)) continue;
+      out.push({
+        recorrencia_id: r.id, competencia: comp, vencimento: dia,
+        valor: r.valor, carteira: r.carteira, tipo: r.tipo,
+        valor_variavel: !!r.valor_variavel,
+      });
+    }
+  }
+  return out;
+}
+
+/** Cobranças do banco que casam com previsões abertas (ver `casarPrevisao`). */
+async function sugerirBaixas(grupoId, de, ate, quitacoes, ajustes) {
+  if (!de || !ate) return [];
+  const previsoes = await previsoesAbertas(grupoId, de, ate, quitacoes, ajustes);
+  if (!previsoes.length) return [];
+
+  // Janela alargada pela tolerância: o pagamento pode ter caído fora do mês.
+  const menor = previsoes.reduce((m, p) => (p.vencimento < m ? p.vencimento : m), previsoes[0].vencimento);
+  const maior = previsoes.reduce((m, p) => (p.vencimento > m ? p.vencimento : m), previsoes[0].vencimento);
+  const d0 = new Date(`${menor}T12:00:00`); d0.setDate(d0.getDate() - JANELA_DIAS);
+  const d1 = new Date(`${maior}T12:00:00`); d1.setDate(d1.getDate() + JANELA_DIAS);
+
+  const { data: txs } = await supabase.from('transacoes')
+    .select('id, data, valor, tipo, carteira_nome, of_tx_id, recorrencia_id')
+    .eq('grupo_id', grupoId)
+    .not('of_tx_id', 'is', null)
+    .is('recorrencia_id', null)
+    .gte('data', iso(d0)).lte('data', iso(d1));
+
+  return casar(previsoes, txs || []);
+}
+
 /**
  * GET /api/previstos/ocorrencias/:phone?de=YYYY-MM&ate=YYYY-MM
  *
@@ -73,16 +144,25 @@ router.get('/ocorrencias/:phone', auth, async (req, res) => {
       a.then((r) => r).catch(() => ({ data: [] })),
     ]);
 
-    res.json({
-      quitacoes: (tx.data || []).map((t) => ({
-        recorrenciaId: t.recorrencia_id, competencia: t.competencia,
-        transacaoId: t.id, data: t.data, valor: t.valor,
-      })),
-      ajustes: (aj.data || []).map((x) => ({
-        recorrenciaId: x.recorrencia_id, competencia: x.competencia,
-        status: x.status, novaData: x.nova_data, novoValor: x.novo_valor,
-      })),
-    });
+    const quitacoes = (tx.data || []).map((t) => ({
+      recorrenciaId: t.recorrencia_id, competencia: t.competencia,
+      transacaoId: t.id, data: t.data, valor: t.valor,
+    }));
+    const ajustes = (aj.data || []).map((x) => ({
+      recorrenciaId: x.recorrencia_id, competencia: x.competencia,
+      status: x.status, novaData: x.nova_data, novoValor: x.novo_valor,
+    }));
+
+    // ⚠️ SUGESTÕES SÃO TOLERANTES: se falharem, a tela continua funcionando
+    // sem elas. Elas são um atalho, nunca um pré-requisito — quem não tem Open
+    // Finance (ou tem e deu erro) dá baixa manualmente, que é o caminho
+    // principal e completo.
+    let sugestoes = [];
+    try {
+      sugestoes = await sugerirBaixas(grupoId, de, ate, quitacoes, ajustes);
+    } catch { /* segue sem sugestão */ }
+
+    res.json({ quitacoes, ajustes, sugestoes });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
