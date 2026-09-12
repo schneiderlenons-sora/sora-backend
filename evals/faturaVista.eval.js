@@ -255,8 +255,28 @@ console.log('── 6. simulado igual ao limite usado ──');
     saldo: -10217.60, of_limite_usado: 10217.60,
   };
 
+  // ⚠️ A COMPETÊNCIA É DERIVADA, NUNCA CRAVADA — e isto é a correção de um eval
+  // que se DESLIGOU SOZINHO numa virada de calendário.
+  //
+  // O ramo do simulado só vale na competência que o código considera atual
+  // (`competencia === competenciaDoSimulado(...) || competenciaAtual(...)`).
+  // Este bloco pedia '2026-09' na mão; quando o vencimento de 10/09 passou,
+  // `competenciaAtual` virou '2026-10', a condição deixou de casar e as quatro
+  // asserções passaram a falhar — sem UMA linha de código de produção ter
+  // mudado. Vermelho por calendário é pior que vermelho por bug: ninguém
+  // acredita nele, e aí ele deixa de ser lido.
+  //
+  // Os irmãos deste arquivo (`cicloFatura`, `parcelasPrevistas`,
+  // `pagamentoFatura`) já congelavam o "hoje". Este era o único que não.
+  //
+  // O que as asserções abaixo testam é a DECISÃO (aceitar ou recusar o
+  // simulado), não um mês específico — então derivar do cartão é mais fiel ao
+  // que se quer provar, e funciona em qualquer data.
+  const { competenciaAtual } = require('../src/services/cicloFatura');
+  const COMP = competenciaAtual(inter);
+
   // Com movimento no ciclo → o simulado é recusado e cai no auditável.
-  const comMovimento = await valorExibido(inter, '2026-09', st(568.93), semDeps);
+  const comMovimento = await valorExibido(inter, COMP, st(568.93), semDeps);
   ok(comMovimento.fatura !== 10217.60, 'NÃO exibe o limite usado como fatura');
   eq(comMovimento.fonte, 'ciclo+previstas', 'cai no caminho auditável');
 
@@ -264,18 +284,18 @@ console.log('── 6. simulado igual ao limite usado ──');
   // ninguém comprou desde então) — e aí o simulado continua valendo. Sem esta
   // metade, a trava viraria "nunca confie no simulado", que é o oposto do que
   // este arquivo inteiro defende.
-  const semMovimento = await valorExibido(inter, '2026-09', st(0), semDeps);
+  const semMovimento = await valorExibido(inter, COMP, st(0), semDeps);
   eq(semMovimento.fatura, 10217.60, 'ciclo vazio: o simulado segue valendo');
   eq(semMovimento.fonte, 'simulada', 'e a fonte continua sendo o banco');
 
   // Simulado DIFERENTE do limite usado = a regra de ouro funcionou. Intocado.
   const regraFechou = { ...inter, saldo: -1774.64, of_limite_usado: 3155.80 };
-  const normal = await valorExibido(regraFechou, '2026-09', st(900), semDeps);
+  const normal = await valorExibido(regraFechou, COMP, st(900), semDeps);
   eq(normal.fatura, 1774.64, 'regra de ouro que fechou continua mandando');
 
   // Sem `of_limite_usado` não há com o que comparar — adota o simulado.
   const semUsado = { ...inter, of_limite_usado: null };
-  const r4 = await valorExibido(semUsado, '2026-09', st(180), semDeps);
+  const r4 = await valorExibido(semUsado, COMP, st(180), semDeps);
   eq(r4.fatura, 10217.60, 'sem limite usado gravado, nada muda');
 }
 console.log('  ok');
@@ -293,29 +313,34 @@ console.log('  ok');
   console.log('── 7. pagamento no ciclo × simulado ──');
   {
     const cartao = (saldo) => ({ ...CARTAO_OF, saldo });
+    // ⚠️ DERIVADA, nunca cravada — ver a nota na §6. O ramo do simulado só
+    // vale na competência que o código considera atual, então pedir um mês
+    // fixo faz o bloco inteiro ficar vermelho na virada do vencimento.
+    const { competenciaAtual: cAtual } = require('../src/services/cicloFatura');
+    const COMP = cAtual(CARTAO_OF);
 
     // (a) O caso do relato: nossa soma é MAIOR que o simulado (não falta nada)
     //     e o pagamento cabe na fatura → usa a nossa conta.
-    const a = await valorExibido(cartao(-3363.39), '2026-09', st(3763.01, 2854.70), semDeps);
+    const a = await valorExibido(cartao(-3363.39), COMP, st(3763.01, 2854.70), semDeps);
     eq(a.restante, 908.31, 'usa a nossa conta e bate com o app do banco');
     eq(a.fonte, 'ciclo-pago', 'e diz de onde veio');
 
     // (b) `platinum`: nossa soma é 4× MENOR que o simulado — nos falta
     //     lançamento, o banco sabe mais. Trocar aqui levaria 6.005,07 pra
      //    1.574,99 e esconderia R$ 4,4 mil de fatura.
-    const b = await valorExibido(cartao(-6005.07), '2026-09', st(1604.98, 29.99), semDeps);
+    const b = await valorExibido(cartao(-6005.07), COMP, st(1604.98, 29.99), semDeps);
     eq(b.restante, 6005.07, 'soma menor que o simulado → mantém o banco');
     eq(b.fonte, 'simulada', 'e continua marcada como simulada');
 
     // (c) `gold`: o pagamento registrado é MAIOR que o ciclo inteiro — sinal
     //     de que ele quitou a fatura ANTERIOR. Descontar aqui zeraria uma
     //     fatura que existe.
-    const c = await valorExibido(cartao(-1381.16), '2026-09', st(1409.12, 1793.62), semDeps);
+    const c = await valorExibido(cartao(-1381.16), COMP, st(1409.12, 1793.62), semDeps);
     eq(c.restante, 1381.16, 'pagamento maior que o ciclo → mantém o banco');
 
     // (d) Sem pagamento nenhum na competência nada muda — é o caminho de 24
     //     dos 28 cartões que caem neste ramo.
-    const d = await valorExibido(cartao(-3363.39), '2026-09', st(3763.01, 0), semDeps);
+    const d = await valorExibido(cartao(-3363.39), COMP, st(3763.01, 0), semDeps);
     eq(d.restante, 3363.39, 'sem pagamento → simulado intocado');
     eq(d.fonte, 'simulada', 'sem pagamento → fonte segue simulada');
   }
@@ -346,24 +371,29 @@ console.log('  ok');
   console.log('── 7B. lacuna pequena × pagamento registrado ──');
   {
     const cartao = (saldo) => ({ ...CARTAO_OF, saldo });
+    // ⚠️ DERIVADA, nunca cravada — ver a nota na §6. O ramo do simulado só
+    // vale na competência que o código considera atual, então pedir um mês
+    // fixo faz o bloco inteiro ficar vermelho na virada do vencimento.
+    const { competenciaAtual: cAtual } = require('../src/services/cicloFatura');
+    const COMP = cAtual(CARTAO_OF);
 
     // O caso do relato, com os números reais do cartão.
-    const a = await valorExibido(cartao(-4091.58), '2026-09', st(4064.68, 4018.54), semDeps);
+    const a = await valorExibido(cartao(-4091.58), COMP, st(4064.68, 4018.54), semDeps);
     eq(a.restante, 46.14, 'lacuna de 0,7% não descarta o pagamento');
     eq(a.fonte, 'ciclo-pago', 'e passa a usar a nossa conta');
 
     // ⚠️ AS DUAS BORDAS DA TOLERÂNCIA — é aqui que um "afrouxa só mais um
     //    pouquinho" futuro aparece como falha em vez de virar bug de dinheiro.
-    const dentro = await valorExibido(cartao(-1000), '2026-09', st(960, 500), semDeps);
+    const dentro = await valorExibido(cartao(-1000), COMP, st(960, 500), semDeps);
     eq(dentro.restante, 460, '96% do simulado → dentro da tolerância');
 
-    const fora = await valorExibido(cartao(-1000), '2026-09', st(900, 500), semDeps);
+    const fora = await valorExibido(cartao(-1000), COMP, st(900, 500), semDeps);
     eq(fora.restante, 1000, '90% do simulado → fora, mantém o banco');
     eq(fora.fonte, 'simulada', 'fora da tolerância segue simulada');
 
     // Sem pagamento a tolerância não pode mudar NADA — é o caminho de 15 dos
     // 16 cartões, e o que garante regressão zero neles.
-    const semPg = await valorExibido(cartao(-4091.58), '2026-09', st(4064.68, 0), semDeps);
+    const semPg = await valorExibido(cartao(-4091.58), COMP, st(4064.68, 0), semDeps);
     eq(semPg.restante, 4091.58, 'sem pagamento, a tolerância é inerte');
     eq(semPg.fonte, 'simulada', 'sem pagamento → fonte segue simulada');
   }

@@ -54,7 +54,8 @@
     "eval:frequencia": "node evals/frequenciaRecorrencia.eval.js",
     "eval:fatura-empurradas": "node evals/faturaEmpurradas.eval.js",
     "eval:a-pagar-cartoes": "node evals/aPagarCartoes.eval.js",
-    "eval:casar-previsao": "node evals/casarPrevisao.eval.js"
+    "eval:casar-previsao": "node evals/casarPrevisao.eval.js",
+    "eval:fatura-vista-datas": "node evals/faturaVistaDatas.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
