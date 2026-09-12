@@ -832,6 +832,98 @@ console.log('── 14. unbilled por plástico (payload vivo) ──');
 }
 console.log('  ok');
 
+// ── 15. MODALIDADE VAZIA derrubava o consenso — payload VIVO ───────────────
+//
+// CASO REAL (Mercado Pago, 12/09/2026): a Sora exibia R$ 4.274,85 num cartão
+// em que o banco cobrava R$ 689,23. Não era erro de cálculo — era um valor
+// FÓSSIL. O emissor manda duas modalidades de SAQUE zeradas (que o cliente
+// não contratou) junto da linha real, e o "0 de 0" delas derrubava os DOIS
+// consensos: `usadoDoCartao` e o teto de `limitePorModalidade`. Sem
+// `used_amount` a regra de ouro não roda, `saldoFatura` sai null, e
+// `upsertWallet` NÃO GRAVA null (`patchSaldo`) — então `wallets.saldo` ficava
+// com o número de um sync antigo, para sempre, e a tela o exibia como fatura.
+//
+// Medido na base em 12/09/2026: 9 cartões de OF nesse estado, R$ 11.346,27
+// exibidos sem confirmação da API — SETE deles Mercado Pago.
+console.log('── 15. modalidade vazia não vota no consenso ──');
+{
+  // As TRÊS linhas exatas do payload vivo.
+  const limits = [
+    { consolidation_type: 'CONSOLIDADO', credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO',
+      identification_number: '4430', line_name: 'SAQUE_CREDITO_EXTERIOR', is_limit_flexible: false,
+      used_amount: { amount: '0.0000' }, limit_amount: { amount: '0.0000' },
+      available_amount: { amount: '0.0000' }, unbilled_amount: { amount: 0 } },
+    { consolidation_type: 'CONSOLIDADO', credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO',
+      identification_number: '4430', line_name: 'SAQUE_CREDITO_BRASIL', is_limit_flexible: false,
+      used_amount: { amount: '0.0000' }, limit_amount: { amount: '0.0000' },
+      available_amount: { amount: '0.0000' }, unbilled_amount: { amount: 0 } },
+    { consolidation_type: 'CONSOLIDADO', credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO',
+      identification_number: '4430', line_name: 'CREDITO_A_VISTA', is_limit_flexible: false,
+      used_amount: { amount: '655.9300' }, limit_amount: { amount: '2900.0000' },
+      available_amount: { amount: '2244.0700' }, unbilled_amount: { amount: 0 } },
+  ];
+
+  ok(S.modalidadeVazia(limits[0]) === true, 'saque 0 de 0 é modalidade vazia');
+  ok(S.modalidadeVazia(limits[2]) === false, 'a linha com 655,93 usados NÃO é vazia');
+  ok(S.semModalidadeVazia(limits).length === 1, 'sobra só a linha que informa algo');
+
+  const usado = S.usadoDoCartao({ limits });
+  ok(usado === 655.93, `used_amount do cartão (esperado 655.93, veio ${usado})`);
+  ok(usado !== null, 'era NULL antes do fix — e é o null que congelava o saldo');
+
+  // ⚠️ A PROVA de que a linha sobrevivente é a do cartão inteiro é a
+  // aritmética do PRÓPRIO BANCO: teto − usado = available_amount.
+  const lim = S.limiteTotalDoCartao(limits, 208.77);
+  ok(lim.limite === 2900 && lim.usado === 655.93 && lim.disponivel === 2244.07,
+    `limite do cartão (esperado 2900/655.93/2244.07, veio ${JSON.stringify(lim)})`);
+  ok(Math.abs((lim.limite - lim.usado) - lim.disponivel) <= 0.01,
+    'a subtração da tela bate com o available_amount do banco');
+
+  // E a regra de ouro volta a produzir valor — é ela que drena o fóssil.
+  ok(S.faturaPorLimite(usado, S.unbilledDoCartao({ limits })) === 655.93,
+    'a regra de ouro devolve 655,93 — o mesmo número da nossa soma do ciclo aberto');
+
+  // ── as travas que NÃO podem afrouxar ────────────────────────────────────
+  // 1. Linha de teto zero que CARREGA informação não é descartada: sem esta
+  //    cláusula eu jogaria fora o subtraendo da regra de ouro, e a fatura
+  //    sairia MAIOR que a do banco (o bug do Inter ao contrário).
+  ok(S.modalidadeVazia({ limit_amount: { amount: '0.00' }, used_amount: { amount: '0.00' },
+    unbilled_amount: { amount: '150.00' } }) === false,
+    'teto 0 mas com unbilled: NÃO é vazia — o unbilled é dado');
+
+  // 2. `null` não é zero. Emissor que simplesmente não manda teto por
+  //    modalidade não pode ter a linha boa apagada.
+  ok(S.modalidadeVazia({ used_amount: { amount: '0.00' } }) === false,
+    'teto ausente (null) não é teto zero');
+
+  // 3. O "Limite Nupay" segue recusado: ele tem teto de verdade (300,45),
+  //    logo não é vazio, e quem o barra continua sendo a trava aritmética.
+  ok(S.limiteTotalDoCartao([
+    { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'INDIVIDUAL',
+      limit_amount: { amount: '300.4500' }, used_amount: { amount: '300.45' },
+      available_amount: { amount: '0.00' } },
+  ], 2293.71).limite === null, 'o sublimite do NuPay continua recusado');
+
+  // 4. Modalidades que discordam DE VERDADE seguem recusadas — o filtro tira
+  //    ruído, não cria consenso onde não há.
+  ok(S.limiteTotalDoCartao([
+    { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', limit_amount: { amount: '10050.00' },
+      used_amount: { amount: '10.00' }, available_amount: { amount: '10040.00' } },
+    { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', limit_amount: { amount: '999.00' },
+      used_amount: { amount: '10.00' }, available_amount: { amount: '989.00' } },
+  ], 500).limite === null, 'tetos reais divergentes → null, como antes');
+
+  // 5. Cartão com TODAS as linhas vazias decide EXATAMENTE como antes.
+  ok(S.usadoDoCartao({ limits: [limits[0], limits[1]] }) === 0,
+    'todas vazias: consenso de zeros continua devolvendo 0');
+  ok(S.limiteTotalDoCartao([limits[0], limits[1]], 10).limite === null,
+    'todas vazias: sem teto, como antes');
+
+  // 6. Ordem das linhas não importa.
+  ok(S.usadoDoCartao({ limits: [...limits].reverse() }) === 655.93,
+    'inverter a ordem não muda o used_amount do cartão');
+}
+console.log('  ok');
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {
   console.log('\n── Falhas ──');

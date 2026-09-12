@@ -527,8 +527,13 @@ function usoConhecido(card, bills) {
 function limitePorModalidade(arr, usoRef, diag) {
   const anota = (motivo) => { if (diag) diag.motivo = motivo; return null; };
 
-  const mods = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_MODALIDADE_OPERACAO');
-  if (!mods.length) return anota('nenhuma linha de modalidade em limits[]');
+  const todasMods = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_MODALIDADE_OPERACAO');
+  if (!todasMods.length) return anota('nenhuma linha de modalidade em limits[]');
+  // ⚠️ Modalidade que o cartão não tem (0 de 0) não vota no teto — ver
+  // `modalidadeVazia`. O Mercado Pago manda duas linhas de saque zeradas, e
+  // era só por causa delas que este cartão caía em "DISCORDAM do teto".
+  const uteis = todasMods.filter((l) => !modalidadeVazia(l));
+  const mods = uteis.length ? uteis : todasMods;
 
   const tetos = new Set(mods.map((l) => String(money(l.limit_amount))));
   if (tetos.size !== 1) {                               // trava 1
@@ -706,8 +711,69 @@ function faturaSimulada(fonte) {
  * R$ 4.750 · usado R$ 4.836,77", com o teto de uma linha e o usado de outra.
  * Preferir não calcular a calcular errado.
  */
+/**
+ * MODALIDADE QUE O CARTÃO NÃO TEM — a linha vazia de `limits[]`.
+ *
+ * CASO REAL (Mercado Pago, 12/09/2026) medido no payload VIVO. O emissor manda
+ * TRÊS linhas, todas `MODALIDADE_OPERACAO` e todas do mesmo plástico (4430):
+ *
+ *     SAQUE_CREDITO_EXTERIOR   limite      0,00   usado      0,00
+ *     SAQUE_CREDITO_BRASIL     limite      0,00   usado      0,00
+ *     CREDITO_A_VISTA          limite  2.900,00   usado    655,93
+ *
+ * As duas de saque são modalidades que o cliente NÃO CONTRATOU: "usou 0 de 0"
+ * não informa nada. Mas elas DERRUBAVAM as duas regras que exigem consenso:
+ *
+ *   · `usadoDoCartao` via {0, 0, 655.93} → discordam → null → a REGRA DE OURO
+ *     não roda → `saldoFatura` null → e aí o golpe: `patchSaldo` do
+ *     `upsertWallet` não grava `null`, então `wallets.saldo` ficava com o
+ *     valor de um sync ANTIGO. PARA SEMPRE. A tela exibia R$ 4.274,85 (uma
+ *     fatura de agosto, já paga) onde o banco cobrava R$ 689,23.
+ *   · `limitePorModalidade` via tetos {0, 2900} → "DISCORDAM do teto" → o
+ *     cartão não tinha limite usado nenhum, e por isso nem o
+ *     `simuladoEhOLimiteUsado` do `faturaVista` conseguia barrar o fóssil.
+ *
+ * Medido na base: 9 cartões de OF nesse estado, R$ 11.346,27 exibidos por
+ * valores que a API não confirma mais — SETE deles Mercado Pago.
+ *
+ * ⚠️ A PROVA de que a linha sobrevivente é a do cartão é a aritmética do
+ * próprio banco: 2.900,00 − 655,93 = 2.244,07 = `available_amount`. É o mesmo
+ * teste que `tetoEfetivo` já usa pra desempatar limite × customizado.
+ * E o 655,93 bate AO CENTAVO com a nossa soma auditável do ciclo aberto.
+ *
+ * ⚠️ NÃO DESCARTA LINHA QUE CARREGA INFORMAÇÃO. Exige os três zeros (teto,
+ * usado e o `unbilled_amount`, quando vem). Sem a cláusula do unbilled eu
+ * jogaria fora o subtraendo da regra de ouro num cartão que informasse
+ * `unbilled` numa linha de teto zero — e a fatura sairia MAIOR que a do banco,
+ * que é o bug do Banco Inter ao contrário.
+ *
+ * ⚠️ `null` NÃO É ZERO. Campo ausente é "não sei", e `money()` devolve null;
+ * tratá-lo como 0 apagaria a linha boa de um emissor que simplesmente não
+ * manda o teto por modalidade.
+ */
+function modalidadeVazia(l) {
+  if (!l) return true;
+  if (money(l.limit_amount) !== 0) return false;
+  if (money(l.used_amount) !== 0) return false;
+  const unb = money(l.unbilled_amount != null ? l.unbilled_amount : l.unbilledAmount);
+  return unb == null || unb === 0;
+}
+
+/**
+ * Tira as modalidades vazias de `limits[]`.
+ *
+ * ⚠️ SE SOBRAR NADA, DEVOLVE O ORIGINAL. Cartão cujas linhas são TODAS vazias
+ * tem de continuar decidindo exatamente como decidia antes desta função — o
+ * filtro existe pra restaurar um consenso que o ruído derrubava, nunca pra
+ * criar um caminho novo onde não havia dado nenhum.
+ */
+function semModalidadeVazia(arr) {
+  const todas = (arr || []).filter(Boolean);
+  const uteis = todas.filter((l) => !modalidadeVazia(l));
+  return uteis.length ? uteis : todas;
+}
 function usadoDoCartao(card) {
-  const arr = Array.isArray(card && card.limits) ? card.limits : [];
+  const arr = semModalidadeVazia(Array.isArray(card && card.limits) ? card.limits : []);
 
   // Se o emissor publica a linha do CARTÃO INTEIRO, o `used_amount` dela é o do
   // cartão por definição — não precisa de consenso com as modalidades, que
@@ -726,7 +792,7 @@ function usadoDoCartao(card) {
 }
 
 function unbilledDoCartao(card) {
-  const arr = Array.isArray(card && card.limits) ? card.limits : [];
+  const arr = semModalidadeVazia(Array.isArray(card && card.limits) ? card.limits : []);
 
   // ⚠️ `LIMITE_CREDITO_TOTAL` **NÃO É A LINHA DO CARTÃO INTEIRO** — ela vem UMA
   // POR PLÁSTICO. Esta função assumia o contrário e ESCOLHIA uma delas, o que
@@ -3170,6 +3236,7 @@ module.exports = {
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
   faturaSimulada, unbilledDoCartao, usadoDoCartao, usoConhecido, nomeDoCartao,
+  modalidadeVazia, semModalidadeVazia,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };
