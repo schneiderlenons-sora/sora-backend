@@ -207,6 +207,29 @@ function projetar(lista, cartao, hoje) {
  * competências futuras esse casamento por valor não existe de propósito: lá
  * qualquer compra de valor parecido cancelaria uma parcela real.
  */
+/** R$ — teto do arredondamento do emissor. Acima disto não é a mesma compra. */
+const TOLERANCIA_ARREDONDAMENTO = 1;
+
+/** Sem acento, sem caixa, sem pontuação — só o miolo do nome. */
+function chaveDesc(s) {
+  return String(s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * A descrição prevista é o começo da descrição da transação (ou vice-versa)?
+ *
+ * ⚠️ PISO DE 6 CARACTERES. Sem ele, uma previsão descrita como "Uber" casaria
+ * com qualquer transação que comece com "uber" — e num cartão com sete Ubers no
+ * mesmo ciclo isso cancelaria a parcela errada.
+ */
+function mesmaDescricao(previsto, transacao) {
+  const a = chaveDesc(previsto);
+  const b = chaveDesc(transacao);
+  if (a.length < 6 || b.length < 6) return false;
+  return b.startsWith(a) || a.startsWith(b);
+}
+
 function jaEhTransacao(linha, txsDoCartao, cartao) {
   const lista = txsDoCartao || [];
   // ⚠️ DUAS FORMAS DE CHAVE. Quem chama daqui do sync passa as transações
@@ -232,7 +255,33 @@ function jaEhTransacao(linha, txsDoCartao, cartao) {
     if (!t) return false;
     const d = String(t.data || '').slice(0, 10);
     if (!(d >= ciclo.ini && d < ciclo.fimExcl)) return false;
-    return Math.abs(Math.abs(Number(t.valor) || 0) - linha.valor) <= 0.01;
+    const dif = Math.abs(Math.abs(Number(t.valor) || 0) - linha.valor);
+    // Centavo exato: é a mesma linha, ponto.
+    if (dif <= 0.01) return true;
+    // ⚠️ O EMISSOR INFORMA A PARCELA NOMINAL E COBRA A ARREDONDADA — e essa
+    // diferença de centavos fazia a parcela ser contada DUAS VEZES (a transação
+    // do extrato + a projeção). Medido na base:
+    //
+    //     previsto  Amazonmktplc*Drogariaa      57,50
+    //     transação Amazonmktplc*Drogariaa 4/4  57,47   → 3 centavos
+    //     previsto  Morandeturismoe            161,38
+    //     transação MorandeTurismoE 5/5        161,34   → 4 centavos
+    //
+    // Foi o que inflou a fatura de uma cliente em R$ 466 (1.350,58 × 884,36
+    // no app do banco).
+    //
+    // ⚠️ MAS AFROUXAR SÓ O VALOR SERIA PIOR. Medido nas ~3.000 combinações da
+    // base: 2.001 pares ficam entre R$ 0,01 e R$ 2,00 e só 147 têm a DESCRIÇÃO
+    // batendo. Aceitar por valor sozinho cancelaria ~1.854 parcelas REAIS —
+    // trocaria fatura inflada por fatura a MENOS, que é o erro mais perigoso
+    // dos dois: a pessoa acha que tem folga que não tem.
+    //
+    // Por isso o par precisa dos DOIS sinais. E aqui casar por descrição é
+    // legítimo, ao contrário do casamento entre duas linhas da API: os dois
+    // lados vêm do MESMO emissor, e a transação é a previsão com o marcador
+    // "N/M" no fim — a descrição prevista é PREFIXO da transação.
+    if (dif > TOLERANCIA_ARREDONDAMENTO) return false;
+    return mesmaDescricao(linha.descricao, t.observacao || t.descricao);
   });
 }
 

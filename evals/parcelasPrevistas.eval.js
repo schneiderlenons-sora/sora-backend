@@ -195,11 +195,55 @@ console.log('── 5B. dedup do ciclo em curso ──');
 
   ok(jaEhTransacao(emCurso, dentro, CARTAO), 'transação sem marcador DENTRO do ciclo cancela a projeção');
   eq(jaEhTransacao(emCurso, fora, CARTAO), false, 'a mesma transação FORA do ciclo não cancela');
+  // ⚠️ ESTA ASSERÇÃO CRAVAVA A PREMISSA ANTIGA ("a folga é de 1 centavo").
+  // Ela continua valendo, mas por OUTRO motivo: sem descrição nos dois lados,
+  // a folga do arredondamento não se aplica. A regra nova está na §5C.
   eq(jaEhTransacao(emCurso, [{ valor: 56.60, data: '2026-07-20T18:15:06+00:00' }], CARTAO), false,
-    'no ciclo em curso a folga é de 1 centavo, não de R$ 1');
+    'diferença de centavos SEM descrição nos dois lados não cancela');
   eq(jaEhTransacao(futura, dentro, CARTAO), false,
     'em competência futura valor sozinho NUNCA cancela — só o marcador');
   eq(jaEhTransacao(emCurso, dentro, null), false, 'sem cartão não dá pra saber o ciclo: não cancela');
+}
+console.log('  ok');
+
+// ── 5C. ARREDONDAMENTO DO EMISSOR: parcela nominal × parcela cobrada ────
+//
+// BUG REAL, relatado por duas contas. O emissor INFORMA a parcela nominal e
+// COBRA a arredondada, e a diferença de centavos fazia a dedup não casar — a
+// parcela entrava duas vezes (transação do extrato + projeção). Medido na base:
+//
+//     previsto  Amazonmktplc*Drogariaa      57,50
+//     transação Amazonmktplc*Drogariaa 4/4  57,47   → 3 centavos
+//     previsto  Morandeturismoe            161,38
+//     transação MorandeTurismoE 5/5        161,34   → 4 centavos
+//
+// Inflou a fatura de uma cliente em R$ 466 (Sora 1.350,58 × banco 884,36).
+//
+// ⚠️ E É AQUI QUE O EVAL GANHA O SEU CASO MAIS IMPORTANTE: afrouxar SÓ o valor
+// seria pior que o bug. Medido nas ~3.000 combinações da base, 2.001 pares
+// ficam entre R$ 0,01 e R$ 2,00 e só 147 têm a descrição batendo — aceitar por
+// valor sozinho cancelaria ~1.854 parcelas REAIS, trocando fatura inflada por
+// fatura a MENOS. Esse é o erro mais perigoso: a pessoa acha que tem folga.
+console.log('── 5C. arredondamento do emissor ──');
+{
+  const previstas = projetar(REAIS, CARTAO, HOJE);
+  const emCurso = previstas.find((p) => p.competencia === '2026-08');
+  const dia = '2026-07-20T18:15:06+00:00';
+  const desc = emCurso.descricao;
+
+  // Centavos de diferença + MESMA descrição = mesma parcela.
+  ok(jaEhTransacao(emCurso, [{ valor: emCurso.valor - 0.04, data: dia, observacao: desc }], CARTAO),
+    '4 centavos a menos COM a descrição igual cancela a projeção');
+  ok(jaEhTransacao(emCurso, [{ valor: emCurso.valor - 0.03, data: dia, observacao: `${desc} 4/4` }], CARTAO),
+    'a transação com o marcador "N/M" no fim também casa (a prevista é prefixo)');
+
+  // ⚠️ As três proteções que impedem cancelar parcela real.
+  eq(jaEhTransacao(emCurso, [{ valor: emCurso.valor - 0.04, data: dia, observacao: 'Posto Ipiranga' }], CARTAO), false,
+    'mesmo valor, descrição DIFERENTE: não cancela');
+  eq(jaEhTransacao(emCurso, [{ valor: emCurso.valor - 1.5, data: dia, observacao: desc }], CARTAO), false,
+    'mesma descrição mas R$ 1,50 de diferença: não é arredondamento, não cancela');
+  eq(jaEhTransacao(emCurso, [{ valor: emCurso.valor - 0.04, data: dia, observacao: 'Uber' }], CARTAO), false,
+    'descrição curta ("Uber") não basta — o piso de 6 caracteres impede casar o Uber errado');
 }
 console.log('  ok');
 
