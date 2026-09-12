@@ -780,6 +780,58 @@ console.log('── 13. fatura em aberto (sem total do banco) ──');
 }
 console.log('  ok');
 
+// ── 14. unbilled_amount É POR PLÁSTICO — payload VIVO ───────────────────────
+//
+// BUG REAL (Nubank, 12/09/2026), achado no payload vivo depois de a cliente
+// relatar a fatura divergindo do banco. Havia DUAS linhas
+// LIMITE_CREDITO_TOTAL, as duas CONSOLIDADO, uma por plástico:
+//
+//     4351 → unbilled      0,00
+//     6967 → unbilled    733,82
+//
+// A função assumia que TOTAL era "a linha do cartão inteiro" e ESCOLHIA uma
+// (o `.find()` pegava a primeira = 4351 = zero). Com `unbilled = 0` a regra de
+// ouro degenera — `used − 0` É o limite usado — e a Sora mostrava R$ 1.618,18
+// onde o banco cobrava R$ 884,36.
+//
+// ⚠️ A ASSIMETRIA COM `usadoDoCartao` É O PONTO DESTE BLOCO: `used_amount` vem
+// igual em todas as linhas (consolidado do cartão) e lá se ESCOLHE uma;
+// `unbilled_amount` VARIA por plástico e aqui se SOMA — uma leitura por
+// plástico, nunca a mesma duas vezes.
+console.log('── 14. unbilled por plástico (payload vivo) ──');
+{
+  // Exatamente as 6 linhas que a API devolveu neste cartão.
+  const limits = [
+    { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'INDIVIDUAL',  identification_number: '6967', used_amount: { amount: '1618.18' }, unbilled_amount: { amount: 733.82 } },
+    { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'INDIVIDUAL',  identification_number: '4351', used_amount: { amount: '1618.18' }, unbilled_amount: { amount: 0 } },
+    { credit_line_limit_type: 'LIMITE_CREDITO_TOTAL',               consolidation_type: 'CONSOLIDADO', identification_number: '4351', used_amount: { amount: '1618.18' }, unbilled_amount: { amount: 0 } },
+    { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'CONSOLIDADO', identification_number: '6967', used_amount: { amount: '1618.18' }, unbilled_amount: { amount: 733.82 } },
+    { credit_line_limit_type: 'LIMITE_CREDITO_MODALIDADE_OPERACAO', consolidation_type: 'CONSOLIDADO', identification_number: '4351', used_amount: { amount: '1618.18' }, unbilled_amount: { amount: 0 } },
+    { credit_line_limit_type: 'LIMITE_CREDITO_TOTAL',               consolidation_type: 'CONSOLIDADO', identification_number: '6967', used_amount: { amount: '1618.18' }, unbilled_amount: { amount: 733.82 } },
+  ];
+
+  const unb = S.unbilledDoCartao({ limits });
+  ok(unb === 733.82, `unbilled soma UMA leitura por plástico (esperado 733.82, veio ${unb})`);
+  ok(unb !== 0, 'nunca mais zero por escolher o plástico errado');
+  ok(unb !== 2201.46, 'e nunca a soma das 6 linhas (733,82 × 3), que daria fatura NEGATIVA');
+
+  const fatura = S.faturaPorLimite(1618.18, unb);
+  ok(fatura === 884.36, `a regra de ouro fecha com o banco AO CENTAVO (esperado 884.36, veio ${fatura})`);
+  ok(fatura !== 1618.18, 'e não devolve o limite usado');
+
+  // ⚠️ Cartão de UM plástico: comportamento inalterado (era o caso que já ia bem).
+  ok(S.unbilledDoCartao({ limits: [limits[2]] }) === 0, 'cartão de um plástico segue igual');
+
+  // A ORDEM das linhas deixou de importar — era a fragilidade de origem.
+  ok(S.unbilledDoCartao({ limits: [...limits].reverse() }) === 733.82,
+    'inverter a ordem das linhas não muda o resultado');
+
+  // Sem o campo em linha nenhuma → null, NÃO zero (zero viraria o limite usado).
+  const semCampo = limits.map(({ unbilled_amount, ...r }) => r);
+  ok(S.unbilledDoCartao({ limits: semCampo }) === null, 'sem o campo devolve null, não 0');
+}
+console.log('  ok');
+
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {
   console.log('\n── Falhas ──');

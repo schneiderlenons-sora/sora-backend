@@ -728,28 +728,51 @@ function usadoDoCartao(card) {
 function unbilledDoCartao(card) {
   const arr = Array.isArray(card && card.limits) ? card.limits : [];
 
-  // Simétrico ao `usadoDoCartao`: existindo a linha do CARTÃO INTEIRO, o
-  // `unbilled_amount` dela é o do cartão. Sem este ramo o resultado dependia da
-  // ORDEM em que o banco manda as linhas (as sem `identification_number`
-  // colapsam na primeira), o que é frágil demais pra um número de dinheiro.
-  const totais = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_TOTAL');
-  const doTotal = totais.find((l) => l.consolidation_type === 'CONSOLIDADO') || totais[0] || null;
-  if (doTotal) {
-    const v = money(doTotal.unbilled_amount != null ? doTotal.unbilled_amount : doTotal.unbilledAmount);
-    if (v != null) return Math.max(0, cent(v));
-  }
+  // ⚠️ `LIMITE_CREDITO_TOTAL` **NÃO É A LINHA DO CARTÃO INTEIRO** — ela vem UMA
+  // POR PLÁSTICO. Esta função assumia o contrário e ESCOLHIA uma delas, o que
+  // descartava o `unbilled` dos outros plásticos.
+  //
+  // CASO REAL (Nubank, 12/09/2026) medido no payload VIVO. Duas linhas TOTAL,
+  // as duas `CONSOLIDADO`:
+  //
+  //     plástico 4351 → unbilled_amount      0,00   ← o `.find()` pegava ESTA
+  //     plástico 6967 → unbilled_amount    733,82   ← e jogava fora esta
+  //
+  // O resultado era 0 — e com `unbilled = 0` a regra de ouro degenera:
+  // `used − 0` devolve o limite usado inteiro. A Sora mostrava R$ 1.618,18 (o
+  // limite usado) onde o banco cobrava R$ 884,36. Com o valor certo a conta
+  // fecha AO CENTAVO:  1.618,18 − 733,82 = 884,36.
+  //
+  // ⚠️ A ASSIMETRIA COM `usadoDoCartao` É REAL E É O PONTO DA FUNÇÃO. O
+  // `used_amount` vem IGUAL em todas as linhas (é consolidado do cartão), então
+  // lá se ESCOLHE uma. O `unbilled_amount` VARIA por plástico, então aqui se
+  // SOMA — uma leitura por plástico, nunca a mesma duas vezes. Somar as 6
+  // linhas deste payload daria 733,82 × 3 = 2.201,46 e a fatura sairia
+  // NEGATIVA.
+  //
+  // ⚠️ E isto também elimina a dependência de ORDEM que o ramo antigo queria
+  // evitar: agrupando por plástico, a ordem em que o emissor manda as linhas
+  // deixa de importar.
+  const somaPorPlastico = (linhas) => {
+    const porPlastico = new Map();
+    for (const l of linhas) {
+      if (!l) continue;
+      const v = money(l.unbilled_amount != null ? l.unbilled_amount : l.unbilledAmount);
+      if (v == null) continue;
+      const chave = l.identification_number != null ? String(l.identification_number) : '__sem_id';
+      // A mesma linha repetida em `INDIVIDUAL` e `CONSOLIDADO` é o MESMO
+      // dinheiro — uma leitura por plástico.
+      if (!porPlastico.has(chave)) porPlastico.set(chave, v);
+    }
+    if (!porPlastico.size) return null;
+    const total = [...porPlastico.values()].reduce((s, v) => s + v, 0);
+    return Math.max(0, cent(total));
+  };
 
-  const porPlastico = new Map();
-  for (const l of arr) {
-    if (!l) continue;
-    const v = money(l.unbilled_amount != null ? l.unbilled_amount : l.unbilledAmount);
-    if (v == null) continue;
-    const chave = l.identification_number != null ? String(l.identification_number) : '__sem_id';
-    if (!porPlastico.has(chave)) porPlastico.set(chave, v);
-  }
-  if (!porPlastico.size) return null;
-  const total = [...porPlastico.values()].reduce((s, v) => s + v, 0);
-  return Math.max(0, cent(total));
+  // As linhas TOTAL, quando existem, são a visão mais confiável — mas ainda POR
+  // PLÁSTICO. Sem elas, vale qualquer linha que traga o campo.
+  const totais = arr.filter((l) => l && l.credit_line_limit_type === 'LIMITE_CREDITO_TOTAL');
+  return somaPorPlastico(totais.length ? totais : arr);
 }
 
 /**
