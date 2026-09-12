@@ -26,6 +26,30 @@ const CAPA = () => process.env.SORA_CAPA_URL
 const TEMPLATE_RESPOSTA = 'comunicado_sora';
 const CAPA_COMUNICADO = () => process.env.COMUNICADO_CAPA_URL || CAPA();
 
+/**
+ * Acrescenta o ponteiro pro painel na resposta enviada por WhatsApp.
+ *
+ * ⚠️ POR QUE ISTO EXISTE. A conversa do chamado (`bug_mensagens`, migration
+ * 143) já funcionava dos dois lados — e estava VAZIA depois de 56 chamados,
+ * porque toda resposta saía por WhatsApp e nunca voltava pro painel. Um
+ * cliente descreveu o efeito: "o sistema de chamados não permite organizar as
+ * respostas em threads, o que dificulta o acompanhamento de conversas mais
+ * longas". A thread existia; ele nunca teve motivo pra abri-la.
+ *
+ * ⚠️ A RESPOSTA CONTINUA INDO INTEIRA no WhatsApp, de propósito. Reduzi-la a
+ * um aviso ("respondemos, abra o painel") pioraria o caso comum, que é uma
+ * pergunta curta resolvida numa frase. O ponteiro serve à conversa LONGA, que
+ * é justamente a que ele reclamou.
+ *
+ * ⚠️ Sem `\n`: parâmetro de template da Meta não aceita quebra de linha nem
+ * tab (o envio falha). Por isso vai na mesma linha.
+ */
+const LINK_CHAMADOS = () =>
+  `${(process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://www.forsora.com').replace(/\/$/, '')}/reportar-bug`;
+
+const comPonteiro = (texto) =>
+  `${String(texto || '').trim()} — a conversa completa deste chamado fica em ${LINK_CHAMADOS()}`;
+
 // {{1}} do comunicado_sora. Fallback amigável pra nunca sair "Oi, !" — quem não
 // tem nome cadastrado recebe "Oi, tudo bem!", que continua lendo natural.
 const primeiroNome = (n) => (oneLine(n || '').split(' ')[0] || 'tudo bem').slice(0, 60);
@@ -64,8 +88,11 @@ router.post('/responder-relato', async (req, res) => {
   const antes = Date.now();
   // Com WHATSAPP_PROVIDER=meta vai o TEMPLATE (entrega dentro E fora das 24h).
   await enviarProativo(phone, {
-    texto, // fallback (Z-API / dentro da janela)
-    template: { name: TEMPLATE_RESPOSTA, params: [nome, oneLine(texto)], opts: { headerImage: CAPA_COMUNICADO() } },
+    // Fallback (Z-API / dentro da janela de 24h). Leva o ponteiro TAMBÉM: os
+    // dois caminhos têm de dizer a mesma coisa, senão a conversa aponta pro
+    // painel só às vezes — e aí ninguém aprende que ele existe.
+    texto: comPonteiro(texto),
+    template: { name: TEMPLATE_RESPOSTA, params: [nome, oneLine(comPonteiro(texto))], opts: { headerImage: CAPA_COMUNICADO() } },
   });
 
   const err = getLastSendError();
