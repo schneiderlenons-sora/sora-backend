@@ -136,6 +136,73 @@ function ehCombinacaoInvalida(e) {
   return txt.includes('COMBINACAO_PERMISSOES') || txt.includes('PERMISSOES');
 }
 
+/**
+ * RECRIAR o consentimento — emite uma URL de autorização NOVA mantendo o id.
+ *
+ * ⚠️ É O ENDPOINT QUE FALTAVA, e a falta dele deixava o cliente num beco sem
+ * saída. `request_uri` de PAR (RFC 9126) é de **USO ÚNICO** e de vida curta:
+ * depois do primeiro toque, a MESMA URL responde
+ * "400 invalid_request_uri: request_uri is invalid or expired" para sempre.
+ * Como o botão "Autorizar" do painel reentregava essa URL (a Celcoin só a
+ * renova aqui), a reação natural do usuário — voltar e tocar de novo — era
+ * garantidamente inútil. Caso real: um cliente com Santander tentou duas
+ * vezes em 55 minutos e as duas morreram sem autorizar.
+ *
+ * ⚠️ E ISTO CUSTA MENOS, não mais. A doc da Polp é explícita: "Não use
+ * POST /consents para reconectar o mesmo cliente: isso criaria outro registro
+ * na Polp. Recriar mantém o id local." Hoje cada retentativa criava um
+ * registro novo; recriando, a linha é a mesma. E a cobrança lá é por
+ * consentimento ATIVO (ver o comentário do limite em routes/openFinance.js),
+ * então tentativa que nunca foi autorizada não entra na conta.
+ *
+ * ⚠️ NUNCA chamar num consentimento AUTORISED sem querer: a doc diz que aí a
+ * Polp REVOGA o atual antes de criar o novo — derrubaria uma conexão que
+ * está funcionando. Quem protege disso é `precisaRenovar` + o filtro de
+ * status vivo em `ehConexaoViva`.
+ */
+async function recriarConsentimento(consentId, { products } = {}) {
+  const body = (products && products.length) ? { products } : {};
+  const d = dados(await api(`/consents/${encodeURIComponent(consentId)}/recreate`, { method: 'POST', body }));
+  return {
+    id: d.id,
+    status: d.status,
+    urlToAuthenticate: d.url_to_authenticate || null,
+    urlExpiraEm: d.url_to_authenticate_expires_at || null,
+    produtos: d.products || [],
+    erro: d.error || null,
+  };
+}
+
+// Vida da URL de autorização segundo a doc da Polp ("renovada — 1 hora").
+const VIDA_URL_MS = 60 * 60 * 1000;
+// Janela em que a URL é NOVA DEMAIS pra ter sido usada. Existe por CUSTO:
+// sem ela, dois toques seguidos no botão gerariam dois consentimentos.
+const JANELA_URL_NOVA_MS = 2 * 60 * 1000;
+
+/**
+ * Vale a pena pedir uma URL nova, ou a que está lá ainda serve?
+ *
+ * ⚠️ "NÃO VENCEU" NÃO QUER DIZER "SERVE". O `request_uri` é de uso único, e a
+ * API não conta se ele já foi consumido — então uma URL válida mas emitida há
+ * 10 minutos pode estar morta e não há como saber. Por isso o padrão é
+ * RENOVAR, e a única exceção é a URL recém-emitida (ninguém teve tempo de
+ * usá-la), que é o que impede clique duplo de virar consentimento duplicado.
+ */
+function precisaRenovar(consent, agora = Date.now()) {
+  if (!consent) return true;
+  const status = String(consent.status || '').toUpperCase();
+  // Conexão viva não se mexe: recriar aqui REVOGA o consentimento bom.
+  if (status === 'AUTHORISED' || status === 'UPDATED') return false;
+  const url = consent.url_to_authenticate || consent.urlToAuthenticate || null;
+  if (!url) return true;
+  const exp = consent.url_to_authenticate_expires_at || consent.urlExpiraEm || null;
+  if (!exp) return true;
+  const fim = new Date(exp).getTime();
+  if (!Number.isFinite(fim)) return true;
+  if (fim <= agora) return true;
+  const emitidaEm = fim - VIDA_URL_MS;
+  return (agora - emitidaEm) > JANELA_URL_NOVA_MS;
+}
 async function criarConsentimento({ institutionId, cpf, cnpj, products, credenciais } = {}) {
   const base = { institution_id: String(institutionId) };
   if (cpf)  base.cpf  = String(cpf).replace(/\D/g, '');
@@ -346,6 +413,7 @@ module.exports = {
   configurado, api, paginado,
   listarInstituicoes,
   criarConsentimento, getConsentimento, revogarConsentimento, listarConsentimentos, syncSchedules,
+  recriarConsentimento, precisaRenovar, VIDA_URL_MS, JANELA_URL_NOVA_MS,
   listarContas, listarTransacoesConta, listarSaldosReservados,
   listarCartoes, listarTransacoesCartao, listarFaturas, listarParcelamentos, listarRecorrencias,
   listarEmprestimos, listarFinanciamentos,

@@ -130,6 +130,42 @@ router.get('/instituicoes', auth, exigirAcesso, exigirConfigurado, async (req, r
   }
 });
 
+/**
+ * A TENTATIVA MORTA do mesmo banco, se existir — pra reaproveitar em vez de
+ * criar outra conexão.
+ *
+ * ⚠️ ISTO É O QUE DESTRAVA O CLIENTE, e o beco sem saída tinha dois muros.
+ * Um consentimento que nunca autorizou continuava ocupando vaga do plano (o
+ * limite abaixo conta TODA linha, sem olhar status), então "Conecte de novo"
+ * — a mensagem que o próprio sync grava — levava direto a 409
+ * `limite_conexoes`. Medido em 13/09/2026: 7 usuários com conexão morta
+ * ocupando vaga, e um deles em 3/3 no premium, sem conseguir tentar de novo.
+ *
+ * ⚠️ DUAS TRAVAS, e as duas são de segurança, não de estilo:
+ *   1. `ultima_sync` NULA — se a conexão já trouxe dado alguma vez, ela é
+ *      real e não se mexe nela por este caminho.
+ *   2. status NÃO vivo (`ehConexaoViva`) — recriar um consentimento
+ *      AUTORISED faz a Polp REVOGAR o atual. Derrubar a conexão boa de
+ *      alguém seria muito pior que o bug que estou corrigindo.
+ *
+ * O casamento é pelo RÓTULO gravado (`instituicao`), que é exatamente a mesma
+ * expressão usada no upsert logo abaixo — o mesmo banco escolhido na mesma
+ * lista produz a mesma string.
+ */
+async function tentativaMorta(userId, rotulo, provider) {
+  if (!userId || !rotulo) return null;
+  const { data, error } = await supabase.from('of_conexoes')
+    .select('external_id, provider, status, ultima_sync, instituicao')
+    .eq('user_id', userId).eq('instituicao', rotulo).eq('provider', provider)
+    .order('created_at', { ascending: false });
+  // ⚠️ Erro de leitura NÃO vira "não existe": seguir como se não houvesse
+  // criaria a conexão duplicada que esta função existe pra evitar.
+  if (error) throw error;
+  // ⚠️ A lista vem SEM filtrar `ultima_sync` de propósito: quem decide precisa
+  // ENXERGAR as conexões vivas daquele banco pra poder desistir do reuso.
+  // Filtrando no SQL, uma segunda conta no mesmo banco ficaria invisível.
+  return providers.escolherTentativaMorta(data);
+}
 // Conectar: cria a integração e devolve a URL de autorização — o usuário abre,
 // autoriza o banco (MFA etc.), e o webhook avisa quando os dados ficam prontos.
 router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao('admin', 'escrita'), async (req, res) => {
@@ -148,6 +184,39 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
     // cobrança é por consentimento ativo. Medido numa conta real: a conexão
     // ficou no grupo pessoal, o usuário trocou pro compartilhado, não a viu
     // mais e ia reconectar.
+    const p = provDaReq(req);
+    const rotulo = instituicao_nome || String(institution_id);
+
+    // ⭐ RETENTATIVA REAPROVEITA A LINHA MORTA — não cria outra.
+    //
+    // Vale por três motivos, nessa ordem: (a) sem linha nova, o limite do
+    // plano não é tocado, que é o 409 que prendia o usuário; (b) a doc da
+    // Polp manda ("Não use POST /consents para reconectar o mesmo cliente:
+    // isso criaria outro registro na Polp"); (c) sai MAIS BARATO que hoje —
+    // cada retentativa criava um registro novo lá.
+    //
+    // ⚠️ Falha aqui NÃO derruba a conexão: cai no fluxo normal (com o limite),
+    // que é exatamente o comportamento de antes desta mudança.
+    try {
+      const morta = typeof p.recriarConexao === 'function'
+        ? await tentativaMorta(req.userId, rotulo, p.provider) : null;
+      if (morta) {
+        const nova = await p.recriarConexao(morta.external_id, {});
+        await supabase.from('of_conexoes').update({
+          status: String(nova.status || 'awaiting_authorization').toLowerCase(),
+          ultimo_erro: null,
+        }).eq('provider', p.provider).eq('external_id', String(morta.external_id));
+        console.log(`🔁 [${p.provider}] consent ${morta.external_id} RECRIADO (${rotulo}) — sem linha nova`);
+        return res.json({
+          ok: true, externalId: String(morta.external_id), status: nova.status,
+          urlToAuthenticate: nova.urlToAuthenticate, provider: p.provider,
+          reaproveitada: true,
+        });
+      }
+    } catch (e) {
+      console.warn('[of/conectar] recreate falhou, seguindo pelo fluxo normal:', e.message);
+    }
+
     const limite = req.ofAcesso?.limite ?? 0;
     const { count } = await supabase.from('of_conexoes')
       .select('id', { count: 'exact', head: true }).eq('user_id', req.userId);
@@ -161,7 +230,6 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
       });
     }
 
-    const p = provDaReq(req);
     const { id, status, urlToAuthenticate, produtos, produtosPedidos } = await p.criarConexao({
       institutionId: institution_id, cpf, cnpj, credenciais,
       // `products` só se o cliente pedir explicitamente: no Celcoin, mandar uma
@@ -296,6 +364,58 @@ router.post('/conexoes/:externalId/sincronizar', auth, exigirPermissao('admin', 
   }
 });
 
+// Renovar a autorização de uma conexão pendente — o botão "Autorizar".
+//
+// ⚠️ POR QUE É POST E NÃO O GET ABAIXO. O GET é chamado em POLLING (até 20
+// vezes); recriar ali geraria 20 consentimentos na Polp por clique. Renovar é
+// escrita e acontece UMA vez, no toque do usuário.
+router.post('/conexoes/:externalId/reautorizar', auth, exigirAcesso,
+  exigirPermissao('admin', 'escrita'), async (req, res) => {
+    try {
+      const p = await providers.paraConexao(req.params.externalId, req.grupoId);
+      if (!p) return res.status(404).json({ erro: 'Conexão não encontrada.' });
+      if (typeof p.recriarConexao !== 'function') {
+        // Trilho Pluggy legado: sem /recreate. Devolve o que existe, como antes.
+        const g = await p.getConexao(req.params.externalId).catch(() => null);
+        return res.json({
+          urlToAuthenticate: (g && (g.url_to_authenticate || g.urlToAuthenticate)) || null,
+          status: (g && g.status) || null, renovada: false, provider: p.provider,
+        });
+      }
+
+      const atual = await p.getConexao(req.params.externalId).catch(() => null);
+
+      // ⚠️ CONEXÃO VIVA NÃO SE RENOVA: a doc diz que recriar um AUTORISED
+      // REVOGA o consentimento atual. Aqui isso apagaria uma conexão boa.
+      const st = String((atual && atual.status) || '').toUpperCase();
+      if (st === 'AUTHORISED' || st === 'UPDATED') {
+        return res.json({ jaAutorizada: true, status: st, urlToAuthenticate: null, provider: p.provider });
+      }
+
+      // URL recém-emitida ainda serve — e não recriar aqui é o que impede
+      // clique duplo de virar consentimento duplicado (custo).
+      if (atual && !p.precisaRenovar(atual)) {
+        return res.json({
+          urlToAuthenticate: atual.url_to_authenticate || atual.urlToAuthenticate || null,
+          status: atual.status || null, renovada: false, provider: p.provider,
+        });
+      }
+
+      const nova = await p.recriarConexao(req.params.externalId, {});
+      await supabase.from('of_conexoes').update({
+        status: String(nova.status || 'awaiting_authorization').toLowerCase(),
+        ultimo_erro: null,
+      }).eq('external_id', String(req.params.externalId));
+      console.log(`🔁 [${p.provider}] consent ${req.params.externalId} RECRIADO pelo botão Autorizar`);
+      res.json({
+        urlToAuthenticate: nova.urlToAuthenticate, status: nova.status,
+        renovada: true, provider: p.provider,
+      });
+    } catch (err) {
+      console.error('[open-finance/reautorizar]', err.message);
+      res.status(500).json({ erro: `Não consegui renovar a autorização: ${err.message}`.slice(0, 200) });
+    }
+  });
 // URL de autorização ATUAL de uma conexão pendente (pro botão "Autorizar").
 router.get('/conexoes/:externalId/autorizar', auth, exigirAcesso, async (req, res) => {
   try {

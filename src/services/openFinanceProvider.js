@@ -50,6 +50,51 @@ function normalizarProvider(p) {
  * `sincronizar` tem a MESMA assinatura nos dois trilhos, então quem chama não
  * precisa saber qual é.
  */
+/**
+ * A conexão está VIVA (autorizada e importando)?
+ *
+ * ⚠️ Fronteira de segurança do `recreate`: a doc da Polp diz que recriar um
+ * consentimento AUTORISED **revoga o atual** antes de criar o novo. Uma
+ * conexão que funciona nunca pode entrar nesse caminho — por isso a lista é
+ * de quem ESTÁ VIVO (allowlist), não de quem está morto: status novo que
+ * apareça amanhã é tratado como morto, que é o lado seguro (no pior caso o
+ * usuário refaz a autorização; no outro lado ele PERDE a conexão).
+ * Os valores chegam em minúsculas (é como `of_conexoes.status` é gravado).
+ */
+const STATUS_VIVO = new Set(['updated', 'updating', 'authorised', 'authorized']);
+function ehConexaoViva(status) {
+  return STATUS_VIVO.has(String(status || '').toLowerCase());
+}
+/**
+ * Qual tentativa MORTA dá pra reaproveitar neste banco — ou nenhuma.
+ *
+ * ⚠️ A REGRA É "TODAS MORTAS", NÃO "ALGUMA MORTA", e a diferença importa.
+ * Medido na base em 13/09/2026: existem 4 pares (usuário, banco) com MAIS DE
+ * UMA conexão — Nubank, Itaú, Mercado Pago e o próprio Santander. Ou seja,
+ * ter duas contas no mesmo banco é caso real, não hipótese.
+ *
+ * Se alguma conexão daquele banco está VIVA, o usuário que clica "conectar"
+ * quase certamente quer uma SEGUNDA conta (outro CPF). Reaproveitar a
+ * tentativa morta ali entregaria a ele a autorização do CPF ERRADO — o
+ * `recreate` mantém "instituição, CPF/CNPJ e demais campos" (doc da Polp).
+ * Então: com qualquer viva por perto, o reuso sai de cena e tudo volta a ser
+ * exatamente como era antes desta correção.
+ *
+ * Com TODAS mortas não há ambiguidade — é a mesma pessoa tentando o mesmo
+ * banco de novo. Vale inclusive quando são duas mortas, que é o caso real do
+ * cliente que tentou duas vezes em 55 minutos.
+ *
+ * ⚠️ `ultima_sync` preenchida conta como VIVA mesmo com status estranho: se a
+ * conexão já trouxe dado alguma vez, ela é real e não se mexe nela por aqui.
+ *
+ * @param linhas de `of_conexoes`, MAIS RECENTE PRIMEIRO.
+ */
+function escolherTentativaMorta(linhas) {
+  const arr = (linhas || []).filter(Boolean);
+  if (!arr.length) return null;
+  if (arr.some((c) => ehConexaoViva(c.status) || c.ultima_sync)) return null;
+  return arr[0];
+}
 function para(provider) {
   const p = normalizarProvider(provider);
   if (p === CELCOIN) {
@@ -64,6 +109,10 @@ function para(provider) {
       criarConexao: (args) => cliente.criarConsentimento(args),
       getConexao: (id) => cliente.getConsentimento(id),
       removerConexao: (id) => cliente.revogarConsentimento(id),
+      // Só o trilho Celcoin tem /recreate. No Pluggy fica `undefined` e a
+      // rota cai no caminho antigo — o `typeof === function` é a checagem.
+      recriarConexao: (id, args) => cliente.recriarConsentimento(id, args || {}),
+      precisaRenovar: (c, agora) => cliente.precisaRenovar(c, agora),
       sincronizar: (id, opts) => sync.sincronizarConsentimento(id, opts),
       // Status que significa "pronto pra importar".
       statusOk: (st) => String(st || '').toUpperCase() === 'AUTHORISED',
@@ -96,4 +145,7 @@ async function paraConexao(externalId, grupoId) {
   return { ...para(data.provider), conexao: data };
 }
 
-module.exports = { PLUGGY, CELCOIN, providerPadrao, normalizarProvider, para, paraConexao };
+module.exports = {
+  PLUGGY, CELCOIN, providerPadrao, normalizarProvider, para, paraConexao,
+  ehConexaoViva, STATUS_VIVO, escolherTentativaMorta,
+};
