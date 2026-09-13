@@ -924,6 +924,55 @@ console.log('── 15. modalidade vazia não vota no consenso ──');
     'inverter a ordem não muda o used_amount do cartão');
 }
 console.log('  ok');
+// ── 16. O SYNC TEM DE SE CALAR — o fóssil de `wallets.saldo` ───────────────
+//
+// O patch antigo (`saldo == null ? {} : { saldo }`) nunca sobrescrevia a
+// coluna quando o cartão não produzia valor. Resultado: o número de um sync
+// antigo ficava na tela PARA SEMPRE, como se fosse a fatura de hoje — num
+// Mercado Pago real, R$ 4.274,85 (fatura de agosto, já paga) contra
+// R$ 689,23 do banco. Medido: 9 cartões de OF nesse estado, R$ 11.346,27.
+//
+// A regra distingue os DOIS silêncios, igual a `limite`/`of_limite_usado`.
+console.log('── 16. patchDoSaldo(): calar × apagar ──');
+{
+  const P = S.patchDoSaldo;
+
+  // Caminho normal: veio valor, grava valor.
+  ok(JSON.stringify(P(-655.93, true)) === JSON.stringify({ saldo: -655.93 }),
+    'com valor, grava o valor');
+  ok(JSON.stringify(P(-655.93, false)) === JSON.stringify({ saldo: -655.93 }),
+    'com valor, grava mesmo sem resposta de limites');
+  // Zero é valor legítimo (fatura quitada), não ausência.
+  ok('saldo' in P(0, false), 'zero é valor, não silêncio');
+
+  // ⭐ O FIX: o banco RESPONDEU e não deu pra derivar → grava null, e a tela
+  // cai no ciclo auditável em vez de manter o fóssil.
+  ok('saldo' in P(null, true) && P(null, true).saldo === null,
+    'banco respondeu mas sem valor: grava null (drena o fóssil)');
+
+  // ⚠️ A TRAVA QUE NÃO PODE AFROUXAR: sem resposta do banco, `null` é
+  // ausência de dado. Um soluço de rede não pode zerar a fatura de ninguém —
+  // é exatamente o que o patch antigo protegia, e isso continua valendo.
+  ok(!('saldo' in P(null, false)),
+    'banco NÃO respondeu: não toca na coluna (soluço de rede não zera fatura)');
+  ok(!('saldo' in P(null, undefined)), 'flag ausente conta como não respondeu');
+  ok(!('saldo' in P(undefined, false)), 'undefined também é silêncio');
+
+  // ⚠️ CONTA BANCÁRIA fica de fora DE GRAÇA: `_limiteRespondeu` só existe em
+  // normalizeCartao, então em conta a flag nunca é true e `saldo` nunca é
+  // apagado — lá null apagaria o dinheiro da pessoa da tela.
+  // ⚠️ NA ADOÇÃO DE CARTEIRA MANUAL o sync chama com `false` de propósito: o
+  // saldo que está lá foi DIGITADO pelo usuário e é o único número existente
+  // se o banco não souber a fatura. Apagá-lo no instante em que ele conecta o
+  // banco seria a armadilha do `limite` ("editava à mão e o sync zerava").
+  ok(!('saldo' in P(null, false)),
+    'adoção de carteira manual nunca apaga o saldo digitado pelo usuário');
+
+  const conta = { externalId: 'c1', nome: 'Conta', tipo: 'Conta', extras: { agencia: '1' } };
+  ok(conta.extras._limiteRespondeu !== true,
+    'conta normalizada não tem a flag — o null nunca a alcança');
+}
+console.log('  ok');
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {
   console.log('\n── Falhas ──');

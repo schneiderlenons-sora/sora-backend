@@ -2210,6 +2210,47 @@ function moedaDaConta(n) {
   return ok;
 }
 
+/**
+ * O QUE O SYNC GRAVA EM `wallets.saldo` — E QUANDO ELE SE CALA.
+ *
+ * ⚠️ ESTA FUNÇÃO EXISTE POR CAUSA DE UM VALOR FÓSSIL. O patch era
+ * `saldo == null ? {} : { saldo }`: quando o cartão não produzia valor, o
+ * sync não tocava na coluna — e `wallets.saldo` ficava com o número de um
+ * sync ANTIGO, para sempre, com a tela exibindo-o como se fosse a fatura de
+ * hoje. Num Mercado Pago real isso mostrou R$ 4.274,85 (uma fatura de agosto,
+ * JÁ PAGA) onde o banco cobrava R$ 689,23. Medido na base em 12/09/2026:
+ * 9 cartões de OF nesse estado, R$ 11.346,27 exibidos sem confirmação da API.
+ *
+ * O pulo do gato é distinguir os dois silêncios, exatamente como
+ * `limite`/`of_limite_usado` já fazem logo acima:
+ *
+ *   · o banco NÃO RESPONDEU sobre limites (`limits` null — a doc avisa que
+ *     vem null enquanto não sincroniza, e a chamada pode simplesmente ter
+ *     falhado). Aí `null` é AUSÊNCIA DE DADO e não pode apagar nada: um
+ *     soluço de rede zeraria a fatura de todo mundo, que é justamente o que
+ *     o patch antigo protegia. Continua sem tocar na coluna.
+ *
+ *   · o banco RESPONDEU e mesmo assim não deu pra derivar o valor. Aí `null`
+ *     é RESPOSTA: "hoje eu não sei quanto é esta fatura". Gravar o null faz
+ *     a tela cair no ciclo — que erra a menos quando há parcela sem
+ *     marcador, mas é AUDITÁVEL (bate com a lista de lançamentos logo
+ *     abaixo) e nunca exibe um número que o cliente não reconhece.
+ *
+ * ⚠️ ESCOPADO A CARTÃO DE GRAÇA, e isso é de propósito: `_limiteRespondeu` só
+ * existe em `normalizeCartao`. Em CONTA BANCÁRIA `saldo` é o dinheiro da
+ * pessoa e `null` apagaria o extrato inteiro da tela — lá o comportamento
+ * antigo tem de valer sempre, e vale, porque a flag nunca é true.
+ *
+ * ⚠️ TODO CONSUMIDOR DE `saldo` FOI CONFERIDO antes de liberar o null:
+ * `faturaVista` (ramo do simulado e `simuladoEhOLimiteUsado`), `CartaoClient`
+ * e `DetalhesCartaoModal` exigem `typeof saldo === 'number'` antes de
+ * qualquer aritmética; `ssr-data` e `ResumoCards` usam `Number(saldo) || 0`.
+ * Nenhum deles quebra, e em todos o número que manda vem do `faturaVista`.
+ */
+function patchDoSaldo(saldo, limiteRespondeu) {
+  if (saldo != null) return { saldo };
+  return limiteRespondeu === true ? { saldo: null } : {};
+}
 async function upsertWallet(grupoId, userId, n, saldo, consentId) {
   const nome = (n.nome || 'Conta').toString().trim().slice(0, 60);
 
@@ -2243,7 +2284,13 @@ async function upsertWallet(grupoId, userId, n, saldo, consentId) {
     extras.of_limite_usado = n.extras.of_limite_usado ?? null;
   }
 
-  const patchSaldo = saldo == null ? {} : { saldo };
+  const patchSaldo = patchDoSaldo(saldo, limiteRespondeu);
+  // ⚠️ NA ADOÇÃO DE CARTEIRA MANUAL O NULL NÃO VALE. O `saldo` que está lá foi
+  // DIGITADO PELO USUÁRIO, e é o único número que existe se o banco não
+  // souber dizer a fatura — apagá-lo no instante em que ele conecta o banco
+  // seria a mesma armadilha do `limite` logo abaixo ("editava à mão, salvava,
+  // e o sync seguinte zerava"). `false` = comportamento conservador de sempre.
+  const patchSaldoAdocao = patchDoSaldo(saldo, false);
 
   // ⚠️ Se UMA coluna dos extras não existir (migration nova ainda não rodada), o
   // update inteiro falha — e levaria o SALDO junto, zerando a fatura na tela.
@@ -2313,10 +2360,10 @@ async function upsertWallet(grupoId, userId, n, saldo, consentId) {
   if (mesmoNome) {
     const vinculo = { of_conta_id: n.externalId, of_provider: PROVIDER, ...(consentId ? { of_consent_id: consentId } : {}) };
     const { error } = await supabase.from('wallets')
-      .update({ tipo: n.tipo, ...vinculo, ...patchSaldo, ...extras }).eq('id', mesmoNome.id);
+      .update({ tipo: n.tipo, ...vinculo, ...patchSaldoAdocao, ...extras }).eq('id', mesmoNome.id);
     if (error) {
       await supabase.from('wallets')
-        .update({ tipo: n.tipo, ...vinculo, ...patchSaldo }).eq('id', mesmoNome.id);
+        .update({ tipo: n.tipo, ...vinculo, ...patchSaldoAdocao }).eq('id', mesmoNome.id);
     }
     return mesmoNome.nome;
   }
@@ -3236,7 +3283,7 @@ module.exports = {
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
   faturaSimulada, unbilledDoCartao, usadoDoCartao, usoConhecido, nomeDoCartao,
-  modalidadeVazia, semModalidadeVazia,
+  modalidadeVazia, semModalidadeVazia, patchDoSaldo,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };
