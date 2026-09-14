@@ -1,3 +1,4 @@
+const { extrairTermoParcela } = require('../services/consultaParcela');
 const { categorizarDescricao } = require('../services/categorizar');
 
 // Detecta categoria pelo texto da mensagem
@@ -615,6 +616,17 @@ function interpretarRapido(message) {
   if ((m = msg.match(/(antecipar|pagar|quitar)\s+(?:as\s+|a\s+)?parcelas?\s+(?:d[aeo]s?\s+)?(.+)/i))) {
     const todas = /\b(quitar|todas)\b/i.test(msg);
     return { acao: 'antecipar_parcela', termo: m[2].trim(), todas };
+  }
+
+  // CONSULTAR UMA COMPRA PARCELADA: "parcelas do presente da juliana",
+  // "quantas parcelas faltam do celular", "valor da parcela da tv". É o MESMO
+  // `listar_parcelas`, com um termo — ver services/consultaParcela.js.
+  // Vem ANTES da regra de listar todas (senão "quantas parcelas faltam do
+  // celular" listaria tudo e ignoraria o celular) e DEPOIS de registrar,
+  // antecipar e quitar parcela, que continuam ganhando.
+  {
+    const termoParcela = extrairTermoParcela(msg);
+    if (termoParcela) return { acao: 'listar_parcelas', termo: termoParcela };
   }
 
   // LISTAR compras parceladas em aberto: "parcelas", "minhas parcelas",

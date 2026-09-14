@@ -88,6 +88,9 @@ PARCELAS:
 {"acao":"compra_parcelada","descricao":"fone","carteira":"Nubank Crédito","numParcelas":3,"valorParcela":150,"valorTotal":450,"categoria":"Outros"}
 {"acao":"pagar_parcela","descricao":"fone"}
 {"acao":"confirmar_pagamento_parcela","descricao":"fone"}
+{"acao":"listar_parcelas"} ← "minhas parcelas", "quantas parcelas faltam?", "compras parceladas"
+{"acao":"listar_parcelas","termo":"presente juliana"} ← "valor e quantidade de parcelas do presente da juliana", "quanto falta pagar do celular parcelado?", "detalhes da compra parcelada do fone"
+  "termo" = o NOME da compra, como foi lançada. Sem nome → sem termo (lista todas). É CONSULTA: pagar/antecipar parcela continua sendo pagar_parcela.
 
 RECORRÊNCIAS (contas/receitas que se repetem todo mês):
 {"acao":"set_recorrente","valor":1000,"descricao":"aluguel","dia":5,"tipo":"Gasto"}

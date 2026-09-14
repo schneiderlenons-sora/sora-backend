@@ -56,7 +56,8 @@
     "eval:a-pagar-cartoes": "node evals/aPagarCartoes.eval.js",
     "eval:casar-previsao": "node evals/casarPrevisao.eval.js",
     "eval:fatura-vista-datas": "node evals/faturaVistaDatas.eval.js",
-    "eval:reautorizar": "node evals/reautorizarConsent.eval.js"
+    "eval:reautorizar": "node evals/reautorizarConsent.eval.js",
+    "eval:consulta-parcela": "node evals/consultaParcela.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -1,6 +1,7 @@
 const supabase = require('../db/supabase');
 const { CATEGORIA_FATURA } = require('../services/categorizar');
 const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
+const { termoCasaCompra } = require('../services/consultaParcela');
 const { criarPendente } = require('../services/pendentes');
 const { oferecerDesconto } = require('../services/descontoConta');
 
@@ -65,6 +66,99 @@ async function pedirCartao(ctx, data, cartoes, motivo) {
     'Responde com o número ou o nome.');
 }
 
+// ── CONSULTA DE UMA COMPRA PARCELADA ─────────────────────────────────────
+// "parcelas do presente da juliana", "quantas parcelas faltam do celular".
+//
+// ⚠️ É o `listar_parcelas` com um `termo`, e usa OS MESMOS grupos que a lista
+// completa monta — assim "o que conta como paga", "a próxima" e o legado
+// "Desc (2/3)" nunca divergem entre ver uma compra e ver todas.
+//
+// Motivo: um cliente pediu "o valor e quantidade de parcelas do presente da
+// Juliana" e não conseguiu (5x de R$ 54,03 no Mercado Pago, 1 paga).
+const brlParcela = (v) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Data pura (YYYY-MM-DD) por fatia, nunca por `new Date` — que leria em UTC e
+// voltaria um dia no Brasil.
+const dataBRParcela = (d) => {
+  const s = String(d || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : '';
+};
+const nomeDaCompra = (g) => String((g && g.desc) || 'Compra').replace(/\s*\(\d+\/\d+\)\s*$/, '');
+
+async function responderCompraParcelada(phone, grupoId, termo, grupos) {
+  const achadas = grupos
+    .filter((g) => termoCasaCompra(termo, nomeDaCompra(g), g.cartao))
+    // Em aberto primeiro (pela próxima parcela); quitadas depois.
+    .sort((a, b) => (Number(b.restantes > 0) - Number(a.restantes > 0))
+      || String((a.proxima && a.proxima.data) || '').localeCompare(String((b.proxima && b.proxima.data) || '')));
+
+  if (achadas.length) {
+    const MAX = 3;
+    const blocos = achadas.slice(0, MAX).map((g) => {
+      const total = g.total || (g.pagas + g.restantes);
+      // Legado só traz as linhas NÃO pagas: as pagas saem da conta do total.
+      const pagas = g.legado ? Math.max(0, total - g.restantes) : g.pagas;
+      const valorTotal = g.legado ? g.valorParcela * total : g.valorTotal;
+      const linhas = [
+        `🧾 *${nomeDaCompra(g)}* — ${g.cartao || 'cartão'}`,
+        `💰 Total: ${brlParcela(valorTotal)} · ${total}x de ${brlParcela(g.valorParcela)}`,
+      ];
+      if (g.restantes > 0) {
+        linhas.push(`✅ Pagas: ${pagas} de ${total}`);
+        linhas.push(`⏳ Faltam: ${g.restantes} ${g.restantes === 1 ? 'parcela' : 'parcelas'} · ${brlParcela(g.valorRestante)}`);
+        if (g.proxima) linhas.push(`📅 Próxima: ${dataBRParcela(g.proxima.data)}`);
+      } else {
+        linhas.push(`✅ Quitada — as ${total} parcelas já foram pagas.`);
+      }
+      return linhas.join('\n');
+    }).join('\n\n');
+    const mais = achadas.length > MAX
+      ? `\n\n_+${achadas.length - MAX} compra(s) com "${termo}" — veja no painel._` : '';
+    await enviarBotaoLink(phone, {
+      message: `${blocos}${mais}\n\n_Pra adiantar: *antecipar parcela do <nome>*._`,
+      label: 'Ver no painel',
+      url: 'https://forsora.com/cartao-de-credito',
+    });
+    return;
+  }
+
+  // Não é compra de cartão? Pode ser parcelamento com alguém ou empréstimo,
+  // que moram em Dívidas ("parcelei o notebook com o joão").
+  // ⚠️ Leitura TOLERANTE: se falhar, cai no "não achei" em vez de derrubar.
+  try {
+    const { data: dividas, error } = await supabase.from('dividas')
+      .select('titulo, credor, valor_total, valor_parcela, parcelas_total, parcelas_pagas, status')
+      .eq('grupo_id', grupoId);
+    if (!error) {
+      const d = (dividas || []).find((x) => x.status !== 'quitada' && termoCasaCompra(termo, x.titulo, x.credor));
+      if (d) {
+        const total = Number(d.parcelas_total) || 0;
+        const pagas = Number(d.parcelas_pagas) || 0;
+        const restantes = Math.max(0, total - pagas);
+        const vp = Number(d.valor_parcela) || (total ? Number(d.valor_total) / total : 0);
+        const linhas = [`🧾 *${d.titulo}*${d.credor ? ` — ${d.credor}` : ''}`];
+        if (total) {
+          linhas.push(`💰 Total: ${brlParcela(Number(d.valor_total) || vp * total)} · ${total}x de ${brlParcela(vp)}`);
+          linhas.push(`✅ Pagas: ${pagas} de ${total}`);
+          linhas.push(`⏳ Faltam: ${restantes} ${restantes === 1 ? 'parcela' : 'parcelas'} · ${brlParcela(vp * restantes)}`);
+        } else {
+          linhas.push(`💰 Parcela: ${brlParcela(vp)}`);
+        }
+        await enviarBotaoLink(phone, {
+          message: linhas.join('\n'),
+          label: 'Ver no painel',
+          url: 'https://forsora.com/dividas',
+        });
+        return;
+      }
+    }
+  } catch { /* tolerante */ }
+
+  const abertas = grupos.filter((g) => g.restantes > 0).slice(0, 5).map((g) => `*${nomeDaCompra(g)}*`);
+  await enviarTexto(phone,
+    `🔍 Não achei compra parcelada com *"${termo}"*.`
+    + (abertas.length ? `\n\nSuas compras parceladas em aberto: ${abertas.join(', ')}.` : '')
+    + '\n\n_Manda *parcelas* pra ver todas._');
+}
 module.exports = async function handleParcelas(data, ctx) {
   const { phone, grupoId, user } = ctx;
 
@@ -350,8 +444,10 @@ module.exports = async function handleParcelas(data, ctx) {
         desc: (t.observacao || 'Compra').trim() || 'Compra', cartao: t.carteira_nome,
         total: t.parcela_total || 0, pagas: 0, restantes: 0, valorRestante: 0,
         valorParcela: t.valor || 0, proxima: null,
+        valorTotal: 0, legado: false,
       };
       if (t.parcela_total) g.total = t.parcela_total;
+      g.valorTotal += (t.valor || 0);
       if (t.pago) g.pagas++;
       else {
         g.restantes++;
@@ -377,11 +473,19 @@ module.exports = async function handleParcelas(data, ctx) {
       const g = grupos.get(chave) || {
         desc, cartao: t.carteira_nome, total, pagas: 0, restantes: 0,
         valorRestante: 0, valorParcela: t.valor || 0, proxima: null,
+        valorTotal: 0, legado: true,
       };
       g.restantes++;
       g.valorRestante += (t.valor || 0);
       if (!g.proxima || t.data < g.proxima.data) g.proxima = { data: t.data };
       grupos.set(chave, g);
+    }
+
+    // Uma compra específica ("parcelas do presente da juliana"). SEM termo, tudo
+    // abaixo segue exatamente como era.
+    if (data.termo) {
+      await responderCompraParcelada(phone, grupoId, data.termo, [...grupos.values()]);
+      return;
     }
 
     const abertas = [...grupos.values()]
