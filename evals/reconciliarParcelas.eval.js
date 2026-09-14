@@ -140,6 +140,42 @@ console.log('── 5. parcela ainda não cobrada nasce não paga ──');
 }
 console.log('  ok');
 
+// ── 6. A parcela na data CERTA também tem o `pago` refrescado ────────────
+//
+// ⚠️ Antes, a reconciliação só reescrevia quando a DATA divergia. A PROSED 2/2
+// foi importada em agosto já em 03/09 — nasceu não paga e ficou assim depois
+// de cobrada (medido: 30 linhas do Open Finance, R$ 14.270,19, 13 clientes), e
+// o comando "parcelas" a listava como a pagar.
+console.log('── 6. o sync vira a parcela pra paga quando o dia chega ──');
+{
+  const P = S.patchReconciliacaoParcela;
+  const prosedEm = (hoje) => S.normalizeTxCartao(PAYLOAD[6], hoje);
+
+  // Em 19/08 a 2/2 é futura: data certa, não paga → nada a gravar.
+  eq(P({ data: '2026-09-03T12:00:00+00:00', pago: false }, prosedEm('2026-08-19')), null,
+    'antes do dia: linha em dia, nada a gravar');
+  // Em 14/09 o sync a vê paga: grava SÓ o pago.
+  eq(JSON.stringify(P({ data: '2026-09-03T12:00:00+00:00', pago: false }, prosedEm('2026-09-14'))),
+    JSON.stringify({ pago: true }), 'depois do dia: vira paga, sem tocar em mais nada');
+  // Já paga: nada.
+  eq(P({ data: '2026-09-03T12:00:00+00:00', pago: true }, prosedEm('2026-09-14')), null,
+    'já paga: nada a gravar');
+
+  // ⚠️ ANTECIPADA: o usuário pagou antes do dia. O sync diz "futura, não paga"
+  // e NÃO pode desfazer a antecipação.
+  eq(P({ data: '2026-09-03T12:00:00+00:00', pago: true }, prosedEm('2026-08-19')), null,
+    'antecipada não volta pra "a pagar"');
+
+  // O caso ORIGINAL segue igual: data da compra → move data, marcador e pago.
+  const velho = P({ data: '2026-08-03T22:31:55+00:00', pago: true }, prosedEm('2026-08-19'));
+  eq(velho && String(velho.data).slice(0, 10), '2026-09-03', 'data errada: move pra data da parcela');
+  eq(velho && velho.pago, false, 'e grava o pago do sync, como sempre');
+  eq(velho && velho.parcela_num, 2, 'e o marcador');
+
+  eq(P(null, prosedEm('2026-09-14')), null, 'linha ainda não importada: nada');
+}
+console.log('  ok');
+
 console.log('');
 if (falhas.length) {
   console.log(`✗ ${falhas.length} falha(s):`);

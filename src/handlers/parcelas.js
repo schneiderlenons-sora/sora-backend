@@ -1,7 +1,7 @@
 const supabase = require('../db/supabase');
 const { CATEGORIA_FATURA } = require('../services/categorizar');
 const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
-const { termoCasaCompra } = require('../services/consultaParcela');
+const { termoCasaCompra, parcelaJaCobrada, agruparParcelas } = require('../services/consultaParcela');
 const { criarPendente } = require('../services/pendentes');
 const { oferecerDesconto } = require('../services/descontoConta');
 
@@ -10,7 +10,7 @@ const gerarId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 // O ciclo da fatura mora em services/cicloFatura.js (fonte única compartilhada
 // com o painel e os crons). Os helpers locais que existiam aqui clampavam o dia
 // em 28 e estouravam o mês — 10 cartões da base fecham depois do dia 28.
-const { competenciaAtual, competenciaVizinha, cicloPorCompetencia } = require('../services/cicloFatura');
+const { competenciaAtual, competenciaVizinha, cicloPorCompetencia, hojeSP } = require('../services/cicloFatura');
 
 // ── CARTÃO DA COMPRA PARCELADA ───────────────────────────────────────────────
 //
@@ -95,19 +95,21 @@ async function responderCompraParcelada(phone, grupoId, termo, grupos) {
     const MAX = 3;
     const blocos = achadas.slice(0, MAX).map((g) => {
       const total = g.total || (g.pagas + g.restantes);
-      // Legado só traz as linhas NÃO pagas: as pagas saem da conta do total.
-      const pagas = g.legado ? Math.max(0, total - g.restantes) : g.pagas;
-      const valorTotal = g.legado ? g.valorParcela * total : g.valorTotal;
+      // `pagas` e `valorTotal` vêm prontos de `agruparParcelas` — inclusive
+      // as parcelas que não existem como linha (legado, marcador faltando).
+      const { pagas, valorTotal } = g;
       const linhas = [
         `🧾 *${nomeDaCompra(g)}* — ${g.cartao || 'cartão'}`,
         `💰 Total: ${brlParcela(valorTotal)} · ${total}x de ${brlParcela(g.valorParcela)}`,
       ];
+      // "Cobrada", não "paga": a parcela que caiu na fatura ainda aberta já saiu
+      // do cronograma, mas a fatura dela pode não ter sido paga.
       if (g.restantes > 0) {
-        linhas.push(`✅ Pagas: ${pagas} de ${total}`);
+        linhas.push(`✅ Já cobradas: ${pagas} de ${total}`);
         linhas.push(`⏳ Faltam: ${g.restantes} ${g.restantes === 1 ? 'parcela' : 'parcelas'} · ${brlParcela(g.valorRestante)}`);
         if (g.proxima) linhas.push(`📅 Próxima: ${dataBRParcela(g.proxima.data)}`);
       } else {
-        linhas.push(`✅ Quitada — as ${total} parcelas já foram pagas.`);
+        linhas.push(`✅ Todas as ${total} parcelas já foram cobradas — nada a vencer.`);
       }
       return linhas.join('\n');
     }).join('\n\n');
@@ -377,12 +379,16 @@ module.exports = async function handleParcelas(data, ctx) {
       .ilike('observacao', `%${termo}%`)
       .order('data', { ascending: true });
 
-    if (!parcelas?.length) {
+    // ⚠️ Parcela cujo dia já chegou foi COBRADA, mesmo com `pago: false` (ver
+    // parcelaJaCobrada). "Antecipar" a que já está numa fatura debitaria a
+    // conta por um valor que a fatura também cobra.
+    const aVencer = (parcelas || []).filter((p) => !parcelaJaCobrada(p, hojeSP()));
+    if (!aVencer.length) {
       await enviarTexto(phone, `❌ Não encontrei parcelas em aberto de *"${termo}"*.\nVeja suas faturas no painel: forsora.com/cartao-de-credito`);
       return;
     }
 
-    const alvo = data.todas ? parcelas : [parcelas[0]];
+    const alvo = data.todas ? aVencer : [aVencer[0]];
     const totalPago = alvo.reduce((s, t) => s + (t.valor || 0), 0);
 
     // Pagar fatura debita de uma conta — pergunta de qual (igual ao painel).
@@ -431,31 +437,12 @@ module.exports = async function handleParcelas(data, ctx) {
   // "quantas parcelas tenho pra pagar". Agrupa por compra (parcela_grupo)
   // e mostra só as que ainda têm parcela a vencer.
   if (data.acao === 'listar_parcelas') {
-    const grupos = new Map(); // chave → { desc, cartao, total, pagas, restantes, valorRestante, valorParcela, proxima }
-
     // Fonte principal: linhas com parcela_grupo (painel + WhatsApp novo).
     const { data: comGrupo } = await supabase.from('transacoes')
       .select('valor, observacao, carteira_nome, pago, data, parcela_num, parcela_total, parcela_grupo')
       .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
       .not('parcela_grupo', 'is', null)
       .order('data', { ascending: true });
-    for (const t of comGrupo || []) {
-      const g = grupos.get(t.parcela_grupo) || {
-        desc: (t.observacao || 'Compra').trim() || 'Compra', cartao: t.carteira_nome,
-        total: t.parcela_total || 0, pagas: 0, restantes: 0, valorRestante: 0,
-        valorParcela: t.valor || 0, proxima: null,
-        valorTotal: 0, legado: false,
-      };
-      if (t.parcela_total) g.total = t.parcela_total;
-      g.valorTotal += (t.valor || 0);
-      if (t.pago) g.pagas++;
-      else {
-        g.restantes++;
-        g.valorRestante += (t.valor || 0);
-        if (!g.proxima || t.data < g.proxima.data) g.proxima = { data: t.data };
-      }
-      grupos.set(t.parcela_grupo, g);
-    }
 
     // Fallback legado: WhatsApp antigo (sem parcela_grupo) — observação "Desc (2/3)".
     const { data: semGrupo } = await supabase.from('transacoes')
@@ -464,22 +451,10 @@ module.exports = async function handleParcelas(data, ctx) {
       .is('parcela_grupo', null)
       .ilike('observacao', '%(%/%)%')
       .order('data', { ascending: true });
-    for (const t of semGrupo || []) {
-      const mm = (t.observacao || '').match(/^(.*?)\s*\((\d+)\/(\d+)\)\s*$/);
-      if (!mm) continue;
-      const desc = mm[1].trim() || 'Compra';
-      const total = parseInt(mm[3], 10);
-      const chave = `legacy:${desc.toLowerCase()}:${(t.carteira_nome || '').toLowerCase()}:${total}`;
-      const g = grupos.get(chave) || {
-        desc, cartao: t.carteira_nome, total, pagas: 0, restantes: 0,
-        valorRestante: 0, valorParcela: t.valor || 0, proxima: null,
-        valorTotal: 0, legado: true,
-      };
-      g.restantes++;
-      g.valorRestante += (t.valor || 0);
-      if (!g.proxima || t.data < g.proxima.data) g.proxima = { data: t.data };
-      grupos.set(chave, g);
-    }
+
+    // ⚠️ "Já cobrada" NÃO é `pago`: parcela futura nasce não paga e nada a vira
+    // quando o dia chega. Ver parcelaJaCobrada em services/consultaParcela.js.
+    const grupos = agruparParcelas(comGrupo, semGrupo, hojeSP());
 
     // Uma compra específica ("parcelas do presente da juliana"). SEM termo, tudo
     // abaixo segue exatamente como era.
@@ -505,7 +480,7 @@ module.exports = async function handleParcelas(data, ctx) {
     const mostradas = abertas.slice(0, MAX);
     const blocos = mostradas.map(g => {
       const nome = (g.desc || 'Compra').replace(/\s*\(\d+\/\d+\)\s*$/, '');
-      const pagasTxt = g.total ? `${g.pagas}/${g.total} pagas` : `${g.pagas} pagas`;
+      const pagasTxt = g.total ? `${g.pagas}/${g.total} cobradas` : `${g.pagas} cobradas`;
       const prox = g.proxima ? ` · próxima ${fmtMes(g.proxima.data)}` : '';
       return `💳 *${nome}* — ${g.cartao || 'cartão'}\n   ${g.restantes}x de R$ ${g.valorParcela.toFixed(2)} a pagar (${pagasTxt})${prox}`;
     }).join('\n\n');

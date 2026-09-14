@@ -2463,6 +2463,33 @@ async function backfillBillPostDate(grupoId, normalizadas) {
 }
 
 /**
+ * O que a reconciliação grava numa parcela JÁ importada — ou null se nada.
+ *
+ * DATA ERRADA → reescreve data, `pago` e marcador (o caso original: linha
+ * importada na data da COMPRA, antes da redistribuição existir).
+ *
+ * DATA CERTA → só `pago`, e ele SÓ ANDA DE false PRA true. A parcela futura
+ * nasce não paga e só era reescrita quando a data divergia: a que já nasceu na
+ * data certa ficava "não paga" pra sempre (medido: 30 linhas, R$ 14.270,19,
+ * 13 clientes). O caminho inverso fica fechado de propósito — parcela ANTECIPADA
+ * pelo usuário é paga com data futura, e o sync a devolveria pra "a pagar".
+ */
+function patchReconciliacaoParcela(atual, t) {
+  if (!atual || !t || !t.data) return null;
+  if (ymd(atual.data) !== ymd(t.data)) {
+    return {
+      data: t.data,
+      pago: t.pago,
+      parcela_num: t.parcelaNum || null,
+      parcela_total: t.parcelaTotal || null,
+      parcela_grupo: t.parcelaGrupo || null,
+    };
+  }
+  if (t.pago === true && atual.pago === false) return { pago: true };
+  return null;
+}
+
+/**
  * RECONCILIA a data das parcelas JÁ IMPORTADAS.
  *
  * ⚠️ ESTE É O CONSERTO DA FATURA DIVERGENTE, e a causa é banal: o cálculo
@@ -2502,16 +2529,11 @@ async function reconciliarParcelas(grupoId, normalizadas) {
     if (!t.externalId || !t.data) continue;
     try {
       const { data: atual } = await supabase.from('transacoes')
-        .select('id, data').eq('grupo_id', grupoId).eq('of_tx_id', t.externalId).maybeSingle();
+        .select('id, data, pago').eq('grupo_id', grupoId).eq('of_tx_id', t.externalId).maybeSingle();
       if (!atual) continue;                       // ainda não importada: entra já certa
-      if (ymd(atual.data) === ymd(t.data)) continue;   // já está na data certa
-      const { error } = await supabase.from('transacoes').update({
-        data: t.data,
-        pago: t.pago,
-        parcela_num: t.parcelaNum || null,
-        parcela_total: t.parcelaTotal || null,
-        parcela_grupo: t.parcelaGrupo || null,
-      }).eq('id', atual.id);
+      const patch = patchReconciliacaoParcela(atual, t);
+      if (!patch) continue;                       // data certa e `pago` em dia
+      const { error } = await supabase.from('transacoes').update(patch).eq('id', atual.id);
       if (!error) corrigidas++;
     } catch { /* ignora */ }
   }
@@ -3283,7 +3305,7 @@ module.exports = {
   mesmaDividaManual, normTexto,
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
   faturaSimulada, unbilledDoCartao, usadoDoCartao, usoConhecido, nomeDoCartao,
-  modalidadeVazia, semModalidadeVazia, patchDoSaldo,
+  modalidadeVazia, semModalidadeVazia, patchDoSaldo, patchReconciliacaoParcela,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };

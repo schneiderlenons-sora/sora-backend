@@ -81,4 +81,104 @@ function termoCasaCompra(termo, descricao, cartao) {
   return alvo.every((w) => texto.some((t) => t === w || t.startsWith(w) || (t.length >= 4 && w.startsWith(t))));
 }
 
-module.exports = { extrairTermoParcela, termoCasaCompra, VERBO_DE_ACAO, RE_PARCELAS_DE };
+// =============================================================================
+// PARCELA JÁ COBRADA — e o agrupamento que o comando "parcelas" mostra.
+//
+// ⚠️ `pago` SOZINHO NÃO RESPONDE ISSO. Parcela futura nasce `pago: false` — no
+// painel, no WhatsApp e no sync do banco — e nada a vira quando o dia chega.
+// Medido em 14/09/2026: 30 parcelas do Open Finance (R$ 14.270,19) e 240
+// digitadas à mão (R$ 21.812,15) com a data já passada seguiam "não pagas".
+//
+// O relato: "parcelas" listou JIM.COM PROSED ES como a pagar, com as duas
+// parcelas cobradas. A 2/2 (03/09) está na fatura de setembro — a soma do
+// ciclo 09/08→08/09 dá R$ 4.018,54, igual aos pagamentos do banco no centavo.
+//
+// Cobrada = paga (inclusive ANTECIPADA, que fica paga com data futura) OU o
+// dia dela já chegou — a mesma definição com que `normalizeTxCartao` grava o
+// `pago` na importação; o que faltava era aplicá-la de novo quando o dia chega.
+// ⚠️ É "cobrada", não "quitada": a parcela da fatura ainda aberta já saiu do
+// cronograma, mas a fatura dela pode não ter sido paga. O texto diz "cobradas".
+// =============================================================================
+
+const TZ = 'America/Sao_Paulo';
+const SO_DATA = /^\d{4}-\d{2}-\d{2}$/;
+const MEIA_UTC = /^\d{4}-\d{2}-\d{2}T00:00:00(\.0+)?(Z|\+00:?00)$/;
+
+/**
+ * O dia da transação em São Paulo — a mesma regra de `lib/data-br.ts`.
+ * `transacoes.data` guarda data pura (meia-noite UTC, fatiar) E instante real
+ * (converter pro fuso); fatiar o instante erra o dia entre 21h e meia-noite.
+ */
+function diaSP(v) {
+  if (!v) return '';
+  const s = String(v);
+  if (SO_DATA.test(s) || MEIA_UTC.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s.slice(0, 10);
+  return d.toLocaleDateString('en-CA', { timeZone: TZ });
+}
+
+/** A parcela já foi cobrada? `hoje` = 'YYYY-MM-DD' em São Paulo. */
+function parcelaJaCobrada(t, hoje) {
+  if (t && t.pago === true) return true;
+  const dia = diaSP(t && t.data);
+  return !!dia && dia <= hoje;
+}
+
+/**
+ * Agrupa as parcelas por compra. `comGrupo` = linhas com `parcela_grupo`
+ * (painel, WhatsApp novo, Open Finance); `semGrupo` = legado do WhatsApp
+ * antigo, observação "Desc (2/3)" — só as NÃO pagas, como sempre veio.
+ * Devolve um Map chave → { desc, cartao, total, pagas, restantes,
+ * valorRestante, valorParcela, valorTotal, proxima, legado }.
+ */
+function agruparParcelas(comGrupo, semGrupo, hoje) {
+  const grupos = new Map();
+  const novo = (desc, cartao, total, valor, legado) => ({
+    desc, cartao, total: total || 0, pagas: 0, restantes: 0, valorRestante: 0,
+    valorParcela: valor || 0, proxima: null, valorTotal: 0, linhas: 0, legado,
+  });
+  const contar = (g, t) => {
+    g.linhas++;
+    g.valorTotal += (t.valor || 0);
+    if (parcelaJaCobrada(t, hoje)) return;
+    g.restantes++;
+    g.valorRestante += (t.valor || 0);
+    if (!g.proxima || String(t.data) < String(g.proxima.data)) g.proxima = { data: t.data };
+  };
+
+  for (const t of comGrupo || []) {
+    if (!t || !t.parcela_grupo) continue;
+    const g = grupos.get(t.parcela_grupo)
+      || novo((t.observacao || 'Compra').trim() || 'Compra', t.carteira_nome, t.parcela_total, t.valor, false);
+    if (t.parcela_total) g.total = t.parcela_total;
+    contar(g, t);
+    grupos.set(t.parcela_grupo, g);
+  }
+
+  for (const t of semGrupo || []) {
+    const mm = String((t && t.observacao) || '').match(/^(.*?)\s*\((\d+)\/(\d+)\)\s*$/);
+    if (!mm) continue;
+    const desc = mm[1].trim() || 'Compra';
+    const total = parseInt(mm[3], 10);
+    const chave = `legacy:${desc.toLowerCase()}:${(t.carteira_nome || '').toLowerCase()}:${total}`;
+    const g = grupos.get(chave) || novo(desc, t.carteira_nome, total, t.valor, true);
+    contar(g, t);
+    grupos.set(chave, g);
+  }
+
+  for (const g of grupos.values()) {
+    // ⚠️ Com o total conhecido, pagas = total − a vencer. Cobre parcela que nem
+    // existe como linha: o legado só busca as não pagas, e o banco pode mandar
+    // a 2/2 sem marcador na 1/2 (foi o caso do JIM.COM PROSED).
+    g.pagas = g.total ? Math.max(0, g.total - g.restantes) : g.linhas - g.restantes;
+    if (g.total > g.linhas) g.valorTotal += (g.total - g.linhas) * g.valorParcela;
+    g.valorTotal = Math.round(g.valorTotal * 100) / 100;
+    g.valorRestante = Math.round(g.valorRestante * 100) / 100;
+  }
+  return grupos;
+}
+module.exports = {
+  extrairTermoParcela, termoCasaCompra, VERBO_DE_ACAO, RE_PARCELAS_DE,
+  diaSP, parcelaJaCobrada, agruparParcelas,
+};
