@@ -2412,6 +2412,60 @@ async function upsertWallet(grupoId, userId, n, saldo, consentId) {
  *
  * Tolerante: sem a migration, não faz nada e o sync segue igual.
  */
+// ── LEITURA EM LOTE DAS LINHAS JÁ IMPORTADAS ──────────────────────────────
+//
+// ⚠️ EGRESS. Os quatro passos que tocam linha já importada (backfill do mês
+// de faturamento, backfill do lançamento, reconciliação de parcela e melhora
+// da descrição) faziam UMA consulta por transação, a cada sync, mesmo quando
+// não havia nada a mudar. A Celcoin dispara o webhook de hora em hora por
+// conexão, e cada sync relê 90 dias: medido em 14/09/2026, ~18.400 consultas
+// por rodada, cada uma ~1,1 KB no fio (1.029 bytes são só cabeçalho HTTP) —
+// ~19 MB por rodada, que é a ordem do egress diário do projeto.
+//
+// Agora é uma leitura por lote de 300, e o FILTRO vai pro banco: só voltam as
+// linhas que ainda têm o que fazer (coluna vazia, descrição genérica). O que
+// cada passo decide e grava não mudou.
+//
+// ⚠️ "Exatamente uma linha" é o que o `maybeSingle` antigo exigia: com duas
+// linhas do mesmo `of_tx_id` no grupo ele devolvia erro e a linha era pulada.
+// `linhaUnica` pula igual. (Medido: 0 casos em 15.872 linhas — o rateio só
+// deixa a 1ª parte herdar o `of_tx_id`.)
+const LOTE_OF_TX = 300;
+
+/**
+ * Linhas do grupo cujo `of_tx_id` está em `ids`, agrupadas por `of_tx_id`.
+ * `filtrar(q)` acrescenta o filtro de servidor. LANÇA em erro de leitura —
+ * quem chama decide (os backfills param, como paravam com a coluna ausente).
+ */
+async function linhasPorOfTxId(grupoId, ids, colunas, filtrar) {
+  const mapa = new Map();
+  const unicos = [...new Set((ids || []).filter(Boolean))];
+  for (let i = 0; i < unicos.length; i += LOTE_OF_TX) {
+    let q = supabase.from('transacoes').select(`of_tx_id, ${colunas}`)
+      .eq('grupo_id', grupoId).in('of_tx_id', unicos.slice(i, i + LOTE_OF_TX));
+    if (filtrar) q = filtrar(q);
+    const { data, error } = await q;
+    if (error) throw error;
+    for (const r of data || []) {
+      const arr = mapa.get(r.of_tx_id) || [];
+      arr.push(r);
+      mapa.set(r.of_tx_id, arr);
+    }
+  }
+  return mapa;
+}
+
+/** A linha daquele `of_tx_id` — null se não veio ou se veio mais de uma. */
+function linhaUnica(mapa, ofTxId) {
+  const arr = mapa.get(ofTxId);
+  return arr && arr.length === 1 ? arr[0] : null;
+}
+
+// A mesma regra de RE_DESC_GENERICA, na sintaxe do Postgres, pra o banco só
+// devolver as linhas que PODEM ser melhoradas. ⚠️ Conferido na base: casa as
+// mesmas 11 linhas que a regra JS em 15.874 (zero divergência). O JS continua
+// reconferindo cada linha antes de gravar — o banco só estreita a leitura.
+const PG_DESC_GENERICA = '^[[:space:]]*(pix|ted|doc|transfer[êÊe]ncia|transferencia|pagamento|dep[óÓo]sito|deposito|saque|d[éÉe]bito|debito|cr[éÉe]dito|credito|compra|boleto|tarifa|estorno|recebimento|envio)[[:space:]]*$';
 /**
  * BACKFILL do mês de faturamento declarado pelo emissor (migration 162).
  *
@@ -2426,17 +2480,21 @@ async function upsertWallet(grupoId, userId, n, saldo, consentId) {
 async function backfillBillForecast(grupoId, normalizadas) {
   const linhas = (normalizadas || []).filter((t) => t && t.externalId && t.billForecast);
   if (!linhas.length) return 0;
+  // Só voltam as que ainda estão VAZIAS — preenchida não é tocada, igual antes.
+  let mapa;
+  try {
+    mapa = await linhasPorOfTxId(grupoId, linhas.map((t) => t.externalId),
+      'id, of_bill_forecast', (q) => q.is('of_bill_forecast', null));
+  } catch { return 0; }                     // migration 162 pendente: para
   let n = 0;
   for (const t of linhas) {
     try {
-      const { data: atual, error } = await supabase.from('transacoes')
-        .select('id, of_bill_forecast')
-        .eq('grupo_id', grupoId).eq('of_tx_id', t.externalId).maybeSingle();
-      if (error) return n;                     // migration 162 pendente: para
+      const atual = linhaUnica(mapa, t.externalId);
       if (!atual || atual.of_bill_forecast) continue;   // já tem, não mexe
       const { error: e2 } = await supabase.from('transacoes')
         .update({ of_bill_forecast: t.billForecast }).eq('id', atual.id);
       if (e2) return n;                        // coluna ausente: para, sem ruído
+      atual.of_bill_forecast = t.billForecast; // repetida no payload: já tem
       n++;
     } catch { return n; }
   }
@@ -2446,17 +2504,19 @@ async function backfillBillForecast(grupoId, normalizadas) {
 async function backfillBillPostDate(grupoId, normalizadas) {
   const linhas = (normalizadas || []).filter((t) => t && t.externalId && t.billPostDate);
   if (!linhas.length) return 0;
+  let mapa;
+  try {
+    mapa = await linhasPorOfTxId(grupoId, linhas.map((t) => t.externalId),
+      'id, of_bill_post_date', (q) => q.is('of_bill_post_date', null));
+  } catch { return 0; }                     // migration 130 pendente: para
   let n = 0;
   for (const t of linhas) {
     try {
-      const { data: atual, error } = await supabase.from('transacoes')
-        .select('id, of_bill_post_date')
-        .eq('grupo_id', grupoId).eq('of_tx_id', t.externalId).maybeSingle();
-      if (error) return n;                    // migration 130 pendente: para
+      const atual = linhaUnica(mapa, t.externalId);
       if (!atual || atual.of_bill_post_date) continue;   // já tem, não mexe
       const { error: e2 } = await supabase.from('transacoes')
         .update({ of_bill_post_date: t.billPostDate }).eq('id', atual.id);
-      if (!e2) n++;
+      if (!e2) { atual.of_bill_post_date = t.billPostDate; n++; }
     } catch { return n; }
   }
   return n;
@@ -2524,17 +2584,20 @@ async function reconciliarParcelas(grupoId, normalizadas) {
   let corrigidas = 0;
   // Só parcela que o sync DESLOCOU (2ª em diante). A 1ª fica na data da compra
   // e não tem o que reconciliar.
-  const linhas = (normalizadas || []).filter((t) => t && t.redistribuida);
+  const linhas = (normalizadas || []).filter((t) => t && t.redistribuida && t.externalId && t.data);
+  if (!linhas.length) return 0;
+  let mapa;
+  try {
+    mapa = await linhasPorOfTxId(grupoId, linhas.map((t) => t.externalId), 'id, data, pago');
+  } catch { return 0; }                         // leitura falhou: nada a reconciliar agora
   for (const t of linhas) {
-    if (!t.externalId || !t.data) continue;
     try {
-      const { data: atual } = await supabase.from('transacoes')
-        .select('id, data, pago').eq('grupo_id', grupoId).eq('of_tx_id', t.externalId).maybeSingle();
+      const atual = linhaUnica(mapa, t.externalId);
       if (!atual) continue;                       // ainda não importada: entra já certa
       const patch = patchReconciliacaoParcela(atual, t);
       if (!patch) continue;                       // data certa e `pago` em dia
       const { error } = await supabase.from('transacoes').update(patch).eq('id', atual.id);
-      if (!error) corrigidas++;
+      if (!error) { corrigidas++; Object.assign(atual, patch); }
     } catch { /* ignora */ }
   }
   return corrigidas;
@@ -2579,12 +2642,19 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
   try {
     const melhoraveis = validas.filter((t) => existentes.has(t.externalId)
       && t.descricao && !RE_DESC_GENERICA.test(t.descricao));
+    // Uma leitura por lote, e só das linhas com descrição GENÉRICA guardada
+    // (ver linhasPorOfTxId). O teste JS abaixo continua valendo.
+    const mapa = melhoraveis.length
+      ? await linhasPorOfTxId(grupoId, melhoraveis.map((t) => t.externalId), 'id, observacao',
+        (q) => q.filter('observacao', 'imatch', PG_DESC_GENERICA))
+      : new Map();
     for (const t of melhoraveis) {
-      const { data: atual } = await supabase.from('transacoes')
-        .select('id, observacao').eq('of_tx_id', t.externalId).eq('grupo_id', grupoId).maybeSingle();
+      const atual = linhaUnica(mapa, t.externalId);
       if (!atual || !RE_DESC_GENERICA.test(String(atual.observacao || ''))) continue;
+      const nova = t.descricao.slice(0, 200);
       await supabase.from('transacoes')
-        .update({ observacao: t.descricao.slice(0, 200) }).eq('id', atual.id);
+        .update({ observacao: nova }).eq('id', atual.id);
+      atual.observacao = nova;
     }
   } catch { /* melhoria cosmética: nunca derruba o sync */ }
 
@@ -3306,6 +3376,8 @@ module.exports = {
   limiteTotalDoCartao, escolherFaturaAberta, pagoDaFatura, tipoInvestimento, diaMaisFrequente,
   faturaSimulada, unbilledDoCartao, usadoDoCartao, usoConhecido, nomeDoCartao,
   modalidadeVazia, semModalidadeVazia, patchDoSaldo, patchReconciliacaoParcela,
+  reconciliarParcelas, backfillBillPostDate, backfillBillForecast, inserirTransacoes,
+  RE_DESC_GENERICA, PG_DESC_GENERICA,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
 };
