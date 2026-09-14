@@ -37,6 +37,7 @@ const DIA         = /^\d{4}-\d{2}-\d{2}$/;
 // MESMAS que o sync do Open Finance usa pra baixa automatica. Duas copias
 // fariam a tela sugerir uma coisa e o sync quitar outra.
 const { sugerirBaixas } = require('../services/baixaPrevisao');
+const { hojeSP } = require('../services/cicloFatura');
 
 /**
  * GET /api/previstos/ocorrencias/:phone?de=YYYY-MM&ate=YYYY-MM
@@ -141,7 +142,13 @@ router.post('/quitar', auth, exigirPermissao('admin', 'escrita'), async (req, re
       categoria:      rec.categoria || null,
       observacao:     rec.descricao || 'Conta fixa',
       carteira_nome:  carteira_nome || rec.carteira || null,
-      data:           data || new Date().toISOString().slice(0, 10),
+      // hojeSP(), nunca toISOString(): o segundo e UTC, e depois das 21h no
+      // Brasil devolve o dia SEGUINTE. A quitacao entraria com a data errada
+      // e, na virada de mes, ate na competencia errada -- que e a chave
+      // (recorrencia_id, competencia) de todo este fluxo. Mesma regra de
+      // lib/data-br.ts no frontend. Na pratica a tela sempre manda a data;
+      // isto fecha o caminho de quem nao manda.
+      data:           data || hojeSP(),
       pago:           true,
       recorrencia_id,
       competencia,
