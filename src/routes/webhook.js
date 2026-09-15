@@ -320,12 +320,16 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
     //
     // Os dois organizam pelo PAINEL; o zap é do plano pago recorrente. A
     // resposta difere porque o caminho de saída é outro: o Kit já pagou e
-    // faz upgrade na /kit; o grátis nunca pagou e vai pra /planos.
+    // faz upgrade direto no checkout; o grátis nunca pagou e vai pra /planos.
+    //
+    // ⚠️ O Kit vai pro `?tier=upgrade`, NÃO pra landing /kit. A landing abre
+    // `?tier=completa`, e a conta Kit pagava R$ 97 em vez da diferença de R$ 50.
+    // `rec=1`: a conta já existe — deslogado, o checkout manda pro login e volta.
     //
     // ⚠️ ESTE É O ÚNICO PONTO QUE SEGURA O WHATSAPP. Tudo abaixo daqui —
     // interpretador, FAQ, Grow, agentes, Watson — já assume usuário com
     // direito. Plano novo sem zap tem de entrar AQUI.
-    const SEM_WHATSAPP = { kit: `${APP_URL_WH}/kit`, gratis: `${APP_URL_WH}/planos` };
+    const SEM_WHATSAPP = { kit: `${APP_URL_WH}/checkout-vitalicio?tier=upgrade&rec=1`, gratis: `${APP_URL_WH}/planos` };
     if (SEM_WHATSAPP[user.plano]) {
       const ehKit = user.plano === 'kit';
       await enviarBotaoLink(phone, {
