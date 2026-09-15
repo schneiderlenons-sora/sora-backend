@@ -25,7 +25,7 @@ const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const {
   listarRegras, atualizarRegra, removerRegraPorId,
-  salvarRegra, carregarRegras, casaRegra, aplicarNaLinha, normalizar,
+  salvarRegra, carregarRegras, casaRegra, aplicarNaLinha, normalizar, transacoesDoGrupo,
 } = require('../services/regrasCategoria');
 
 async function getGrupoId(req) {
@@ -47,16 +47,24 @@ async function getGrupoId(req) {
 async function aplicarNoHistorico(grupoId, termo) {
   const regras = await carregarRegras(grupoId);
   const regra = regras.find((r) => r.termo === normalizar(termo));
-  if (!regra) return 0;
+  if (!regra) return [];
 
   // ⚠️ `select('*')` — `ignorar_em` (146) pelo nome faria a query falhar antes
   // da migration, e aí a criação de regra pareceria não fazer nada.
-  const { data: txs } = await supabase.from('transacoes')
-    .select('*').eq('grupo_id', grupoId);
+  // ⚠️ Paginado (`transacoesDoGrupo`): um `select` só parava em 1.000 linhas.
+  const txs = await transacoesDoGrupo(grupoId, '*');
 
-  let n = 0;
-  for (const t of txs || []) {
-    if (!casaRegra(normalizar(t.observacao), regra)) continue;
+  // Devolve QUAIS linhas mudaram, não só quantas: a tela que criou a regra a
+  // partir de um lançamento precisa saber se ELE mudou — senão o "Salvar" do
+  // modal, ainda aberto com a categoria antiga, grava o valor velho por cima.
+  const alteradas = [];
+  for (const t of txs) {
+    const alvo = normalizar(t.observacao);
+    // ⚠️ Só onde ESTA regra é a que vence — a mesma escolha do import
+    // (`aplicarRegrasEmLote` pega a primeira que casa, na ordem exato → termo
+    // mais longo). Sem isto, criar uma regra genérica reescrevia lançamentos
+    // que uma regra mais específica já tinha classificado.
+    if (regras.find((x) => casaRegra(alvo, x)) !== regra) continue;
 
     const antes = {
       categoria: t.categoria, observacao: t.observacao,
@@ -79,9 +87,9 @@ async function aplicarNoHistorico(grupoId, termo) {
         ({ error } = await supabase.from('transacoes').update(semIgnorar).eq('id', t.id));
       } else { error = null; }
     }
-    if (!error) n++;
+    if (!error) alteradas.push(t.id);
   }
-  return n;
+  return alteradas;
 }
 
 // GET /api/regras/:phone — as regras do grupo, com quantos lançamentos cada
@@ -100,20 +108,18 @@ router.get('/:phone', auth, async (req, res) => {
     //
     // ⚠️ Só `observacao` e `categoria`: é uma tela de gestão, não precisa da
     // transação inteira (e egress é cota escassa aqui).
-    const { data: txs } = await supabase.from('transacoes')
-      .select('observacao, categoria').eq('grupo_id', grupoId);
+    const txs = await transacoesDoGrupo(grupoId, 'observacao, categoria');
 
-    const { normalizar } = require('../services/regrasCategoria');
-    const alvos = (txs || []).map((t) => ({
+    const alvos = txs.map((t) => ({
       alvo: normalizar(t.observacao), categoria: t.categoria,
     })).filter((t) => t.alvo);
 
     const comUso = regras.map((r) => {
       const termo = normalizar(r.termo);
-      // MESMO casamento do motor (`categoriaPorRegra`) — se divergir, a tela
-      // promete um número que a importação não cumpre.
-      const casam = alvos.filter((t) =>
-        t.alvo === termo || t.alvo.includes(termo) || termo.includes(t.alvo));
+      // ⚠️ `casaRegra`, a MESMA função do motor. Esta tela tinha uma cópia do
+      // casamento que ignorava o "texto exato" e não conhecia o casamento por
+      // palavras em ordem — prometia um número que a importação não cumpria.
+      const casam = alvos.filter((t) => casaRegra(t.alvo, { termo, modo_match: r.modo_match }));
       return {
         ...r,
         lancamentos: casam.length,
@@ -143,9 +149,7 @@ router.get('/sugestoes/:phone', auth, async (req, res) => {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
-    const { data: txs } = await supabase.from('transacoes')
-      .select('observacao, categoria, valor, tipo, data')
-      .eq('grupo_id', grupoId);
+    const txs = await transacoesDoGrupo(grupoId, 'observacao, categoria, valor, tipo, data');
 
     // Só o que está num balde genérico: sugerir regra pra quem já está
     // categorizado seria propor mexer no que a pessoa já resolveu.
@@ -214,11 +218,11 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 
     // Aplica no histórico que já existe, se pedirem. É o que faz a regra ter
     // efeito visível na hora, em vez de só valer pro próximo import.
-    let atualizadas = 0;
+    let ids = [];
     if (b.aplicar_agora !== false) {
-      atualizadas = await aplicarNoHistorico(grupoId, termo);
+      ids = await aplicarNoHistorico(grupoId, termo);
     }
-    res.json({ ok: true, termo, atualizadas });
+    res.json({ ok: true, termo, atualizadas: ids.length, ids });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -239,9 +243,9 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     });
     if (!regra) return res.status(404).json({ erro: 'Regra não encontrada.' });
 
-    let atualizadas = 0;
-    if (b.aplicar_agora === true) atualizadas = await aplicarNoHistorico(grupoId, regra.termo);
-    res.json({ ...regra, atualizadas });
+    let ids = [];
+    if (b.aplicar_agora === true) ids = await aplicarNoHistorico(grupoId, regra.termo);
+    res.json({ ...regra, atualizadas: ids.length, ids });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

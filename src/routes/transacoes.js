@@ -50,22 +50,27 @@ function usuarioReq(req) {
  * mudaram — sem isso o usuário não sabe se a ação pegou 1 ou 40 lançamentos.
  */
 async function aplicarCategoriaNoEstabelecimento({ grupoId, userId, descricao, categoria, ignorarId } = {}) {
-  const { salvarRegra, termoDe, normalizar: normRegra } = require('../services/regrasCategoria');
+  const { salvarRegra, casaRegra, transacoesDoGrupo, normalizar: normRegra } = require('../services/regrasCategoria');
   const termo = await salvarRegra({ grupoId, descricao, categoria, userId });
   if (!termo) return null;
 
   // Só as que ainda NÃO estão na categoria certa (evita update à toa) e que de
   // fato casam o termo — o filtro fino é em JS, porque o termo já vem sem ruído
   // e o `ilike` do Postgres não normaliza acento.
-  const { data: candidatas } = await supabase.from('transacoes')
-    .select('id, observacao, categoria').eq('grupo_id', grupoId).neq('categoria', categoria);
+  // ⚠️ Paginado: sem isso o PostgREST corta em 1.000 linhas e a regra só
+  // alcançava parte do histórico de quem tem mais que isso.
+  const candidatas = (await transacoesDoGrupo(grupoId, 'id, observacao, categoria'))
+    .filter((t) => t.categoria !== categoria);
 
-  const alvo = normRegra(termo);
-  const ids = (candidatas || [])
+  // ⚠️ `casaRegra`, a mesma do motor. A cópia que existia aqui casava só por
+  // pedaço contíguo — e o termo desta rota vem de `termoDe`, que tira "da",
+  // "de", "para" do MEIO da frase. Resultado: "Valer para todas" num Pix de
+  // "MARIZA MARIA DA SILVA SANTOS" não achava nem os outros Pix dela.
+  const regra = { termo: normRegra(termo), modo_match: 'contem' };
+  const ids = candidatas
     .filter((t) => {
       if (ignorarId && t.id === ignorarId) return false;
-      const d = normRegra(t.observacao);
-      return d && (d === alvo || d.includes(alvo) || alvo.includes(d));
+      return casaRegra(normRegra(t.observacao), regra);
     })
     .map((t) => t.id);
 

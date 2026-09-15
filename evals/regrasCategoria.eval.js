@@ -42,6 +42,43 @@ for (const s of ['APPLE.COM/BILL', 'FACEBK *SY6', 'Açaí & Cia', 'MERCADOLIVRE*
 }
 console.log('  ok');
 
+// ── 4. ⚠️ A REGRA CASA COM A DESCRIÇÃO DE ONDE NASCEU ─────────────────────
+// O `termoDe` tira ruído do MEIO da frase, e o casamento era por pedaço
+// contíguo: a regra do "Valer para todas" não casava nem com o próprio
+// lançamento (38,9% das descrições da base, 61,3% das de Pix). Caso real:
+// reclassificar "Pix recebido MARIZA MARIA DA SILVA SANTOS" não mudava os
+// outros Pix dela.
+console.log('── 4. regra casa com a própria descrição ──');
+{
+  const contem = (termo) => ({ termo, modo_match: 'contem' });
+  const reais = [
+    'Pix recebido MARIZA MARIA DA SILVA SANTOS',
+    'Transferência enviada|BIANCA APARECIDA DIAS DA SILVA',
+    'Compra no débito|PADARIA E MERCEARIA BR',
+    'BARBEARIA DO ZE LTDA',
+    'PIX - ENVIADO   29/07 15:13 DIVINA SOUZA DE NOVAIS',
+    'MERCADOLIVRE  PARC 04/06 OSASCO      BR',
+    'Pagamento - Maria Lana ME',
+    'PIX FERNANDOPEIXOTO 0512',
+  ];
+  for (const d of reais) {
+    ok(R.casaRegra(R.normalizar(d), contem(R.termoDe(d))), `regra extraída de "${d}" casa com ela mesma`);
+  }
+  // E com as próximas do mesmo lugar, que variam no meio.
+  const divina = contem(R.termoDe('Pix enviado DIVINA SOUZA DE NOVAIS'));
+  ok(R.casaRegra(R.normalizar('Pix - Enviado - 27/06 11:00 DIVINA SOUZA DE NOVAIS'), divina), 'mesma pessoa com data e hora no meio');
+  const mariza = contem(R.termoDe('Pix recebido MARIZA MARIA DA SILVA SANTOS'));
+  ok(R.casaRegra(R.normalizar('PIX RECEBIDO - 03/10 MARIZA MARIA DA SILVA SANTOS'), mariza), 'o próximo Pix da mesma pessoa');
+  // Ordem importa: as palavras soltas em outra ordem não são o mesmo nome.
+  ok(!R.casaRegra(R.normalizar('Pix recebido SANTOS SILVA MARIA MARIZA'), mariza), 'palavras fora de ordem não casam');
+  ok(!R.casaRegra(R.normalizar('Pix recebido MARIZA COSTA'), mariza), 'outra Mariza não casa');
+  ok(!R.casaRegra(R.normalizar('Pix recebido MARIA DA SILVA SANTOS'), mariza), 'faltando uma palavra não casa');
+  // "exato" continua exato.
+  ok(!R.casaRegra(R.normalizar('Pix recebido MARIZA MARIA DA SILVA SANTOS'), { termo: 'mariza maria silva santos', modo_match: 'exato' }),
+    'texto exato não ganha a folga das palavras em ordem');
+}
+console.log('  ok');
+
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {
   console.log('\n── Falhas ──');

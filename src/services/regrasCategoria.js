@@ -77,7 +77,36 @@ function casaRegra(alvoNormalizado, regra) {
   const termo = regra.termo;
   if (!alvo || !termo) return false;
   if (regra.modo_match === 'exato') return alvo === termo;
-  return alvo === termo || alvo.includes(termo) || termo.includes(alvo);
+  return alvo === termo || alvo.includes(termo) || termo.includes(alvo)
+    || palavrasEmOrdem(termo, alvo);
+}
+
+/**
+ * Todas as palavras do termo aparecem na descrição, NA MESMA ORDEM (com
+ * qualquer coisa entre elas)?
+ *
+ * ⚠️ SEM ISTO A REGRA NÃO CASAVA NEM COM A DESCRIÇÃO DE ONDE NASCEU. O
+ * `termoDe` tira ruído do MEIO da frase ("de", "da", "para", códigos):
+ * "Pix recebido MARIZA MARIA DA SILVA SANTOS" vira "mariza maria silva santos",
+ * que não é pedaço contíguo da descrição — o `includes` falhava. Medido em
+ * set/2026: 38,9% das 9.602 descrições distintas da base (61,3% das de Pix)
+ * geravam pelo "Valer para todas" uma regra que nunca casava. Era o relato
+ * "reclassifico um Pix e os outros iguais não mudam".
+ *
+ * Só ALARGA: tudo que casava continua casando. Nas 96 regras que existiam,
+ * passam a casar 134 lançamentos, todos do mesmo estabelecimento com "de",
+ * parcela ou código no meio ("DIVINA SOUZA DE NOVAIS", "MERCADOLIVRE PARC 04/06
+ * OSASCO").
+ */
+function palavrasEmOrdem(termo, alvo) {
+  const t = termo.split(' ').filter(Boolean);
+  if (!t.length) return false;
+  let i = 0;
+  for (const p of alvo.split(' ')) {
+    if (p === t[i]) i++;
+    if (i === t.length) return true;
+  }
+  return false;
 }
 
 function invalidarCache(grupoId) {
@@ -351,12 +380,22 @@ function aplicarNaLinha(linha, regra) {
 async function listarRegras(grupoId) {
   if (!grupoId) return [];
   try {
+    // ⚠️ `*` e não a lista antiga (id, termo, categoria…): a tela mostra "texto
+    // exato"/"contém" e "não considerar", e sem `tipo`/`modo_match` toda regra
+    // aparecia como "contém · categorizar". Com `*` os campos da 146 vêm se
+    // existirem; os defaults repetem os de `carregarRegras`.
     const { data, error } = await supabase.from('regras_categoria')
-      .select('id, termo, categoria, criado_por, created_at, updated_at')
+      .select('*')
       .eq('grupo_id', grupoId)
       .order('updated_at', { ascending: false });
     if (error) throw error;
-    return data || [];
+    return (data || []).map((r) => ({
+      ...r,
+      tipo:           umDe(r.tipo, TIPOS, 'categorizar'),
+      modo_match:     umDe(r.modo_match, MATCHES, 'contem'),
+      renomear_para:  r.renomear_para || null,
+      ignorar_escopo: r.ignorar_escopo || null,
+    }));
   } catch {
     return [];
   }
@@ -412,7 +451,29 @@ async function removerRegraPorId({ grupoId, id } = {}) {
   return true;
 }
 
+/**
+ * Todas as transações do grupo, em páginas de 1.000.
+ *
+ * ⚠️ O PostgREST corta toda resposta em 1.000 linhas SEM avisar. Aplicar uma
+ * regra ao histórico (ou contá-la na tela) com um `select` só alcançava as
+ * primeiras 1.000 de quem tem mais — a regra "funcionava pela metade".
+ */
+async function transacoesDoGrupo(grupoId, colunas) {
+  const todas = [];
+  for (let de = 0; ; de += 1000) {
+    const { data, error } = await supabase.from('transacoes')
+      .select(colunas).eq('grupo_id', grupoId)
+      .order('id', { ascending: true })
+      .range(de, de + 999);
+    if (error) throw error;
+    todas.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return todas;
+}
+
 module.exports = {
+  transacoesDoGrupo,
   normalizar, termoDe, carregarRegras, categoriaPorRegra, aplicarRegrasEmLote,
   salvarRegra, removerRegra, invalidarCache,
   listarRegras, atualizarRegra, removerRegraPorId,
