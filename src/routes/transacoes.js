@@ -295,7 +295,11 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     // dólares: gastar US$ 50 tem de tirar 50 do saldo dela, não os R$ 270 que a
     // transação registra. Confundir os dois zeraria a conta do cliente em
     // poucos lançamentos.
-    if (tx.pago && walletReal) {
+    //
+    // ⚠️ REGRA DE OURO: carteira de Open Finance não é debitada (nem estornada
+    // no DELETE, nem reconciliada no PUT) — o saldo dela é o do banco. Os três
+    // têm de pular juntos, senão criar e apagar a mesma linha não volta ao zero.
+    if (tx.pago && walletReal && !walletReal.of_conta_id) {
       const mult = tipo === 'Gasto' ? -1 : 1;
       const valorNativo = campoMoeda.valor_moeda ?? campoMoeda.valor;
       await supabase.from('wallets')
@@ -798,8 +802,10 @@ router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res
       if (!t.pago) continue;
       const mult = t.tipo === 'Gasto' ? 1 : -1;
       const { data: wallet } = await supabase.from('wallets')
-        .select('id, saldo').eq('grupo_id', t.grupo_id).ilike('nome', t.carteira_nome).maybeSingle();
-      if (wallet) {
+        .select('id, saldo, of_conta_id').eq('grupo_id', t.grupo_id).ilike('nome', t.carteira_nome).maybeSingle();
+      // ⚠️ REGRA DE OURO (a mesma do PUT): carteira de Open Finance tem o saldo
+      // do BANCO. Estornar aqui dava um número que o próximo sync desfazia.
+      if (wallet && !wallet.of_conta_id) {
         await supabase.from('wallets')
         // ⚠️ NATIVO: `wallets.saldo` está na moeda da conta e `valor` em BRL.
         //    Estornar o BRL deixaria a conta em coroa errada ao apagar a linha.

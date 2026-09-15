@@ -58,7 +58,8 @@
     "eval:fatura-vista-datas": "node evals/faturaVistaDatas.eval.js",
     "eval:reautorizar": "node evals/reautorizarConsent.eval.js",
     "eval:consulta-parcela": "node evals/consultaParcela.eval.js",
-    "eval:sync-lote": "node evals/syncLote.eval.js"
+    "eval:sync-lote": "node evals/syncLote.eval.js",
+    "eval:quitacao": "node evals/quitacao.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

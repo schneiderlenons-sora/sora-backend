@@ -37,7 +37,7 @@ const DIA         = /^\d{4}-\d{2}-\d{2}$/;
 // MESMAS que o sync do Open Finance usa pra baixa automatica. Duas copias
 // fariam a tela sugerir uma coisa e o sync quitar outra.
 const { sugerirBaixas } = require('../services/baixaPrevisao');
-const { hojeSP } = require('../services/cicloFatura');
+const { quitarOcorrencia } = require('../services/quitacao');
 
 /**
  * GET /api/previstos/ocorrencias/:phone?de=YYYY-MM&ate=YYYY-MM
@@ -106,13 +106,15 @@ router.get('/ocorrencias/:phone', auth, async (req, res) => {
  *
  * Cria a transação REAL já amarrada à ocorrência. É o vínculo que impede a
  * duplicata: com ele, o extrato para de gerar a previsão daquela competência.
+ * Com `transacao_id` (sugestão do banco) não cria nada: amarra a cobrança que
+ * já veio no extrato.
  */
 router.post('/quitar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { grupoId, userId } = await contexto(req);
     if (!grupoId) return res.status(400).json({ erro: 'sem grupo ativo' });
 
-    const { recorrencia_id, competencia, data, valor, carteira_nome } = req.body || {};
+    const { recorrencia_id, competencia, data, valor, carteira_nome, transacao_id } = req.body || {};
     if (!recorrencia_id || !COMPETENCIA.test(competencia || '')) {
       return res.status(400).json({ erro: 'recorrencia_id e competencia (YYYY-MM) sao obrigatorios' });
     }
@@ -122,52 +124,10 @@ router.post('/quitar', auth, exigirPermissao('admin', 'escrita'), async (req, re
       .select('*').eq('id', recorrencia_id).eq('grupo_id', grupoId).single();
     if (!rec) return res.status(404).json({ erro: 'conta fixa nao encontrada' });
 
-    // ⚠️ IDEMPOTENTE. Dois toques no botão (ou o retry de uma rede ruim) não
-    // podem gerar dois pagamentos — seria exatamente a duplicata que esta rota
-    // existe pra eliminar.
-    const { data: jaTem } = await supabase.from('transacoes')
-      .select('id').eq('grupo_id', grupoId)
-      .eq('recorrencia_id', recorrencia_id).eq('competencia', competencia)
-      .limit(1);
-    if (jaTem && jaTem.length) {
-      return res.json({ ok: true, id: jaTem[0].id, jaQuitada: true });
-    }
-
-    const valorFinal = Number(valor) > 0 ? Number(valor) : Number(rec.valor);
-    const linha = {
-      grupo_id:       grupoId,
-      criado_por:     userId,
-      tipo:           rec.tipo,
-      valor:          valorFinal,
-      categoria:      rec.categoria || null,
-      observacao:     rec.descricao || 'Conta fixa',
-      carteira_nome:  carteira_nome || rec.carteira || null,
-      // hojeSP(), nunca toISOString(): o segundo e UTC, e depois das 21h no
-      // Brasil devolve o dia SEGUINTE. A quitacao entraria com a data errada
-      // e, na virada de mes, ate na competencia errada -- que e a chave
-      // (recorrencia_id, competencia) de todo este fluxo. Mesma regra de
-      // lib/data-br.ts no frontend. Na pratica a tela sempre manda a data;
-      // isto fecha o caminho de quem nao manda.
-      data:           data || hojeSP(),
-      pago:           true,
-      recorrencia_id,
-      competencia,
-    };
-
-    const { data: nova, error } = await supabase.from('transacoes').insert(linha).select('id').single();
-    // ⚠️ LER O `error`. Rota que faz insert sem conferir responde 200 com null
-    // e a tela fecha o modal achando que salvou — foi exatamente o bug das
-    // migrations 121 e 147.
-    if (error) return res.status(500).json({ erro: error.message });
-
-    // Um ajuste (pular/adiar) daquela competência perde o sentido depois de
-    // quitada; deixá-lo lá faria a previsão reaparecer deslocada se a
-    // transação fosse apagada.
-    await supabase.from('previsao_ajustes')
-      .delete().eq('recorrencia_id', recorrencia_id).eq('competencia', competencia)
-      .then(() => {}, () => {});
-
-    res.json({ ok: true, id: nova?.id });
+    // Idempotência, débito do saldo, data futura e reabertura de pendente:
+    // tudo em services/quitacao.js (travado em eval:quitacao).
+    const r = await quitarOcorrencia({ grupoId, userId, rec, competencia, data, valor, carteira_nome, transacao_id });
+    res.status(r.status).json(r.body);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
