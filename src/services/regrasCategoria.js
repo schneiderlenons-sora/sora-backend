@@ -77,8 +77,30 @@ function casaRegra(alvoNormalizado, regra) {
   const termo = regra.termo;
   if (!alvo || !termo) return false;
   if (regra.modo_match === 'exato') return alvo === termo;
-  return alvo === termo || alvo.includes(termo) || termo.includes(alvo)
+  return alvo === termo || alvo.includes(termo) || reversoValido(alvo, termo)
     || palavrasEmOrdem(termo, alvo);
+}
+
+/**
+ * O casamento AO CONTRÁRIO: a descrição inteira cabe dentro do termo da regra.
+ *
+ * Existe porque o termo às vezes fica MAIOR que a descrição curta de outro
+ * lançamento do mesmo lugar ("allrede" na regra "boleto allrede").
+ *
+ * ⚠️ MAS SÓ COM NOME DE VERDADE (decisão do usuário, set/2026). Solto, ele
+ * pegava descrição genérica: a regra "Pix recebido MARIZA MARIA DA SILVA
+ * SANTOS" jogou em Extras 5 lançamentos "Pix recebido" de OUTRAS pessoas, e
+ * "Pagamento" caiu numa regra de Móveis. Medido: 69 lançamentos na base pegos
+ * só por este caminho. Agora:
+ *   · descrição só de ruído ("pix recebido", "pagamento") não casa;
+ *   · o que sobra tem de ter 4+ letras ("pg", "gol" não casam);
+ *   · por PALAVRA inteira, não pedaço ("mercado" ≠ "supermercado junior").
+ */
+function reversoValido(alvo, termo) {
+  const significativas = alvo.split(' ').filter((p) => p && !RUIDO.has(p) && !/^\d+$/.test(p));
+  if (!significativas.length) return false;
+  if (significativas.join('').length < 4) return false;
+  return ` ${termo} `.includes(` ${alvo} `);
 }
 
 /**

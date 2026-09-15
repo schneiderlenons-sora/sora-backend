@@ -79,6 +79,29 @@ console.log('── 4. regra casa com a própria descrição ──');
 }
 console.log('  ok');
 
+// ── 5. ⚠️ CASAMENTO AO CONTRÁRIO SÓ COM NOME DE VERDADE ────────────────────
+// A regra "Pix recebido MARIZA MARIA DA SILVA SANTOS" jogava em Extras todo
+// lançamento "Pix recebido" de outras pessoas, porque a descrição cabia dentro
+// do texto da regra. Decisão do usuário: o reverso fica, mas só com nome real.
+console.log('── 5. reverso só com nome de verdade ──');
+{
+  const contem = (termo) => ({ termo, modo_match: 'contem' });
+  const casa = (d, termo) => R.casaRegra(R.normalizar(d), contem(termo));
+  // Continua valendo — é pra isto que o reverso existe.
+  ok(casa('ALLREDE', 'boleto allrede'), '"allrede" cai na regra "boleto allrede"');
+  ok(casa('VIVO', 'vivo celular vivo movel go'), '"vivo" cai na regra da Vivo');
+  ok(casa('Embreagem carro', 'mecanico embreagem carro'), 'pedaço com nome real continua casando');
+  // Não vale mais.
+  ok(!casa('Pix recebido', 'pix recebido mariza maria da silva santos'), '⚠️ "Pix recebido" de outra pessoa não cai na regra da Mariza');
+  ok(!casa('Pagamento', 'pagamento guarda roupa de ana liz'), '"Pagamento" genérico não cai numa regra de Móveis');
+  ok(!casa('PG', 'pg sano suplementos l br'), 'código curto ("pg") não casa');
+  ok(!casa('GOL', 'pecas o gol'), 'três letras ("gol") não casam');
+  ok(!casa('Mercado', 'supermercado junior'), 'pedaço de palavra ("mercado" ≠ "supermercado") não casa');
+  // O caminho normal (descrição contém o termo) não foi afetado.
+  ok(casa('Pix recebido MARIZA MARIA DA SILVA SANTOS', 'pix recebido mariza maria da silva santos'), 'a própria Mariza segue casando');
+}
+console.log('  ok');
+
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {
   console.log('\n── Falhas ──');
