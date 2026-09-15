@@ -437,6 +437,27 @@ function ehPagamentoFatura(categoria) {
 }
 
 /**
+ * É AJUSTE DE SALDO? (`🔧 Ajuste` / `🔧 Ajuste recebido`, de services/ajusteSaldo.js)
+ *
+ * ⚠️ AJUSTE NÃO É RECEITA NEM DESPESA (decisão de set/2026, que inverte a nota
+ * da migration 135). É a correção de um saldo que estava errado: a conta de um
+ * cliente ganhou R$ 3.485,18 de "receita" no mês por ele ter acertado o saldo
+ * com o banco — dinheiro que ele não ganhou. O lançamento continua existindo e
+ * mexendo no saldo; só sai das somas de receita/despesa.
+ *
+ * Casa pelo NOME da categoria, sem ícone, caixa ou acento: a base tem também
+ * uma categoria criada à mão "🏦 Ajuste" usada do mesmo jeito. Nome EXATO — uma
+ * "Ajuste de roupa" continua sendo gasto.
+ * Espelho fiel em sora-frontend/lib/categorizar.ts.
+ */
+function ehAjusteSaldo(categoria) {
+  const c = (categoria || '').toString().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return c === 'ajuste' || c === 'ajuste recebido';
+}
+
+/**
  * Pagamento de fatura visto pelo lado da CONTA, detectado pela descrição.
  *
  * ⚠️ FONTE ÚNICA — não copiar esta regra pra dentro de um sync. Ela já existia
@@ -549,5 +570,5 @@ module.exports = {
   ajustarPorDirecao,
   categorizar, categorizarDescricao, mapearCategoriaPluggy,
   CATEGORIA_FATURA, CATEGORIA_FATURA_LEGADO, CATEGORIA_ESTORNO,
-  ehPagamentoFatura, ehPagamentoFaturaDescricao, ehMovimentoInvestimento,
+  ehPagamentoFatura, ehPagamentoFaturaDescricao, ehMovimentoInvestimento, ehAjusteSaldo,
 };

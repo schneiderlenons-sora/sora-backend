@@ -152,12 +152,14 @@ async function lerFoto(grupoId) {
   const desde = `${ymAtras(3)}-01`;
   const ate   = `${ymAtras(0)}-01`;
   const { data: txs } = await supabase.from('transacoes')
-    .select('tipo, valor, data, transferencia')
+    .select('tipo, valor, data, transferencia, categoria')
     .eq('grupo_id', grupoId).gte('data', desde).lt('data', ate);
 
+  const { ehAjusteSaldo } = require('../services/categorizar');
   const porMes = {};
   for (const t of txs || []) {
     if (t.transferencia) continue;             // transferência não é renda nem gasto
+    if (ehAjusteSaldo(t.categoria)) continue;  // acertar o saldo também não
     const ym = String(t.data).slice(0, 7);
     porMes[ym] = porMes[ym] || { receita: 0, gasto: 0 };
     if (t.tipo === 'Recebimento') porMes[ym].receita += cent(t.valor);

@@ -10,7 +10,8 @@
 //   diff < 0 → saiu grana não registrada   → Gasto
 //
 // Categoria própria "🔧 Ajuste" pra não se misturar com salário/mercado reais
-// nas análises.
+// nas análises — e desde set/2026 ela NÃO entra em receita/despesa
+// (`ehAjusteSaldo` em categorizar.js): acertar o saldo não é ganhar nem gastar.
 //
 // ⚠️ NÃO use na CRIAÇÃO da conta: saldo inicial é ABERTURA (patrimônio), não
 // receita. Contá-lo como receita mentiria no relatório do mês (você já tinha o

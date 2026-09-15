@@ -7,7 +7,7 @@
 // transferência/quitação de dívida, fica fora do consumo).
 // =============================================================================
 const supabase = require('../db/supabase');
-const { ehPagamentoFatura } = require('./categorizar');
+const { ehPagamentoFatura, ehAjusteSaldo } = require('./categorizar');
 
 // Primeiro dia do mês seguinte (YYYY-MM-01) — limite exclusivo seguro.
 function proximoMesPrimeiroDia(mes) {
@@ -26,6 +26,9 @@ function ehTransferencia(r) {
   // é decidida em services/valorFatura.js. Aqui é receita × despesa, e nos dois
   // casos a linha não conta.
   if (r.ignorar_em) return true;
+  // ⚠️ Ajuste de saldo também fica fora (ver `ehAjusteSaldo`): corrigir o saldo
+  // com o banco não é ganhar nem gastar. Espelhado em lib/ssr-data.ts.
+  if (ehAjusteSaldo(r.categoria)) return true;
   return r.transferencia === true || ehPagamentoFatura(r.categoria) || r.categoria === 'Transferências';
 }
 
