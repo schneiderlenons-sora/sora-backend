@@ -2,6 +2,8 @@ const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/mensageiro');
 const { gerarDicas }  = require('../services/ia');
 const { oferecerDesconto } = require('../services/descontoConta');
+// Mesma trava do painel: posição do Open Finance não aceita lançamento manual.
+const { recusaSeDoBanco } = require('../services/aporteInvestimento');
 
 const { normalizarPlano } = require('../config/planos');
 
@@ -106,6 +108,25 @@ module.exports = async function handleInvestimentos(data, ctx) {
   if (data.acao === 'registrar_aporte') {
     const valor = parseFloat(data.valor);
 
+    // ⚠️ MESMA TRAVA DO PAINEL, e esta é a SEGUNDA porta pro mesmo estrago:
+    // posição vinda do Open Finance é reescrita pelo sync a cada rodada, então
+    // o aporte lançado aqui some sozinho no dia seguinte, sem aviso nenhum.
+    // Recusar explicando é melhor do que aceitar e desfazer depois.
+    let invZap = null;
+    if (data.investimentoId) {
+      const { data: achado } = await supabase.from('investimentos')
+        .select('nome, valor_aportado, valor_atual, of_id, origem')
+        .eq('id', data.investimentoId).single();
+      invZap = achado || null;
+      if (recusaSeDoBanco(invZap, 'aporte')) {
+        await enviarTexto(phone,
+          `⚠️ *${invZap.nome}* vem do seu banco pelo Open Finance — a posição é atualizada ` +
+          `sozinha, então um aporte manual aqui seria desfeito na próxima sincronização.\n\n` +
+          `É só esperar o banco atualizar. Pra controlar à mão, crie um investimento próprio no painel.`);
+        return;
+      }
+    }
+
     await supabase.from('aportes').insert({
       grupo_id:        grupoId,
       investimento_id: data.investimentoId || null,
@@ -113,15 +134,14 @@ module.exports = async function handleInvestimentos(data, ctx) {
       descricao:       data.descricao || 'Aporte manual'
     });
 
-    if (data.investimentoId) {
-      const { data: inv } = await supabase.from('investimentos')
-        .select('valor_aportado, valor_atual').eq('id', data.investimentoId).single();
-      if (inv) {
-        await supabase.from('investimentos').update({
-          valor_aportado: inv.valor_aportado + valor,
-          valor_atual:    inv.valor_atual    + valor
-        }).eq('id', data.investimentoId);
-      }
+    if (invZap) {
+      // ⚠️ Sem quantidade de propósito: por texto ninguém diz quantas cotas
+      // comprou ("aportei 500 na PETR4"). Quem precisa somar cota usa o painel,
+      // onde o campo existe. Aqui o comportamento é o de sempre.
+      await supabase.from('investimentos').update({
+        valor_aportado: (Number(invZap.valor_aportado) || 0) + valor,
+        valor_atual:    (Number(invZap.valor_atual)    || 0) + valor
+      }).eq('id', data.investimentoId);
     }
 
     await enviarTexto(phone, `💰 Aporte de R$ ${valor.toFixed(2)} registrado com sucesso!`);

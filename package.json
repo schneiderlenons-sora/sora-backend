@@ -37,6 +37,7 @@
     "eval:fatura-vista": "node evals/faturaVista.eval.js",
     "eval:caixinhas": "node evals/caixinhas.eval.js",
     "eval:resgate": "node evals/resgateInvestimento.eval.js",
+    "eval:aporte": "node evals/aporteInvestimento.eval.js",
     "agentes:preview": "node scripts/preview-agentes.js",
     "eval:reconciliar-parcelas": "node evals/reconciliarParcelas.eval.js",
     "eval:pago-competencia": "node evals/pagoPorCompetencia.eval.js",

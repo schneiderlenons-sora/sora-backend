@@ -21,6 +21,10 @@ async function getGrupoId(req) {
   return data?.grupo_ativo || null;
 }
 
+// A aritmética do aporte e a trava de Open Finance moram no service — puras e
+// cobertas por `npm run eval:aporte`. A rota só orquestra.
+const { aplicarAporte, recusaSeDoBanco } = require('../services/aporteInvestimento');
+
 // ── BUSCAS PÚBLICAS DE COTAÇÃO ───────────────────────────────────
 
 // GET /api/investimentos/buscar-ticker?q=PETR
@@ -278,12 +282,38 @@ router.get('/:phone/aportes', auth, exigirPlano('kit', 'premium', 'platinum'), e
 // POST /api/investimentos/aportes
 router.post('/aportes', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { phone, valor, investimento_id, descricao } = req.body;
+    const { phone, valor, investimento_id, descricao, quantidade } = req.body;
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
-    const v = parseFloat(valor);
-    if (!Number.isFinite(v) || v <= 0) return res.status(400).json({ erro: 'Informe um valor maior que zero.' });
+    // ⚠️ LÊ O INVESTIMENTO ANTES DE GRAVAR QUALQUER COISA. É ele que diz se o
+    // aporte pode acontecer (Open Finance) e qual é a posição de hoje — que é o
+    // que o preço médio precisa. Antes a leitura vinha DEPOIS do insert, então
+    // um investimento recusado já teria deixado linha no extrato.
+    let inv = null;
+    if (investimento_id) {
+      const { data, error: eLer } = await supabase.from('investimentos')
+        .select('id, nome, valor_aportado, valor_atual, quantidade, ticker, of_id, origem')
+        .eq('id', investimento_id).eq('grupo_id', grupoId).maybeSingle();
+      if (eLer) return res.status(500).json({ erro: `Não consegui ler o investimento: ${eLer.message}` });
+      if (!data) return res.status(404).json({ erro: 'Investimento não encontrado.' });
+      inv = data;
+      const recusa = recusaSeDoBanco(inv, 'aporte');
+      if (recusa) return res.status(409).json(recusa);
+    }
+
+    // Aritmética canônica (services/aporteInvestimento, `npm run eval:aporte`).
+    // ⚠️ É AQUI QUE A QUANTIDADE ENTRA. Sem ela o aporte só somava dinheiro, e
+    // em ativo com ticker o `atualizar-precos` (cotação × quantidade) apagava a
+    // compra no refresh seguinte — virava prejuízo na tela.
+    const calc = aplicarAporte(inv || {}, { valor, quantidade });
+    if (!calc.ok) return res.status(400).json({ erro: calc.erro });
+    const v = calc.aportado;
+
+    const qtdInformada = calc.patch.quantidade !== undefined ? Number(quantidade) : null;
+    const descricaoFinal = descricao || (qtdInformada
+      ? `Aporte: ${qtdInformada} ${qtdInformada === 1 ? 'cota' : 'cotas'}${inv?.ticker ? ` de ${inv.ticker}` : ''}`
+      : 'Aporte manual');
 
     // `tipo` NÃO é enviado de propósito: a coluna tem default 'aporte'
     // (migration 122), então isto continua funcionando antes de ela rodar.
@@ -293,7 +323,7 @@ router.post('/aportes', auth, exigirPlano('kit', 'premium', 'platinum'), exigirP
     const { data: aporte, error: eAp } = await supabase.from('aportes').insert({
       grupo_id: grupoId, valor: v,
       investimento_id: investimento_id || null,
-      descricao: descricao || 'Aporte manual'
+      descricao: descricaoFinal
     }).select().single();
     if (eAp) {
       console.error('[aportes] insert falhou:', eAp.message);
@@ -302,17 +332,16 @@ router.post('/aportes', auth, exigirPlano('kit', 'premium', 'platinum'), exigirP
 
     // Atualiza o investimento vinculado
     let nomeInv = null;
-    if (investimento_id) {
-      const { data: inv } = await supabase.from('investimentos')
-        .select('nome, valor_aportado, valor_atual').eq('id', investimento_id)
-        .eq('grupo_id', grupoId).maybeSingle();
-      if (inv) {
-        nomeInv = inv.nome;
-        await supabase.from('investimentos').update({
-          valor_aportado: (Number(inv.valor_aportado) || 0) + v,
-          valor_atual:    (Number(inv.valor_atual)    || 0) + v,
-          ultima_atualizacao: new Date().toISOString(),
-        }).eq('id', investimento_id);
+    if (inv) {
+      nomeInv = inv.nome;
+      const { error: eUp } = await supabase.from('investimentos')
+        .update({ ...calc.patch, ultima_atualizacao: new Date().toISOString() })
+        .eq('id', investimento_id).eq('grupo_id', grupoId);
+      if (eUp) {
+        // Desfaz o extrato: aporte registrado sem efeito na posição é pior que
+        // aporte nenhum — o extrato para de bater com a carteira e ninguém vê.
+        await supabase.from('aportes').delete().eq('id', aporte.id);
+        return res.status(500).json({ erro: `Não consegui atualizar o investimento: ${eUp.message}` });
       }
     }
 
@@ -348,10 +377,13 @@ router.post('/resgates', auth, exigirPlano('kit', 'premium', 'platinum'), exigir
     if (!investimento_id) return res.status(400).json({ erro: 'Escolha de qual investimento é o resgate.' });
 
     const { data: inv, error: eInv } = await supabase.from('investimentos')
-      .select('id, nome, valor_aportado, valor_atual, quantidade')
+      .select('id, nome, valor_aportado, valor_atual, quantidade, of_id, origem')
       .eq('id', investimento_id).eq('grupo_id', grupoId).maybeSingle();
     if (eInv) return res.status(500).json({ erro: `Não consegui ler o investimento: ${eInv.message}` });
     if (!inv) return res.status(404).json({ erro: 'Investimento não encontrado.' });
+    // Mesma regra do aporte: o sync do banco reescreveria isto no dia seguinte.
+    const recusaResgate = recusaSeDoBanco(inv, 'resgate');
+    if (recusaResgate) return res.status(409).json(recusaResgate);
 
     const { aplicarResgate } = require('../services/resgateInvestimento');
     const calc = aplicarResgate(inv, valor);
