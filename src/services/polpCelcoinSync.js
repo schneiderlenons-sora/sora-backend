@@ -2870,21 +2870,85 @@ async function upsertInvestimento(grupoId, n) {
   const limpo = Object.fromEntries(Object.entries(base).filter(([, v]) => v !== undefined));
   const colunaNova = (e) => /valor_bruto|ir_provisionado|iof_provisionado|saldo_bloqueado|carencia_ate|data_emissao|instituicao|categoria_anbima/i.test(e?.message || '');
 
-  const { data: ja } = await supabase.from('investimentos')
-    .select('id').eq('grupo_id', grupoId).eq('of_id', n.externalId).maybeSingle();
+  // ⚠️ LÊ OS CAMPOS QUE ESCREVERIA, não só o `id`. É o que permite PULAR o
+  // UPDATE quando nada mudou — e era metade do egress da base: medido em
+  // 16/09/2026, o sync fazia 52 mil UPDATEs por dia reescrevendo 700
+  // investimentos de hora em hora com os mesmos valores.
+  //
+  // ⚠️ SÓ AS COLUNAS COMPARADAS, nunca `select('*')`. Medido na base: a linha
+  // inteira são 950 bytes (39 colunas), e pedir tudo devolveria quase todo o
+  // ganho do UPDATE evitado pela porta de trás — o custo aqui é byte que sai,
+  // não número de campos. Sem base64 escondido: o maior campo é o nome, 66 B.
+  const alvoCampos = { ...limpo, ...extras };
+  const colunas = ['id', ...Object.keys(alvoCampos)].join(', ');
+  let { data: ja, error: eLer } = await supabase.from('investimentos')
+    .select(colunas).eq('grupo_id', grupoId).eq('of_id', n.externalId).maybeSingle();
+  // Migration 138 pendente: pedir coluna que não existe derruba a leitura
+  // inteira. Cai pro `*`, que sempre existe — ali os campos novos vêm ausentes,
+  // a comparação acusa "mudou" e o caminho antigo (update + fallback) assume.
+  if (eLer && colunaNova(eLer)) {
+    ({ data: ja } = await supabase.from('investimentos')
+      .select('*').eq('grupo_id', grupoId).eq('of_id', n.externalId).maybeSingle());
+  }
   if (ja) {
-    const { error } = await supabase.from('investimentos').update({ ...limpo, ...extras }).eq('id', ja.id);
+    // ⚠️ `ultima_atualizacao` FICA DE FORA da comparação: ela muda a cada sync
+    // por construção, então incluí-la faria "mudou" ser sempre verdade e a
+    // economia seria zero. O efeito colateral é assumido e foi decidido pelo
+    // dono: o campo passa a marcar "quando mudou de verdade", não "quando o
+    // sync passou por aqui".
+    if (!algoMudou(ja, alvoCampos)) return { resultado: 'inalterado', id: ja.id };
+
+    const { error } = await supabase.from('investimentos').update(alvoCampos).eq('id', ja.id);
     if (error && colunaNova(error)) await supabase.from('investimentos').update(limpo).eq('id', ja.id);
-    return 'atualizado';
+    return { resultado: 'atualizado', id: ja.id };
   }
   const novo = { ...limpo, ...extras, of_id: n.externalId, of_provider: PROVIDER, origem: 'of' };
-  let { error } = await supabase.from('investimentos').insert(novo);
+  // `.select('id')` não custa requisição nova (é a mesma), e o id evita a
+  // SEGUNDA leitura que `sincronizarMovimentos` fazia logo em seguida.
+  let { data: criado, error } = await supabase.from('investimentos').insert(novo).select('id').single();
   if (error && colunaNova(error)) {
-    ({ error } = await supabase.from('investimentos')
-      .insert({ ...limpo, of_id: n.externalId, of_provider: PROVIDER, origem: 'of' }));
+    ({ data: criado, error } = await supabase.from('investimentos')
+      .insert({ ...limpo, of_id: n.externalId, of_provider: PROVIDER, origem: 'of' })
+      .select('id').single());
   }
   if (error) throw new Error(`investimento: ${error.message}`);
-  return 'criado';
+  return { resultado: 'criado', id: criado?.id || null };
+}
+
+/**
+ * Algum campo que o sync escreveria está diferente do que já está gravado?
+ *
+ * ⚠️ NA DÚVIDA, DIZ QUE MUDOU. O erro de dizer "mudou" quando não mudou custa
+ * uma requisição; o erro contrário congela o dado do cliente em silêncio, que é
+ * o modo de falha que este projeto não perdoa. Por isso tipo inesperado,
+ * objeto, array — tudo cai em `true`.
+ */
+function algoMudou(atual, alvo) {
+  for (const [campo, novo] of Object.entries(alvo)) {
+    if (campo === 'ultima_atualizacao') continue;
+    if (!mesmoValor(atual ? atual[campo] : undefined, novo)) return true;
+  }
+  return false;
+}
+
+function mesmoValor(a, b) {
+  if (a === b) return true;
+  const vazioA = a === null || a === undefined;
+  const vazioB = b === null || b === undefined;
+  if (vazioA || vazioB) return vazioA && vazioB;
+  // Booleano nunca compara por número: `Number(true)` é 1, e 1 === true diria
+  // "igual" pra coisas diferentes.
+  if (typeof a === 'boolean' || typeof b === 'boolean') return a === b;
+  if (typeof a === 'object' || typeof b === 'object') return false;   // na dúvida
+  const na = Number(a);
+  const nb = Number(b);
+  // ⚠️ Numérico do PostgREST pode chegar como string ("1234.56"). Comparar como
+  // texto diria que 1234.5 e 1234.50 são diferentes e o UPDATE nunca seria
+  // pulado. A folga de 1e-9 é de ponto flutuante, não de dinheiro.
+  if (Number.isFinite(na) && Number.isFinite(nb) && String(a).trim() !== '' && String(b).trim() !== '') {
+    return Math.abs(na - nb) < 1e-9;
+  }
+  return String(a) === String(b);
 }
 
 /**
@@ -2942,39 +3006,89 @@ async function fotografarPatrimonio(grupoId) {
  * Devolve quantas linhas novas entraram (0 quando não há nada ou a migration
  * ainda não rodou).
  */
-async function sincronizarMovimentos(grupoId, path, ofId) {
+async function sincronizarMovimentos(grupoId, path, ofId, investimentoId) {
   if (!path || !ofId) return 0;
 
-  // O investimento tem de existir no nosso banco — é a FK da tabela.
-  const { data: inv } = await supabase.from('investimentos')
-    .select('id').eq('grupo_id', grupoId).eq('of_id', ofId).maybeSingle();
-  if (!inv) return 0;
+  // O investimento tem de existir no nosso banco — é a FK da tabela. O id vem
+  // pronto de `upsertInvestimento`, que acabou de ler a linha: sem isso eram
+  // DUAS leituras do mesmo investimento a cada sync.
+  let invId = investimentoId || null;
+  if (!invId) {
+    const { data: inv } = await supabase.from('investimentos')
+      .select('id').eq('grupo_id', grupoId).eq('of_id', ofId).maybeSingle();
+    if (!inv) return 0;
+    invId = inv.id;
+  }
 
   // `max: 3` páginas de 500 = até 1500 movimentações por papel. Quem tem mais
   // que isso num único investimento é caso de biblioteca, não de tela.
   const brutos = await celcoin.listarTransacoesInvestimento(path, ofId, { max: 3 });
   if (!brutos?.length) return 0;
 
-  let novas = 0;
+  // ⚠️ MONTA TUDO ANTES DE ESCREVER. Antes era um upsert POR MOVIMENTAÇÃO, em
+  // laço: medido em 16/09/2026, 23.900 gravações em 51,5h numa tabela com 502
+  // linhas — quase toda gravação batendo na constraint sem mudar nada. É o
+  // mesmo defeito que as transações tiveram (`linhasPorOfTxId`, 14/09) e que
+  // as movimentações de investimento não chegaram a receber.
+  const linhas = [];
+  const vistos = new Set();
   for (const b of brutos) {
     const m = normalizeMovimento(b);
     if (!m.externalId || !m.data) continue;
-    const linha = {
-      grupo_id: grupoId, investimento_id: inv.id, of_mov_id: m.externalId,
+    if (vistos.has(m.externalId)) continue;   // o payload repete o mesmo id
+    vistos.add(m.externalId);
+    linhas.push({
+      grupo_id: grupoId, investimento_id: invId, of_mov_id: m.externalId,
       data: m.data, direcao: m.direcao, operacao: m.operacao, classe: m.classe,
       valor: m.valor, valor_bruto: m.valor_bruto, ir: m.ir, iof: m.iof,
       quantidade: m.quantidade, preco_unitario: m.preco_unitario,
-    };
-    const { error } = await supabase.from('investimento_movimentos')
-      .upsert(linha, { onConflict: 'investimento_id,of_mov_id' });
-    // Migration 139 pendente: sai calado em vez de derrubar o sync inteiro.
-    if (error) {
-      if (/investimento_movimentos/i.test(error.message || '')) return novas;
-      continue;
-    }
-    novas++;
+    });
   }
-  return novas;
+  if (!linhas.length) return 0;
+
+  // Uma leitura no lugar de N gravações. Migration 139 pendente sai calado,
+  // igual a antes — não pode derrubar o sync, que já gravou o investimento.
+  let jaGravados;
+  try {
+    jaGravados = await movimentosJaGravados(invId);
+  } catch (e) {
+    if (/investimento_movimentos/i.test(e?.message || '')) return 0;
+    throw e;
+  }
+
+  const novas = linhas.filter((l) => !jaGravados.has(l.of_mov_id));
+  if (!novas.length) return 0;
+
+  // ⚠️ Continua UPSERT, não INSERT: dois syncs da mesma conexão podem se
+  // cruzar, e a leitura acima é uma foto de um instante atrás. A constraint é
+  // quem garante de verdade; o lote só evita bater nela 500 vezes à toa.
+  const { error } = await supabase.from('investimento_movimentos')
+    .upsert(novas, { onConflict: 'investimento_id,of_mov_id' });
+  if (error) {
+    if (/investimento_movimentos/i.test(error.message || '')) return 0;
+    throw new Error(`movimentos de investimento: ${error.message}`);
+  }
+  return novas.length;
+}
+
+/**
+ * Os `of_mov_id` que este investimento já tem gravados.
+ *
+ * ⚠️ PAGINADO. O PostgREST corta a resposta em 1.000 linhas EM SILÊNCIO, e um
+ * papel antigo pode passar disso (o sync busca até 1.500 por rodada). Sem a
+ * paginação, as de cima seriam consideradas ausentes e regravadas a cada sync —
+ * o bug que esta função existe pra matar, de volta pela porta dos fundos.
+ */
+async function movimentosJaGravados(invId) {
+  const vistos = new Set();
+  for (let de = 0; de <= 5000; de += 1000) {
+    const { data, error } = await supabase.from('investimento_movimentos')
+      .select('of_mov_id').eq('investimento_id', invId).range(de, de + 999);
+    if (error) throw new Error(error.message);
+    for (const r of data || []) vistos.add(r.of_mov_id);
+    if (!data || data.length < 1000) break;
+  }
+  return vistos;
 }
 
 /**
@@ -3283,7 +3397,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           continue;
         }
         const r = await upsertInvestimento(grupoId, n);
-        relatorio.investimentos.push({ nome: n.nome, tipo: n.tipo, valor: n.valor_atual, resultado: r });
+        relatorio.investimentos.push({ nome: n.nome, tipo: n.tipo, valor: n.valor_atual, resultado: r.resultado });
 
         // 5B. MOVIMENTAÇÕES do investimento (migration 139) — aportes,
         //     resgates e proventos. É daqui que saem a aba Aportes, o card de
@@ -3299,7 +3413,9 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // gravou o investimento logo acima.
         if ((n.valor_atual || 0) > 0.005) {
           try {
-            await sincronizarMovimentos(grupoId, raw.__path, n.externalId);
+            // O id vem de `upsertInvestimento`, que acabou de ler a linha —
+            // uma leitura a menos por investimento, por sync.
+            await sincronizarMovimentos(grupoId, raw.__path, n.externalId, r.id);
           } catch (e) {
             console.warn('[celcoin] movimentos de investimento:', e.message);
           }
@@ -3380,4 +3496,8 @@ module.exports = {
   RE_DESC_GENERICA, PG_DESC_GENERICA,
   analisarParcelamentos, normalizeParcelamento, assinaturaCompra,
   parcelaDaDescricao, parcelaDaTx, baseSemMarcador, dataDaParcela, grupoDaParcela,
+  // Corte de egress dos investimentos (16/09/2026) — `npm run eval:sync-investimentos`.
+  // As duas primeiras são puras; as outras tocam banco e são exercitadas com o
+  // Supabase falso do eval.
+  algoMudou, mesmoValor, upsertInvestimento, sincronizarMovimentos,
 };
