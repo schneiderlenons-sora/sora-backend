@@ -640,7 +640,9 @@ router.post('/transferir', auth, exigirPermissao('admin', 'escrita'), async (req
     const chequeOrigem = Math.abs(Number(origem.cheque_especial) || 0);
     const disponivel   = (origem.saldo || 0) + chequeOrigem;
     if (disponivel < v) {
-      const extra = chequeOrigem > 0 ? ` (saldo + cheque especial: R$ ${disponivel.toFixed(2)})` : '';
+      // Saldo é NATIVO: conta em coroa responde em coroa (migration 168).
+      const extra = chequeOrigem > 0
+        ? ` (saldo + cheque especial: ${require('../services/moeda').formatar(disponivel, origem.moeda)})` : '';
       return res.status(400).json({ erro: `Saldo insuficiente em ${origem.nome}${extra}.` });
     }
 

@@ -109,6 +109,9 @@ async function listarRecorrencias(data, ctx) {
 
 module.exports = async function handleRecorrencias(data, ctx) {
   const { phone, grupoId, user } = ctx;
+  // Dinheiro na moeda do GRUPO (Fase 3).
+  const baseDoGrupo = await moedaBaseRec(grupoId);
+  const fmtGrupo = (v) => fmtMoedaRec(v, baseDoGrupo);
 
   if (data.acao === 'listar_recorrencias') return listarRecorrencias(data, ctx);
 
@@ -211,7 +214,7 @@ module.exports = async function handleRecorrencias(data, ctx) {
     await enviarTexto(phone,
       `✅ *Confirmado!* ${ehGasto ? '🔴' : '🟢'} ${descLimpa} — ${camposConf.moeda
         ? `${fmtMoedaRec(camposConf.valor_moeda, camposConf.moeda)} (≈ ${fmtMoedaRec(camposConf.valor, baseConf)})`
-        : `R$ ${valor.toFixed(2)}`}${linhaConta}.`);
+        : fmtGrupo(valor)}${linhaConta}.`);
     return;
   }
 
@@ -238,7 +241,7 @@ module.exports = async function handleRecorrencias(data, ctx) {
       descricao: data.descricao, carteira: data.carteira || 'Dinheiro', ativa: true
     }, user?.id);
     const ondeTxt = data.carteira ? ` no *${data.carteira}*` : '';
-    await enviarTexto(phone, `📌 *Agendado!* R$ ${valorNum.toFixed(2)} — ${data.descricao} todo dia *${data.dia}*${ondeTxt}.`);
+    await enviarTexto(phone, `📌 *Agendado!* ${fmtGrupo(valorNum)} — ${data.descricao} todo dia *${data.dia}*${ondeTxt}.`);
     return;
   }
 
@@ -274,6 +277,6 @@ module.exports = async function handleRecorrencias(data, ctx) {
       grupo_id: grupoId, descricao: data.descricao, valor: temValor ? valorNum : null,
       tipo: data.tipo, data_vencimento: dataVenc.toISOString()
     }, user?.id);
-    await enviarTexto(phone, `🔔 Lembrete criado: ${data.tipo === 'pagar' ? '💸' : '💰'} *${data.descricao}*${temValor ? ` - R$ ${valorNum.toFixed(2)}` : ''} em ${dataVenc.toLocaleDateString('pt-BR')}`);
+    await enviarTexto(phone, `🔔 Lembrete criado: ${data.tipo === 'pagar' ? '💸' : '💰'} *${data.descricao}*${temValor ? ` - ${fmtGrupo(valorNum)}` : ''} em ${dataVenc.toLocaleDateString('pt-BR')}`);
   }
 };

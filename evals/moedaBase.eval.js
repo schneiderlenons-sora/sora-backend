@@ -818,13 +818,13 @@ const ANTIGO = (() => {
       // A 1ª parcela do tênis cai hoje (já cobrada); sobram 2.
       msgs.length = 0;
       await parcelas({ acao: 'listar_parcelas' }, ctx('gUSD'));
-      const totalUSD = (2 * cent(100 / TAXAS.USD)).toFixed(2);
-      ok((msgs[0] || '').includes('Tênis* — Nubank Crédito\n   2x de R$ 100.00 a pagar')
-        && (msgs[0] || '').includes(`Total ainda a pagar: R$ ${totalUSD}*`),
-        `⚠️ zap "parcelas" num grupo em dólar: R$ 100 por parcela (moeda do cartão) e o total em dólar — veio ${msgs[0]}`);
+      const totalUSD = (2 * cent(100 / TAXAS.USD)).toFixed(2).replace('.', ',');
+      ok((msgs[0] || '').includes('Tênis* — Nubank Crédito\n   2x de R$ 100,00 a pagar')
+        && (msgs[0] || '').includes(`Total ainda a pagar: US$ ${totalUSD}*`),
+        `⚠️ zap "parcelas" num grupo em dólar: R$ 100 por parcela (moeda do cartão) e o total EM DÓLAR — veio ${msgs[0]}`);
       msgs.length = 0;
       await parcelas({ acao: 'listar_parcelas' }, ctx('gBRL'));
-      ok((msgs[0] || '').includes('2x de R$ 100.00 a pagar') && (msgs[0] || '').includes('Total ainda a pagar: R$ 200.00*'),
+      ok((msgs[0] || '').includes('2x de R$ 100,00 a pagar') && (msgs[0] || '').includes('Total ainda a pagar: R$ 200,00*'),
         `zap "parcelas" num grupo em real: igual a antes — veio ${msgs[0]}`);
     }
 
@@ -838,12 +838,12 @@ const ANTIGO = (() => {
       mensageiro.enviarBotaoLink = async (p, o) => { msgs.push(o.message); };
       const carteiras = L('handlers/wallets.js');
       await carteiras({ acao: 'gastos_carteiras' }, { phone: '5511999999999', grupoId: 'gUSD', user: { id: 'u1' } });
-      ok(/\*Nubank Crédito:\* R\$ 514\.35/.test(msgs[0] || '') && /Total: R\$ 140\.00/.test(msgs[0] || ''),
-        `⚠️ zap "gastos por cartão": a fatura do cartão em real sai no original e o TOTAL soma US$ 100 + US$ 40 — veio ${msgs[0]}`);
+      ok((msgs[0] || '').includes('*Nubank Crédito:* R$ 514,35') && (msgs[0] || '').includes('Total: US$ 140,00'),
+        `⚠️ zap "gastos por cartão": a fatura do cartão sai EM REAL e o TOTAL em dólar (US$ 100 + US$ 40) — veio ${msgs[0]}`);
       msgs.length = 0;
       await carteiras({ acao: 'gastos_carteiras' }, { phone: '5511999999999', grupoId: 'gBRL', user: { id: 'u1' } });
-      ok(/\*Nubank Crédito:\* R\$ 514\.35/.test(msgs[0] || '') && /Total: R\$ 514\.35/.test(msgs[0] || ''),
-        `grupo em real: "gastos por cartão" igual a antes — veio ${msgs[0]}`);
+      ok((msgs[0] || '').includes('*Nubank Crédito:* R$ 514,35') && (msgs[0] || '').includes('Total: R$ 514,35'),
+        `grupo em real: "gastos por cartão" tudo em real — veio ${msgs[0]}`);
 
       const { lerFoto } = L('handlers/oraculo.js');
       const fotoU = await lerFoto('gUSD');
@@ -947,7 +947,7 @@ const ANTIGO = (() => {
       const dono = { id: 'u1', phone: '5511999990001' };
       await avisarFatura({ titulo: '💳 *Fatura do Nubank Crédito fechou*', ciclo, total: 514.35, dono, cartao: w('u-nu'), competencia: compAtual });
       eq([pendentes(), msgs.length, proativos.length], [0, 0, 1], '⚠️ aviso automático num grupo em dólar: só AVISA, sem abrir a pergunta de qual conta pagar');
-      ok(/Total: R\$ 514\.35/.test(proativos[0] || '') && !/Com qual conta/.test(proativos[0] || ''),
+      ok((proativos[0] || '').includes('Total: R$ 514,35') && !/Com qual conta/.test(proativos[0] || ''),
         `o aviso traz o valor da fatura em real e não pergunta a conta — veio ${proativos[0]}`);
       await avisarFatura({ titulo: '💳 *Fatura do Nubank Crédito fechou*', ciclo, total: 514.35, dono, cartao: w('b-nu'), competencia: compAtual });
       ok(pendentes() === 1 && msgs.some((m) => /Com qual conta você quer pagar/.test(m)),

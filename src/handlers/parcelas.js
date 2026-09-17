@@ -8,7 +8,7 @@ const { oferecerDesconto } = require('../services/descontoConta');
 // services/moeda.cartaoForaDaBase. Em grupo em real nada disto muda o fluxo.
 const {
   moedaBaseDoGrupo, taxasParaBase, camposTransacao, normalizarMoeda,
-  cartaoForaDaBase, motivoCartaoForaDaBase,
+  cartaoForaDaBase, motivoCartaoForaDaBase, formatar: fmtMoeda,
 } = require('../services/moeda');
 
 const gerarId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -57,7 +57,9 @@ async function acharCartao(grupoId, termo, cartoes) {
 
 /** Pergunta em qual cartão lançar, guardando a compra pra próxima mensagem. */
 async function pedirCartao(ctx, data, cartoes, motivo) {
-  const { phone, user } = ctx;
+  const { phone, user, grupoId } = ctx;
+  const base = await moedaBaseDoGrupo(grupoId);
+  const fmt = (v) => fmtMoeda(v, base);
   const lista = cartoes.map((c, i) => `${i + 1}. ${c.nome}`).join('\n');
   await criarPendente({
     userId: user?.id,
@@ -68,7 +70,7 @@ async function pedirCartao(ctx, data, cartoes, motivo) {
   });
   await enviarTexto(phone,
     `${motivo ? `${motivo}\n\n` : ''}💳 *Em qual cartão* foi essa compra de ` +
-    `${data.numParcelas}x de R$ ${Number(data.valorParcela).toFixed(2)}?\n\n${lista}\n\n` +
+    `${data.numParcelas}x de ${fmt(Number(data.valorParcela))}?\n\n${lista}\n\n` +
     'Responde com o número ou o nome.');
 }
 
@@ -81,7 +83,6 @@ async function pedirCartao(ctx, data, cartoes, motivo) {
 //
 // Motivo: um cliente pediu "o valor e quantidade de parcelas do presente da
 // Juliana" e não conseguiu (5x de R$ 54,03 no Mercado Pago, 1 paga).
-const brlParcela = (v) => 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Data pura (YYYY-MM-DD) por fatia, nunca por `new Date` — que leria em UTC e
 // voltaria um dia no Brasil.
 const dataBRParcela = (d) => {
@@ -91,6 +92,9 @@ const dataBRParcela = (d) => {
 const nomeDaCompra = (g) => String((g && g.desc) || 'Compra').replace(/\s*\(\d+\/\d+\)\s*$/, '');
 
 async function responderCompraParcelada(phone, grupoId, termo, grupos) {
+  // Parcela de cartão fora da base sai NA MOEDA DO CARTÃO; dívida, na do grupo.
+  const base = await moedaBaseDoGrupo(grupoId);
+  const brlParcela = (v, g) => fmtMoeda(v, (g && g.moeda) || base);
   const achadas = grupos
     .filter((g) => termoCasaCompra(termo, nomeDaCompra(g), g.cartao))
     // Em aberto primeiro (pela próxima parcela); quitadas depois.
@@ -106,13 +110,13 @@ async function responderCompraParcelada(phone, grupoId, termo, grupos) {
       const { pagas, valorTotal } = g;
       const linhas = [
         `🧾 *${nomeDaCompra(g)}* — ${g.cartao || 'cartão'}`,
-        `💰 Total: ${brlParcela(valorTotal)} · ${total}x de ${brlParcela(g.valorParcela)}`,
+        `💰 Total: ${brlParcela(valorTotal, g)} · ${total}x de ${brlParcela(g.valorParcela, g)}`,
       ];
       // "Cobrada", não "paga": a parcela que caiu na fatura ainda aberta já saiu
       // do cronograma, mas a fatura dela pode não ter sido paga.
       if (g.restantes > 0) {
         linhas.push(`✅ Já cobradas: ${pagas} de ${total}`);
-        linhas.push(`⏳ Faltam: ${g.restantes} ${g.restantes === 1 ? 'parcela' : 'parcelas'} · ${brlParcela(g.valorRestante)}`);
+        linhas.push(`⏳ Faltam: ${g.restantes} ${g.restantes === 1 ? 'parcela' : 'parcelas'} · ${brlParcela(g.valorRestante, g)}`);
         if (g.proxima) linhas.push(`📅 Próxima: ${dataBRParcela(g.proxima.data)}`);
       } else {
         linhas.push(`✅ Todas as ${total} parcelas já foram cobradas — nada a vencer.`);
@@ -169,6 +173,9 @@ async function responderCompraParcelada(phone, grupoId, termo, grupos) {
 }
 module.exports = async function handleParcelas(data, ctx) {
   const { phone, grupoId, user } = ctx;
+  // Moeda do GRUPO pros totais; cartão e conta saem na moeda deles (Fase 3).
+  const base = await moedaBaseDoGrupo(grupoId);
+  const fmt = (v) => fmtMoeda(v, base);
 
   // ── PAGAR FATURA DO CARTÃO: "pagar fatura [nome]" (aberta) ou
   //    "pagar fatura fechada/anterior [nome]" (a que fechou e está vencendo) ──
@@ -223,6 +230,8 @@ module.exports = async function handleParcelas(data, ctx) {
     const ciclo = cicloPorCompetencia(cartao, competencia);
     const ehOF = !!cartao.of_conta_id;
 
+    // A fatura está NA MOEDA DO CARTÃO (migration 168) — é o número do app do banco.
+    const fmtCartao = (v) => fmtMoeda(v, cartao.moeda || base);
     let fatura, jaPago = 0;
     if (ehOF && !fechada && typeof cartao.saldo === 'number' && cartao.saldo < 0) {
       // Open Finance: saldo = −fatura (já sem parcelas a vencer). Igual ao painel.
@@ -240,7 +249,7 @@ module.exports = async function handleParcelas(data, ctx) {
     if (fatura <= 0) {
       await enviarTexto(phone,
         `🎉 A ${qualTxt} do *${cartao.nome}* está ${jaPago > 0 ? 'quitada' : 'zerada'}` +
-        `${jaPago > 0 ? ` (você já pagou R$ ${jaPago.toFixed(2)})` : ''}. Nada a pagar!`);
+        `${jaPago > 0 ? ` (você já pagou ${fmtCartao(jaPago)})` : ''}. Nada a pagar!`);
       return;
     }
 
@@ -254,8 +263,8 @@ module.exports = async function handleParcelas(data, ctx) {
       + (ciclo.porCiclo ? `\n📅 Ciclo: ${ciclo.label}` : '');
 
     const introValor = parcial
-      ? `💳 Pagar *R$ ${valorPagar.toFixed(2)}* da fatura do *${cartao.nome}* (fatura: R$ ${fatura.toFixed(2)})`
-      : `💳 *Fatura ${cartao.nome}${fechada ? ' (anterior)' : ''}: R$ ${fatura.toFixed(2)}*`;
+      ? `💳 Pagar *${fmtCartao(valorPagar)}* da fatura do *${cartao.nome}* (fatura: ${fmtCartao(fatura)})`
+      : `💳 *Fatura ${cartao.nome}${fechada ? ' (anterior)' : ''}: ${fmtCartao(fatura)}*`;
     await oferecerDesconto({
       user, phone, grupoId, valor: valorPagar,
       categoria: CATEGORIA_FATURA, observacao: `Fatura ${cartao.nome}${fechada ? ' (anterior)' : ''}`,
@@ -381,7 +390,7 @@ module.exports = async function handleParcelas(data, ctx) {
       `📦 ${descricao}\n` +
       `💳 Cartão: ${wallet.nome}\n` +
       `🏷️ Categoria: ${categoria || 'Outros'}\n` +
-      `💵 Total: R$ ${valorTotal.toFixed(2)} em ${numParcelas}x de R$ ${valorParcela.toFixed(2)}\n` +
+      `💵 Total: ${fmtMoeda(valorTotal, moedaCartao)} em ${numParcelas}x de ${fmtMoeda(valorParcela, moedaCartao)}\n` +
       `📅 ${data.dataTx ? `Compra em ${compraFmt} · ` : '1ª parcela na fatura atual · '}última em ${ultimaData.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', month: 'long', year: 'numeric' })}\n\n` +
       `As ${numParcelas} parcelas já aparecem nas faturas do painel. Você pode antecipar por lá.`
     );
@@ -436,7 +445,7 @@ module.exports = async function handleParcelas(data, ctx) {
 
     // Pagar fatura debita de uma conta — pergunta de qual (igual ao painel).
     const { data: contas } = await supabase.from('wallets')
-      .select('id, nome, saldo, tipo, arquivada')
+      .select('id, nome, saldo, tipo, arquivada, moeda')
       .eq('grupo_id', grupoId)
       .neq('tipo', 'Crédito')
       .order('created_at', { ascending: true });
@@ -446,17 +455,17 @@ module.exports = async function handleParcelas(data, ctx) {
       // Sem conta pra debitar — só quita as parcelas (libera limite)
       await supabase.from('transacoes').update({ pago: true }).in('id', alvo.map(t => t.id));
       await enviarTexto(phone,
-        `✅ Quitei *${alvo.length}* parcela(s) de *"${termo}"* (R$ ${totalPago.toFixed(2)}) e liberei o limite.\n` +
+        `✅ Quitei *${alvo.length}* parcela(s) de *"${termo}"* (${fmt(totalPago)}) e liberei o limite.\n` +
         `⚠️ Você não tem conta bancária cadastrada, então não debitei de nenhuma.`
       );
       return;
     }
 
     const opcoesTexto = contasAtivas
-      .map((c, i) => `${i + 1}️⃣ ${c.nome} (R$ ${(c.saldo || 0).toFixed(2)})`)
+      .map((c, i) => `${i + 1}️⃣ ${c.nome} (${fmtMoeda(c.saldo || 0, c.moeda || base)})`)
       .join('\n');
     await enviarTexto(phone,
-      `💳 Vou antecipar *${alvo.length}* parcela(s) de *"${termo}"* — total R$ ${totalPago.toFixed(2)}.\n\n` +
+      `💳 Vou antecipar *${alvo.length}* parcela(s) de *"${termo}"* — total ${fmt(totalPago)}.\n\n` +
       `❓ *De qual conta pago?*\n${opcoesTexto}\n\nResponde com o número ou o nome.`
     );
 
@@ -482,14 +491,14 @@ module.exports = async function handleParcelas(data, ctx) {
   if (data.acao === 'listar_parcelas') {
     // Fonte principal: linhas com parcela_grupo (painel + WhatsApp novo).
     const { data: comGrupo } = await supabase.from('transacoes')
-      .select('valor, valor_moeda, observacao, carteira_nome, pago, data, parcela_num, parcela_total, parcela_grupo')
+      .select('valor, valor_moeda, moeda, observacao, carteira_nome, pago, data, parcela_num, parcela_total, parcela_grupo')
       .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
       .not('parcela_grupo', 'is', null)
       .order('data', { ascending: true });
 
     // Fallback legado: WhatsApp antigo (sem parcela_grupo) — observação "Desc (2/3)".
     const { data: semGrupo } = await supabase.from('transacoes')
-      .select('valor, valor_moeda, observacao, carteira_nome, pago, data')
+      .select('valor, valor_moeda, moeda, observacao, carteira_nome, pago, data')
       .eq('grupo_id', grupoId).eq('tipo', 'Gasto').eq('pago', false)
       .is('parcela_grupo', null)
       .ilike('observacao', '%(%/%)%')
@@ -525,7 +534,7 @@ module.exports = async function handleParcelas(data, ctx) {
       const nome = (g.desc || 'Compra').replace(/\s*\(\d+\/\d+\)\s*$/, '');
       const pagasTxt = g.total ? `${g.pagas}/${g.total} cobradas` : `${g.pagas} cobradas`;
       const prox = g.proxima ? ` · próxima ${fmtMes(g.proxima.data)}` : '';
-      return `💳 *${nome}* — ${g.cartao || 'cartão'}\n   ${g.restantes}x de R$ ${g.valorParcela.toFixed(2)} a pagar (${pagasTxt})${prox}`;
+      return `💳 *${nome}* — ${g.cartao || 'cartão'}\n   ${g.restantes}x de ${fmtMoeda(g.valorParcela, g.moeda || base)} a pagar (${pagasTxt})${prox}`;
     }).join('\n\n');
     const maisTxt = abertas.length > MAX ? `\n\n_+${abertas.length - MAX} compra(s) — veja o restante no painel._` : '';
 
@@ -536,7 +545,7 @@ module.exports = async function handleParcelas(data, ctx) {
     await enviarBotaoLink(phone, {
       message:
         `🧾 *Suas compras parceladas*\n\n${blocos}${maisTxt}\n\n` +
-        `💰 *Total ainda a pagar: R$ ${totalRestante.toFixed(2)}*\n\n` +
+        `💰 *Total ainda a pagar: ${fmt(totalRestante)}*\n\n` +
         `_Pra adiantar: *antecipar parcela do <nome>* · quitar tudo: *quitar parcelas do <nome>*._`,
       label: 'Ver no painel',
       url: 'https://forsora.com/cartao-de-credito',

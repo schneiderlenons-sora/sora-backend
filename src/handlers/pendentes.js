@@ -179,6 +179,9 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
  */
 async function resolverPendente(pendente, mensagem, ctx) {
   const { phone, grupoId, user } = ctx;
+  // Dinheiro na moeda do GRUPO (Fase 3); cartão e conta, na moeda deles.
+  const base = await moedaBaseMv(grupoId);
+  const fmt = (v) => fmtMoedaMv(v, base);
   const msg = (mensagem || '').trim();
   const lower = msg.toLowerCase();
 
@@ -204,7 +207,7 @@ async function resolverPendente(pendente, mensagem, ctx) {
           await materializarRollover(row, cartao?.nome || cartao_nome || 'cartão', cartao);
         }
         await removerPendente(pendente.id);
-        await enviarTexto(phone, `✅ Pronto! Rolei R$ ${Number(valor || 0).toFixed(2)} pra próxima fatura do ${cartao_nome || 'cartão'}.`);
+        await enviarTexto(phone, `✅ Pronto! Rolei ${fmt(Number(valor || 0))} pra próxima fatura do ${cartao_nome || 'cartão'}.`);
       } catch (e) {
         await removerPendente(pendente.id);
         await enviarTexto(phone, `⚠️ Não consegui rolar agora: ${e.message}`);
@@ -374,9 +377,9 @@ async function resolverPendente(pendente, mensagem, ctx) {
     await removerPendente(pendente.id);
     const ehFatura = pendente.contexto?.modo === 'fatura';
     await enviarTexto(phone, ehFatura
-      ? `✅ *Fatura paga!*\n💸 R$ ${total.toFixed(2)} debitado de *${escolhida.nome}* · limite do cartão liberado.`
+      ? `✅ *Fatura paga!*\n💸 ${fmt(total)} debitado de *${escolhida.nome}* · limite do cartão liberado.`
       : `✅ Antecipei *${emAberto.length}* parcela(s) de *"${termo}"*.\n` +
-        `💸 R$ ${total.toFixed(2)} debitado de *${escolhida.nome}* · limite do cartão liberado.`
+        `💸 ${fmt(total)} debitado de *${escolhida.nome}* · limite do cartão liberado.`
     );
     return true;
   }
@@ -425,7 +428,7 @@ async function resolverPendente(pendente, mensagem, ctx) {
       }
       await removerPendente(pendente.id);
       await enviarTexto(phone,
-        `✅ Anotei que *R$ ${Number(valor || 0).toFixed(2)}* foi *pago por outra pessoa*. ` +
+        `✅ Anotei que *${fmt(Number(valor || 0))}* foi *pago por outra pessoa*. ` +
         `Não descontei de nenhuma conta — só registrei nas suas transações 📊`);
       return true;
     }
@@ -463,8 +466,8 @@ async function resolverPendente(pendente, mensagem, ctx) {
     const ehFatura = ehPagamentoFatura(categoria);
     await enviarTexto(phone,
       (ehFatura
-        ? `✅ *Pagamento da fatura registrado!* Debitei *R$ ${Number(valor || 0).toFixed(2)}* de *${escolhida.nome}*.`
-        : `✅ Descontei *R$ ${Number(valor || 0).toFixed(2)}* de *${escolhida.nome}*.`) +
+        ? `✅ *Pagamento da fatura registrado!* Debitei *${fmt(Number(valor || 0))}* de *${escolhida.nome}*.`
+        : `✅ Descontei *${fmt(Number(valor || 0))}* de *${escolhida.nome}*.`) +
       `\nJá aparece nas suas transações 📊`);
     return true;
   }
@@ -596,7 +599,7 @@ async function resolverPendente(pendente, mensagem, ctx) {
     const linhas = [`💳 *Cartão configurado!*`, ''];
     linhas.push(`🏦 ${cartao.nome}`);
     if (cartao.bandeira)      linhas.push(`💳 Bandeira: ${cartao.bandeira}`);
-    if (cartao.limite)        linhas.push(`💰 Limite: R$ ${cartao.limite.toFixed(2)}`);
+    if (cartao.limite)        linhas.push(`💰 Limite: ${fmtMoedaMv(cartao.limite, cartao.moeda || base)}`);
     if (cartao.dia_fechamento && cartao.dia_vencimento) {
       linhas.push(`📅 Fecha dia ${cartao.dia_fechamento} · Vence dia ${cartao.dia_vencimento}`);
     }
@@ -646,7 +649,7 @@ async function resolverPendente(pendente, mensagem, ctx) {
 
     await removerPendente(pendente.id);
     await enviarTexto(phone,
-      `✅ Conta *${nome}* criada com saldo R$ ${saldo.toFixed(2)}!\n` +
+      `✅ Conta *${nome}* criada com saldo ${fmt(saldo)}!\n` +
       `✓ Movi a transação anterior pra essa conta\n` +
       `⭐ Definida como sua conta principal\n\n` +
       `Pode mandar seus próximos gastos normalmente — eu já sei de onde tirar 😉`

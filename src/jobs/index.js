@@ -29,6 +29,11 @@ const oneLine = (s) => String(s || '').replace(/\s*[\r\n\t]+\s*/g, ' ').trim();
 // agente dono daquele aviso (src/agentes). Com AGENTES_VOZ desligado, `falar`
 // devolve o texto original intacto — por isso dá pra passar o agente em todos
 // os pontos sem mudar nada no que é entregue hoje.
+// Formatador de dinheiro DO GRUPO pros textos dos crons (Fase 3 do plano da
+// moeda base): `const fmt = await fmtDoGrupo(grupoId)`. A base é cacheada por
+// 10 min em services/moeda, então chamar por item não custa ida de rede.
+const fmtDoGrupo = (grupoId) => require('../services/moeda').formatadorDoGrupo(grupoId);
+
 const lembrete = async (phone, texto, core, agente) => {
   const vestida = agente
     // `direto` = voz CURTA. Repassado aqui senão o aviso diario continua
@@ -118,7 +123,9 @@ const linhaGrow = (grow, periodo) => {
 };
 
 // Formata valor em BRL pros params de template (ex.: "R$ 1.240,00").
-const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// ⚠️ `moeda` é a do GRUPO (Fase 3 do plano da moeda base). Sem ela, real —
+// que é o que todo grupo é hoje, e mantém o texto idêntico.
+const brl = (v, moeda = null) => require('../services/moeda').formatar(v, moeda);
 
 // Busca o telefone do dono de um grupo
 async function phoneDono(grupoId) {
@@ -210,7 +217,10 @@ async function donoDoItem(userId, grupoId) {
 // não existem, então respondia "Fatura paga! R$ 0,00".
 async function avisarFatura({ titulo, ciclo, total, dono, cartao, competencia }) {
   const [, vm, vd] = ciclo.venc.split('-');
-  const detalhe = `\n💵 Total: R$ ${total.toFixed(2)}`
+  // A fatura está NA MOEDA DO CARTÃO (migration 168).
+  const { formatar: fmtMoedaJob, moedaBaseDoGrupo: baseJob } = require('../services/moeda');
+  const fmtCartao = (v) => fmtMoedaJob(v, cartao.moeda || null);
+  const detalhe = `\n💵 Total: ${fmtCartao(total)}`
     + `\n📅 Vence em ${vd}/${vm}`
     + (ciclo.porCiclo ? `\n🧾 Ciclo: ${ciclo.label}` : '');
 
@@ -298,7 +308,7 @@ async function processarFaturas() {
       // o parceiro recebe só a notícia — que é o que faltava: numa gestão
       // compartilhada ele não sabia nem que a fatura tinha fechado.
       await avisarOutrosMembros(c.grupo_id, dono.id,
-        `💳 *Fatura do ${c.nome} fechou*\n💵 Total: R$ ${total.toFixed(2)}`
+        `💳 *Fatura do ${c.nome} fechou*\n💵 Total: ${require('../services/moeda').formatar(total, c.moeda || null)}`
         + `\n📅 Vence em ${ciclo.venc.split('-').reverse().slice(0, 2).join('/')}`,
         { aviso: 'fatura', seed: c.id });
       await supabase.from('wallets').update({ ultimo_aviso_fechamento: hojeStr }).eq('id', c.id);
@@ -416,7 +426,7 @@ cron.schedule('0 * * * *', async () => {
         if (rec.ultimo_lembrete_dia === sp.dataStr) continue;
         const phoneL = await phoneDoUser(rec.criado_por, rec.grupo_id);
         if (phoneL && await avisosLigados(rec.criado_por)) {
-          bucket(phoneL).soLembrete.push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo });
+          bucket(phoneL).soLembrete.push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo, grupo_id: rec.grupo_id });
           try { await supabase.from('recorrencias').update({ ultimo_lembrete_dia: sp.dataStr }).eq('id', rec.id); } catch {}
         }
         continue;
@@ -453,7 +463,7 @@ cron.schedule('0 * * * *', async () => {
         try { await supabase.from('recorrencias').update({ ultimo_previsto_ym: ymSP }).eq('id', rec.id); } catch {}
         const phoneP = await phoneDoUser(rec.criado_por, rec.grupo_id);
         if (phoneP && querLembrete && await avisosLigados(rec.criado_por)) {
-          bucket(phoneP).confirmar.push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo });
+          bucket(phoneP).confirmar.push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo, grupo_id: rec.grupo_id });
         }
         continue;
       }
@@ -519,7 +529,7 @@ cron.schedule('0 * * * *', async () => {
       const phone = await phoneDoUser(rec.criado_por, rec.grupo_id);
       if (phone && querLembrete && await avisosLigados(rec.criado_por)) {
         bucket(phone)[contaConectada ? 'aguardando' : 'lancados']
-          .push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo, idCurto });
+          .push({ descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo, idCurto, grupo_id: rec.grupo_id });
       }
     }
 
@@ -540,7 +550,7 @@ cron.schedule('0 * * * *', async () => {
       if (!phoneA || !(await avisosLigados(rec.criado_por))) continue;
       bucket(phoneA).antecipados.push({
         descricao: rec.descricao, valor: rec.valor, tipo: rec.tipo,
-        dias: Number(rec.lembrete_dias) || 0,
+        dias: Number(rec.lembrete_dias) || 0, grupo_id: rec.grupo_id,
       });
       try {
         await supabase.from('recorrencias').update({ ultimo_lembrete_dia: sp.dataStr }).eq('id', rec.id);
@@ -549,10 +559,15 @@ cron.schedule('0 * * * *', async () => {
 
     for (const [phone, { lancados, confirmar, aguardando, soLembrete, antecipados }] of porPhone) {
       if (!lancados.length && !confirmar.length && !aguardando.length && !soLembrete.length && !antecipados.length) continue;
+      // Dinheiro na moeda do GRUPO (Fase 3). Os itens deste telefone são do
+      // grupo ativo dele; o primeiro que trouxer o id manda.
+      const grupoDoAviso = [...lancados, ...aguardando, ...soLembrete, ...antecipados, ...confirmar]
+        .map((it) => it.grupo_id).find(Boolean);
+      const fmtAviso = await fmtDoGrupo(grupoDoAviso);
       const partes = [];
       if (lancados.length) {
         partes.push('✅ *Lancei automaticamente:*');
-        for (const it of lancados) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${money(it.valor)}`);
+        for (const it of lancados) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — ${fmtAviso(it.valor)}`);
       }
       // Modo 'prever': a Sora NÃO promete o valor — quem dá o número final é o
       // banco. Prometer "lancei R$ 113,50" e depois o extrato trazer 113,85
@@ -560,7 +575,7 @@ cron.schedule('0 * * * *', async () => {
       if (aguardando.length) {
         if (partes.length) partes.push('');
         partes.push('🔗 *Vence hoje* (o valor final vem do seu banco):');
-        for (const it of aguardando) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — cerca de R$ ${money(it.valor)}`);
+        for (const it of aguardando) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — cerca de ${fmtAviso(it.valor)}`);
       }
       // Modo 'nao_lancar': lembrete puro. A Sora não lançou NADA e precisa
       // deixar isso explícito — senão o usuário procura a transação no painel
@@ -568,7 +583,7 @@ cron.schedule('0 * * * *', async () => {
       if (soLembrete.length) {
         if (partes.length) partes.push('');
         partes.push('🔔 *Vence hoje* (não lancei — só te lembrando):');
-        for (const it of soLembrete) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${money(it.valor)}`);
+        for (const it of soLembrete) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — ${fmtAviso(it.valor)}`);
       }
       if (antecipados.length) {
         // ⚠️ AGRUPADO POR PRAZO. Duas contas podem cair no mesmo aviso com
@@ -583,13 +598,13 @@ cron.schedule('0 * * * *', async () => {
         for (const d of [...porPrazo.keys()].sort((a, b) => a - b)) {
           if (partes.length) partes.push('');
           partes.push(`⏳ *Vence em ${d} ${d === 1 ? 'dia' : 'dias'}* (pra você se organizar):`);
-          for (const it of porPrazo.get(d)) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — R$ ${money(it.valor)}`);
+          for (const it of porPrazo.get(d)) partes.push(`${it.tipo === 'Gasto' ? '🔴' : '🟢'} ${it.descricao} — ${fmtAviso(it.valor)}`);
         }
       }
       if (confirmar.length) {
         if (partes.length) partes.push('');
         partes.push('💡 *A confirmar o valor* (responda *confirmar <nome> <valor>*):');
-        for (const it of confirmar) partes.push(`• ${it.descricao} — estimei R$ ${money(it.valor)}`);
+        for (const it of confirmar) partes.push(`• ${it.descricao} — estimei ${fmtAviso(it.valor)}`);
       }
       // Texto rico (Z-API / dentro da janela). Fora da janela vira o `core`
       // de uma linha só (template da Meta não aceita quebra de linha no param).
@@ -603,10 +618,10 @@ cron.schedule('0 * * * *', async () => {
       // LISTA dos itens (SEM instrução) — vira o {{1}} do template dedicado
       // (a instrução de confirmar já está no CORPO FIXO do template).
       const listaSegs = [];
-      if (lancados.length) listaSegs.push(`✅ Lancei: ${lancados.map(it => `${it.descricao} R$ ${money(it.valor)}`).join(', ')}`);
-      if (aguardando.length) listaSegs.push(`🔗 Vence hoje (valor final vem do banco): ${aguardando.map(it => `${it.descricao} (cerca de R$ ${money(it.valor)})`).join(', ')}`);
-      if (soLembrete.length) listaSegs.push(`🔔 Vence hoje (não lancei): ${soLembrete.map(it => `${it.descricao} R$ ${money(it.valor)}`).join(', ')}`);
-      if (confirmar.length) listaSegs.push(`💡 A confirmar o valor: ${confirmar.map(it => `${it.descricao} (estimei R$ ${money(it.valor)})`).join(', ')}`);
+      if (lancados.length) listaSegs.push(`✅ Lancei: ${lancados.map(it => `${it.descricao} ${fmtAviso(it.valor)}`).join(', ')}`);
+      if (aguardando.length) listaSegs.push(`🔗 Vence hoje (valor final vem do banco): ${aguardando.map(it => `${it.descricao} (cerca de ${fmtAviso(it.valor)})`).join(', ')}`);
+      if (soLembrete.length) listaSegs.push(`🔔 Vence hoje (não lancei): ${soLembrete.map(it => `${it.descricao} ${fmtAviso(it.valor)}`).join(', ')}`);
+      if (confirmar.length) listaSegs.push(`💡 A confirmar o valor: ${confirmar.map(it => `${it.descricao} (estimei ${fmtAviso(it.valor)})`).join(', ')}`);
       const listaParam = listaSegs.join('. ');
 
       // `core` (fallback lembretes_gerais, linha única) — lista + a instrução de
@@ -626,10 +641,10 @@ cron.schedule('0 * * * *', async () => {
       // ele só existia porque o modelo genérico não tinha onde encaixar a
       // lista, e a instrução de confirmar valor cabe no próprio item.
       const itensRec = [
-        ...lancados.map((it) => `✅ ${it.descricao} — ${brl(it.valor)} (já lancei)`),
-        ...aguardando.map((it) => `🔗 ${it.descricao} — cerca de ${brl(it.valor)} (o banco confirma)`),
-        ...soLembrete.map((it) => `🔔 ${it.descricao} — ${brl(it.valor)}`),
-        ...confirmar.map((it) => `💡 ${it.descricao} — estimei ${brl(it.valor)}, responda "confirmar ${it.descricao.toLowerCase()} <valor>"`),
+        ...lancados.map((it) => `✅ ${it.descricao} — ${fmtAviso(it.valor)} (já lancei)`),
+        ...aguardando.map((it) => `🔗 ${it.descricao} — cerca de ${fmtAviso(it.valor)} (o banco confirma)`),
+        ...soLembrete.map((it) => `🔔 ${it.descricao} — ${fmtAviso(it.valor)}`),
+        ...confirmar.map((it) => `💡 ${it.descricao} — estimei ${fmtAviso(it.valor)}, responda "confirmar ${it.descricao.toLowerCase()} <valor>"`),
       ];
       await lembrete(phone, txt, core, {
         id: 'sardinha', aviso: 'recorrencias', seed: phone,
@@ -648,14 +663,15 @@ cron.schedule('0 * * * *', async () => {
 
   for (const lem of lembretes || []) {
     const phone = await phoneDoUser(lem.criado_por, lem.grupo_id);
+    const fmtLem = await fmtDoGrupo(lem.grupo_id);
     if (phone && await avisosLigados(lem.criado_por)) {
       const txt =
         `🔔 *LEMBRETE:*\n` +
         `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} *${lem.descricao}*\n` +
-        `Valor: R$ ${(lem.valor||0).toFixed(2)}\n` +
+        `Valor: ${fmtLem(lem.valor || 0)}\n` +
         `Vencimento: ${new Date(lem.data_vencimento).toLocaleDateString('pt-BR')}`;
       const core =
-        `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} *${lem.descricao}* — R$ ${(lem.valor||0).toFixed(2)}\n` +
+        `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} *${lem.descricao}* — ${fmtLem(lem.valor || 0)}\n` +
         `Vencimento: ${new Date(lem.data_vencimento).toLocaleDateString('pt-BR')}`;
       await lembrete(phone, txt, core, {
         id: 'sardinha', aviso: 'lembretes', seed: lem.id,
@@ -664,7 +680,7 @@ cron.schedule('0 * * * *', async () => {
           'Lembrete',
           aberturaDe('sardinha', 'lembretes', lem.id),
           `${lem.tipo === 'pagar' ? '💸 Pagar' : '💰 Receber'} — ${lem.descricao}`,
-          brl(lem.valor || 0),
+          fmtLem(lem.valor || 0),
           `Vence em ${new Date(lem.data_vencimento).toLocaleDateString('pt-BR')}`,
           'Você me pediu pra avisar disso.',
         ],
@@ -683,15 +699,16 @@ cron.schedule('0 * * * *', async () => {
   for (const p of parcelas || []) {
     if (p.parcelas_pagas >= p.total_parcelas) continue;
     const phone = await phoneDoUser(p.criado_por, p.grupo_id);
+    const fmtParc = await fmtDoGrupo(p.grupo_id);
     if (phone && await avisosLigados(p.criado_por)) {
       const txt =
         `🔔 *PARCELA VENCE HOJE:*\n` +
         `📦 ${p.descricao} — ${p.parcelas_pagas + 1}/${p.total_parcelas}\n` +
-        `💵 R$ ${p.valor_parcela.toFixed(2)} no cartão *${p.carteira}*\n\n` +
+        `💵 ${fmtParc(p.valor_parcela)} no cartão *${p.carteira}*\n\n` +
         `Para pagar: "pagar parcela da ${p.descricao}"`;
       const core =
         `📦 *Parcela vence hoje:* ${p.descricao} — ${p.parcelas_pagas + 1}/${p.total_parcelas}\n` +
-        `💵 R$ ${p.valor_parcela.toFixed(2)} no cartão *${p.carteira}*\n` +
+        `💵 ${fmtParc(p.valor_parcela)} no cartão *${p.carteira}*\n` +
         `Pra pagar, responda: "pagar parcela da ${p.descricao}"`;
       await lembrete(phone, txt, core, {
         id: 'sardinha', aviso: 'parcelas', seed: p.id || p.descricao,
@@ -699,7 +716,7 @@ cron.schedule('0 * * * *', async () => {
           'Parcela vencendo',
           aberturaDe('sardinha', 'parcelas', p.id || p.descricao),
           `${p.descricao} — parcela ${p.parcelas_pagas + 1} de ${p.total_parcelas} · cartão ${p.carteira}`,
-          brl(p.valor_parcela),
+          fmtParc(p.valor_parcela),
           'Vence hoje',
           `Pra pagar, responda: pagar parcela da ${p.descricao}`,
         ],
@@ -1102,11 +1119,13 @@ cron.schedule('*/15 * * * *', async () => {
     const cfg = await growShareCfg(u.grupo_ativo);
     const eventos = await montarFeed(u.grupo_ativo, sp.dataStr, sp.dataStr, { userId: u.id, casaCompartilhada: cfg.casa, paraBriefing: true });
     if (!eventos.length) continue; // nada hoje — não enche o saco
+    // Os valores do feed já vêm na moeda do grupo (services/agendaFeed).
+    const fmtBrief = await fmtDoGrupo(u.grupo_ativo);
 
     eventos.sort((a, b) => (a.hora || '99:99').localeCompare(b.hora || '99:99'));
     const linhas = eventos.map(e => {
       const h = e.hora ? `*${e.hora}*` : '•';
-      const val = e.valor != null ? ` (R$ ${Number(e.valor).toFixed(2)})` : '';
+      const val = e.valor != null ? ` (${fmtBrief(e.valor)})` : '';
       return `${EMOJI_AGENDA[e.source] || '•'} ${h} ${e.titulo}${val}`;
     });
     const dataFmt = new Date(sp.dataStr + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
@@ -1125,7 +1144,7 @@ cron.schedule('*/15 * * * *', async () => {
     // marcador some e a hora entra só quando existe.
     const resumo = oneLine(eventos.map((e) => {
       const h = e.hora ? `${e.hora} ` : '';
-      const val = e.valor != null ? ` (R$ ${Number(e.valor).toFixed(2)})` : '';
+      const val = e.valor != null ? ` (${fmtBrief(e.valor)})` : '';
       return `${EMOJI_AGENDA[e.source] || '•'} ${h}${e.titulo}${val}`;
     }).join('  ·  ')).slice(0, 900);
     // O BRIEFING É DO LOKI — ele é o dono da agenda (compromissos, hábitos,
@@ -1140,7 +1159,7 @@ cron.schedule('*/15 * * * *', async () => {
     // fecha a cadeia — ver o helper `lembrete`.
     const itensLista = eventos.map((e) => {
       const h = e.hora ? `${e.hora} ` : '';
-      const val = e.valor != null ? ` (${brl(e.valor)})` : '';
+      const val = e.valor != null ? ` (${fmtBrief(e.valor)})` : '';
       return `${EMOJI_AGENDA[e.source] || '•'} ${h}${e.titulo}${val}`;
     });
     await lembrete(u.phone, txt, resumo, {
@@ -1269,12 +1288,13 @@ cron.schedule('0 9 * * *', async () => {
     // {{1}} assunto · {{2}} abertura · {{3}} dívida · {{4}} parcela · {{5}} prazo · {{6}} ação
     let camposDivida = null;
     const tituloDivida = `${d.titulo}${d.credor ? ` (${d.credor})` : ''}`;
+    const fmtDiv = await fmtDoGrupo(d.grupo_id);
     // ⚠️ Sem valor de parcela o parâmetro ficaria VAZIO e a Meta recusaria o
     // envio inteiro — por isso a frase de reserva, nunca string vazia.
-    const parcelaDivida = d.valor_parcela ? brl(d.valor_parcela) : 'sem valor de parcela';
+    const parcelaDivida = d.valor_parcela ? fmtDiv(d.valor_parcela) : 'sem valor de parcela';
     const acaoDivida = `Pra pagar, responda: pagar divida ${d.titulo}${d.valor_parcela ? ` ${d.valor_parcela.toFixed(2)}` : ''}`;
     if (diffDias === 3) {
-      mensagem = `🔔 *Lembrete de dívida*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : ''}\n📅 Vence em *3 dias* (dia ${d.dia_vencimento})\n\nPara pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*\nPra parar de receber: *cancelar lembrete divida ${d.titulo}*`;
+      mensagem = `🔔 *Lembrete de dívida*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? fmtDiv(d.valor_parcela) : ''}\n📅 Vence em *3 dias* (dia ${d.dia_vencimento})\n\nPara pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*\nPra parar de receber: *cancelar lembrete divida ${d.titulo}*`;
       camposDivida = [
         'Dívida vence em 3 dias',
         aberturaDe('don-baleone', 'dividas', d.id),
@@ -1284,7 +1304,7 @@ cron.schedule('0 9 * * *', async () => {
       ];
     } else if (diffDias === 0) {
       dividaVenceHoje = true; // o "vence hoje" é do briefing; aqui só se briefing off (ver abaixo)
-      mensagem = `🚨 *VENCE HOJE*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : 'sem valor de parcela'}\n\nNão esqueça! Para pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*`;
+      mensagem = `🚨 *VENCE HOJE*\n\n📌 *${d.titulo}*${d.credor ? ` (${d.credor})` : ''}\n💵 ${d.valor_parcela ? fmtDiv(d.valor_parcela) : 'sem valor de parcela'}\n\nNão esqueça! Para pagar: *pagar divida ${d.titulo} ${d.valor_parcela?.toFixed(2) || ''}*`;
       camposDivida = [
         'Dívida vence hoje',
         aberturaDe('don-baleone', 'dividas', d.id),
@@ -1304,7 +1324,7 @@ cron.schedule('0 9 * * *', async () => {
         if (!pago || pago < vencEsteMes) {
           // Avisa só uma vez por semana
           if (diasAtraso === 1 || diasAtraso === 7 || diasAtraso === 15 || diasAtraso === 30) {
-            mensagem = `⚠️ *DÍVIDA EM ATRASO*\n\n📌 *${d.titulo}*\n📅 Vencimento era dia ${d.dia_vencimento} (${diasAtraso} dia${diasAtraso > 1 ? 's' : ''} atrás)\n💵 ${d.valor_parcela ? `R$ ${d.valor_parcela.toFixed(2)}` : ''}\n\nO atraso costuma vir com juros — quanto antes melhor.`;
+            mensagem = `⚠️ *DÍVIDA EM ATRASO*\n\n📌 *${d.titulo}*\n📅 Vencimento era dia ${d.dia_vencimento} (${diasAtraso} dia${diasAtraso > 1 ? 's' : ''} atrás)\n💵 ${d.valor_parcela ? fmtDiv(d.valor_parcela) : ''}\n\nO atraso costuma vir com juros — quanto antes melhor.`;
             camposDivida = [
               'Dívida em atraso',
               aberturaDe('don-baleone', 'dividas', d.id),
@@ -1404,8 +1424,9 @@ cron.schedule('0 9 * * *', async () => {
         confirmar_ate: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
       }, { onConflict: 'cartao_id,competencia' }).select().single();
 
-      const txt = `💳 *Fatura do ${c.nome}*\n\nVocê pagou parte, mas sobraram *R$ ${st.restante.toFixed(2)}*.\n\nQuer que eu role esse saldo pra próxima fatura? Responda *sim*.\n\n_Se não responder em 24h, eu rolo automaticamente pra você não ficar sem controle._`;
-      const core = `Sobraram R$ ${st.restante.toFixed(2)} da fatura do ${c.nome}. Quer rolar pra próxima? Responda sim (senão rolo sozinho em 24h).`;
+      const fmtRoll = (v) => brl(v, c.moeda || null);
+      const txt = `💳 *Fatura do ${c.nome}*\n\nVocê pagou parte, mas sobraram *${fmtRoll(st.restante)}*.\n\nQuer que eu role esse saldo pra próxima fatura? Responda *sim*.\n\n_Se não responder em 24h, eu rolo automaticamente pra você não ficar sem controle._`;
+      const core = `Sobraram ${fmtRoll(st.restante)} da fatura do ${c.nome}. Quer rolar pra próxima? Responda sim (senão rolo sozinho em 24h).`;
       await notificarDono(c.grupo_id, txt, { rollover_id: row?.id, cartao_id: c.id, cartao_nome: c.nome, valor: st.restante }, core);
     }
   } catch (e) { console.warn('[rollover passo A]', e.message); }
@@ -1416,15 +1437,16 @@ cron.schedule('0 9 * * *', async () => {
       .select('*').eq('status', 'aguardando').lt('confirmar_ate', new Date().toISOString());
     for (const row of pendentes || []) {
       const { data: cartao } = await supabase.from('wallets')
-        .select('id, nome, dia_fechamento, dia_vencimento').eq('id', row.cartao_id).maybeSingle();
+        .select('id, nome, dia_fechamento, dia_vencimento, moeda').eq('id', row.cartao_id).maybeSingle();
       await faturaRoll.materializarRollover(row, cartao?.nome || 'cartão', cartao);
       const nome = cartao?.nome || 'cartão';
-      const val = Number(row.valor).toFixed(2);
+      // O saldo rolado está NA MOEDA DO CARTÃO (migration 168).
+      const val = brl(row.valor, cartao?.moeda || null);
       await notificarDono(
         row.grupo_id,
-        `💳 Rolei *R$ ${val}* da fatura do ${nome} pra próxima fatura (você não confirmou em 24h). Está tudo registrado no painel.`,
+        `💳 Rolei *${val}* da fatura do ${nome} pra próxima fatura (você não confirmou em 24h). Está tudo registrado no painel.`,
         null,
-        `Rolei R$ ${val} da fatura do ${nome} pra próxima fatura (não confirmado em 24h). Registrado no painel.`,
+        `Rolei ${val} da fatura do ${nome} pra próxima fatura (não confirmado em 24h). Registrado no painel.`,
       );
     }
   } catch (e) { console.warn('[rollover passo B]', e.message); }
@@ -1716,11 +1738,11 @@ const CAPA = process.env.SORA_CAPA_URL || `${APP_URL_RESUMO}/sora-capa.png`;
 // Este `core` é o que vira o {{2}}: UMA linha, com o que mais importa primeiro
 // (manchete → frase → números), porque o parâmetro tem teto de tamanho e é o
 // fim que é cortado.
-function coreResumo(insight, atual, mesNome) {
+function coreResumo(insight, atual, mesNome, moeda = null) {
   const cabeca = [insight?.titulo, insight?.frase].filter(Boolean).join('. ');
   const numeros = mesNome
-    ? `${mesNome}: gastos ${brl(atual.gastos)}, receitas ${brl(atual.receitas)}, saldo ${brl(atual.saldo)}.`
-    : `Gastos ${brl(atual.gastos)} e receitas ${brl(atual.receitas)}.`;
+    ? `${mesNome}: gastos ${brl(atual.gastos, moeda)}, receitas ${brl(atual.receitas, moeda)}, saldo ${brl(atual.saldo, moeda)}.`
+    : `Gastos ${brl(atual.gastos, moeda)} e receitas ${brl(atual.receitas, moeda)}.`;
   return oneLine(`${cabeca ? `${cabeca} ` : ''}${numeros}`);
 }
 
@@ -1761,11 +1783,15 @@ cron.schedule('*/15 * * * *', async () => {
         // grupo_id (privacidade do Grow). `{}` quando o usuário não usa nada
         // disso; os coletores mesmos filtram "usa de verdade" (ver o arquivo).
         const grow = await coletarGrow(u.id, ini, fim).catch(() => ({}));
-        const insight = await gerarInsight({ periodo: 'semana', atual, anterior, grow });
-        const corpo = montarCorpoSemanal({ atual, anterior, insight, grow });
+        // O resumo fala a moeda do GRUPO (migration 168): no prompt do
+        // insight, no corpo e nos parâmetros do template. `valor` já está na
+        // base, então é só nomeá-la.
+        const moedaG = await require('../services/moeda').moedaBaseDoGrupo(u.grupo_ativo);
+        const insight = await gerarInsight({ periodo: 'semana', atual, anterior, grow, moeda: moedaG });
+        const corpo = montarCorpoSemanal({ atual, anterior, insight, grow, moeda: moedaG });
         const vestida = falar('sora', 'resumo-semanal', {
           texto: `${corpo}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`,
-          core: coreResumo(insight, atual),
+          core: coreResumo(insight, atual, null, moedaG),
           seed: u.id,
         });
         const primeiroNome = (u.name || 'tudo bem').split(' ')[0];
@@ -1782,17 +1808,17 @@ cron.schedule('*/15 * * * *', async () => {
               primeiroNome,
               insight.titulo,
               insight.frase,
-              brl(atual.gastos) + deltaGastos(atual.gastos, anterior.gastos, 'vs semana passada'),
-              brl(atual.receitas),
-              brl(atual.saldo),
+              brl(atual.gastos, moedaG) + deltaGastos(atual.gastos, anterior.gastos, 'vs semana passada'),
+              brl(atual.receitas, moedaG),
+              brl(atual.saldo, moedaG),
               // ⚠️ Semana só de receitas deixaria o parâmetro VAZIO e a Meta
               // recusaria a mensagem inteira.
-              topo ? `${topo[0]} (${brl(topo[1])})` : 'sem gastos no período',
+              topo ? `${topo[0]} (${brl(topo[1], moedaG)})` : 'sem gastos no período',
             ];
             const gLinha = linhaGrow(grow, 'semana');
             return (gLinha && templateDoAviso('sora', 'resumo-semanal', [...base, gLinha], 'resumo_semanal_grow'))
               || templateDoAviso('sora', 'resumo-semanal', base)
-              || { name: 'resumo_semanal', params: [primeiroNome, brl(atual.gastos), brl(atual.receitas)], opts: { headerImage: CAPA } };
+              || { name: 'resumo_semanal', params: [primeiroNome, brl(atual.gastos, moedaG), brl(atual.receitas, moedaG)], opts: { headerImage: CAPA } };
           })(),
         });
         enviados++;
@@ -1833,11 +1859,12 @@ cron.schedule('*/15 * * * *', async () => {
         const anterior = await resumoPeriodo(u.grupo_ativo, prevIni, ini);
         // Grow (hábitos/tarefas/treino/estudos) — SEMPRE por user_id, igual ao semanal.
         const grow = await coletarGrow(u.id, ini, fim).catch(() => ({}));
-        const insight = await gerarInsight({ periodo: 'mes', atual, anterior, grow });
-        const corpo = montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight, grow });
+        const moedaG = await require('../services/moeda').moedaBaseDoGrupo(u.grupo_ativo);
+        const insight = await gerarInsight({ periodo: 'mes', atual, anterior, grow, moeda: moedaG });
+        const corpo = montarCorpoMensal({ mesNome, atual, anterior, metaMensal: u.meta_mensal || 0, insight, grow, moeda: moedaG });
         const vestida = falar('sora', 'resumo-mensal', {
           texto: `${corpo}\n\n👉 Ver no painel: ${APP_URL_RESUMO}/relatorios`,
-          core: coreResumo(insight, atual, mesNome),
+          core: coreResumo(insight, atual, mesNome, moedaG),
           seed: u.id,
         });
         const primeiroNome = (u.name || 'tudo bem').split(' ')[0];
@@ -1850,19 +1877,19 @@ cron.schedule('*/15 * * * *', async () => {
             // ⚠️ O limite geral entra JUNTO das categorias, não como parâmetro
             // próprio: quem não configurou meta mandaria um campo vazio.
             const cats = (atual.topCats || []).slice(0, 3)
-              .map(([nome, val]) => `${nome} ${brl(val)}`).join(' · ');
+              .map(([nome, val]) => `${nome} ${brl(val, moedaG)}`).join(' · ');
             const meta = u.meta_mensal > 0
               ? `🎯 Limite: ${Math.round((atual.gastos / u.meta_mensal) * 100)}% usado` : '';
             const base = [
               primeiroNome, mesNome, insight.titulo, insight.frase,
-              brl(atual.gastos) + deltaGastos(atual.gastos, anterior.gastos, 'vs mês anterior'),
-              brl(atual.receitas), brl(atual.saldo),
+              brl(atual.gastos, moedaG) + deltaGastos(atual.gastos, anterior.gastos, 'vs mês anterior'),
+              brl(atual.receitas, moedaG), brl(atual.saldo, moedaG),
               [cats, meta].filter(Boolean).join(' · ') || 'sem gastos no período',
             ];
             const gLinha = linhaGrow(grow, 'mes');
             return (gLinha && templateDoAviso('sora', 'resumo-mensal', [...base, gLinha], 'resumo_mensal_grow'))
               || templateDoAviso('sora', 'resumo-mensal', base)
-              || { name: 'resumo_mensal', params: [primeiroNome, mesNome, brl(atual.gastos), brl(atual.receitas), brl(atual.saldo)], opts: { headerImage: CAPA } };
+              || { name: 'resumo_mensal', params: [primeiroNome, mesNome, brl(atual.gastos, moedaG), brl(atual.receitas, moedaG), brl(atual.saldo, moedaG)], opts: { headerImage: CAPA } };
           })(),
         });
         enviados++;

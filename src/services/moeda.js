@@ -447,6 +447,22 @@ function formatar(valor, moeda) {
 }
 
 /**
+ * Formatador de dinheiro DO GRUPO, pros textos do WhatsApp (Fase 3 do plano da
+ * moeda base): `const fmt = await formatadorDoGrupo(grupoId)` e depois `fmt(v)`.
+ *
+ * ⚠️ NUNCA escrever `R$ ${v.toFixed(2)}` num texto novo: num grupo em dólar
+ * isso mostra dólar com cara de real. E a grafia segue o IDIOMA (pt-BR), não a
+ * moeda — decisão do dono: "US$ 1.234,56", não "US$ 1,234.56".
+ *
+ * A base é cacheada por 10 min (moedaBaseDoGrupo), então chamar uma vez por
+ * mensagem não custa ida de rede.
+ */
+async function formatadorDoGrupo(grupoId) {
+  const base = await moedaBaseDoGrupo(grupoId);
+  return (v) => formatar(v, base);
+}
+
+/**
  * Soma o saldo de uma lista de carteiras NA MOEDA BASE, buscando câmbio só se
  * houver carteira fora da base (migration 168).
  *
@@ -632,6 +648,6 @@ module.exports = {
   taxaEntre, paraBase, moedaBaseDoGrupo, esquecerMoedaBase, baseDisponivel, marcarBaseIndisponivel,
   taxasParaBase, saldoNaBase, comSaldoNaBase, fatorCotacaoParaBase, cartaoForaDaBase, motivoCartaoForaDaBase,
   saldoEmBRL, somarSaldos, totalDeSaldosNaBase,
-  camposTransacao, valorNativo, originalDoValorNaBase, formatar,
+  camposTransacao, valorNativo, originalDoValorNaBase, formatar, formatadorDoGrupo,
   comSaldoBRL, aquecerCotacoes, atualizarRecorrenciasEstrangeiras,
 };

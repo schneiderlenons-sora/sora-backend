@@ -30,6 +30,7 @@ const supabase = require('../db/supabase');
 const celcoin  = require('./polpCelcoin');
 const {
   normalizarMoeda, MOEDAS, moedaBaseDoGrupo, taxasParaBase, taxaEntre, camposTransacao, totalDeSaldosNaBase,
+  formatar,
 } = require('./moeda');
 const {
   categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA, CATEGORIA_ESTORNO,
@@ -1849,7 +1850,10 @@ function contratoDe(item) {
   return out;
 }
 
-function normalizeDivida(item, kind) {
+// `fmtSaldo` (opcional): formata o "Saldo devedor" da observação. O sync passa
+// um que já leva pra moeda do grupo — senão a linha diria real numa dívida
+// gravada em dólar. Sem ele, o real de sempre.
+function normalizeDivida(item, kind, fmtSaldo = (v) => `R$ ${Number(v || 0).toFixed(2)}`) {
   const c   = contratoDe(item);
   const sch = item.scheduled_instalments || {};
   const pay = item.payments || {};
@@ -1901,7 +1905,7 @@ function normalizeDivida(item, kind) {
     : null;
 
   const obs = [
-    saldoDevedor != null ? `Saldo devedor: R$ ${saldoDevedor.toFixed(2)}` : null,
+    saldoDevedor != null ? `Saldo devedor: ${fmtSaldo(saldoDevedor)}` : null,
     c.cet ? `CET ${(pct(c.cet) ?? 0).toFixed(2)}% a.a.` : null,
     c.amortization_scheduled ? `Amortização ${c.amortization_scheduled}` : null,
     vencidas > 0 ? `${vencidas} parcela(s) em atraso` : null,
@@ -3388,9 +3392,10 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
             const restante = Math.max(0, cent(estimada - pago));
             await upsertWallet(grupoId, userId, n, -restante, consentId);
             relatorio.avisos.push(
-              `${walletNome}: banco não publicou o total da fatura em aberto — somada por ${fonte} = R$ ${restante.toFixed(2)}` +
-              ` · limite usado informado pelo emissor: ${n.limiteUsado == null ? 'não informado' : `R$ ${Number(n.limiteUsado).toFixed(2)}`}` +
-              (futuras ? ` · parcelas datadas no futuro: R$ ${futuras.toFixed(2)}` : ''));
+              // Números do CARTÃO, na moeda dele (migration 168).
+              `${walletNome}: banco não publicou o total da fatura em aberto — somada por ${fonte} = ${formatar(restante, moedaCartao)}` +
+              ` · limite usado informado pelo emissor: ${n.limiteUsado == null ? 'não informado' : formatar(Number(n.limiteUsado), moedaCartao)}` +
+              (futuras ? ` · parcelas datadas no futuro: ${formatar(futuras, moedaCartao)}` : ''));
             if (n.faturaAberta) { n.faturaAberta.total = estimada; n.faturaAberta.fonte = fonte; }
             else n.faturaAberta = { estimada: true, restante, fonte };
           }
@@ -3453,7 +3458,10 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     ]) {
       for (const raw of lista) {
         try {
-          const d0 = normalizeDivida(raw, kind);
+          // A moeda do contrato sai antes: o texto do saldo devedor precisa dela.
+          const tSaldo = await taxaDoBanco(contratoDe(raw).currency || moeda(contratoDe(raw).contract_amount));
+          const d0 = normalizeDivida(raw, kind,
+            (v) => formatar(tSaldo === null || tSaldo === 1 ? v : cent(v * tSaldo), tSaldo === null ? null : base));
           if (!d0) { relatorio.dividas.push({ pulado: 'sem valor contratado', id: raw.id }); continue; }
           // Moeda do contrato (o Open Finance brasileiro manda real) → base do grupo.
           const contrato = contratoDe(raw);

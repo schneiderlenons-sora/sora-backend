@@ -3,7 +3,8 @@ const { enviarTexto } = require('../services/mensageiro');
 const { oferecerDesconto } = require('../services/descontoConta');
 const { criarPendente } = require('../services/pendentes');
 
-const fmt = v => `R$ ${(parseFloat(v) || 0).toFixed(2).replace('.', ',')}`;
+// Dinheiro na moeda do GRUPO (Fase 3) — o `fmt` nasce dentro do handler.
+const { formatadorDoGrupo } = require('../services/moeda');
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 
 const TIPO_LABEL = {
@@ -49,6 +50,7 @@ async function encontrarDivida(grupoId, termo) {
 
 module.exports = async function handleDividas(data, ctx) {
   const { phone, grupoId, user } = ctx;
+  const fmt = await formatadorDoGrupo(grupoId);
 
   // ── CRIAR DÍVIDA ───────────────────────────────────────────────
   if (data.acao === 'criar_divida') {

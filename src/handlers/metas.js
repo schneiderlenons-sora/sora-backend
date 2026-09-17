@@ -7,10 +7,12 @@ const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/mensageiro');
 const { oferecerDesconto } = require('../services/descontoConta');
 
-const fmt = (v) => `R$ ${Number(v || 0).toFixed(2)}`;
+// Dinheiro na moeda do GRUPO (Fase 3) — o `fmt` nasce dentro do handler.
+const { formatadorDoGrupo } = require('../services/moeda');
 
 module.exports = async function handleMetas(data, ctx) {
   const { phone, grupoId, user } = ctx;
+  const fmt = await formatadorDoGrupo(grupoId);
 
   if (data.acao === 'aporte_meta') {
     const termo = (data.termo || '').trim();

@@ -13,9 +13,15 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // ⚠️ Achado testando o insight com a IA de verdade: `.toFixed(2)` usa PONTO
 // como separador decimal em JS, sempre — "R$ 600.00" em vez de "R$ 600,00".
 // Bug pré-existente (não é meu), mas real: quem recebe o resumo toda semana
-// via essa função. jobs/index.js já tem a versão CERTA (toLocaleString
-// pt-BR) — espelhando aqui, mesma convenção do resto do projeto (CLAUDE.md).
-const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// via essa função. Hoje quem formata é `services/moeda.formatar`, fonte única
+// do projeto (CLAUDE.md), com o mesmo pt-BR de sempre.
+// ⚠️ `moeda` é a BASE DO GRUPO (migration 168). Sem ela, real — o de antes.
+const brl = (v, moeda = null) => require('./moeda').formatar(v, moeda);
+
+// Plural em português, só pra frase do prompt abaixo ("NÃO repita valores em
+// reais"). Não sai do catálogo por regra: Real → reais é irregular. Moeda fora
+// do mapa cai no genérico "valores" — melhor do que nomear a moeda errada.
+const PLURAL_MOEDA = { BRL: 'reais', USD: 'dólares', EUR: 'euros', GBP: 'libras', NOK: 'coroas' };
 const limpaCat = (s) => (s || '').replace(/\p{Emoji}/gu, '').trim() || 'Outros';
 
 /** Soma gastos/receitas/categorias de um grupo no intervalo [inicio, fim). Datas YYYY-MM-DD. */
@@ -121,8 +127,17 @@ function fmtGrow(grow) {
  * disponível, Grow (hábitos/tarefas/treino/estudos). gpt-4o-mini com fallback
  * local (nunca quebra o resumo). Retorna { titulo, frase }.
  */
-async function gerarInsight({ periodo, atual, anterior, grow }) {
-  const fmtCats = (arr) => arr.slice(0, 8).map(([n, v]) => `${n} R$${Math.round(v)}`).join(', ') || 'nada';
+async function gerarInsight({ periodo, atual, anterior, grow, moeda = null }) {
+  // ⚠️ O SÍMBOLO ENTRA NO PROMPT INTEIRO, few-shot inclusive. A instrução manda
+  // NÃO repetir valores, mas o 3º exemplo mostra a IA citando um ("um IOF de
+  // R$120"): com os exemplos em real, um grupo em coroa receberia a frase
+  // falando em reais. Em grupo em real o prompt sai caractere por caractere
+  // igual ao de antes — `sim` é 'R$' e `emMoeda` é ' em reais'.
+  const { MOEDAS, normalizarMoeda } = require('./moeda');
+  const cod = normalizarMoeda(moeda);
+  const sim = MOEDAS[cod].simbolo;
+  const emMoeda = PLURAL_MOEDA[cod] ? ` em ${PLURAL_MOEDA[cod]}` : '';
+  const fmtCats = (arr) => arr.slice(0, 8).map(([n, v]) => `${n} ${sim}${Math.round(v)}`).join(', ') || 'nada';
   const growTxt = fmtGrow(grow);
   try {
     const sys = 'Você é a Sora, assistente financeira e de rotina pessoal, calorosa e perspicaz. ' +
@@ -133,7 +148,7 @@ async function gerarInsight({ periodo, atual, anterior, grow }) {
       '"Semana de disciplina". Se o resultado foi excepcional (100% dos hábitos, treinou todo dia, gasto bem menor), ' +
       'pode comemorar ou parabenizar — no título ou na frase, não nos dois ao mesmo tempo.\n' +
       'FRASE: 1 a 2 frases curtas combinando o que mudou de verdade — categorias que sumiram/surgiram, se gastou ' +
-      'mais/menos, e (só se houver dado) hábitos/treino/estudos/tarefas. NÃO repita valores em reais (já aparecem ' +
+      `mais/menos, e (só se houver dado) hábitos/treino/estudos/tarefas. NÃO repita valores${emMoeda} (já aparecem ` +
       'na mensagem) — foque em PADRÕES e no que isso revela.\n' +
       'Tom leve, humano, como um amigo esperto. Sem julgar, sem lição de moral, sem exagero. ' +
       'NÃO invente nada além dos dados fornecidos — se uma área não veio nos dados, não fale dela. ' +
@@ -141,27 +156,27 @@ async function gerarInsight({ periodo, atual, anterior, grow }) {
     // Few-shot: ancora o tom e mostra como misturar finanças + Grow sem forçar.
     const exemplos = [
       [
-        'Período: semana.\nGastos: R$450 (período anterior: R$820).\nReceitas: R$1200. Saldo: R$750.\n' +
-        'Categorias agora: Mercado R$300, Farmácia R$150.\nCategorias antes: iFood R$400, Uber R$220, Mercado R$200.',
+        `Período: semana.\nGastos: ${sim}450 (período anterior: ${sim}820).\nReceitas: ${sim}1200. Saldo: ${sim}750.\n` +
+        `Categorias agora: Mercado ${sim}300, Farmácia ${sim}150.\nCategorias antes: iFood ${sim}400, Uber ${sim}220, Mercado ${sim}200.`,
         '{"titulo":"Semana mais em casa","frase":"iFood e Uber sumiram do seu radar essa semana — o gasto caiu quase pela metade, quase tudo foi mercado e farmácia."}',
       ],
       [
-        'Período: semana.\nGastos: R$680 (período anterior: R$700).\nReceitas: R$1000. Saldo: R$320.\n' +
-        'Categorias agora: Mercado R$400, Assinaturas R$180.\nCategorias antes: Mercado R$420, Assinaturas R$180.\n' +
+        `Período: semana.\nGastos: ${sim}680 (período anterior: ${sim}700).\nReceitas: ${sim}1000. Saldo: ${sim}320.\n` +
+        `Categorias agora: Mercado ${sim}400, Assinaturas ${sim}180.\nCategorias antes: Mercado ${sim}420, Assinaturas ${sim}180.\n` +
         'Hábitos: 21/21 marcados (100%) — TODOS os dias, 100%, destaque "Beber água".\n' +
         'Treino: 5 sessão(ões) em 5/7 dias, 240 min — principalmente Academia.',
         '{"titulo":"Semana redonda 🏆","frase":"Fora o financeiro estável, o destaque foi você: hábitos 100% marcados a semana inteira e 5 treinos na academia. Mandou muito bem!"}',
       ],
       [
-        'Período: mês.\nGastos: R$3200 (período anterior: R$2900).\nReceitas: R$4500. Saldo: R$1300.\n' +
-        'Categorias agora: Aluguel R$1500, Mercado R$800, Assinaturas R$300, IOF R$120.\n' +
-        'Categorias antes: Aluguel R$1500, Mercado R$750, Assinaturas R$300.',
-        '{"titulo":"Mês com um gasto fora da curva","frase":"O mês seguiu parecido com o anterior, só que com um IOF de R$120 que não costuma aparecer — vale conferir se foi algo pontual."}',
+        `Período: mês.\nGastos: ${sim}3200 (período anterior: ${sim}2900).\nReceitas: ${sim}4500. Saldo: ${sim}1300.\n` +
+        `Categorias agora: Aluguel ${sim}1500, Mercado ${sim}800, Assinaturas ${sim}300, IOF ${sim}120.\n` +
+        `Categorias antes: Aluguel ${sim}1500, Mercado ${sim}750, Assinaturas ${sim}300.`,
+        `{"titulo":"Mês com um gasto fora da curva","frase":"O mês seguiu parecido com o anterior, só que com um IOF de ${sim}120 que não costuma aparecer — vale conferir se foi algo pontual."}`,
       ],
     ];
     const user = `Período: ${periodo === 'mes' ? 'mês' : 'semana'}.\n` +
-      `Gastos: R$${Math.round(atual.gastos)} (período anterior: R$${Math.round(anterior.gastos)}).\n` +
-      `Receitas: R$${Math.round(atual.receitas)}. Saldo: R$${Math.round(atual.saldo)}.\n` +
+      `Gastos: ${sim}${Math.round(atual.gastos)} (período anterior: ${sim}${Math.round(anterior.gastos)}).\n` +
+      `Receitas: ${sim}${Math.round(atual.receitas)}. Saldo: ${sim}${Math.round(atual.saldo)}.\n` +
       `Categorias agora: ${fmtCats(atual.topCats)}.\n` +
       `Categorias antes: ${fmtCats(anterior.topCats)}.` +
       (growTxt ? `\n${growTxt}` : '');
@@ -223,18 +238,21 @@ function linhasGrow(grow, periodo = 'semana') {
   return linhas;
 }
 
-function montarCorpoSemanal({ atual, anterior, insight, grow }) {
+function montarCorpoSemanal({ atual, anterior, insight, grow, moeda = null }) {
+  // `valor` das transações está SEMPRE na base do grupo (migration 168), então
+  // é só dizer qual é ela. Sem `moeda`, real — o de antes.
+  const fmt = (v) => brl(v, moeda);
   const partes = [
     `*${insight.titulo}*`,
     insight.frase,
     '',
-    `🔴 Gastos: ${brl(atual.gastos)}${deltaGastos(atual.gastos, anterior.gastos, 'vs semana passada')}`,
-    `🟢 Receitas: ${brl(atual.receitas)}`,
-    `💰 *Saldo: ${brl(atual.saldo)}*`,
+    `🔴 Gastos: ${fmt(atual.gastos)}${deltaGastos(atual.gastos, anterior.gastos, 'vs semana passada')}`,
+    `🟢 Receitas: ${fmt(atual.receitas)}`,
+    `💰 *Saldo: ${fmt(atual.saldo)}*`,
   ];
   if (atual.topCats.length) {
     const [nome, val] = atual.topCats[0];
-    partes.push(`Maior categoria: *${nome}* (${brl(val)})`);
+    partes.push(`Maior categoria: *${nome}* (${fmt(val)})`);
   }
   const gLinhas = linhasGrow(grow);
   if (gLinhas.length) partes.push('', ...gLinhas);
@@ -242,21 +260,22 @@ function montarCorpoSemanal({ atual, anterior, insight, grow }) {
   return partes.join('\n');
 }
 
-function montarCorpoMensal({ mesNome, atual, anterior, metaMensal, insight, grow }) {
+function montarCorpoMensal({ mesNome, atual, anterior, metaMensal, insight, grow, moeda = null }) {
+  const fmt = (v) => brl(v, moeda);
   const partes = [
     `*${insight.titulo}* · ${mesNome}`,
     insight.frase,
     '',
-    `🔴 Gastos: ${brl(atual.gastos)}${deltaGastos(atual.gastos, anterior.gastos, 'vs mês anterior')}`,
-    `🟢 Receitas: ${brl(atual.receitas)}`,
-    `💰 *Saldo: ${brl(atual.saldo)}*`,
+    `🔴 Gastos: ${fmt(atual.gastos)}${deltaGastos(atual.gastos, anterior.gastos, 'vs mês anterior')}`,
+    `🟢 Receitas: ${fmt(atual.receitas)}`,
+    `💰 *Saldo: ${fmt(atual.saldo)}*`,
   ];
   if (atual.topCats.length) {
     partes.push('', '*Top categorias:*');
-    atual.topCats.slice(0, 3).forEach(([nome, val]) => partes.push(`• ${nome}: ${brl(val)}`));
+    atual.topCats.slice(0, 3).forEach(([nome, val]) => partes.push(`• ${nome}: ${fmt(val)}`));
   }
   if (metaMensal > 0) {
-    partes.push('', `🎯 Limite Geral: ${brl(metaMensal)} (${Math.round((atual.gastos / metaMensal) * 100)}% usado)`);
+    partes.push('', `🎯 Limite Geral: ${fmt(metaMensal)} (${Math.round((atual.gastos / metaMensal) * 100)}% usado)`);
   }
   const gLinhas = linhasGrow(grow, 'mes');
   if (gLinhas.length) partes.push('', ...gLinhas);

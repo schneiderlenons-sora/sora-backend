@@ -89,13 +89,14 @@ const ALVO_GERAL = 'gasto geral';
 // Com separador de milhar: "R$ 1.234,50". Sem ele, um teto de R$ 1234,50 lia
 // como valor menor de relance — e o alerta existe pra dar o susto certo.
 //
-// ⚠️ O "R$ " é concatenado À MÃO de propósito. Com `style: 'currency'` o Intl
-// insere um espaço NÃO SEPARÁVEL (U+00A0) entre símbolo e número, e caractere
-// invisível dentro de parâmetro de template é risco que só aparece em produção.
-const brl = (v) => 'R$ ' + new Intl.NumberFormat('pt-BR',
-  { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v) || 0);
+// ⚠️ O SÍMBOLO É CONCATENADO À MÃO, e continua sendo em `services/moeda.formatar`.
+// Com `style: 'currency'` o Intl insere um espaço NÃO SEPARÁVEL (U+00A0) entre
+// símbolo e número, e caractere invisível dentro de parâmetro de template é
+// risco que só aparece em produção.
+// ⚠️ `moeda` é a do GRUPO (Fase 3 do plano da moeda base). Sem ela, real.
+const brlNa = (v, moeda) => require('./moeda').formatar(v, moeda);
 
-function templateLimite(nome, alvo, pct, gasto, teto, seed) {
+function templateLimite(nome, alvo, pct, gasto, teto, seed, moedaDoGrupo = null) {
   const { aberturaDe, capaDe } = require('../agentes');
   return {
     name: TPL_LIMITE_NOME,
@@ -109,8 +110,8 @@ function templateLimite(nome, alvo, pct, gasto, teto, seed) {
       // `Math.round(NaN)` é NaN e sairia "NaN%" na cara do cliente — um teto
       // zerado ou um valor sujo bastam pra chegar aqui.
       `${Number.isFinite(Number(pct)) ? Math.round(Number(pct)) : 0}%`,
-      brl(gasto),
-      brl(teto),
+      brlNa(gasto, moedaDoGrupo),
+      brlNa(teto, moedaDoGrupo),
     ],
     // O modelo passou a ter cabeçalho de IMAGEM (a foto do Don Baleone), e a
     // Meta EXIGE o parâmetro de header em todo envio quando ele existe — sem
@@ -184,6 +185,8 @@ async function avisarGrupo(grupoId, fallbackPhone, msg, template) {
  */
 async function verificarLimite(grupoId, phone, user) {
   if (!grupoId) return;
+  // Alerta de limite fala a moeda do GRUPO (Fase 3 do plano da moeda base).
+  const base = await require('./moeda').moedaBaseDoGrupo(grupoId);
 
   const mesRef = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
   // Primeiro dia do mês seguinte (limite exclusivo) — evita `${mes}-31`
@@ -221,8 +224,8 @@ async function verificarLimite(grupoId, phone, user) {
         const alvo = String(limite.categoria || '').replace(/\p{Extended_Pictographic}/gu, '').trim();
         const enviado = await avisarGrupo(grupoId, phone,
           `⚠️ *Limite de ${limite.categoria}*: os gastos chegaram a *${pct.toFixed(0)}%* do teto do mês.\n` +
-          `Teto: ${brl(limite.limite_mensal)} | Gasto atual: ${brl(total)}`,
-          (nome, seed) => templateLimite(nome, alvo, pct, total, limite.limite_mensal, seed));
+          `Teto: ${brlNa(limite.limite_mensal, base)} | Gasto atual: ${brlNa(total, base)}`,
+          (nome, seed) => templateLimite(nome, alvo, pct, total, limite.limite_mensal, seed, base));
 
         // Só marca se saiu de verdade — senão o aviso do mês morre num envio
         // que falhou e o teto estoura calado. A próxima escrita tenta de novo.
@@ -254,6 +257,7 @@ async function verificarLimiteGeral(grupoId, phone, user, mesRef, gastos) {
   const pctAlerta = u.meta_mensal_alerta_pct ?? 80;
   if (!meta || !ativo || !alertaAtivo) return;
   if (u.meta_mensal_alerta_enviado === mesRef) return; // já avisou este mês
+  const base = await require('./moeda').moedaBaseDoGrupo(grupoId);
 
   const total = (gastos || []).reduce((s, g) => s + (g.valor || 0), 0);
   const pct = (total / meta) * 100;
@@ -261,8 +265,8 @@ async function verificarLimiteGeral(grupoId, phone, user, mesRef, gastos) {
 
   const enviado = await avisarGrupo(grupoId, phone,
     `🚨 *Limite geral do mês*: os gastos chegaram a *${pct.toFixed(0)}%* da meta.\n` +
-    `Meta: ${brl(meta)} | Gasto total: ${brl(total)}`,
-    (nome, seed) => templateLimite(nome, ALVO_GERAL, pct, total, meta, seed));
+    `Meta: ${brlNa(meta, base)} | Gasto total: ${brlNa(total, base)}`,
+    (nome, seed) => templateLimite(nome, ALVO_GERAL, pct, total, meta, seed, base));
 
   if (!enviado) return; // não queima o aviso do mês num envio que falhou
 

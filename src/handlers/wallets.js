@@ -63,6 +63,10 @@ function limitePorPlano(plano) {
 
 module.exports = async function handleWallets(data, ctx) {
   const { phone, grupoId, user } = ctx;
+  // Dinheiro na moeda do GRUPO (Fase 3). Valor de UMA conta sai na moeda DELA
+  // — é o número que o cliente vê no app do banco (`fmtMoeda(v, w.moeda)`).
+  const base = await moedaBaseDoGrupo(grupoId);
+  const fmt = (v) => fmtMoeda(v, base);
 
   // ── CRIAR / DEFINIR SALDO ───────────────────────────────────────
   if (data.acao === 'set_wallet') {
@@ -77,7 +81,7 @@ module.exports = async function handleWallets(data, ctx) {
       .select('*', { count: 'exact', head: true }).eq('grupo_id', grupoId);
 
     const jaExiste = await supabase.from('wallets')
-      .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
+      .select('id, saldo, moeda').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
 
     if (!jaExiste.data && count >= limitePorPlano(user.plano)) {
       await enviarTexto(phone, `⚠️ Limite de ${limitePorPlano(user.plano)} contas atingido no seu plano.\nRemova uma conta antes de adicionar outra, ou faça upgrade.`);
@@ -120,9 +124,11 @@ module.exports = async function handleWallets(data, ctx) {
       await registrarAjuste({ grupoId, criadoPor: user?.id, carteiraNome: nomeFinal, diff: diffAjuste });
     }
 
-    const sinalAj = diffAjuste > 0 ? `+R$ ${diffAjuste.toFixed(2)}` : `−R$ ${Math.abs(diffAjuste).toFixed(2)}`;
+    // Conta que já existe pode estar em OUTRA moeda; a nova nasce na base.
+    const fmtEsta = (v) => fmtMoeda(v, jaExiste.data?.moeda || base);
+    const sinalAj = diffAjuste > 0 ? `+${fmtEsta(diffAjuste)}` : `−${fmtEsta(Math.abs(diffAjuste))}`;
     await enviarTexto(phone,
-      `${emojiTipo} Conta *${nomeFinal}* (${tipo}) ${existia ? 'atualizada' : 'criada'} com saldo de R$ ${parseFloat(data.valor).toFixed(2)}.` +
+      `${emojiTipo} Conta *${nomeFinal}* (${tipo}) ${existia ? 'atualizada' : 'criada'} com saldo de ${fmtEsta(parseFloat(data.valor))}.` +
       (diffAjuste !== 0 ? `\n\n🔧 Registrei a diferença (*${sinalAj}*) como *Ajuste*, pra o histórico bater com o saldo.` : '')
     );
 
@@ -190,7 +196,7 @@ module.exports = async function handleWallets(data, ctx) {
         `💳 *Cartão criado!*\n\n` +
         `🏦 ${nomeCartao}\n` +
         `💳 Bandeira: ${data.bandeira}\n` +
-        `💰 Limite: R$ ${data.limite.toFixed(2)}\n` +
+        `💰 Limite: ${fmt(data.limite)}\n` +
         `📅 Fecha dia ${data.dia_fechamento} · Vence dia ${data.dia_vencimento}`
       );
       return;
@@ -234,12 +240,14 @@ module.exports = async function handleWallets(data, ctx) {
     }
 
     const { data: wallet } = await supabase.from('wallets')
-      .select('id, nome, saldo').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
+      .select('id, nome, saldo, moeda').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
 
     if (!wallet) {
       await enviarTexto(phone, `❌ Conta *${nomeFinal}* não encontrada. Crie primeiro com "${nomeFinal.toLowerCase()} 0".`);
       return;
     }
+    // Saldo é NATIVO: uma conta em coroa responde em coroa.
+    const fmtConta = (v) => fmtMoeda(v, wallet.moeda || base);
 
     const add = parseFloat(data.valor);
     const novoSaldo = (wallet.saldo || 0) + add;
@@ -250,7 +258,7 @@ module.exports = async function handleWallets(data, ctx) {
     await registrarAjuste({ grupoId, criadoPor: user?.id, carteiraNome: wallet.nome, diff: add });
 
     await enviarTexto(phone,
-      `✅ R$ ${add.toFixed(2)} adicionados à conta *${nomeFinal}*.\nNovo saldo: R$ ${novoSaldo.toFixed(2)}` +
+      `✅ ${fmtConta(add)} adicionados à conta *${nomeFinal}*.\nNovo saldo: ${fmtConta(novoSaldo)}` +
       (add ? `\n\n🔧 Registrei como *Ajuste* pra o histórico bater com o saldo.` : ''));
     return;
   }
@@ -264,12 +272,13 @@ module.exports = async function handleWallets(data, ctx) {
     }
 
     const { data: wallet } = await supabase.from('wallets')
-      .select('id, nome, saldo').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
+      .select('id, nome, saldo, moeda').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
 
     if (!wallet) {
       await enviarTexto(phone, `❌ Conta *${nomeFinal}* não encontrada.`);
       return;
     }
+    const fmtConta = (v) => fmtMoeda(v, wallet.moeda || base);
 
     const novo  = parseFloat(data.valor);
     const atual = wallet.saldo || 0;
@@ -281,9 +290,9 @@ module.exports = async function handleWallets(data, ctx) {
     // histórico, já que o saldo era só sobrescrito).
     await registrarAjuste({ grupoId, criadoPor: user?.id, carteiraNome: wallet.nome, diff });
 
-    const sinal = diff > 0 ? `+R$ ${diff.toFixed(2)}` : `−R$ ${Math.abs(diff).toFixed(2)}`;
+    const sinal = diff > 0 ? `+${fmtConta(diff)}` : `−${fmtConta(Math.abs(diff))}`;
     await enviarTexto(phone,
-      `✅ Saldo da conta *${nomeFinal}* atualizado para R$ ${novo.toFixed(2)}.` +
+      `✅ Saldo da conta *${nomeFinal}* atualizado para ${fmtConta(novo)}.` +
       (diff !== 0
         ? `\n\n🔧 Registrei a diferença (*${sinal}*) como *Ajuste*, pra o histórico bater com o saldo.`
         : ''));
@@ -349,10 +358,10 @@ module.exports = async function handleWallets(data, ctx) {
 
     // Com cartão a pagar, mostra o líquido (contas − fatura). Sem cartão, só o total.
     const rodape = (aPagar > 0
-      ? `💵 Total em contas: R$ ${emContas.toFixed(2)}\n` +
-        `💳 A pagar no cartão: R$ ${aPagar.toFixed(2)}\n` +
-        `💰 *Saldo líquido: R$ ${(emContas - aPagar).toFixed(2)}*`
-      : `💵 *Total: R$ ${emContas.toFixed(2)}*`) + avisoCambio;
+      ? `💵 Total em contas: ${fmt(emContas)}\n` +
+        `💳 A pagar no cartão: ${fmt(aPagar)}\n` +
+        `💰 *Saldo líquido: ${fmt(emContas - aPagar)}*`
+      : `💵 *Total: ${fmt(emContas)}*`) + avisoCambio;
 
     await enviarTexto(phone, `💰 *SEUS SALDOS:*\n\n${linhas}\n\n${rodape}`);
     return;
@@ -372,10 +381,10 @@ module.exports = async function handleWallets(data, ctx) {
     // cheque_especial (migration 094): permite ir negativo até esse teto.
     // Select tolerante (coluna pode não existir ainda → refaz sem ela).
     let { data: origem, error: origemErr } = await supabase.from('wallets')
-      .select('id, saldo, cheque_especial').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single();
+      .select('id, saldo, moeda, cheque_especial').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single();
     if (origemErr) {
       ({ data: origem } = await supabase.from('wallets')
-        .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single());
+        .select('id, saldo, moeda').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single());
     }
 
     if (!origem) {
@@ -384,7 +393,7 @@ module.exports = async function handleWallets(data, ctx) {
     }
     const disponivel = (origem.saldo || 0) + Math.abs(Number(origem.cheque_especial) || 0);
     if (disponivel < valor) {
-      await enviarTexto(phone, `⚠️ Saldo insuficiente em *${nomeOrigem}*. Disponível: R$ ${disponivel.toFixed(2)}`);
+      await enviarTexto(phone, `⚠️ Saldo insuficiente em *${nomeOrigem}*. Disponível: ${fmtMoeda(disponivel, origem.moeda || base)}`);
       return;
     }
 
@@ -417,7 +426,7 @@ module.exports = async function handleWallets(data, ctx) {
       `💸 *Transferência realizada!*\n\n` +
       `📤 Saída: *${nomeOrigem}*\n` +
       `📥 Entrada: *${nomeDestino}*\n` +
-      `💵 Valor: R$ ${valor.toFixed(2)}`
+      `💵 Valor: ${fmtMoeda(valor, origem.moeda || base)}`
     );
     return;
   }
@@ -444,7 +453,7 @@ module.exports = async function handleWallets(data, ctx) {
   // Cartões pela FATURA ABERTA (ciclo de fechamento); contas pelo gasto do MÊS.
   if (data.acao === 'gastos_carteiras') {
     const { data: wallets } = await supabase.from('wallets')
-      .select('nome, tipo, limite, dia_fechamento, dia_vencimento').eq('grupo_id', grupoId).order('nome');
+      .select('nome, tipo, limite, dia_fechamento, dia_vencimento, moeda').eq('grupo_id', grupoId).order('nome');
 
     if (!wallets?.length) {
       await enviarTexto(phone,
@@ -465,7 +474,7 @@ module.exports = async function handleWallets(data, ctx) {
         const c = cicloPorCompetencia(w, competenciaAtual(w));
         const soma = await somarGastosCarteira(grupoId, w.nome, c.ini, c.fimExcl);
         // `fatura` na moeda do cartão (a do limite); `faturaBase` pro total.
-        cartoes.push({ nome: w.nome, fatura: soma.naCarteira, faturaBase: soma.naBase, limite: w.limite });
+        cartoes.push({ nome: w.nome, moeda: w.moeda, fatura: soma.naCarteira, faturaBase: soma.naBase, limite: w.limite });
       } else {
         const gasto = (await somarGastosCarteira(grupoId, w.nome, iniMes, fimMes, true)).naBase;
         contas.push({ nome: w.nome, gasto, tipo: w.tipo });
@@ -478,18 +487,18 @@ module.exports = async function handleWallets(data, ctx) {
     if (cartoes.length) {
       msg += `\n\n*💳 Cartões (fatura aberta):*\n` + cartoes.map(c => {
         const uso = c.limite ? ` · ${Math.round((c.fatura / c.limite) * 100)}% do limite` : '';
-        return `💳 *${c.nome}:* R$ ${c.fatura.toFixed(2)}${uso}`;
+        return `💳 *${c.nome}:* ${fmtMoeda(c.fatura, c.moeda || base)}${uso}`;
       }).join('\n');
     }
     if (contas.length) {
       msg += `\n\n*🏦 Contas (gasto no mês):*\n` + contas.map(c => {
         const emoji = c.tipo === 'Poupança' ? '🐷' : c.tipo === 'Dinheiro' ? '💵' : '🏦';
-        return `${emoji} *${c.nome}:* R$ ${c.gasto.toFixed(2)}`;
+        return `${emoji} *${c.nome}:* ${fmt(c.gasto)}`;
       }).join('\n');
     }
 
     const total = cartoes.reduce((s, c) => s + c.faturaBase, 0) + contas.reduce((s, c) => s + c.gasto, 0);
-    msg += `\n\n💰 *Total: R$ ${total.toFixed(2)}*`;
+    msg += `\n\n💰 *Total: ${fmt(total)}*`;
 
     await enviarBotaoLink(phone, { message: msg, label: 'Ver no painel', url: 'https://forsora.com/dashboard' });
     return;

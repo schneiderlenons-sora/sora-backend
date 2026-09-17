@@ -134,9 +134,11 @@ function parcelaJaCobrada(t, hoje) {
  */
 function agruparParcelas(comGrupo, semGrupo, hoje) {
   const grupos = new Map();
-  const novo = (desc, cartao, total, valor, legado) => ({
+  // `moeda`: a do CARTÃO quando ele não está na base do grupo (migration 168);
+  // null = na base. Quem escreve o texto formata com ela.
+  const novo = (desc, cartao, total, valor, legado, moeda = null) => ({
     desc, cartao, total: total || 0, pagas: 0, restantes: 0, valorRestante: 0, valorRestanteBase: 0,
-    valorParcela: valor || 0, proxima: null, valorTotal: 0, linhas: 0, legado,
+    valorParcela: valor || 0, proxima: null, valorTotal: 0, linhas: 0, legado, moeda,
   });
   // Na moeda do CARTÃO (migration 168): parcela de cartão fora da moeda do
   // grupo guarda o original em `valor_moeda`. Sem ele (todo cartão hoje) é o
@@ -156,7 +158,7 @@ function agruparParcelas(comGrupo, semGrupo, hoje) {
   for (const t of comGrupo || []) {
     if (!t || !t.parcela_grupo) continue;
     const g = grupos.get(t.parcela_grupo)
-      || novo((t.observacao || 'Compra').trim() || 'Compra', t.carteira_nome, t.parcela_total, valorDe(t), false);
+      || novo((t.observacao || 'Compra').trim() || 'Compra', t.carteira_nome, t.parcela_total, valorDe(t), false, t.moeda || null);
     if (t.parcela_total) g.total = t.parcela_total;
     contar(g, t);
     grupos.set(t.parcela_grupo, g);
@@ -168,7 +170,7 @@ function agruparParcelas(comGrupo, semGrupo, hoje) {
     const desc = mm[1].trim() || 'Compra';
     const total = parseInt(mm[3], 10);
     const chave = `legacy:${desc.toLowerCase()}:${(t.carteira_nome || '').toLowerCase()}:${total}`;
-    const g = grupos.get(chave) || novo(desc, t.carteira_nome, total, valorDe(t), true);
+    const g = grupos.get(chave) || novo(desc, t.carteira_nome, total, valorDe(t), true, t.moeda || null);
     contar(g, t);
     grupos.set(chave, g);
   }

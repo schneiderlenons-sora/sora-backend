@@ -1,5 +1,6 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/mensageiro');
+const { formatar: fmtMoeda, moedaBaseDoGrupo, MOEDAS } = require('../services/moeda');
 const { gerarDicas }  = require('../services/ia');
 const { oferecerDesconto } = require('../services/descontoConta');
 // Mesma trava do painel: posição do Open Finance não aceita lançamento manual.
@@ -22,6 +23,11 @@ const BLOQUEADO = '🚫 A Central de Investimentos faz parte dos planos *Premium
 
 module.exports = async function handleInvestimentos(data, ctx) {
   const { phone, grupoId, user } = ctx;
+  // Investimento e meta vivem na moeda do GRUPO (Fase 3): a posição do banco
+  // entra convertida (polpCelcoinSync) e a cotação também (routes/investimentos).
+  const base = await moedaBaseDoGrupo(grupoId);
+  const fmt = (v) => fmtMoeda(v, base);
+  const simbolo = MOEDAS[base].simbolo;
 
   // Todas as ações deste handler exigem plano com Investimentos
   if (!(await podeInvestimentos(phone))) {
@@ -48,8 +54,8 @@ module.exports = async function handleInvestimentos(data, ctx) {
     await enviarTexto(phone,
       `✅ *Investimento criado!*\n\n` +
       `📌 ${inv.nome} (${inv.tipo})\n` +
-      `💵 Aportado: R$ ${inv.valor_aportado.toFixed(2)}\n` +
-      `📊 Valor atual: R$ ${inv.valor_atual.toFixed(2)}`
+      `💵 Aportado: ${fmt(inv.valor_aportado)}\n` +
+      `📊 Valor atual: ${fmt(inv.valor_atual)}`
     );
     await oferecerDesconto({ user, phone, grupoId, valor: inv.valor_aportado, categoria: 'Investimentos', observacao: `Aporte: ${inv.nome}` });
     return;
@@ -61,7 +67,7 @@ module.exports = async function handleInvestimentos(data, ctx) {
       .select('*').eq('grupo_id', grupoId).order('created_at');
 
     if (!invs?.length) {
-      await enviarTexto(phone, '📭 Nenhum investimento cadastrado.\nDiga "criar investimento de R$ 1000 em CDB" para começar.');
+      await enviarTexto(phone, `📭 Nenhum investimento cadastrado.\nDiga "criar investimento de ${simbolo} 1000 em CDB" para começar.`);
       return;
     }
 
@@ -77,9 +83,9 @@ module.exports = async function handleInvestimentos(data, ctx) {
 
       const rent = ((i.rentabilidade || 0) * 100).toFixed(2);
       msg += `💰 *${i.nome}* (${i.tipo})\n`;
-      msg += `   Aportado: R$ ${i.valor_aportado.toFixed(2)}\n`;
-      msg += `   Atual: R$ ${i.valor_atual.toFixed(2)}\n`;
-      msg += `   Dividendos: R$ ${(i.dividendos_acumulados||0).toFixed(2)}\n`;
+      msg += `   Aportado: ${fmt(i.valor_aportado)}\n`;
+      msg += `   Atual: ${fmt(i.valor_atual)}\n`;
+      msg += `   Dividendos: ${fmt((i.dividendos_acumulados||0))}\n`;
       msg += `   Rentabilidade: ${rent}%\n\n`;
     }
 
@@ -89,15 +95,15 @@ module.exports = async function handleInvestimentos(data, ctx) {
       : '0.00';
 
     msg += `*━━ RESUMO ━━*\n`;
-    msg += `💵 Total aportado: R$ ${totalAportado.toFixed(2)}\n`;
-    msg += `📊 Valor atual: R$ ${totalAtual.toFixed(2)}\n`;
-    msg += `💰 Dividendos: R$ ${totalDividendos.toFixed(2)}\n`;
-    msg += `📈 Patrimônio total: R$ ${patrimonioTotal.toFixed(2)}\n`;
+    msg += `💵 Total aportado: ${fmt(totalAportado)}\n`;
+    msg += `📊 Valor atual: ${fmt(totalAtual)}\n`;
+    msg += `💰 Dividendos: ${fmt(totalDividendos)}\n`;
+    msg += `📈 Patrimônio total: ${fmt(patrimonioTotal)}\n`;
     msg += `🎯 Rentabilidade geral: ${rentGeral}%\n\n`;
     msg += `*Distribuição:*\n`;
     for (const [tipo, val] of Object.entries(agrupado)) {
       const pct = patrimonioTotal > 0 ? ((val/patrimonioTotal)*100).toFixed(1) : 0;
-      msg += `• ${tipo}: R$ ${val.toFixed(2)} (${pct}%)\n`;
+      msg += `• ${tipo}: ${fmt(val)} (${pct}%)\n`;
     }
 
     await enviarTexto(phone, msg);
@@ -144,7 +150,7 @@ module.exports = async function handleInvestimentos(data, ctx) {
       }).eq('id', data.investimentoId);
     }
 
-    await enviarTexto(phone, `💰 Aporte de R$ ${valor.toFixed(2)} registrado com sucesso!`);
+    await enviarTexto(phone, `💰 Aporte de ${fmt(valor)} registrado com sucesso!`);
     await oferecerDesconto({ user, phone, grupoId, valor, categoria: 'Investimentos', observacao: `Aporte: ${data.descricao || 'investimento'}` });
     return;
   }
@@ -162,7 +168,7 @@ module.exports = async function handleInvestimentos(data, ctx) {
 
     const lista = aportes.map(a => {
       const dt = new Date(a.data).toLocaleDateString('pt-BR');
-      return `📅 ${dt}: R$ ${a.valor.toFixed(2)} — ${a.descricao}`;
+      return `📅 ${dt}: ${fmt(a.valor)} — ${a.descricao}`;
     }).join('\n');
 
     await enviarTexto(phone, `📊 *Últimos aportes:*\n\n${lista}`);
@@ -190,10 +196,10 @@ module.exports = async function handleInvestimentos(data, ctx) {
     await enviarTexto(phone,
       `🎯 *Meta criada!*\n\n` +
       `📌 ${meta.nome}\n` +
-      `💵 Objetivo: R$ ${meta.valor_objetivo.toFixed(2)}\n` +
+      `💵 Objetivo: ${fmt(meta.valor_objetivo)}\n` +
       `⏳ Prazo: ${meta.prazo_anos} anos\n` +
       `📈 Taxa: ${taxa}% a.a.\n` +
-      `💰 Aporte mensal sugerido: R$ ${meta.aporte_mensal_sugerido.toFixed(2)}`
+      `💰 Aporte mensal sugerido: ${fmt(meta.aporte_mensal_sugerido)}`
     );
     return;
   }
@@ -204,12 +210,12 @@ module.exports = async function handleInvestimentos(data, ctx) {
       .select('*').eq('grupo_id', grupoId);
 
     if (!metas?.length) {
-      await enviarTexto(phone, '📭 Nenhuma meta cadastrada.\nDiga "criar meta de R$ 50000 em 2 anos" para começar.');
+      await enviarTexto(phone, `📭 Nenhuma meta cadastrada.\nDiga "criar meta de ${simbolo} 50000 em 2 anos" para começar.`);
       return;
     }
 
     const lista = metas.map(m =>
-      `🎯 *${m.nome}*\n   Objetivo: R$ ${m.valor_objetivo.toFixed(2)} em ${m.prazo_anos} anos\n   Aporte: R$ ${m.aporte_mensal_sugerido.toFixed(2)}/mês\n   Status: ${m.status}`
+      `🎯 *${m.nome}*\n   Objetivo: ${fmt(m.valor_objetivo)} em ${m.prazo_anos} anos\n   Aporte: ${fmt(m.aporte_mensal_sugerido)}/mês\n   Status: ${m.status}`
     ).join('\n\n');
 
     await enviarTexto(phone, `🎯 *SUAS METAS:*\n\n${lista}`);
@@ -234,9 +240,9 @@ module.exports = async function handleInvestimentos(data, ctx) {
 
     await enviarTexto(phone,
       `🎯 *Progresso: ${meta.nome}*\n\n` +
-      `✅ Aportado: R$ ${totalAportado.toFixed(2)} (${pct.toFixed(1)}%)\n` +
-      `🏁 Objetivo: R$ ${meta.valor_objetivo.toFixed(2)}\n` +
-      `📉 Faltam: R$ ${Math.max(faltante,0).toFixed(2)}\n` +
+      `✅ Aportado: ${fmt(totalAportado)} (${pct.toFixed(1)}%)\n` +
+      `🏁 Objetivo: ${fmt(meta.valor_objetivo)}\n` +
+      `📉 Faltam: ${fmt(Math.max(faltante,0))}\n` +
       `⏱️ Tempo restante: ~${mesesRestantes} meses\n` +
       `📊 Status: ${meta.status}`
     );
@@ -284,9 +290,9 @@ module.exports = async function handleInvestimentos(data, ctx) {
     const cats = {};
     let total = 0;
     txs.forEach(t => { cats[t.categoria] = (cats[t.categoria]||0) + t.valor; total += t.valor; });
-    const resumo = `Total: R$ ${total.toFixed(2)}\n` +
+    const resumo = `Total: ${fmt(total)}\n` +
       Object.entries(cats).sort((a,b)=>b[1]-a[1])
-        .map(([c,v]) => `- ${c}: R$ ${v.toFixed(2)}`).join('\n');
+        .map(([c,v]) => `- ${c}: ${fmt(v)}`).join('\n');
 
     await enviarTexto(phone, '🧠 Analisando seus gastos... aguarde um segundo.');
     const dicas = await gerarDicas(resumo);
@@ -308,10 +314,10 @@ module.exports = async function handleInvestimentos(data, ctx) {
     let total = 0;
     const lista = invs.map(i => {
       total += i.dividendos_acumulados;
-      return `📌 ${i.nome}${i.ticker ? ` (${i.ticker})` : ''}: R$ ${i.dividendos_acumulados.toFixed(2)}`;
+      return `📌 ${i.nome}${i.ticker ? ` (${i.ticker})` : ''}: ${fmt(i.dividendos_acumulados)}`;
     }).join('\n');
 
-    await enviarTexto(phone, `💰 *Dividendos recebidos:*\n\n${lista}\n\n💵 *Total: R$ ${total.toFixed(2)}*`);
+    await enviarTexto(phone, `💰 *Dividendos recebidos:*\n\n${lista}\n\n💵 *Total: ${fmt(total)}*`);
     return;
   }
 };

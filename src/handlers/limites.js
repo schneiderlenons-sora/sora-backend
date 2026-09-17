@@ -1,5 +1,7 @@
 const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/mensageiro');
+// Dinheiro na moeda do GRUPO (Fase 3 do plano da moeda base) — nunca "R$" cravado.
+const { formatadorDoGrupo } = require('../services/moeda');
 
 // Normaliza nome de categoria pra casar transações ↔ limites (subcategoria conta
 // pro limite da categoria-pai). Espelha o limpaCat de handlers/transacoes.js.
@@ -7,16 +9,17 @@ function limpaCat(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 }
 
-// Linha "Nome: R$ gasto de R$ limite (pct%)" com bolinha de status por consumo.
-function linhaLimite(nome, gasto, limite, extra = '') {
+// Linha "Nome: gasto de limite (pct%)" com bolinha de status por consumo.
+function linhaLimite(nome, gasto, limite, fmt, extra = '') {
   const pct = limite > 0 ? Math.round((gasto / limite) * 100) : 0;
   const dot = pct >= 100 ? '🔴' : pct >= 80 ? '🟠' : '🟢';
-  return `${dot} *${nome}:* R$ ${gasto.toFixed(2)} de R$ ${limite.toFixed(2)} (${pct}%)${extra}`;
+  return `${dot} *${nome}:* ${fmt(gasto)} de ${fmt(limite)} (${pct}%)${extra}`;
 }
 
 module.exports = async function handleLimites(data, ctx) {
   const { phone, grupoId, user } = ctx;
   const mesRef = new Date().toISOString().slice(0,7);
+  const fmt = await formatadorDoGrupo(grupoId);
 
   if (data.acao === 'set_limite') {
     const cat = data.categoria.charAt(0).toUpperCase() + data.categoria.slice(1).toLowerCase();
@@ -24,13 +27,13 @@ module.exports = async function handleLimites(data, ctx) {
       { grupo_id: grupoId, categoria: cat, limite_mensal: data.valor, mes_referencia: mesRef },
       { onConflict: 'grupo_id,categoria,mes_referencia' }
     );
-    await enviarTexto(phone, `🔔 Limite de *${cat}* definido: R$ ${parseFloat(data.valor).toFixed(2)}/mês.`);
+    await enviarTexto(phone, `🔔 Limite de *${cat}* definido: ${fmt(parseFloat(data.valor))}/mês.`);
     return;
   }
 
   if (data.acao === 'set_meta') {
     await supabase.from('users').update({ meta_mensal: data.valor }).eq('phone', phone);
-    await enviarTexto(phone, `🎯 Meta mensal de gastos: *R$ ${parseFloat(data.valor).toFixed(2)}*.`);
+    await enviarTexto(phone, `🎯 Meta mensal de gastos: *${fmt(parseFloat(data.valor))}*.`);
     return;
   }
 
@@ -78,7 +81,7 @@ module.exports = async function handleLimites(data, ctx) {
 
     const linhas = [];
     if (temGeral) {
-      linhas.push(linhaLimite('Geral (todos os gastos)', gastoTotal, metaGeral, metaAtiva ? '' : ' _(pausado)_'));
+      linhas.push(linhaLimite('Geral (todos os gastos)', gastoTotal, metaGeral, fmt, metaAtiva ? '' : ' _(pausado)_'));
     }
     for (const lim of limitesCat) {
       const alvo = limpaCat(lim.categoria);
@@ -88,7 +91,7 @@ module.exports = async function handleLimites(data, ctx) {
       const gastoCat = gastos
         .filter(g => nomes.has(limpaCat(g.categoria)))
         .reduce((s, g) => s + (g.valor || 0), 0);
-      linhas.push(linhaLimite(lim.categoria, gastoCat, lim.limite_mensal));
+      linhas.push(linhaLimite(lim.categoria, gastoCat, lim.limite_mensal, fmt));
     }
 
     await enviarTexto(phone,

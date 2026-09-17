@@ -22,6 +22,7 @@ const {
   motivoCartaoForaDaBase,
   originalDoValorNaBase,
   valorNativo: valorNativoTx,
+  formatadorDoGrupo,
 } = require('../services/moeda');
 
 const norm = p => p?.replace(/\D/g, '');
@@ -594,7 +595,7 @@ router.post('/rateio/:grupo/desfazer', auth, exigirPermissao('admin', 'escrita')
       return res.status(404).json({ erro: 'Lançamento dividido não encontrado.' });
     }
 
-    const { erro, linha, ids, aviso } = montarDesfazer(partes);
+    const { erro, linha, ids, aviso } = montarDesfazer(partes, await formatadorDoGrupo(req.grupoId));
     if (erro) return res.status(422).json({ erro });
 
     // 1) a linha unificada entra

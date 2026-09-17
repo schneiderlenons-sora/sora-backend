@@ -18,6 +18,7 @@ const {
   somarSaldos: somarSaldosTx,
   camposTransacao,
   formatar: fmtMoedaTx,
+  MOEDAS: MOEDAS_TX,
 } = require('../services/moeda');
 const {
   aPagarCartoes,
@@ -359,6 +360,11 @@ async function nomesPorId(ids) {
 // ── HANDLER PRINCIPAL ─────────────────────────────────────────────
 module.exports = async function handleTransacoes(data, ctx) {
   const { phone, grupoId, user } = ctx;
+  // Resumo, busca e saldo saem na moeda do GRUPO (Fase 3); o lançamento novo
+  // fala a moeda da CONTA (ver `valorTxt` abaixo), que é a que a pessoa disse.
+  const base = await moedaBaseTx(grupoId);
+  const fmt = (v) => fmtMoedaTx(v, base);
+  const simbolo = MOEDAS_TX[base].simbolo;
 
   // ── SALVAR ──────────────────────────────────────────────────────
   if (data.acao === 'salvar') {
@@ -498,7 +504,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     // o nativo e o equivalente em real ao lado, que é a conta que ela faria.
     const valorTxt = campoMoeda.moeda
       ? `${fmtMoedaTx(campoMoeda.valor_moeda, campoMoeda.moeda)} (≈ ${fmtMoedaTx(campoMoeda.valor, baseTx)})`
-      : `R$ ${valor.toFixed(2)}`;
+      : `${fmt(valor)}`;
 
     // Salva a transação (mesmo se precisaPerguntar, registramos pra ter id)
     const linhaTx = {
@@ -565,8 +571,8 @@ module.exports = async function handleTransacoes(data, ctx) {
         `🏦 *Crie suas contas* pra eu organizar direito.\n` +
         `Recomendo criar pelo painel (botão abaixo), onde dá pra escolher o tipo (corrente, poupança, crédito).\n\n` +
         `Ou me manda aqui o nome + saldo:\n` +
-        `Ex: \`nubank 1000\` → Nubank Corrente com R$ 1.000\n` +
-        `Ex: \`nubank crédito 5000\` → Nubank Crédito com limite R$ 5.000`;
+        `Ex: \`nubank 1000\` → Nubank Corrente com ${simbolo} 1.000\n` +
+        `Ex: \`nubank crédito 5000\` → Nubank Crédito com limite ${simbolo} 5.000`;
       await enviarBotaoLink(phone, {
         message: msg,
         label: 'Criar no painel',
@@ -628,7 +634,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       `✅ *Transação registrada!*\n\n` +
       `🔑 ID: \`${idCurto}\`\n` +
       `${emoji} Categoria: ${data.categoria}\n` +
-      `💸 Valor: R$ ${valor.toFixed(2)}\n` +
+      `💸 Valor: ${valorTxt}\n` +
       `🔄 Tipo: ${tipo}\n` +
       `🏦 Conta: ${carteiraNome}\n` +
       `📅 Data: ${dataFmt}${notaReceita}\n\n` +
@@ -735,7 +741,7 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     await enviarTexto(phone,
       `✅ Atualizei! Última transação (*${tx.id_curto}*) agora está em *${novaCarteira}*.\n` +
-      `💸 R$ ${tx.valor.toFixed(2)} — ${tx.observacao || tx.categoria}`
+      `💸 ${fmt(tx.valor)} — ${tx.observacao || tx.categoria}`
     );
     return;
   }
@@ -852,7 +858,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       const emoji = emojiPara(r.categoria, arvore, emojiDaCat);
       const autor = ehGrupo && r.criado_por && nomes.get(r.criado_por)
         ? ` · ${nomes.get(r.criado_por)}` : '';
-      return `${emoji} ${dt} - R$ ${r.valor.toFixed(2)} (${r.categoria})${autor}`;
+      return `${emoji} ${dt} - ${fmt(r.valor)} (${r.categoria})${autor}`;
     }).join('\n');
 
     // Buscando por uma categoria PAI, o total sozinho esconde de onde veio.
@@ -860,13 +866,13 @@ module.exports = async function handleTransacoes(data, ctx) {
     let quebra = '';
     if (familia?.length > 1 && Object.keys(porSub).length > 1) {
       const linhas = Object.entries(porSub).sort((a, b) => b[1] - a[1])
-        .map(([c, v]) => `${emojiPara(c, arvore, emojiDaCat)} ${c.replace(/\p{Extended_Pictographic}/gu, '').trim()}: R$ ${v.toFixed(2)}`)
+        .map(([c, v]) => `${emojiPara(c, arvore, emojiDaCat)} ${c.replace(/\p{Extended_Pictographic}/gu, '').trim()}: ${fmt(v)}`)
         .join('\n');
       quebra = `\n\n*Por subcategoria:*\n${linhas}`;
     }
 
     await enviarTexto(phone,
-      `🔍 *Busca: ${data.termo}${sufPeriodo}*\n\n${lista}${quebra}\n\n💰 *Total: R$ ${total.toFixed(2)}*`
+      `🔍 *Busca: ${data.termo}${sufPeriodo}*\n\n${lista}${quebra}\n\n💰 *Total: ${fmt(total)}*`
     );
     return;
   }
@@ -912,7 +918,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       .sort((a,b) => b[1]-a[1])
       .map(([cat, val]) => {
         const nome = cat.replace(/\p{Extended_Pictographic}/gu, '').trim();
-        return `${emojiPara(cat, arvore, emojiDaCat)} *${nome}:* R$ ${val.toFixed(2)}`;
+        return `${emojiPara(cat, arvore, emojiDaCat)} *${nome}:* ${fmt(val)}`;
       })
       .join('\n') || 'Sem gastos ainda.';
 
@@ -920,7 +926,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     const metaMensal = user.meta_mensal || 0;
     // Limite geral (users.meta_mensal) é mensal → só no resumo do mês.
     const statusMeta = (ehMes && metaMensal > 0)
-      ? `\n🎯 Limite Geral: R$ ${metaMensal.toFixed(2)} (${((gastos/metaMensal)*100).toFixed(0)}% usado)`
+      ? `\n🎯 Limite Geral: ${fmt(metaMensal)} (${((gastos/metaMensal)*100).toFixed(0)}% usado)`
       : '';
 
     // Em grupo compartilhado, mostra o gasto de cada membro.
@@ -929,7 +935,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       const nomes = await nomesPorId(Object.keys(porMembro));
       const linhas = Object.entries(porMembro)
         .sort((a, b) => b[1] - a[1])
-        .map(([id, val]) => `👤 *${nomes.get(id) || 'Membro'}:* R$ ${val.toFixed(2)}`)
+        .map(([id, val]) => `👤 *${nomes.get(id) || 'Membro'}:* ${fmt(val)}`)
         .join('\n');
       if (linhas) blocoMembros = `\n\n*Por membro:*\n${linhas}`;
     }
@@ -951,7 +957,7 @@ module.exports = async function handleTransacoes(data, ctx) {
         .sort((a, b) => b[1] - a[1])
         .map(([nome, val]) => {
           const emoji = ({ 'Crédito': '💳', 'Poupança': '🐷', 'Dinheiro': '💵' })[tipoDe.get(nome.toLowerCase())] || '🏦';
-          return `${emoji} *${nome}:* R$ ${val.toFixed(2)}`;
+          return `${emoji} *${nome}:* ${fmt(val)}`;
         })
         .join('\n');
       if (linhas) blocoCarteiras = `\n\n*Por conta/cartão:*\n${linhas}`;
@@ -987,8 +993,8 @@ module.exports = async function handleTransacoes(data, ctx) {
         semFatura: rk.semFatura,
       });
       blocoPatrimonio = (aPagar > 0
-        ? `\n\n🏦 Em contas: R$ ${emContas.toFixed(2)}\n💳 A pagar no cartão: R$ ${aPagar.toFixed(2)}\n💰 *Saldo real: R$ ${(emContas - aPagar).toFixed(2)}*`
-        : `\n\n🏦 *Saldo em contas: R$ ${emContas.toFixed(2)}*`) + aviso;
+        ? `\n\n🏦 Em contas: ${fmt(emContas)}\n💳 A pagar no cartão: ${fmt(aPagar)}\n💰 *Saldo real: ${fmt((emContas - aPagar))}*`
+        : `\n\n🏦 *Saldo em contas: ${fmt(emContas)}*`) + aviso;
     }
 
     // 📌 Ainda neste mês: gastos fixos (recorrências) que ainda vão vencer no mês.
@@ -1007,11 +1013,11 @@ module.exports = async function handleTransacoes(data, ctx) {
       const linhasP = recs.map(r => {
         if (r.valor_variavel) return `• ${r.descricao} — a confirmar · dia ${r.dia_vencimento}`;
         totalAVencer += (r.valor || 0);
-        return `• ${r.descricao} — R$ ${(r.valor || 0).toFixed(2)} · dia ${r.dia_vencimento}`;
+        return `• ${r.descricao} — ${fmt((r.valor || 0))} · dia ${r.dia_vencimento}`;
       });
       if (linhasP.length) {
         blocoPendentes = `\n\n*📌 Ainda neste mês:*\n${linhasP.join('\n')}`
-          + (totalAVencer > 0 ? `\n_A vencer: R$ ${totalAVencer.toFixed(2)}_` : '');
+          + (totalAVencer > 0 ? `\n_A vencer: ${fmt(totalAVencer)}_` : '');
       }
     }
 
@@ -1023,7 +1029,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     // a pergunta "cadê os R$ 246 da fatura?" — sumir sem explicação é pior que
     // aparecer no lugar errado.
     const blocoMovimentado = movimentado > 0
-      ? `\n🔄 _Movimentado (fatura/transferência): R$ ${movimentado.toFixed(2)} — não conta como gasto_`
+      ? `\n🔄 _Movimentado (fatura/transferência): ${fmt(movimentado)} — não conta como gasto_`
       : '';
 
     // ── MONTAGEM, EM TRÊS BLOCOS SEPARADOS POR LINHA ──────────────────────
@@ -1048,9 +1054,9 @@ module.exports = async function handleTransacoes(data, ctx) {
     const blocoOnde = `${blocoCategorias}${blocoCarteiras}${blocoMembros}`.trim();
 
     const blocoQuanto =
-      `🔴 Gastos: R$ ${gastos.toFixed(2)}\n` +
-      `🟢 Receitas: R$ ${receitas.toFixed(2)}\n` +
-      `💰 *${labelSaldo}: R$ ${saldo.toFixed(2)}*${statusMeta}${blocoMovimentado}` +
+      `🔴 Gastos: ${fmt(gastos)}\n` +
+      `🟢 Receitas: ${fmt(receitas)}\n` +
+      `💰 *${labelSaldo}: ${fmt(saldo)}*${statusMeta}${blocoMovimentado}` +
       `${blocoPatrimonio}`;
 
     const partesResumo = [blocoOnde, blocoQuanto, blocoPendentes.trim()]
@@ -1080,7 +1086,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       return;
     }
 
-    const resumo = rows.map(r => `${r.categoria}: R$ ${r.valor.toFixed(2)}`).join(', ');
+    const resumo = rows.map(r => `${r.categoria}: ${fmt(r.valor)}`).join(', ');
     const analise = await analisarGastos(resumo);
     await enviarTexto(phone, `🧠 *Análise da semana:*\n\n${analise}`);
     return;

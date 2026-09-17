@@ -205,7 +205,9 @@ const ROTULO_CAMPO = {
  * @param {Array} partes linhas do mesmo `rateio_grupo`, como estão no banco
  * @returns {{erro:string}|{linha:object, ids:string[], aviso:string|null}}
  */
-function montarDesfazer(partes) {
+// `fmt` (opcional): formatador de dinheiro do grupo. Sem ele, o de sempre —
+// é o que mantém o eval puro e o comportamento antigo em quem não passa.
+function montarDesfazer(partes, fmt = (v) => `R$ ${Number(v || 0).toFixed(2)}`) {
   if (!Array.isArray(partes) || partes.length === 0) {
     return { erro: 'Não encontrei as partes desse lançamento dividido.' };
   }
@@ -270,7 +272,7 @@ function montarDesfazer(partes) {
   // dividir. Ele precisa SABER, mas o desfazer segue com o valor de hoje.
   let aviso = null;
   if (origem && centavos(origem.valor) !== centavos(total)) {
-    aviso = `O valor mudou desde a divisão: era R$ ${Number(origem.valor).toFixed(2)} e as partes somam R$ ${total.toFixed(2)}. Vou juntar com o valor de hoje.`;
+    aviso = `O valor mudou desde a divisão: era ${fmt(origem.valor)} e as partes somam ${fmt(total)}. Vou juntar com o valor de hoje.`;
   } else if (!origem) {
     aviso = `Esta divisão foi feita antes de a Sora guardar a categoria original, então usei a da maior parte (${categoria}).`;
   }
