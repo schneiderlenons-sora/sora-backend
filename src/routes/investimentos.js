@@ -523,10 +523,9 @@ router.post('/atualizar-precos/:phone', auth, exigirPlano('kit', 'premium', 'pla
 
     const { data: invs } = await supabase.from('investimentos').select('*').eq('grupo_id', grupoId);
     let atualizados = 0;
-    // Moeda base do grupo (migration 168): cotação em real vira a moeda do grupo.
-    // Em grupo em real o fator é 1 e a tabela sai vazia, sem ida de rede.
+    // Moeda base do grupo (migration 168): a cotação, na moeda do ativo, vira a
+    // moeda do grupo. Ativo cotado na base não faz ida de rede.
     const base = await moedaBaseDoGrupo(grupoId);
-    const tabelaBase = await taxasParaBase(['BRL'], base);
 
     for (const inv of invs || []) {
       if (!inv.ticker) continue;
@@ -537,9 +536,9 @@ router.post('/atualizar-precos/:phone', auth, exigirPlano('kit', 'premium', 'pla
         cotacao = await buscarCotacaoAcao(inv.ticker);
       }
       if (!cotacao || cotacao.precoAtual == null) continue;
-      // ⚠️ Sem câmbio pra base, NÃO grava: preço em real num grupo em dólar
-      //    é número plausível e errado.
-      const fator = fatorCotacaoParaBase(cotacao.moeda, base, tabelaBase);
+      // ⚠️ Sem câmbio pra base, NÃO grava: preço em outra moeda gravado como se
+      //    fosse a base é número plausível e errado.
+      const fator = fatorCotacaoParaBase(cotacao.moeda, base, await taxasParaBase([cotacao.moeda], base));
       if (fator === null) continue;
 
       const valorAtual = cotacao.precoAtual * fator * (inv.quantidade || 0);

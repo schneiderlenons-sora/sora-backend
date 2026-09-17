@@ -1462,10 +1462,10 @@ cron.schedule('0 3 * * *', async () => {
       const { moedaBaseDoGrupo, taxasParaBase, fatorCotacaoParaBase } = require('../services/moeda');
       const cot = await buscarCotacaoAcao(inv.ticker);
       if (!cot || cot.precoAtual == null) throw new Error('cotação indisponível');
-      // Moeda base do grupo (migration 168): cotação em real vira a moeda do
-      // grupo. Em grupo em real o fator é 1. Sem câmbio, não grava.
+      // Moeda base do grupo (migration 168): a cotação, na moeda do ativo (a
+      // Nasdaq cota em dólar), vira a moeda do grupo. Sem câmbio, não grava.
       const baseInv = await moedaBaseDoGrupo(inv.grupo_id);
-      const fator = fatorCotacaoParaBase(cot.moeda, baseInv, await taxasParaBase(['BRL'], baseInv));
+      const fator = fatorCotacaoParaBase(cot.moeda, baseInv, await taxasParaBase([cot.moeda], baseInv));
       if (fator === null) throw new Error('câmbio para a moeda base indisponível');
       const precoAtual  = cot.precoAtual * fator;
       const novoValor   = precoAtual * inv.quantidade;

@@ -214,27 +214,33 @@ async function taxasParaBase(moedas, base = PADRAO) {
 }
 
 /**
- * Fator que leva o preço de uma COTAÇÃO DE MERCADO (Yahoo, CoinGecko) até a
- * moeda base do grupo.
+ * Fator que leva o preço de uma COTAÇÃO DE MERCADO (Yahoo, CoinGecko) — na moeda
+ * em que o ativo é negociado — até a moeda base do grupo.
  *
- * ⚠️ SÓ CONVERTE COTAÇÃO EM REAL (ações da B3, cripto cotada em brl). Cotação em
- * outra moeda (Nasdaq em dólar) segue SEM conversão, exatamente como sempre foi:
- * converter também mudaria o número de clientes em real — medido em 17/09/2026,
- * um "MELI" (40 cotas, aportado R$ 2.729,20) exibido como R$ 73.157,60 porque o
- * preço em dólar da Nasdaq entra como real. Esse defeito é ANTERIOR à moeda base
- * e espera decisão do dono; aqui ele só não se espalha.
+ * ⚠️ A COTAÇÃO ESTRANGEIRA ENTRAVA SEM CONVERSÃO, e isso valia até pra grupo em
+ * real: o preço em dólar da Nasdaq era gravado como real. Medido em 17/09/2026
+ * nos 170 investimentos com ticker: 37 cotados em real (nada muda), 131 sem
+ * cotação e 2 em dólar — um "MELI" (40 cotas) exibido como R$ 73.157,60 a partir
+ * de US$ 1.838, que passa a ~R$ 378 mil. Corrigido por decisão do dono.
  *
- * Num grupo em real o fator é SEMPRE 1. Devolve `null` quando é preciso
- * converter e não há câmbio — quem chama NÃO grava (um preço em real num grupo
- * em dólar é o erro que isto existe pra impedir).
+ * ⚠️ MOEDA FORA DO CATÁLOGO NÃO CONVERTE — devolve `null`. E A CAIXA IMPORTA:
+ * o Yahoo cota a bolsa de Londres em "GBp" (PENCE, 1/100 de libra); passar pra
+ * maiúsculas a transformaria em "GBP" e o preço sairia 100× maior. Por isso a
+ * comparação com o catálogo é feita com a sigla CRUA, sem `normalizarMoeda`
+ * (que ainda por cima transformaria sigla desconhecida em BRL).
+ *
+ * Devolve 1 quando a cotação já está na base, e `null` quando é preciso converter
+ * e não há câmbio — quem chama NÃO grava (número plausível e errado é pior que
+ * o preço de ontem).
+ *
+ * `tabela` precisa ter a moeda da cotação e a base: `taxasParaBase([moeda], base)`.
  */
 function fatorCotacaoParaBase(moedaCotacao, base, tabela) {
   const b = normalizarMoeda(base);
-  // Cru, sem `normalizarMoeda`: ela transformaria moeda fora do catálogo (a "GBp"
-  // da bolsa de Londres) em BRL, e aí a converteria como se fosse real.
-  const q = String(moedaCotacao || PADRAO).trim().toUpperCase();
-  if (q !== PADRAO || b === PADRAO) return 1;
-  return taxaEntre(PADRAO, b, tabela);
+  const q = String(moedaCotacao || PADRAO).trim();
+  if (!MOEDAS[q]) return null;
+  if (q === b) return 1;
+  return taxaEntre(q, b, tabela);
 }
 
 /** Saldo da carteira na moeda base do grupo. `null` sem câmbio — NUNCA 0. */

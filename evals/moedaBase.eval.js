@@ -375,10 +375,14 @@ const ANTIGO = (() => {
   {
     const M = carregar(criarBanco({}))('services/moeda.js');
     eq(M.fatorCotacaoParaBase('BRL', 'BRL', {}), 1, 'grupo em real: fator 1');
-    eq(M.fatorCotacaoParaBase('USD', 'BRL', {}), 1, '⚠️ grupo em real com ação em dólar: SEM conversão, como sempre foi (defeito do MELI espera decisão)');
+    eq(M.fatorCotacaoParaBase('USD', 'BRL', TAXAS), TAXAS.USD, '⚠️ grupo em real com ação em dólar: CONVERTE (o defeito do MELI, corrigido)');
+    eq(M.fatorCotacaoParaBase('USD', 'BRL', {}), null, 'sem câmbio do dólar: null, nunca o preço em dólar como real');
     eq(M.fatorCotacaoParaBase('BRL', 'USD', TAXAS), 1 / TAXAS.USD, 'grupo em dólar com ação da B3: real → dólar');
     eq(M.fatorCotacaoParaBase('USD', 'USD', TAXAS), 1, 'grupo em dólar com ação em dólar: nada a converter');
-    eq(M.fatorCotacaoParaBase('GBp', 'USD', TAXAS), 1, 'moeda fora do catálogo não é confundida com real');
+    eq(M.fatorCotacaoParaBase('GBp', 'BRL', { ...TAXAS, GBP: 7 }), null, '⚠️ pence de Londres (GBp) NÃO vira libra (GBP) — seria 100× maior');
+    eq(M.fatorCotacaoParaBase('XYZ', 'BRL', TAXAS), null, 'sigla desconhecida não converte nem vira real');
+    eq(M.fatorCotacaoParaBase('GBP', 'BRL', { ...TAXAS, GBP: 7 }), 7, 'libra de verdade converte');
+    eq(M.fatorCotacaoParaBase('NOK', 'USD', TAXAS), TAXAS.NOK / TAXAS.USD, 'cotação em coroa num grupo em dólar: taxa cruzada');
     eq(M.fatorCotacaoParaBase('BRL', 'NOK', { USD: 5 }), null, '⚠️ sem cotação da base: null (quem chama não grava)');
 
     const mercado = {
@@ -408,7 +412,7 @@ const ANTIGO = (() => {
     } finally { global.setTimeout = sleep; }
     const inv = (id) => b.tabelas.investimentos.find((i) => i.id === id);
     eq([inv('b1').valor_atual, inv('b1').dividendos_acumulados], [1000, 50], 'grupo em real, B3: igual a antes (10 × 100, dividendos 0,50 × 100)');
-    eq(inv('b2').valor_atual, 400, 'grupo em real, Nasdaq: igual a antes (sem conversão)');
+    eq(inv('b2').valor_atual, 400 * TAXAS.USD, '⚠️ grupo em real, Nasdaq: US$ 400 viram R$ 2.057,40 (antes gravava 400 como real)');
     eq([cent(inv('u1').valor_atual), cent(inv('u1').dividendos_acumulados)], [cent(1000 / TAXAS.USD), cent(50 / TAXAS.USD)], '⚠️ grupo em dólar, B3: R$ 1.000 vira US$ 194,42 (e os dividendos também)');
     eq(inv('u2').valor_atual, 400, 'grupo em dólar, Nasdaq: US$ 400 direto');
     eq(cent(inv('u3').valor_atual), cent(5000 / TAXAS.USD), 'grupo em dólar, bitcoin cotado em real: convertido');
