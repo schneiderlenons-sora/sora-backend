@@ -155,15 +155,17 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     if (valor !== undefined || carteira !== undefined) {
       try {
         const { moedaDaCarteira } = require('../services/recorrencias');
-        const { taxas, camposTransacao } = require('../services/moeda');
+        const { taxasParaBase, moedaBaseDoGrupo, camposTransacao } = require('../services/moeda');
         const { data: atual } = await supabase.from('recorrencias')
           .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
         const contaFinal = carteira !== undefined ? (carteira || 'Dinheiro') : atual?.carteira;
         const nativoAtual = atual?.valor_moeda ?? atual?.valor ?? 0;
         const base = valor !== undefined ? (parseFloat(valor) || 0) : Number(nativoAtual) || 0;
-        const m = await moedaDaCarteira(req.grupoId, contaFinal);
-        const tab = m === 'BRL' ? {} : await taxas([m]);
-        const c = camposTransacao(base, m, tab);
+        // Moeda base do grupo (migration 168): `valor` fica nela.
+        const baseGrupo = await moedaBaseDoGrupo(req.grupoId);
+        const m = await moedaDaCarteira(req.grupoId, contaFinal, baseGrupo);
+        const tab = await taxasParaBase([m], baseGrupo);
+        const c = camposTransacao(base, m, tab, baseGrupo);
         patch.valor = c.valor;
         // Grava também como null ao voltar pra conta em real — senão a linha
         // ficaria marcada NOK dentro de uma carteira em BRL.

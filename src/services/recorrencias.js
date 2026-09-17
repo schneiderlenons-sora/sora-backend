@@ -11,7 +11,7 @@ const { categorizarDescricao } = require('./categorizar');
 const { calcularDataFim } = require('./frequenciaRecorrencia');
 // Conta fixa em moeda estrangeira (migration 160): o valor informado está na
 // moeda DA CARTEIRA, igual à transação avulsa. Ver `moedaDaCarteira` abaixo.
-const { normalizarMoeda, taxas, camposTransacao } = require('./moeda');
+const { normalizarMoeda, taxasParaBase, moedaBaseDoGrupo, camposTransacao } = require('./moeda');
 
 /**
  * Confere se a categoria EXISTE no catálogo do grupo; se não, tenta sem o
@@ -49,15 +49,16 @@ async function categoriaValida(grupoId, nome) {
  * isto, quem tem conta em coroa cadastrava "salário 20000" e a Sora guardava
  * R$ 20.000 onde ele quis dizer kr 20.000 (≈ R$ 11.000).
  *
- * Falha de leitura cai em BRL: é o comportamento de sempre, e chutar moeda
- * estrangeira num erro de rede seria muito pior que chutar real.
+ * Falha de leitura (ou conta que ainda não existe) cai na MOEDA BASE do grupo:
+ * chutar moeda estrangeira num erro de rede seria muito pior que chutar a base.
+ * Sem `base`, é o real — o comportamento de antes da migration 168.
  */
-async function moedaDaCarteira(grupoId, carteira) {
+async function moedaDaCarteira(grupoId, carteira, base = 'BRL') {
   try {
     const { data } = await supabase.from('wallets')
       .select('moeda').eq('grupo_id', grupoId).ilike('nome', carteira || 'Dinheiro').maybeSingle();
-    return normalizarMoeda(data?.moeda);
-  } catch { return 'BRL'; }
+    return data ? normalizarMoeda(data.moeda) : normalizarMoeda(base);
+  } catch { return normalizarMoeda(base); }
 }
 
 async function criarRecorrencia({
@@ -88,13 +89,15 @@ async function criarRecorrencia({
   };
 
   // ── Moeda da carteira (migration 160) ───────────────────────────────────
-  // ⚠️ `valor` fica SEMPRE em BRL: 22 arquivos somam esse campo (projeção dos
+  // ⚠️ `valor` fica SEMPRE na moeda BASE do grupo (migration 168; em grupo em
+  // real, BRL): 22 arquivos somam esse campo (projeção dos
   // Previstos, saldo projetado, agenda, Oráculo, resumo do zap…). Converter na
   // leitura obrigaria os 22 a conhecer cotação — a receita das cópias
   // divergentes. O nativo vai ao lado, e o JOB 1M mantém o BRL atualizado.
-  const moedaRec = await moedaDaCarteira(grupoId, carteira);
-  const tabelaRec = moedaRec === 'BRL' ? {} : await taxas([moedaRec]);
-  const camposRec = camposTransacao(parseFloat(valor) || 0, moedaRec, tabelaRec);
+  const baseRec = await moedaBaseDoGrupo(grupoId);
+  const moedaRec = await moedaDaCarteira(grupoId, carteira, baseRec);
+  const tabelaRec = await taxasParaBase([moedaRec], baseRec);
+  const camposRec = camposTransacao(parseFloat(valor) || 0, moedaRec, tabelaRec, baseRec);
   base.valor = camposRec.valor;
   // Só em conta estrangeira; sem a 160 o insert cai na camada seguinte.
   const extraMoeda = camposRec.moeda

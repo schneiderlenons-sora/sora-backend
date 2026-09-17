@@ -17,7 +17,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 // Conta em moeda estrangeira (migration 144): o painel recebe `saldo_brl`
 // pronto — a conversão é a MESMA de `/api/wallets`.
-const { comSaldoBRL } = require('../services/moeda');
+const { comSaldoNaBase, moedaBaseDoGrupo } = require('../services/moeda');
 const auth     = require('../middlewares/auth');
 const { calcularResumo } = require('../services/resumoTransacoes');
 
@@ -146,7 +146,8 @@ router.get('/:phone', auth, async (req, res) => {
       // exibe como real (ou, depois da correção do painel, como "câmbio
       // indisponível") — enquanto a aba de contas, que passa por
       // `/api/wallets`, mostra o valor certo. Mesmo dado, duas respostas.
-      wallets:    await comSaldoBRL((val(wallets, { data: [] }).data) || []),
+      // Na moeda BASE do grupo também (`saldo_base`, migration 168).
+      wallets:    await comSaldoNaBase((val(wallets, { data: [] }).data) || [], await moedaBaseDoGrupo(grupoId)),
       txsRec:     val(txsRec, { transacoes: [], total: 0 }),
       txsMes:     val(txsMes, { transacoes: [], total: 0 }),
       categorias: (val(categorias, { data: [] }).data) || [],

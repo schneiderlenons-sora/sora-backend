@@ -3,8 +3,9 @@ const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { registrarAjuste } = require('../services/ajusteSaldo');
 // Conta em moeda estrangeira (migration 144). Cada linha sai NA MOEDA DELA; o
-// total converte pra BRL, porque somar dólar com real seria mentira.
-const { normalizarMoeda, taxas: taxasDe, somarSaldos, formatar: fmtMoeda } = require('../services/moeda');
+// total converte pra moeda BASE do grupo (migration 168), porque somar dólar
+// com real seria mentira.
+const { normalizarMoeda, taxasParaBase, moedaBaseDoGrupo, somarSaldos, formatar: fmtMoeda } = require('../services/moeda');
 const { aPagarCartoes, avisoParcial: avisoParcialCartoes } = require('../services/aPagarCartoes');
 
 // Soma os gastos de uma carteira (conta/cartão) num intervalo [ini, fimExcl).
@@ -293,19 +294,20 @@ module.exports = async function handleWallets(data, ctx) {
 
     // Câmbio só quando existe conta estrangeira — em 99% dos grupos isto não
     // faz nenhuma ida de rede e o comportamento é idêntico ao de antes.
-    const temEstrangeira = wallets.some(w => normalizarMoeda(w.moeda) !== 'BRL');
-    const tabela = temEstrangeira ? await taxasDe(wallets.map(w => w.moeda)) : {};
+    const baseSaldos = await moedaBaseDoGrupo(grupoId);
+    const temEstrangeira = wallets.some(w => normalizarMoeda(w.moeda) !== baseSaldos);
+    const tabela = temEstrangeira ? await taxasParaBase(wallets.map(w => w.moeda), baseSaldos) : {};
 
 
     const contas  = wallets.filter(w => w.tipo !== 'Crédito');
-    const rc = somarSaldos(contas, tabela);
+    const rc = somarSaldos(contas, tabela, baseSaldos);
     const emContas = rc.total;
 
     // ⚠️ MESMA CORREÇÃO DO `resumo`: o cartão não sai de `−saldo`. Aquilo é a
     // fatura BRUTA (sem descontar `pagamentos_fatura`) e, no cartão manual, o
     // saldo ACUMULADO em vez da fatura do ciclo em curso. Fonte única em
     // services/aPagarCartoes.js — a mesma do painel e do Oráculo.
-    const rk = await aPagarCartoes(grupoId, wallets, tabela);
+    const rk = await aPagarCartoes(grupoId, wallets, tabela, { base: baseSaldos });
     const aPagar = rk.total;
 
     // ⚠️ Se alguma conta ficou de fora por falta de câmbio, o total é PARCIAL e

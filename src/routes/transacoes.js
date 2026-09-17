@@ -10,11 +10,13 @@ const { calcularResumo, calcularResumoAnual } = require('../services/resumoTrans
 // em `npm run eval:rateio`. Aqui fica só a persistência.
 const { montarRateio, montarDesfazer } = require('../services/rateio');
 const { randomUUID } = require('crypto');
-// Conta em moeda estrangeira (migration 144). `valor` continua SEMPRE em BRL;
-// o nativo e a taxa congelada do dia vão em colunas próprias.
+// Conta em moeda estrangeira (migration 144). `valor` fica SEMPRE na moeda
+// BASE do grupo (migration 168); o nativo e a taxa congelada do dia vão em
+// colunas próprias.
 const {
   normalizarMoeda: normalizarMoedaTx,
-  taxas: taxasTx,
+  taxasParaBase: taxasParaBaseTx,
+  moedaBaseDoGrupo: moedaBaseTx,
   camposTransacao,
 } = require('../services/moeda');
 
@@ -224,16 +226,21 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     const walletReal = (wsGrupo || []).find(w => normNome(w.nome) === normNome(carteira_nome));
     const contaFinal = walletReal ? walletReal.nome : 'Dinheiro';
 
-    // ── Moeda da conta (migration 144) ──────────────────────────────────────
-    // O valor digitado está na moeda DA CONTA. `camposTransacao` devolve o BRL
-    // congelado pra `valor` — que é o que todo o resto do sistema soma — e
-    // guarda o nativo + a taxa do dia ao lado.
+    // ── Moeda da conta (144) × moeda base do grupo (168) ────────────────────
+    // O valor digitado está na moeda DA CONTA. `camposTransacao` devolve o
+    // valor congelado NA BASE do grupo pra `valor` — que é o que todo o resto
+    // do sistema soma — e guarda o nativo + a taxa do dia ao lado.
     //
-    // ⚠️ Em conta BRL devolve `{ valor, moeda:null, valor_moeda:null,
+    // ⚠️ Conta na moeda da base devolve `{ valor, moeda:null, valor_moeda:null,
     // taxa_brl:null }`: a linha sai IDÊNTICA à de antes, sem efeito colateral.
-    const moedaConta = normalizarMoedaTx(walletReal?.moeda);
-    const tabelaTx   = moedaConta === 'BRL' ? {} : await taxasTx([moedaConta]);
-    const campoMoeda = camposTransacao(parseFloat(valor), moedaConta, tabelaTx);
+    //
+    // ⚠️ SEM CONTA ENCONTRADA, A MOEDA É A BASE — não o real. O lançamento cai
+    // em 'Dinheiro', que num grupo em dólar é dólar; ler `undefined` como BRL
+    // converteria o valor como se fosse real.
+    const baseGrupo  = await moedaBaseTx(grupoId);
+    const moedaConta = walletReal ? normalizarMoedaTx(walletReal.moeda) : baseGrupo;
+    const tabelaTx   = await taxasParaBaseTx([moedaConta], baseGrupo);
+    const campoMoeda = camposTransacao(parseFloat(valor), moedaConta, tabelaTx, baseGrupo);
 
     // Data FUTURA (fuso SP)? Um lançamento que ainda NÃO aconteceu não pode
     // entrar como "pago" nem debitar o saldo hoje.
@@ -265,7 +272,7 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       criado_por:    userId,
       tipo,
       categoria,
-      valor:         campoMoeda.valor,   // SEMPRE BRL (congelado, ver moeda.js)
+      valor:         campoMoeda.valor,   // SEMPRE na base do grupo (congelado, ver moeda.js)
       observacao:    observacao || '',
       carteira_nome: contaFinal,
       pago:          ehFuturo ? false : (pago !== false),
@@ -276,8 +283,8 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       transferencia: transferencia === true,
       data:          data || new Date().toISOString(),
     };
-    // Campos de moeda só entram quando NÃO é BRL — assim a linha em real fica
-    // byte a byte igual à de antes, e o insert não menciona colunas da 144.
+    // Campos de moeda só entram quando a conta NÃO está na base — assim a linha
+    // fica byte a byte igual à de antes, e o insert não menciona colunas da 144.
     if (campoMoeda.moeda) {
       linha.moeda       = campoMoeda.moeda;
       linha.valor_moeda = campoMoeda.valor_moeda;

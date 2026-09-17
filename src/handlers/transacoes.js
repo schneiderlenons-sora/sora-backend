@@ -9,10 +9,12 @@ const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
 const { criarPendente, buscarPendente, removerPendente } = require('../services/pendentes');
 const { categorizarDescricao } = require('../services/categorizar');
-// Conta em moeda estrangeira (migration 144) — o patrimônio soma em BRL.
+// Conta em moeda estrangeira (migration 144) — o patrimônio soma na moeda BASE
+// do grupo (migration 168).
 const {
   normalizarMoeda: normalizarMoedaTx,
-  taxas: taxasTx,
+  taxasParaBase: taxasParaBaseTx,
+  moedaBaseDoGrupo: moedaBaseTx,
   somarSaldos: somarSaldosTx,
   camposTransacao,
   formatar: fmtMoedaTx,
@@ -484,16 +486,18 @@ module.exports = async function handleTransacoes(data, ctx) {
     // ao de antes — nenhuma ida de rede, nenhum campo novo.
     const walletDaTx = (await supabase.from('wallets')
       .select('*').eq('grupo_id', grupoId).ilike('nome', carteiraNome).maybeSingle()).data;
-    const moedaTx  = normalizarMoedaTx(walletDaTx?.moeda);
-    const tabelaTx = moedaTx === 'BRL' ? {} : await taxasTx([moedaTx]);
-    const campoMoeda = camposTransacao(valor, moedaTx, tabelaTx);
+    // ⚠️ Conta ainda inexistente ('Dinheiro' criado logo abaixo) está na BASE.
+    const baseTx   = await moedaBaseTx(grupoId);
+    const moedaTx  = walletDaTx ? normalizarMoedaTx(walletDaTx.moeda) : baseTx;
+    const tabelaTx = await taxasParaBaseTx([moedaTx], baseTx);
+    const campoMoeda = camposTransacao(valor, moedaTx, tabelaTx, baseTx);
 
     // ⚠️ A CONFIRMAÇÃO TEM DE FALAR A MOEDA QUE A PESSOA FALOU. Responder
     // "Anotei R$ 200,00" a quem disse 200 em conta de coroa faz o lançamento
     // CERTO parecer errado — e é o momento em que ela decide se confia. Mostra
     // o nativo e o equivalente em real ao lado, que é a conta que ela faria.
     const valorTxt = campoMoeda.moeda
-      ? `${fmtMoedaTx(campoMoeda.valor_moeda, campoMoeda.moeda)} (≈ ${fmtMoedaTx(campoMoeda.valor, 'BRL')})`
+      ? `${fmtMoedaTx(campoMoeda.valor_moeda, campoMoeda.moeda)} (≈ ${fmtMoedaTx(campoMoeda.valor, baseTx)})`
       : `R$ ${valor.toFixed(2)}`;
 
     // Salva a transação (mesmo se precisaPerguntar, registramos pra ter id)
@@ -503,7 +507,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       criado_por:   user?.id || null,   // quem lançou (avatar em grupos)
       tipo:         data.tipo,
       categoria:    data.categoria || 'Outros',
-      valor: campoMoeda.valor,   // SEMPRE BRL (congelado, ver moeda.js)
+      valor: campoMoeda.valor,   // SEMPRE na base do grupo (congelado, ver moeda.js)
       observacao:   data.observacao || '',
       carteira_nome: carteiraNome,
       pago:         true,
@@ -960,9 +964,10 @@ module.exports = async function handleTransacoes(data, ctx) {
       // Conta em moeda estrangeira (migration 144): converte antes de somar.
       // Sem conta estrangeira, `tabela` fica vazia, não há ida de rede e o
       // comportamento é idêntico ao de antes.
-      const temEstrangeira = ws.some(w => normalizarMoedaTx(w.moeda) !== 'BRL');
-      const tabela = temEstrangeira ? await taxasTx(ws.map(w => w.moeda)) : {};
-      const rc = somarSaldosTx(ws.filter(w => w.tipo !== 'Crédito'), tabela);
+      const basePat = await moedaBaseTx(grupoId);
+      const temEstrangeira = ws.some(w => normalizarMoedaTx(w.moeda) !== basePat);
+      const tabela = temEstrangeira ? await taxasParaBaseTx(ws.map(w => w.moeda), basePat) : {};
+      const rc = somarSaldosTx(ws.filter(w => w.tipo !== 'Crédito'), tabela, basePat);
       const emContas = rc.total;
 
       // ⚠️ O CARTÃO NÃO SAI DE `−saldo`. Isso somava a fatura BRUTA, sem
@@ -973,7 +978,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       // R$ 2.854,70 já pagos ainda pesando como dívida.
       // A conta certa mora em services/aPagarCartoes.js, que é a MESMA que o
       // painel e o Oráculo usam (faturaVista).
-      const rk = await aPagarCartoes(grupoId, ws, tabela);
+      const rk = await aPagarCartoes(grupoId, ws, tabela, { base: basePat });
       const aPagar = rk.total;
 
       // ⚠️ Total parcial tem de se declarar parcial — mesmo aviso de wallets.js.

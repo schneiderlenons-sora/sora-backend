@@ -22,11 +22,10 @@ const { lerPrevistas: parcelasPrevistasDe } = require('../services/parcelasPrevi
 // o painel recebe `saldo_brl` pronto e não precisa buscar câmbio no navegador —
 // senão cada uma das 5 telas que somam saldo teria a sua própria cotação, e
 // elas divergiriam entre si.
-const { normalizarMoeda, taxas: taxasDe, saldoEmBRL, comSaldoBRL } = require('../services/moeda');
+const { normalizarMoeda, moedaBaseDoGrupo, comSaldoNaBase } = require('../services/moeda');
 
-// A conversão mora em `services/moeda.js` (comSaldoBRL) — o `/api/dashboard`
+// A conversão mora em `services/moeda.js` (comSaldoNaBase) — o `/api/dashboard`
 // precisa da MESMA, e enquanto ela viveu aqui só esta rota convertia.
-const comMoeda = comSaldoBRL;
 
 // Tenta as duas variantes de número brasileiro (com/sem 9º dígito)
 function variantesPhone(phone) {
@@ -65,7 +64,8 @@ router.get('/:phone', auth, async (req, res) => {
       if (r.error) r = await supabase.from('wallets').select('*').eq('grupo_id', grupoId).order('nome');
       data = r.data;
     }
-    res.json(await comMoeda(data));
+    // Saldos também na moeda BASE do grupo (migration 168): `saldo_base`.
+    res.json(await comSaldoNaBase(data, await moedaBaseDoGrupo(grupoId)));
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -108,6 +108,12 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     // qualquer coisa fora do catálogo — é aqui que mora a validação, e NÃO num
     // CHECK do banco (três incidentes desta base foram CHECK falhando calado).
     if (moeda !== undefined) row.moeda = normalizarMoeda(moeda);
+    // ⚠️ CONTA NOVA SEM MOEDA NASCE NA BASE DO GRUPO (migration 168), não em
+    //    real. A coluna tem default 'BRL' até a migration 169 trocá-lo por um
+    //    gatilho; sem isto, num grupo em dólar o cartão criado pelo painel
+    //    (que não manda moeda) viraria conta em real. Só na CRIAÇÃO: numa
+    //    edição sem moeda, o upsert não pode reescrever a moeda que já existe.
+    else if (!antes) row.moeda = await moedaBaseDoGrupo(grupoId);
 
     let { data, error } = await supabase.from('wallets')
       .upsert(row, { onConflict: 'grupo_id,nome' })

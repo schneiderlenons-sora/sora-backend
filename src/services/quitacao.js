@@ -23,6 +23,7 @@
 const supabase = require('../db/supabase');
 const { ehPagamentoFatura } = require('./categorizar');
 const { hojeSP } = require('./cicloFatura');
+const { moedaBaseDoGrupo, normalizarMoeda } = require('./moeda');
 
 // Mesma comparação do `ilike('nome', …)` do PUT (sem curinga): só caixa. Casar
 // por acento aqui e não lá faria a baixa debitar uma conta que o "Ainda não
@@ -44,17 +45,20 @@ function mexeNoSaldo(t) {
  *    Medido: 3 carteiras manuais estrangeiras, 2 contas fixas ativas nelas,
  *    nenhuma baixa pelo painel.
  */
-function carteiraQueDebita(wallets, nome) {
+function carteiraQueDebita(wallets, nome, base = 'BRL') {
   if (!nome) return null;
   const w = (wallets || []).find((x) => mesmoNome(x.nome, nome));
   if (!w || w.of_conta_id) return null;
-  if (String(w.moeda || 'BRL').toUpperCase() !== 'BRL') return null;
+  // ⚠️ "Estrangeira" é relativo à moeda BASE do grupo (migration 168): num grupo
+  //    em dólar a conta em dólar debita, e a em real fica de fora.
+  const b = normalizarMoeda(base);
+  if (String(w.moeda || b).toUpperCase() !== b) return null;
   return w;
 }
 
-async function debitar(wallets, t) {
+async function debitar(wallets, t, base) {
   if (!mexeNoSaldo(t)) return false;
-  const w = carteiraQueDebita(wallets, t.carteira_nome);
+  const w = carteiraQueDebita(wallets, t.carteira_nome, base);
   if (!w) return false;
   // Relê o saldo na hora: a lista de carteiras pode ter vindo antes de outra
   // escrita, e somar em cima de um número velho apagaria essa escrita.
@@ -127,6 +131,7 @@ async function quitarOcorrencia(p) {
   const valorFinal = Number(p.valor) > 0 ? Number(p.valor) : Number(rec.valor);
 
   const { data: wallets } = await supabase.from('wallets').select('*').eq('grupo_id', grupoId);
+  const base = await moedaBaseDoGrupo(grupoId);
 
   // ⚠️ IDEMPOTENTE. Dois toques no botão (ou o retry de uma rede ruim) não
   // podem gerar dois pagamentos nem dois débitos.
@@ -151,7 +156,7 @@ async function quitarOcorrencia(p) {
       .select('id, tipo, valor, categoria, transferencia, carteira_nome');
     if (error) return { status: 500, body: { erro: error.message } };
     if (!viradas || !viradas.length) return { status: 200, body: { ok: true, id: t.id, jaQuitada: true } };
-    await debitar(wallets, viradas[0]);
+    await debitar(wallets, viradas[0], base);
     await limparAjuste(rec.id, competencia);
     return { status: 200, body: { ok: true, id: t.id, reaberta: true } };
   }
@@ -187,7 +192,7 @@ async function quitarOcorrencia(p) {
     return { status: 200, body: { ok: true, id: todas[0].id, jaQuitada: true } };
   }
 
-  await debitar(wallets, linha);
+  await debitar(wallets, linha, base);
   await limparAjuste(rec.id, competencia);
   return { status: 200, body: { ok: true, id: nova.id } };
 }

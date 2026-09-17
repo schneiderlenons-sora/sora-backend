@@ -3,7 +3,8 @@ const supabase = require('../db/supabase');
 // moeda da CONTA, e o saldo dela também.
 const {
   normalizarMoeda: normalizarMoedaRec,
-  taxas: taxasRec,
+  taxasParaBase: taxasParaBaseRec,
+  moedaBaseDoGrupo: moedaBaseRec,
   camposTransacao: camposTransacaoRec,
   formatar: fmtMoedaRec,
 } = require('../services/moeda');
@@ -178,9 +179,11 @@ module.exports = async function handleRecorrencias(data, ctx) {
     // erra ~45%.
     const { data: wallet } = await supabase.from('wallets')
       .select('id, saldo, moeda').eq('grupo_id', grupoId).ilike('nome', alvo.carteira_nome || 'Dinheiro').maybeSingle();
-    const moedaConf  = normalizarMoedaRec(wallet?.moeda);
-    const tabelaConf = moedaConf === 'BRL' ? {} : await taxasRec([moedaConf]);
-    const camposConf = camposTransacaoRec(valor, moedaConf, tabelaConf);
+    // ⚠️ Sem conta encontrada, a moeda é a BASE do grupo (migration 168).
+    const baseConf   = await moedaBaseRec(grupoId);
+    const moedaConf  = wallet ? normalizarMoedaRec(wallet.moeda) : baseConf;
+    const tabelaConf = await taxasParaBaseRec([moedaConf], baseConf);
+    const camposConf = camposTransacaoRec(valor, moedaConf, tabelaConf, baseConf);
 
     const patchTx = { valor: camposConf.valor, pago: true, observacao: descLimpa };
     if (camposConf.moeda) {
@@ -207,7 +210,7 @@ module.exports = async function handleRecorrencias(data, ctx) {
       : '';
     await enviarTexto(phone,
       `✅ *Confirmado!* ${ehGasto ? '🔴' : '🟢'} ${descLimpa} — ${camposConf.moeda
-        ? `${fmtMoedaRec(camposConf.valor_moeda, camposConf.moeda)} (≈ ${fmtMoedaRec(camposConf.valor, 'BRL')})`
+        ? `${fmtMoedaRec(camposConf.valor_moeda, camposConf.moeda)} (≈ ${fmtMoedaRec(camposConf.valor, baseConf)})`
         : `R$ ${valor.toFixed(2)}`}${linhaConta}.`);
     return;
   }

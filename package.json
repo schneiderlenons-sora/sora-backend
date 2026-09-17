@@ -48,6 +48,7 @@
     "eval:mov-invest": "node evals/movimentoInvestimento.eval.js",
     "eval:marcas-br": "node evals/categorizarMarcasBR.eval.js",
     "eval:moeda": "node evals/moeda.eval.js",
+    "eval:moeda-base": "node evals/moedaBase.eval.js",
     "eval:regras-completas": "node evals/regrasCompletas.eval.js",
     "eval:rateio": "node evals/rateio.eval.js",
     "eval:conta-mercado-pago": "node evals/contaMercadoPago.eval.js",

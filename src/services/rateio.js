@@ -69,7 +69,11 @@ function motivoRecusa(tx) {
   if (Number(tx.parcela_total) > 1) {
     return 'Compra parcelada não pode ser dividida por categoria — a parcela precisa manter o valor cheio para casar com a fatura do banco.';
   }
-  if (tx.moeda && String(tx.moeda).toUpperCase() !== 'BRL') {
+  // ⚠️ `moeda` preenchida = lançada numa conta FORA da moeda base do grupo
+  //    (invariante de services/moeda.js). Comparar com 'BRL' deixaria passar,
+  //    num grupo em dólar, o lançamento feito numa conta em real. Medido em
+  //    17/09/2026: nenhuma linha tem `moeda = 'BRL'`, então hoje nada muda.
+  if (tx.moeda) {
     return 'Lançamento em moeda estrangeira ainda não pode ser dividido.';
   }
   if (tx.transferencia === true) {

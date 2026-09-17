@@ -21,7 +21,8 @@ const { criarPendente, removerPendente } = require('../services/pendentes');
 // pode mudar a MOEDA dela — ver `moverCarteira`.
 const {
   normalizarMoeda: normalizarMoedaMv,
-  taxas: taxasMv,
+  taxasParaBase: taxasParaBaseMv,
+  moedaBaseDoGrupo: moedaBaseMv,
   camposTransacao: camposTransacaoMv,
   formatar: fmtMoedaMv,
 } = require('../services/moeda');
@@ -67,11 +68,15 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
 
   const { data: walletDestino } = await supabase.from('wallets')
     .select('*').eq('grupo_id', grupoId).ilike('nome', novaCarteiraNome).maybeSingle();
-  const moedaNova = normalizarMoedaMv(walletDestino?.moeda);
-  const tabelaMv  = moedaNova === 'BRL' ? {} : await taxasMv([moedaNova]);
-  const campos    = camposTransacaoMv(nativo, moedaNova, tabelaMv);
+  // ⚠️ `tx.moeda` NULL significa "na base do grupo", não "em real" (migration
+  // 168). E conta de destino que não existe está na base também.
+  const baseMv    = await moedaBaseMv(grupoId);
+  const moedaNova = walletDestino ? normalizarMoedaMv(walletDestino.moeda) : baseMv;
+  const tabelaMv  = await taxasParaBaseMv([moedaNova], baseMv);
+  const campos    = camposTransacaoMv(nativo, moedaNova, tabelaMv, baseMv);
   // Só vale avisar quando a moeda REALMENTE mudou de lado.
-  const mudouMoeda = normalizarMoedaMv(tx.moeda) !== moedaNova;
+  const moedaAntiga = tx.moeda ? normalizarMoedaMv(tx.moeda) : baseMv;
+  const mudouMoeda = moedaAntiga !== moedaNova;
 
   const mult = tx.tipo === 'Gasto' ? -1 : 1;
 
@@ -145,7 +150,7 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
   // marcada NOK dentro de uma conta em real.
   const patch = {
     carteira_nome: novaCarteiraNome,
-    valor:         campos.valor,          // SEMPRE BRL
+    valor:         campos.valor,          // SEMPRE na base do grupo
     moeda:         campos.moeda,
     valor_moeda:   campos.valor_moeda,
     taxa_brl:      campos.taxa_brl,
@@ -162,7 +167,7 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
     ok: true,
     // O que a resposta do WhatsApp precisa pra explicar a mudança.
     conversao: mudouMoeda && campos.moeda
-      ? { texto: `${fmtMoedaMv(campos.valor_moeda, campos.moeda)} (≈ ${fmtMoedaMv(campos.valor, 'BRL')})` }
+      ? { texto: `${fmtMoedaMv(campos.valor_moeda, campos.moeda)} (≈ ${fmtMoedaMv(campos.valor, baseMv)})` }
       : null,
   };
 }
@@ -652,4 +657,5 @@ async function resolverPendente(pendente, mensagem, ctx) {
   return false;
 }
 
-module.exports = { resolverPendente };
+// `moverCarteira` exportada só pro eval da moeda base (evals/moedaBase.eval.js).
+module.exports = { resolverPendente, moverCarteira };

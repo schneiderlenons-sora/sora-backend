@@ -8,13 +8,23 @@
 // ── AS DUAS REGRAS QUE NÃO PODEM REGREDIR ───────────────────────────────────
 //
 // 1. `wallets.saldo` é NATIVO. Uma conta Nomad com US$ 6.834,56 guarda 6834.56.
-//    Esse número é um FATO e não pode variar com o câmbio. O equivalente em
-//    reais é DERIVADO (`saldoEmBRL`) e esse sim muda todo dia — que é o certo.
+//    Esse número é um FATO e não pode variar com o câmbio. O equivalente na
+//    moeda base é DERIVADO (`saldoNaBase`) e esse sim muda todo dia — o certo.
 //
-// 2. `transacoes.valor` é SEMPRE BRL, congelado na entrada. É o que mantém
-//    dashboard, categorias, relatórios, limites, Wrapped e Oráculo corretos sem
-//    nenhuma alteração neles. Converter na hora de exibir faria o "gasto de
-//    março" mudar todo dia junto com o dólar.
+// 2. `transacoes.valor` está SEMPRE NA MOEDA BASE DO GRUPO (`grupos.moeda_base`,
+//    migration 168), congelado na entrada. Até a 168 a base era fixa em real, e
+//    é por isso que as migrations 144/160 dizem "SEMPRE BRL" — para os grupos em
+//    real continua sendo verdade. É o que mantém dashboard, categorias,
+//    relatórios, limites, Wrapped e Oráculo corretos sem nenhuma alteração
+//    neles: um grupo nunca mistura bases. Converter na hora de exibir faria o
+//    "gasto de março" mudar todo dia junto com o câmbio.
+//
+// ⚠️ A INVARIANTE DAS COLUNAS DE MOEDA DA TRANSAÇÃO: `moeda` NULL = a linha está
+// na base do grupo; `moeda` preenchida = foi lançada numa conta de OUTRA moeda,
+// com o nativo em `valor_moeda` e a taxa usada em `taxa_brl`. ⚠️ O nome da
+// coluna é histórico: ela guarda a taxa da moeda da conta PARA A BASE (que em
+// grupo em real é, de fato, a taxa em BRL). Medido em 17/09/2026: nenhuma linha
+// de `transacoes` ou `recorrencias` tem `moeda = 'BRL'`.
 //
 // ⚠️ FALHA DE CÂMBIO NUNCA VIRA ZERO. Se a cotação não vier (Yahoo fora do ar,
 // rede caindo), `taxas()` devolve o que tiver em cache e a conversão devolve
@@ -62,9 +72,12 @@ function normalizarMoeda(m) {
   return MOEDAS[s] ? s : PADRAO;
 }
 
-/** A carteira/valor está em moeda estrangeira? */
-function ehEstrangeira(moeda) {
-  return normalizarMoeda(moeda) !== PADRAO;
+/**
+ * A carteira/valor está numa moeda diferente da base do grupo?
+ * Sem `base`, compara com o real — o comportamento de antes da migration 168.
+ */
+function ehEstrangeira(moeda, base = PADRAO) {
+  return normalizarMoeda(moeda) !== normalizarMoeda(base);
 }
 
 // ── Cache de câmbio ─────────────────────────────────────────────────────────
@@ -186,6 +199,26 @@ function paraBase(valor, moeda, base, tabela) {
 }
 
 /**
+ * Tabela de câmbio suficiente pra levar `moedas` até a `base`.
+ *
+ * ⚠️ Sem nada fora da base devolve `{}` SEM ida de rede — é o caminho de quase
+ * todo grupo, e é o que `moeda === 'BRL' ? {} : taxas([moeda])` fazia nas
+ * rotas. Com algo estrangeiro, busca as moedas E a base: o pivô precisa das
+ * duas pontas (em base real a ponta da base é 1 e não custa nada).
+ */
+async function taxasParaBase(moedas, base = PADRAO) {
+  const b = normalizarMoeda(base);
+  const fora = (moedas || []).map(normalizarMoeda).filter((m) => m !== b);
+  if (!fora.length) return {};
+  return taxas([...fora, b]);
+}
+
+/** Saldo da carteira na moeda base do grupo. `null` sem câmbio — NUNCA 0. */
+function saldoNaBase(wallet, base, tabela) {
+  return paraBase(wallet?.saldo, wallet?.moeda, base, tabela);
+}
+
+/**
  * Lê a moeda base de um grupo.
  *
  * ⚠️ TOLERANTE À MIGRATION 168, com CACHE DE PROCESSO no "a coluna existe?".
@@ -204,17 +237,39 @@ let baseAusenteAte = 0;
 function baseDisponivel() { return Date.now() >= baseAusenteAte; }
 function marcarBaseIndisponivel() { baseAusenteAte = Date.now() + RETENTAR_BASE_MS; }
 
+// ⚠️ CACHE POR GRUPO, 10 MINUTOS. A base passa a ser lida em todo lançamento,
+// toda lista de contas e todo dashboard — e o egress do Supabase é CONTAGEM de
+// requisição (~1,1 KB de cabeçalho cada, ver CLAUDE.md). Sem cache seria uma ida
+// a mais por chamada, pra ler um valor que, no MVP, não muda depois do primeiro
+// lançamento (a troca é travada — Fase 6 do plano).
+//
+// ⚠️ QUEM MUDAR A BASE TEM DE CHAMAR `esquecerMoedaBase(grupoId)`. Sem isso,
+// esta instância seguiria convertendo pela base antiga por até 10 minutos — e
+// um lançamento convertido pra moeda errada não dá tela quebrada, dá número
+// plausível e errado, CONGELADO na linha.
+//
+// ⚠️ FALHA DE LEITURA COM CACHE VELHO USA O VELHO. Cair em BRL num soluço de rede
+// converteria o lançamento de um grupo em dólar como se fosse em real.
+const TTL_BASE_MS = 10 * 60 * 1000;
+const cacheBase = new Map();   // grupoId → { base, em }
+
+function esquecerMoedaBase(grupoId) { cacheBase.delete(grupoId); }
+
 async function moedaBaseDoGrupo(grupoId) {
   if (!grupoId || !baseDisponivel()) return PADRAO;
+  const hit = cacheBase.get(grupoId);
+  if (hit && Date.now() - hit.em < TTL_BASE_MS) return hit.base;
   try {
     const { data, error } = await supabase.from('grupos')
       .select('moeda_base').eq('id', grupoId).maybeSingle();
     if (error) {
-      if (/moeda_base/i.test(error.message || '')) marcarBaseIndisponivel();
-      return PADRAO;
+      if (/moeda_base/i.test(error.message || '')) { marcarBaseIndisponivel(); return PADRAO; }
+      return hit ? hit.base : PADRAO;
     }
-    return normalizarMoeda(data?.moeda_base);
-  } catch { return PADRAO; }
+    const base = normalizarMoeda(data?.moeda_base);
+    cacheBase.set(grupoId, { base, em: Date.now() });
+    return base;
+  } catch { return hit ? hit.base : PADRAO; }
 }
 
 /**
@@ -244,16 +299,17 @@ function saldoEmBRL(wallet, tabela) {
 }
 
 /**
- * Soma o saldo de várias carteiras EM BRL, avisando o que não deu pra converter.
+ * Soma o saldo de várias carteiras NA MOEDA BASE, avisando o que não deu pra
+ * converter. Sem `base`, soma em real — o comportamento de antes da 168.
  *
  * Devolve `{ total, semCambio }`. `semCambio` > 0 significa que o total está
  * INCOMPLETO — a tela precisa dizer isso, não fingir que o número é final.
  */
-function somarSaldos(wallets, tabela) {
+function somarSaldos(wallets, tabela, base = PADRAO) {
   let total = 0;
   let semCambio = 0;
   for (const w of wallets || []) {
-    const v = saldoEmBRL(w, tabela);
+    const v = saldoNaBase(w, base, tabela);
     if (v === null) { semCambio++; continue; }
     total += v;
   }
@@ -264,32 +320,38 @@ function somarSaldos(wallets, tabela) {
  * Monta os campos de moeda de uma transação nova.
  *
  * `valorNativo` vem na moeda da CARTEIRA. Devolve o que gravar:
- *   · `valor`       → SEMPRE BRL (é o que todo o resto do sistema soma)
- *   · `valor_moeda` → o nativo, pra tela da conta mostrar US$
- *   · `taxa_brl`    → congelada agora, pra o histórico não mudar depois
+ *   · `valor`       → SEMPRE na moeda BASE do grupo (é o que todo o resto soma)
+ *   · `valor_moeda` → o nativo, pra tela da conta mostrar a moeda dela
+ *   · `taxa_brl`    → a taxa da conta PARA A BASE, congelada agora (o nome da
+ *                     coluna é histórico — ver o cabeçalho do arquivo)
  *
- * ⚠️ Em BRL devolve os três campos NULOS (menos `valor`): a linha fica
- * idêntica ao que já se grava hoje, sem nenhum efeito colateral.
+ * ⚠️ Conta na moeda da base devolve os três campos NULOS (menos `valor`): a
+ * linha fica idêntica ao que já se grava hoje, sem nenhum efeito colateral.
+ * Sem `base`, a base é o real — o comportamento de antes da migration 168.
  */
-function camposTransacao(valorNativo, moeda, tabela) {
+function camposTransacao(valorNativo, moeda, tabela, base = PADRAO) {
   const m = normalizarMoeda(moeda);
+  const b = normalizarMoeda(base);
   const v = Number(valorNativo) || 0;
-  if (m === PADRAO) return { valor: v, moeda: null, valor_moeda: null, taxa_brl: null };
+  if (m === b) return { valor: v, moeda: null, valor_moeda: null, taxa_brl: null };
 
-  const t = tabela ? tabela[m] : null;
-  if (!t || !Number.isFinite(t)) {
+  const t = taxaEntre(m, b, tabela);
+  if (t === null) {
     // ⚠️ Sem câmbio, grava o nativo em `valor` com taxa 1 e REGISTRA a moeda.
     // Assim o dinheiro não some da conta do usuário; o número fica provisório e
-    // a tela mostra a moeda, deixando claro que não é real convertido.
+    // a tela mostra a moeda, deixando claro que não é valor convertido.
     return { valor: v, moeda: m, valor_moeda: v, taxa_brl: null };
   }
+  // ⚠️ ARREDONDA NAS CASAS DA BASE. `4090.34 * 0.55032` dá 2250.9959088 em ponto
+  //    flutuante; gravar isso põe 7 casas decimais dentro de um campo de
+  //    dinheiro e faz somas divergirem por centavos, que é o tipo de erro que o
+  //    cliente confere na mão e não perdoa. A TAXA fica inteira (é ela que
+  //    reproduz a conta depois); só o resultado é arredondado. Em real (e em
+  //    dólar e coroa) a escala é 100 — a MESMA conta de antes, operação por
+  //    operação; em iene seria 1.
+  const escala = 10 ** (MOEDAS[b].casas ?? 2);
   return {
-    // ⚠️ ARREDONDA EM CENTAVOS. `4090.34 * 0.55032` dá 2250.9959088 em ponto
-    //    flutuante; gravar isso põe 7 casas decimais dentro de um campo de
-    //    dinheiro e faz somas divergirem por centavos, que é o tipo de erro
-    //    que o cliente confere na mão e não perdoa. A TAXA fica inteira (é ela
-    //    que reproduz a conta depois); só o resultado em real é arredondado.
-    valor: Math.round(v * t * 100) / 100,   // BRL congelado
+    valor: Math.round(v * t * escala) / escala,   // na base, congelado
     moeda: m,
     valor_moeda: v,        // nativo
     taxa_brl: t,
@@ -334,19 +396,44 @@ function valorNativo(tx) {
  * saber a diferença entre "vale zero" e "não sei quanto vale".
  */
 async function comSaldoBRL(lista) {
+  return comSaldoNaBase(lista, PADRAO);
+}
+
+/**
+ * Anexa, além de `moeda`/`saldo_brl`/`taxa_brl`, os campos NA BASE do grupo:
+ * `moeda_base`, `saldo_base` e `taxa_base` (moeda da conta → base).
+ *
+ * ⚠️ CAMPOS NOVOS, NÃO RENOMEADOS. `lib/swr-cache.ts` guarda payloads antigos no
+ * localStorage; trocar `saldo_brl` por outro nome faria o cache chegar sem
+ * nenhum dos dois (armadilha 6 do plano). O painel lê `saldo_base` e só cai no
+ * `saldo_brl` quando o payload é antigo — e payload antigo é de grupo em real.
+ *
+ * ⚠️ `saldo_base` é null quando o câmbio falhou — NUNCA 0, pelo mesmo motivo.
+ */
+async function comSaldoNaBase(lista, base = PADRAO) {
   const ws = lista || [];
-  if (!ws.some((w) => normalizarMoeda(w.moeda) !== PADRAO)) {
+  const b = normalizarMoeda(base);
+  if (b === PADRAO && !ws.some((w) => normalizarMoeda(w.moeda) !== PADRAO)) {
     // Caminho de 99% dos grupos: nenhuma conta estrangeira, nenhuma ida de
-    // rede, nenhum campo novo além do espelho do saldo.
-    return ws.map((w) => ({ ...w, moeda: normalizarMoeda(w.moeda), saldo_brl: Number(w.saldo) || 0 }));
+    // rede. Os campos na base são o espelho do saldo.
+    return ws.map((w) => {
+      const s = Number(w.saldo) || 0;
+      return { ...w, moeda: normalizarMoeda(w.moeda), saldo_brl: s, moeda_base: b, saldo_base: s };
+    });
   }
-  const tabela = await taxas(ws.map((w) => w.moeda));
-  return ws.map((w) => ({
-    ...w,
-    moeda: normalizarMoeda(w.moeda),
-    saldo_brl: saldoEmBRL({ saldo: w.saldo, moeda: w.moeda }, tabela),
-    taxa_brl: tabela[normalizarMoeda(w.moeda)] ?? null,
-  }));
+  const tabela = await taxas([...ws.map((w) => w.moeda), b]);
+  return ws.map((w) => {
+    const m = normalizarMoeda(w.moeda);
+    return {
+      ...w,
+      moeda: m,
+      saldo_brl: saldoEmBRL({ saldo: w.saldo, moeda: w.moeda }, tabela),
+      taxa_brl: tabela[m] ?? null,
+      moeda_base: b,
+      saldo_base: saldoNaBase({ saldo: w.saldo, moeda: w.moeda }, b, tabela),
+      taxa_base: taxaEntre(m, b, tabela),
+    };
+  });
 }
 
 /**
@@ -384,15 +471,19 @@ async function aquecerCotacoes() {
 }
 
 /**
- * Recalcula o `valor` (BRL) das contas fixas em moeda estrangeira.
+ * Recalcula o `valor` (na base do grupo) das contas fixas em moeda estrangeira.
  *
  * ⚠️ ESTE É O ÚNICO LUGAR QUE ESCREVE ESSE CAMPO por causa de câmbio, e é o
- * que permite os outros 22 consumidores continuarem apenas LENDO `valor` como
- * real. A alternativa — converter na leitura — espalharia cotação por toda a
+ * que permite os outros 22 consumidores continuarem apenas LENDO `valor` na
+ * base. A alternativa — converter na leitura — espalharia cotação por toda a
  * projeção dos Previstos, saldo projetado, agenda, Oráculo e resumo do zap.
  *
- * ⚠️ O NATIVO É A FONTE. Recalcular a partir do `valor` (que já é BRL) faria
- * a conta encolher a cada dia, multiplicando a cotação sobre si mesma.
+ * ⚠️ O NATIVO É A FONTE. Recalcular a partir do `valor` (que já está na base)
+ * faria a conta encolher a cada dia, multiplicando a cotação sobre si mesma.
+ *
+ * ⚠️ A TAXA É PARA A BASE DE CADA GRUPO, não pro real. Cada recorrência pode ser
+ * de um grupo com base diferente; `moedaBaseDoGrupo` tem cache, então isto custa
+ * uma leitura por grupo, não por recorrência.
  *
  * Sem a migration 160 a coluna não existe: a consulta falha, devolve zero e
  * o cron segue — nada quebra.
@@ -402,17 +493,19 @@ async function atualizarRecorrenciasEstrangeiras() {
   let erros = 0;
   try {
     const { data } = await supabase.from('recorrencias')
-      .select('id, valor, valor_moeda, moeda').not('moeda', 'is', null);
+      .select('id, grupo_id, valor, valor_moeda, moeda').not('moeda', 'is', null);
     for (const r of data || []) {
       const nativo = Number(r.valor_moeda);
       if (!Number.isFinite(nativo) || !r.moeda) continue;
-      const t = await taxa(r.moeda);
+      const base = await moedaBaseDoGrupo(r.grupo_id);
+      const t = taxaEntre(r.moeda, base, await taxas([r.moeda, base]));
       // Sem cotação, NÃO mexe: o valor de ontem é melhor que um zero.
-      if (!t) { erros += 1; continue; }
-      const brl = Math.round(nativo * t * 100) / 100;
-      if (brl === Number(r.valor)) continue;   // nada mudou, não escreve
+      if (t === null) { erros += 1; continue; }
+      const escala = 10 ** (MOEDAS[normalizarMoeda(base)].casas ?? 2);
+      const naBase = Math.round(nativo * t * escala) / escala;
+      if (naBase === Number(r.valor)) continue;   // nada mudou, não escreve
       const { error } = await supabase.from('recorrencias')
-        .update({ valor: brl, taxa_brl: t }).eq('id', r.id);
+        .update({ valor: naBase, taxa_brl: t }).eq('id', r.id);
       if (error) erros += 1; else atualizadas += 1;
     }
   } catch { /* sem a 160 a coluna não existe — segue sem atualizar */ }
@@ -424,7 +517,8 @@ module.exports = {
   normalizarMoeda, ehEstrangeira,
   taxa, taxas, paraBRL,
   // Moeda base do grupo (migration 168) — o BRL vira pivô, não significado.
-  taxaEntre, paraBase, moedaBaseDoGrupo, baseDisponivel, marcarBaseIndisponivel,
+  taxaEntre, paraBase, moedaBaseDoGrupo, esquecerMoedaBase, baseDisponivel, marcarBaseIndisponivel,
+  taxasParaBase, saldoNaBase, comSaldoNaBase,
   saldoEmBRL, somarSaldos,
   camposTransacao, valorNativo, formatar,
   comSaldoBRL, aquecerCotacoes, atualizarRecorrenciasEstrangeiras,

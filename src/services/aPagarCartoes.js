@@ -41,7 +41,7 @@ const { competenciaAtual } = require('./cicloFatura');
 const { statusFatura } = require('./faturaRollover');
 const { valorExibido } = require('./faturaVista');
 const { lerPrevistas } = require('./parcelasPrevistas');
-const { paraBRL } = require('./moeda');
+const { paraBase } = require('./moeda');
 
 const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
 
@@ -65,9 +65,11 @@ async function vistaReal(grupoId, cartao) {
  *
  * @param {string} grupoId
  * @param {Array}  wallets  carteiras do grupo (a função filtra os de Crédito)
- * @param {object} tabela   cotações (services/moeda.taxas) — só usada quando há
- *                          cartão em moeda estrangeira; hoje não há nenhum na
- *                          base, mas a migration 144 permite e o caminho fica.
+ * @param {object} tabela   cotações (services/moeda.taxasParaBase) — só usada
+ *                          quando há cartão fora da moeda base; hoje não há
+ *                          nenhum, mas a migration 144 permite e o caminho fica.
+ * @param {object} deps     `base` (moeda base do grupo, default BRL) e, no eval,
+ *                          `vistaDoCartao`.
  * @returns {{ total:number, semCambio:number, semFatura:number,
  *             porCartao: Array<{nome:string, restante:number}> }}
  */
@@ -91,14 +93,14 @@ async function aPagarCartoes(grupoId, wallets, tabela, deps = {}) {
       semFatura += 1;
       continue;
     }
-    // Cartão em moeda estrangeira: `restante` está na moeda do cartão.
-    const emBRL = paraBRL(restante, c.moeda, tabela);
-    if (emBRL === null) { semCambio += 1; continue; }
-    total += emBRL;
+    // Cartão fora da moeda base: `restante` está na moeda do cartão.
+    const naBase = paraBase(restante, c.moeda, deps.base || 'BRL', tabela);
+    if (naBase === null) { semCambio += 1; continue; }
+    total += naBase;
     // `restante` fica NA MOEDA DO CARTÃO (pra a linha da lista mostrar o
-    // número que o cliente vê no app do banco) e `restanteBRL` convertido
-    // (pra somar). Em BRL — hoje, toda a base — os dois são iguais.
-    porCartao.push({ id: c.id, nome: c.nome, restante: cent(restante), restanteBRL: cent(emBRL) });
+    // número que o cliente vê no app do banco) e `restanteBase` convertido
+    // (pra somar). Com o cartão na base — hoje, toda a base — os dois são iguais.
+    porCartao.push({ id: c.id, nome: c.nome, restante: cent(restante), restanteBase: cent(naBase) });
   }
 
   return { total: cent(total), semCambio, semFatura, porCartao };
