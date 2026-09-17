@@ -135,22 +135,28 @@ function parcelaJaCobrada(t, hoje) {
 function agruparParcelas(comGrupo, semGrupo, hoje) {
   const grupos = new Map();
   const novo = (desc, cartao, total, valor, legado) => ({
-    desc, cartao, total: total || 0, pagas: 0, restantes: 0, valorRestante: 0,
+    desc, cartao, total: total || 0, pagas: 0, restantes: 0, valorRestante: 0, valorRestanteBase: 0,
     valorParcela: valor || 0, proxima: null, valorTotal: 0, linhas: 0, legado,
   });
+  // Na moeda do CARTÃO (migration 168): parcela de cartão fora da moeda do
+  // grupo guarda o original em `valor_moeda`. Sem ele (todo cartão hoje) é o
+  // `valor` de sempre. Quem busca as linhas precisa pedir `valor_moeda`.
+  const valorDe = (t) => (t.valor_moeda ?? t.valor) || 0;
   const contar = (g, t) => {
     g.linhas++;
-    g.valorTotal += (t.valor || 0);
+    g.valorTotal += valorDe(t);
     if (parcelaJaCobrada(t, hoje)) return;
     g.restantes++;
-    g.valorRestante += (t.valor || 0);
+    g.valorRestante += valorDe(t);
+    // Na moeda do GRUPO — é o que soma compras de cartões diferentes.
+    g.valorRestanteBase += (t.valor || 0);
     if (!g.proxima || String(t.data) < String(g.proxima.data)) g.proxima = { data: t.data };
   };
 
   for (const t of comGrupo || []) {
     if (!t || !t.parcela_grupo) continue;
     const g = grupos.get(t.parcela_grupo)
-      || novo((t.observacao || 'Compra').trim() || 'Compra', t.carteira_nome, t.parcela_total, t.valor, false);
+      || novo((t.observacao || 'Compra').trim() || 'Compra', t.carteira_nome, t.parcela_total, valorDe(t), false);
     if (t.parcela_total) g.total = t.parcela_total;
     contar(g, t);
     grupos.set(t.parcela_grupo, g);
@@ -162,7 +168,7 @@ function agruparParcelas(comGrupo, semGrupo, hoje) {
     const desc = mm[1].trim() || 'Compra';
     const total = parseInt(mm[3], 10);
     const chave = `legacy:${desc.toLowerCase()}:${(t.carteira_nome || '').toLowerCase()}:${total}`;
-    const g = grupos.get(chave) || novo(desc, t.carteira_nome, total, t.valor, true);
+    const g = grupos.get(chave) || novo(desc, t.carteira_nome, total, valorDe(t), true);
     contar(g, t);
     grupos.set(chave, g);
   }
@@ -175,6 +181,7 @@ function agruparParcelas(comGrupo, semGrupo, hoje) {
     if (g.total > g.linhas) g.valorTotal += (g.total - g.linhas) * g.valorParcela;
     g.valorTotal = Math.round(g.valorTotal * 100) / 100;
     g.valorRestante = Math.round(g.valorRestante * 100) / 100;
+    g.valorRestanteBase = Math.round(g.valorRestanteBase * 100) / 100;
   }
   return grupos;
 }

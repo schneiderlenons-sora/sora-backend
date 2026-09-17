@@ -453,6 +453,29 @@ function valorNativo(tx) {
 }
 
 /**
+ * O `valor_moeda` que acompanha um `valor` (na base) EDITADO numa linha já
+ * convertida (migration 168).
+ *
+ * ⚠️ Sem isto, editar só o `valor` deixava o original parado — e é pelo
+ * original que a fatura do cartão e o saldo da conta andam. A edição sumia da
+ * fatura e aparecia no dashboard: dois números pro mesmo lançamento.
+ *
+ * Usa a taxa CONGELADA da linha (`taxa_brl` = taxa pra base, nome histórico):
+ * quem corrige US$ 100 → US$ 110 numa compra em real ajusta a mesma compra,
+ * não a reconverte pelo câmbio de hoje. Linha gravada sem câmbio (onde
+ * `valor` = `valor_moeda`): o próprio valor. `undefined` quando a linha não é
+ * convertida — não há original pra acompanhar e o patch fica como antes.
+ */
+function originalDoValorNaBase(valorBase, linha) {
+  if (!linha || !linha.moeda) return undefined;
+  const v = Number(valorBase) || 0;
+  const t = Number(linha.taxa_brl);
+  if (!Number.isFinite(t) || t <= 0) return v;
+  const escala = 10 ** (MOEDAS[normalizarMoeda(linha.moeda)].casas ?? 2);
+  return Math.round((v / t) * escala) / escala;
+}
+
+/**
  * Anexa `moeda`, `saldo_brl` e `taxa_brl` numa lista de carteiras.
  *
  * ⚠️ FONTE ÚNICA — vivia dentro de `routes/wallets.js` e por isso só a ABA DE
@@ -590,6 +613,6 @@ module.exports = {
   taxaEntre, paraBase, moedaBaseDoGrupo, esquecerMoedaBase, baseDisponivel, marcarBaseIndisponivel,
   taxasParaBase, saldoNaBase, comSaldoNaBase, fatorCotacaoParaBase, cartaoForaDaBase, motivoCartaoForaDaBase,
   saldoEmBRL, somarSaldos,
-  camposTransacao, valorNativo, formatar,
+  camposTransacao, valorNativo, originalDoValorNaBase, formatar,
   comSaldoBRL, aquecerCotacoes, atualizarRecorrenciasEstrangeiras,
 };

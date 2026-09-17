@@ -3174,16 +3174,19 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
 
   // ── Moeda base do grupo (migration 168) ─────────────────────────────────
   //
-  // ⚠️ GRUPO FORA DO REAL SÓ IMPORTA CONTAS E LANÇAMENTOS (decisão do dono,
-  // 17/09/2026). O Open Finance brasileiro só fala real: a conta entra como
-  // conta em real dentro do grupo, e cada lançamento é convertido pra base —
+  // ⚠️ GRUPO FORA DO REAL IMPORTA CONTAS E CARTÕES (decisões do dono,
+  // 17/09/2026). O Open Finance brasileiro só fala real: a conta e o cartão
+  // entram EM REAL dentro do grupo, e cada lançamento é convertido pra base —
   // igual à conta em dólar lançada à mão num grupo em real.
   //
-  // CARTÃO, EMPRÉSTIMO, INVESTIMENTO E CAIXINHA FICAM DE FORA por enquanto:
-  // todos gravam valor em real em tabelas que o painel soma como moeda do
-  // grupo, e a fatura do cartão soma `transacoes.valor` como se fosse a moeda
-  // do cartão. Importá-los sem conversão mostraria número plausível e errado.
-  // O cartão vem numa etapa própria (plano da moeda base, Fase 5).
+  // O CARTÃO fica na moeda dele: fatura, limite, faturas publicadas,
+  // pagamentos e parcelas previstas seguem em real, e a soma da fatura usa o
+  // valor original (`valorFatura`, `valor_moeda ?? valor`). Pagar/antecipar
+  // pela Sora fica travado nesse cartão (`moeda.cartaoForaDaBase`).
+  //
+  // EMPRÉSTIMO, INVESTIMENTO E CAIXINHA FICAM DE FORA por enquanto: gravam
+  // valor em real em tabelas que o painel soma como moeda do grupo, sem
+  // conversão — mostrariam número plausível e errado.
   //
   // Num grupo em real `grupoForaDoReal` é false e nada abaixo muda.
   const base = await moedaBaseDoGrupo(grupoId);
@@ -3213,7 +3216,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
 
     if (grupoForaDoReal) {
       relatorio.avisos.push(
-        `grupo em ${base}: só contas e lançamentos são importados — cartões, empréstimos, `
+        `grupo em ${base}: contas e cartões são importados (lançamentos convertidos) — empréstimos, `
         + 'investimentos e caixinhas do banco ainda não');
     }
 
@@ -3259,7 +3262,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     }
 
     // 3. CARTÕES → wallet 'Crédito' + fatura (datas reais!) + transações
-    for (const raw of grupoForaDoReal ? [] : await celcoin.listarCartoes(consentId)) {
+    for (const raw of await celcoin.listarCartoes(consentId)) {
       try {
         const bills = await celcoin.listarFaturas(raw.id);
         const n = normalizeCartao(raw, bills, hoje, conexao.instituicao);
@@ -3275,7 +3278,13 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         try { parcelamentos = await celcoin.listarParcelamentos(n.externalId, { estrito: true }); }
         catch (e) { parcelamentos = null; parcelamentosErro = e.message; }
 
-        const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadas);
+        // Cartão fora da moeda base (o do OF é em real): lançamento convertido,
+        // original em `valor_moeda` — é dele que a fatura soma. Na base, `null`
+        // e a linha sai idêntica à de antes.
+        const moedaCartao = moedaDaConta(n);
+        const cambioCartao = moedaCartao === base ? null
+          : { moedaConta: moedaCartao, base, tabela: await taxasParaBase([moedaCartao], base) };
+        const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadas, cambioCartao);
         // ⚠️ O HISTÓRICO JÁ IMPORTADO FICOU NA DATA DA COMPRA. Ver
         // reconciliarParcelas: sem isto a fatura do cliente nunca fecha com a
         // do banco, por mais certo que o cálculo esteja.

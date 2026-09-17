@@ -322,6 +322,21 @@ const ANTIGO = (() => {
     eq([r5.body.valor, r5.body.moeda], [cent(200 * TAXAS.NOK / TAXAS.USD), 'NOK'], 'grupo em dólar, conta em coroa: taxa cruzada');
     const r6 = await lancar('gUSD', 'Conta Que Não Existe', 30);
     eq([r6.body.valor, 'moeda' in r6.body, r6.body.carteira_nome], [30, false, 'Dinheiro'], '⚠️ conta inexistente vira Dinheiro NA BASE — não é lida como real');
+
+    // EDITAR o valor (PUT): o original anda junto e o saldo anda pelo original.
+    const put = rota(R, 'put', '/:id');
+    const editar = (grupoId, id, valor) => chamar(put, { grupoId, params: { id }, body: { valor } });
+    const linha = (id) => b.tabelas.transacoes.find((t) => t.id === id);
+    const e1 = await editar('gBRL', r1.body.id, 60);
+    eq([e1.statusCode, linha(r1.body.id).valor, 'valor_moeda' in linha(r1.body.id), w('w-nu')], [200, 60, false, 940],
+      'editar lançamento em real: saldo −10 e nenhuma coluna de moeda aparece, como antes');
+    await editar('gBRL', r2.body.id, cent(r2.body.valor * 2));
+    eq([linha(r2.body.id).valor_moeda, w('w-wise')], [400, 3690.34],
+      '⚠️ editar o lançamento da conta em coroa: o original vai a 400 kr e o saldo anda 200 kr — não 110 "reais" em coroa');
+    await editar('gUSD', r4.body.id, 110);
+    eq([linha(r4.body.id).valor, linha(r4.body.id).valor_moeda, w('u-nu')],
+      [110, Math.round((110 / (1 / TAXAS.USD)) * 100) / 100, cent(5000 - Math.round((110 / (1 / TAXAS.USD)) * 100) / 100)],
+      '⚠️ grupo em dólar, conta em real: US$ 100 → US$ 110 leva o original pela MESMA taxa, e o saldo em real acompanha');
   }
   console.log('  ok');
 
@@ -451,9 +466,29 @@ const ANTIGO = (() => {
   console.log('  ok');
 
   // ── 8. Open Finance: conta em real dentro de grupo em dólar ────────────────
-  console.log('── 8. Open Finance num grupo fora do real: só contas, lançamentos convertidos ──');
+  console.log('── 8. Open Finance num grupo fora do real: contas e cartões, lançamentos convertidos ──');
   {
     const chamadas = {};
+    const cf8 = carregar(criarBanco({}))('services/cicloFatura.js');
+    const hoje8 = cf8.hojeSP();
+    // Cartão do Nubank: uma fatura já publicada (dá o fechamento 05 e o
+    // vencimento 15), uma compra de R$ 514,35 hoje e o pagamento de R$ 300.
+    const cartaoRaw = {
+      id: 'card-1', brand_name: 'Nubank',
+      identification: { name: 'Ultravioleta', payment_methods: [{ identification_number: '5555444433331234' }] },
+      limits: [{ credit_line_limit_type: 'LIMITE_CREDITO_TOTAL', consolidation_type: 'CONSOLIDADO',
+        limit_amount: { amount: '5000.00' }, used_amount: { amount: '514.35' }, available_amount: { amount: '4485.65' } }],
+    };
+    const faturasCartao = [{ id: 'bill-ago', due_date: '2026-08-15', bill_closing_date: '2026-08-05',
+      bill_total_amount: { amount: '300.00' }, payments: [] }];
+    const txsCartao = [
+      { id: 'of-c1', transaction_name: 'AMAZON MARKETPLACE', credit_debit_type: 'DEBITO',
+        completed_authorised_payment_type: 'TRANSACAO_EFETIVADA', brazilian_amount: { amount: '514.35' },
+        transaction_date_time: `${hoje8}T12:00:00Z` },
+      { id: 'of-c2', transaction_name: 'Pagamento recebido', credit_debit_type: 'CREDITO',
+        completed_authorised_payment_type: 'TRANSACAO_EFETIVADA', brazilian_amount: { amount: '300.00' },
+        transaction_date_time: `${hoje8}T11:00:00Z` },
+    ];
     const conta = (id) => ({
       id, brand_name: 'Nubank', type: 'CONTA_DEPOSITO_A_VISTA',
       identification: { type: 'CONTA_DEPOSITO_A_VISTA', subtype: 'INDIVIDUAL', currency: 'BRL' },
@@ -471,7 +506,10 @@ const ANTIGO = (() => {
         listarContas: () => conta1('contas', [conta('acc-1')]),
         listarTransacoesConta: () => conta1('txConta', txsConta),
         listarSaldosReservados: () => conta1('caixinhas', []),
-        listarCartoes: () => conta1('cartoes', []),
+        listarCartoes: () => conta1('cartoes', [cartaoRaw]),
+        listarFaturas: async () => faturasCartao,
+        listarTransacoesCartao: async () => txsCartao,
+        listarParcelamentos: async () => [],
         listarEmprestimos: () => conta1('emprestimos', []),
         listarFinanciamentos: () => conta1('financiamentos', []),
         listarInvestimentos: () => conta1('investimentos', []),
@@ -486,13 +524,38 @@ const ANTIGO = (() => {
     const bU = criarBanco(cenario('gUSD', 'USD'));
     const syncU = carregar(bU, [], {}, celcoin())('services/polpCelcoinSync.js');
     const rU = await syncU.sincronizarConsentimento('cons-1');
-    const wU = bU.tabelas.wallets.filter((w) => w.grupo_id === 'gUSD');
-    const tU = bU.tabelas.transacoes.filter((t) => t.grupo_id === 'gUSD');
+    const wU = bU.tabelas.wallets.filter((w) => w.grupo_id === 'gUSD' && w.tipo !== 'Crédito');
+    const tU = bU.tabelas.transacoes.filter((t) => t.grupo_id === 'gUSD' && t.carteira_nome === (wU[0] && wU[0].nome));
     eq([wU.length, wU[0] && wU[0].moeda], [1, 'BRL'], 'a conta do banco entra como conta EM REAL dentro do grupo em dólar');
     eq(tU.map((t) => [t.valor, t.moeda, t.valor_moeda, t.taxa_brl]), [[100, 'BRL', 514.35, 1 / TAXAS.USD]],
       '⚠️ o lançamento de R$ 514,35 entra como US$ 100, com o original em real ao lado');
     eq([chamadas.cartoes, chamadas.emprestimos, chamadas.financiamentos, chamadas.investimentos, chamadas.caixinhas],
-      [undefined, undefined, undefined, undefined, undefined], '⚠️ cartões, empréstimos, investimentos e caixinhas NEM são buscados');
+      [1, undefined, undefined, undefined, undefined], '⚠️ cartão é buscado; empréstimos, investimentos e caixinhas NEM são buscados');
+
+    // O CARTÃO (C3): entra em real, lançamentos convertidos, fatura em real.
+    const cU = bU.tabelas.wallets.filter((w) => w.grupo_id === 'gUSD' && w.tipo === 'Crédito');
+    eq([cU.length, cU[0] && cU[0].moeda, cU[0] && cU[0].dia_fechamento, cU[0] && cU[0].dia_vencimento], [1, 'BRL', 5, 15],
+      'o cartão do banco entra como cartão EM REAL, com as datas do emissor');
+    const txCartao = (b, id) => b.tabelas.transacoes.find((t) => t.of_tx_id === id);
+    const c1 = txCartao(bU, 'of-c1');
+    const c2 = txCartao(bU, 'of-c2');
+    eq([c1.valor, c1.moeda, c1.valor_moeda, c1.taxa_brl], [100, 'BRL', 514.35, 1 / TAXAS.USD],
+      '⚠️ compra de R$ 514,35 no cartão entra como US$ 100 no gasto do mês, original em real ao lado');
+    eq([c2.valor, c2.valor_moeda, c2.transferencia], [cent(300 / TAXAS.USD), 300, true], 'o pagamento da fatura também guarda o original');
+    eq((bU.tabelas.pagamentos_fatura || []).filter((p) => p.cartao_id === cU[0].id).map((p) => p.valor), [300],
+      '⚠️ pagamento vindo do banco abate R$ 300 da fatura (a moeda dela), não US$ 58,33');
+    const compDeHoje = (w) => {
+      const atual = cf8.competenciaAtual(w);
+      for (const d of [-1, 0, 1, 2]) {
+        const c = d === 0 ? atual : cf8.competenciaVizinha(w, atual, d);
+        const ci = cf8.cicloPorCompetencia(w, c);
+        if (ci.ini <= hoje8 && hoje8 < ci.fimExcl) return c;
+      }
+      return atual;
+    };
+    const Lu = carregar(bU);
+    const stU = await Lu('services/faturaRollover.js').statusFatura('gUSD', cU[0], compDeHoje(cU[0]));
+    eq(stU.fatura, 514.35, '⚠️ a fatura do cartão importado soma R$ 514,35 — o número do app do banco');
     ok((rU.avisos || []).some((a) => /grupo em USD/.test(a)), `o relatório do sync diz o que ficou de fora — veio ${JSON.stringify(rU.avisos)}`);
 
     // A cobrança do banco ASSUME a previsão da conta fixa (reconciliarPrevisto):
@@ -514,8 +577,13 @@ const ANTIGO = (() => {
     const bB = criarBanco(cenario('gBRL', 'BRL'));
     const syncB = carregar(bB, [], {}, celcoin())('services/polpCelcoinSync.js');
     await syncB.sincronizarConsentimento('cons-1');
-    const tB = bB.tabelas.transacoes.filter((t) => t.grupo_id === 'gBRL');
+    const contaB = bB.tabelas.wallets.find((w) => w.grupo_id === 'gBRL' && w.tipo !== 'Crédito');
+    const tB = bB.tabelas.transacoes.filter((t) => t.grupo_id === 'gBRL' && t.carteira_nome === contaB.nome);
     eq(tB.map((t) => [t.valor, 'moeda' in t, 'valor_moeda' in t]), [[514.35, false, false]], 'grupo em real: a linha sai SEM colunas de moeda, como antes');
+    const c1B = bB.tabelas.transacoes.find((t) => t.of_tx_id === 'of-c1');
+    eq([c1B.valor, 'moeda' in c1B, 'valor_moeda' in c1B], [514.35, false, false], 'grupo em real: a compra no cartão sai SEM colunas de moeda, como antes');
+    const cB = bB.tabelas.wallets.find((w) => w.grupo_id === 'gBRL' && w.tipo === 'Crédito');
+    eq((bB.tabelas.pagamentos_fatura || []).filter((p) => p.cartao_id === cB.id).map((p) => p.valor), [300], 'grupo em real: pagamento do banco como antes');
     eq([chamadas.cartoes, chamadas.emprestimos, chamadas.financiamentos, chamadas.investimentos, chamadas.caixinhas],
       [1, 1, 1, 1, 1], 'grupo em real: cartões, empréstimos, investimentos e caixinhas seguem sendo buscados');
   }
@@ -623,6 +691,14 @@ const ANTIGO = (() => {
       await chamar(parcelado, { grupoId: 'gBRL', userId: 'u1', body: { categoria: 'Casa', observacao: 'Sofá', carteira_nome: 'Nubank Crédito', valor_parcela: 100, num_parcelas: 2 } });
       eq(sofa('gBRL').map((t) => [t.valor, 'moeda' in t, 'valor_moeda' in t]), [[100, false, false], [100, false, false]],
         'parcelado em grupo em real: a linha sai SEM colunas de moeda, como antes');
+
+      // Editar a compra do cartão importado: a fatura (que soma o original) acompanha.
+      // (Compara a DIFERENÇA: o 1º "Sofá" parcelado acima pode cair neste ciclo, conforme o dia.)
+      const faturaAntes = (await statusFatura('gUSD', w('u-nu'), compAtual)).fatura;
+      await chamar(rota(R, 'put', '/:id'), { grupoId: 'gUSD', params: { id: 'tu' }, body: { valor: 110 } });
+      const novoOriginal = Math.round((110 / (1 / TAXAS.USD)) * 100) / 100;
+      eq(cent((await statusFatura('gUSD', w('u-nu'), compAtual)).fatura - faturaAntes), cent(novoOriginal - 514.35),
+        '⚠️ editar US$ 100 → US$ 110 na compra do cartão em real sobe a fatura R$ 51,44 — ela não fica parada');
     }
 
     // 9b. WhatsApp: pagar, antecipar, parcelar e "gastos por cartão".
@@ -667,6 +743,19 @@ const ANTIGO = (() => {
       await parcelas(compra, ctx('gBRL'));
       eq(tenis('gBRL').map((t) => [t.valor, 'moeda' in t, 'valor_moeda' in t]), [1, 2, 3].map(() => [100, false, false]),
         'zap, grupo em real: a parcela sai SEM colunas de moeda, como antes');
+
+      // "parcelas": cada compra na moeda do CARTÃO; o total soma na do GRUPO.
+      // A 1ª parcela do tênis cai hoje (já cobrada); sobram 2.
+      msgs.length = 0;
+      await parcelas({ acao: 'listar_parcelas' }, ctx('gUSD'));
+      const totalUSD = (2 * cent(100 / TAXAS.USD)).toFixed(2);
+      ok((msgs[0] || '').includes('Tênis* — Nubank Crédito\n   2x de R$ 100.00 a pagar')
+        && (msgs[0] || '').includes(`Total ainda a pagar: R$ ${totalUSD}*`),
+        `⚠️ zap "parcelas" num grupo em dólar: R$ 100 por parcela (moeda do cartão) e o total em dólar — veio ${msgs[0]}`);
+      msgs.length = 0;
+      await parcelas({ acao: 'listar_parcelas' }, ctx('gBRL'));
+      ok((msgs[0] || '').includes('2x de R$ 100.00 a pagar') && (msgs[0] || '').includes('Total ainda a pagar: R$ 200.00*'),
+        `zap "parcelas" num grupo em real: igual a antes — veio ${msgs[0]}`);
     }
 
     // 9c. O que SOMA cartão com o resto: gastos por carteira, Oráculo, Agenda.
@@ -712,6 +801,14 @@ const ANTIGO = (() => {
         M.cartaoForaDaBase({ nome: 'sem moeda no select' }, 'USD'), M.cartaoForaDaBase(null, 'USD')],
       [true, false, false, false, false], '⚠️ só trava cartão fora da base; grupo em REAL nunca trava; sem a coluna `moeda` não trava às cegas');
       ok(!/banco/.test(M.motivoCartaoForaDaBase({ nome: 'Amex', moeda: 'BRL' }, 'USD')), 'cartão manual: o texto não promete que o pagamento vem do banco');
+
+      const { agruparParcelas } = carregar(criarBanco({}))('services/consultaParcela.js');
+      const futuro = '2099-01-10T12:00:00.000Z';
+      const linha = (extra) => ({ parcela_grupo: 'P1', parcela_total: 2, parcela_num: 1, observacao: 'Fone', carteira_nome: 'Nubank', pago: false, data: futuro, ...extra });
+      const [gFora] = [...agruparParcelas([linha({ valor: 19.44, valor_moeda: 100 }), linha({ parcela_num: 2, valor: 19.44, valor_moeda: 100 })], [], '2026-09-17').values()];
+      eq([gFora.valorParcela, gFora.valorRestante, gFora.valorRestanteBase], [100, 200, 38.88], '⚠️ parcela de cartão fora da base: na moeda do cartão, e a soma do grupo à parte');
+      const [gBase] = [...agruparParcelas([linha({ valor: 100 }), linha({ parcela_num: 2, valor: 100 })], [], '2026-09-17').values()];
+      eq([gBase.valorParcela, gBase.valorRestante, gBase.valorRestanteBase], [100, 200, 200], 'cartão na base: os dois números são o de sempre');
     }
 
     // 9e. O pagamento que o BANCO traz e a duplicata comparam o ORIGINAL.

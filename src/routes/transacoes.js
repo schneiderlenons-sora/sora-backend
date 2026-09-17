@@ -20,6 +20,8 @@ const {
   camposTransacao,
   cartaoForaDaBase,
   motivoCartaoForaDaBase,
+  originalDoValorNaBase,
+  valorNativo: valorNativoTx,
 } = require('../services/moeda');
 
 const norm = p => p?.replace(/\D/g, '');
@@ -674,6 +676,15 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     const { data: antes } = await supabase.from('transacoes')
       .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
 
+    // ⚠️ LINHA CONVERTIDA (conta/cartão fora da moeda base, migration 168): a
+    // tela edita o `valor` NA BASE, e o original em `valor_moeda` tem de andar
+    // junto — é por ele que a fatura do cartão e o saldo da conta andam. Linha
+    // na base (`moeda` null) devolve `undefined` e o patch sai como antes.
+    if (patch.valor !== undefined) {
+      const original = originalDoValorNaBase(patch.valor, antes);
+      if (original !== undefined) patch.valor_moeda = original;
+    }
+
     // Só edita transação do próprio grupo (anti-IDOR)
     const { data: tx, error } = await supabase.from('transacoes')
       .update(patch).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
@@ -686,7 +697,10 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     try {
       const especial = (t) => !t || t.transferencia === true || ehPagamentoFatura(t.categoria) || t.categoria === 'Transferências';
       if (!especial(antes) && !especial(tx)) {
-        const efeito = (t) => (t.pago ? (t.tipo === 'Gasto' ? -1 : 1) * (Number(t.valor) || 0) : 0);
+        // ⚠️ NATIVO: `wallets.saldo` está na moeda da CONTA, e `valor` na base
+        // do grupo. Mesma regra do POST e do WhatsApp (`valor_moeda ?? valor`);
+        // linha na base não tem `valor_moeda` e o efeito é o de sempre.
+        const efeito = (t) => (t.pago ? (t.tipo === 'Gasto' ? -1 : 1) * (Number(valorNativoTx(t)) || 0) : 0);
         const ajustar = async (nome, delta) => {
           if (!delta || !nome) return;
           const { data: w } = await supabase.from('wallets')

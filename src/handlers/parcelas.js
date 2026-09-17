@@ -482,14 +482,14 @@ module.exports = async function handleParcelas(data, ctx) {
   if (data.acao === 'listar_parcelas') {
     // Fonte principal: linhas com parcela_grupo (painel + WhatsApp novo).
     const { data: comGrupo } = await supabase.from('transacoes')
-      .select('valor, observacao, carteira_nome, pago, data, parcela_num, parcela_total, parcela_grupo')
+      .select('valor, valor_moeda, observacao, carteira_nome, pago, data, parcela_num, parcela_total, parcela_grupo')
       .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
       .not('parcela_grupo', 'is', null)
       .order('data', { ascending: true });
 
     // Fallback legado: WhatsApp antigo (sem parcela_grupo) — observação "Desc (2/3)".
     const { data: semGrupo } = await supabase.from('transacoes')
-      .select('valor, observacao, carteira_nome, pago, data')
+      .select('valor, valor_moeda, observacao, carteira_nome, pago, data')
       .eq('grupo_id', grupoId).eq('tipo', 'Gasto').eq('pago', false)
       .is('parcela_grupo', null)
       .ilike('observacao', '%(%/%)%')
@@ -529,7 +529,10 @@ module.exports = async function handleParcelas(data, ctx) {
     }).join('\n\n');
     const maisTxt = abertas.length > MAX ? `\n\n_+${abertas.length - MAX} compra(s) — veja o restante no painel._` : '';
 
-    const totalRestante = abertas.reduce((s, g) => s + g.valorRestante, 0);
+    // Soma compras de cartões diferentes: na moeda do GRUPO (migration 168).
+    // Cada linha acima segue na moeda do cartão. Sem cartão fora da base é o
+    // mesmo número de antes.
+    const totalRestante = abertas.reduce((s, g) => s + g.valorRestanteBase, 0);
     await enviarBotaoLink(phone, {
       message:
         `🧾 *Suas compras parceladas*\n\n${blocos}${maisTxt}\n\n` +
