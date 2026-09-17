@@ -56,11 +56,21 @@ function criarBanco(inicial, opcoes = {}) {
         return api;
       },
       is(c, v) { filtros.push((r) => (r[c] ?? null) === v); return api; },
-      not(c, op, v) { filtros.push((r) => (op === 'is' ? (r[c] ?? null) !== v : true)); return api; },
+      // `not(col, "in", '("a","b")')` é como a reconciliação apaga o que o banco
+      // não mandou mais. Ignorá-lo apagava TUDO, inclusive o que acabou de entrar.
+      not(c, op, v) {
+        if (op === 'in') {
+          const fora = new Set(String(v).replace(/^\(|\)$/g, '').split(',').map((x) => x.replace(/^"|"$/g, '')));
+          filtros.push((r) => !fora.has(String(r[c])));
+          return api;
+        }
+        filtros.push((r) => (op === 'is' ? (r[c] ?? null) !== v : true));
+        return api;
+      },
       in(c, arr) { const s = new Set(arr); filtros.push((r) => s.has(r[c])); return api; },
       filter() { return api; }, gte() { return api; }, lte() { return api; }, lt() { return api; },
       order() { return api; },
-      limit() { return api; },
+      limit() { return api; }, range() { return api; },
       single() { unica = 'single'; return api; },
       maybeSingle() { unica = 'maybe'; return api; },
       then(res, rej) { return Promise.resolve().then(executar).then(res, rej); },
@@ -481,6 +491,33 @@ const ANTIGO = (() => {
     };
     const faturasCartao = [{ id: 'bill-ago', due_date: '2026-08-15', bill_closing_date: '2026-08-05',
       bill_total_amount: { amount: '300.00' }, payments: [] }];
+    // Empréstimo, investimento (com uma movimentação) e caixinha — tudo em real.
+    const emprestimoRaw = {
+      id: 'loan-1', brand_name: 'Nubank', product_sub_type: 'EMPRESTIMO_PESSOAL_SEM_CONSIGNACAO',
+      product_name: 'Crédito Pessoal', currency: 'BRL',
+      contract_amount: { amount: '8000.00', currency: 'BRL' },
+      next_instalment_amount: { amount: '629.51' },
+      contract_date: '2026-02-10', first_instalment_due_date: '2026-03-10',
+      scheduled_instalments: { total_number_of_instalments: 36, paid_instalments: 4, past_due_instalments: 0 },
+      payments: { contract_outstanding_balance: { amount: '7000.00' } },
+    };
+    const investimentoRaw = {
+      id: 'inv-1', __familia: 'bank_fixed_income', __path: 'bank-fixed-incomes',
+      investment_type: 'CDB', brand_name: 'Nubank', product_name: 'CDB Nubank',
+      balance: {
+        net_amount: { amount: '10287.00', currency: 'BRL' },
+        quantity: { amount: '1' },
+        updated_unit_price: { amount: '10287.00' },
+        purchase_unit_price: { amount: '10000.00' },
+      },
+    };
+    const movimentoRaw = {
+      id: 'mov-1', transaction_date: '2026-09-01', type: 'ENTRADA', transaction_type: 'APLICACAO',
+      transaction_net_value: { amount: '1000.00' }, transaction_gross_value: { amount: '1000.00' },
+      transaction_quantity: { amount: '1' }, transaction_unit_price: { amount: '1000.00' },
+    };
+    const caixinhaRaw = { reserved_identification: 'cx-1', reserved_name: 'Viagem',
+      available_amount: [{ amount: '5143.50', currency: 'BRL' }] };
     const txsCartao = [
       { id: 'of-c1', transaction_name: 'AMAZON MARKETPLACE', credit_debit_type: 'DEBITO',
         completed_authorised_payment_type: 'TRANSACAO_EFETIVADA', brazilian_amount: { amount: '514.35' },
@@ -505,32 +542,55 @@ const ANTIGO = (() => {
         getConsentimento: async () => ({ status: 'AUTHORISED' }),
         listarContas: () => conta1('contas', [conta('acc-1')]),
         listarTransacoesConta: () => conta1('txConta', txsConta),
-        listarSaldosReservados: () => conta1('caixinhas', []),
+        listarSaldosReservados: () => conta1('caixinhas', [caixinhaRaw]),
         listarCartoes: () => conta1('cartoes', [cartaoRaw]),
         listarFaturas: async () => faturasCartao,
         listarTransacoesCartao: async () => txsCartao,
         listarParcelamentos: async () => [],
-        listarEmprestimos: () => conta1('emprestimos', []),
+        listarEmprestimos: () => conta1('emprestimos', [emprestimoRaw]),
         listarFinanciamentos: () => conta1('financiamentos', []),
-        listarInvestimentos: () => conta1('investimentos', []),
+        listarInvestimentos: () => conta1('investimentos', [investimentoRaw]),
+        listarTransacoesInvestimento: () => conta1('movInvestimento', [movimentoRaw]),
       };
     };
     const cenario = (grupo, base) => ({
       grupos: [{ id: grupo, moeda_base: base }],
       of_conexoes: [{ id: 'con-1', provider: 'polp-celcoin', external_id: 'cons-1', grupo_id: grupo, user_id: 'u1', instituicao: 'Nubank' }],
+      // Conta do próprio usuário, NA MOEDA DO GRUPO — é ela que denuncia quem
+      // soma carteira sem olhar a moeda (converteria dólar como se fosse real).
+      wallets: [{ id: 'w-propria', grupo_id: grupo, nome: 'Carteira', tipo: 'Corrente', saldo: 2000, moeda: base }],
     });
 
     // Grupo em DÓLAR.
     const bU = criarBanco(cenario('gUSD', 'USD'));
     const syncU = carregar(bU, [], {}, celcoin())('services/polpCelcoinSync.js');
     const rU = await syncU.sincronizarConsentimento('cons-1');
-    const wU = bU.tabelas.wallets.filter((w) => w.grupo_id === 'gUSD' && w.tipo !== 'Crédito');
+    const wU = bU.tabelas.wallets.filter((w) => w.grupo_id === 'gUSD' && w.tipo !== 'Crédito' && w.of_conta_id);
     const tU = bU.tabelas.transacoes.filter((t) => t.grupo_id === 'gUSD' && t.carteira_nome === (wU[0] && wU[0].nome));
     eq([wU.length, wU[0] && wU[0].moeda], [1, 'BRL'], 'a conta do banco entra como conta EM REAL dentro do grupo em dólar');
     eq(tU.map((t) => [t.valor, t.moeda, t.valor_moeda, t.taxa_brl]), [[100, 'BRL', 514.35, 1 / TAXAS.USD]],
       '⚠️ o lançamento de R$ 514,35 entra como US$ 100, com o original em real ao lado');
     eq([chamadas.cartoes, chamadas.emprestimos, chamadas.financiamentos, chamadas.investimentos, chamadas.caixinhas],
-      [1, undefined, undefined, undefined, undefined], '⚠️ cartão é buscado; empréstimos, investimentos e caixinhas NEM são buscados');
+      [1, 1, 1, 1, 1], 'num grupo em dólar o sync busca TUDO — cartão, empréstimo, financiamento, investimento e caixinha');
+
+    // Tudo o que o banco manda em real vira dólar pela cotação do dia.
+    const emBase = (v) => cent(v / TAXAS.USD);
+    const dividaU = bU.tabelas.dividas.find((d) => d.of_id === 'loan-1');
+    eq([dividaU.valor_total, dividaU.valor_parcela, dividaU.saldo_devedor, dividaU.parcelas_total],
+      [emBase(8000), emBase(629.51), emBase(7000), 36],
+      '⚠️ empréstimo de R$ 8.000 entra como US$ 1.555,36 (parcela e saldo devedor junto); nº de parcelas intacto');
+    const invU = bU.tabelas.investimentos.find((i) => i.of_id === 'inv-1');
+    eq([invU.valor_atual, invU.valor_aportado, invU.preco_unitario, invU.quantidade, invU.moeda, cent(invU.rentabilidade * 10000)],
+      // preço unitário arredonda em 8 casas (cota de R$ 0,0101 na base), não em centavo
+      [emBase(10287), emBase(10000), Math.round((10287 / TAXAS.USD) * 1e8) / 1e8, 1, 'USD', 287],
+      '⚠️ CDB de R$ 10.287 entra como US$ 2.000, a moeda vira a do grupo e a rentabilidade (razão) não muda');
+    const movU = (bU.tabelas.investimento_movimentos || []).find((m) => m.of_mov_id === 'mov-1');
+    eq([movU.valor, movU.valor_bruto], [emBase(1000), emBase(1000)], 'a movimentação do investimento também entra convertida');
+    const cxU = bU.tabelas.of_caixinhas.find((c) => c.external_id === 'cx-1');
+    eq([cxU.saldo, cxU.moeda], [emBase(5143.5), 'USD'], '⚠️ caixinha de R$ 5.143,50 entra como US$ 1.000');
+    const fotoU = bU.tabelas.patrimonio_historico[0];
+    eq([fotoU.investido, fotoU.patrimonio_total], [emBase(10287), cent(emBase(10287) + emBase(5143.5) + 2000)],
+      '⚠️ a foto do patrimônio soma a conta do banco CONVERTIDA (e a conta em dólar pelo valor dela)');
 
     // O CARTÃO (C3): entra em real, lançamentos convertidos, fatura em real.
     const cU = bU.tabelas.wallets.filter((w) => w.grupo_id === 'gUSD' && w.tipo === 'Crédito');
@@ -577,13 +637,23 @@ const ANTIGO = (() => {
     const bB = criarBanco(cenario('gBRL', 'BRL'));
     const syncB = carregar(bB, [], {}, celcoin())('services/polpCelcoinSync.js');
     await syncB.sincronizarConsentimento('cons-1');
-    const contaB = bB.tabelas.wallets.find((w) => w.grupo_id === 'gBRL' && w.tipo !== 'Crédito');
+    const contaB = bB.tabelas.wallets.find((w) => w.grupo_id === 'gBRL' && w.tipo !== 'Crédito' && w.of_conta_id);
     const tB = bB.tabelas.transacoes.filter((t) => t.grupo_id === 'gBRL' && t.carteira_nome === contaB.nome);
     eq(tB.map((t) => [t.valor, 'moeda' in t, 'valor_moeda' in t]), [[514.35, false, false]], 'grupo em real: a linha sai SEM colunas de moeda, como antes');
     const c1B = bB.tabelas.transacoes.find((t) => t.of_tx_id === 'of-c1');
     eq([c1B.valor, 'moeda' in c1B, 'valor_moeda' in c1B], [514.35, false, false], 'grupo em real: a compra no cartão sai SEM colunas de moeda, como antes');
     const cB = bB.tabelas.wallets.find((w) => w.grupo_id === 'gBRL' && w.tipo === 'Crédito');
     eq((bB.tabelas.pagamentos_fatura || []).filter((p) => p.cartao_id === cB.id).map((p) => p.valor), [300], 'grupo em real: pagamento do banco como antes');
+    const dividaB = bB.tabelas.dividas.find((d) => d.of_id === 'loan-1');
+    eq([dividaB.valor_total, dividaB.valor_parcela, dividaB.saldo_devedor], [8000, 629.51, 7000], 'grupo em real: o empréstimo entra com os valores do banco, como antes');
+    const invB = bB.tabelas.investimentos.find((i) => i.of_id === 'inv-1');
+    eq([invB.valor_atual, invB.valor_aportado, invB.preco_unitario, invB.moeda], [10287, 10000, 10287, 'BRL'], 'grupo em real: o investimento entra como antes');
+    const movB = (bB.tabelas.investimento_movimentos || []).find((m) => m.of_mov_id === 'mov-1');
+    eq(movB.valor, 1000, 'grupo em real: a movimentação entra como antes');
+    const cxB = bB.tabelas.of_caixinhas.find((c) => c.external_id === 'cx-1');
+    eq([cxB.saldo, cxB.moeda], [5143.5, 'BRL'], 'grupo em real: a caixinha entra como antes');
+    const fotoB = bB.tabelas.patrimonio_historico[0];
+    eq([fotoB.investido, fotoB.patrimonio_total], [10287, cent(10287 + 5143.5 + 2000)], 'grupo em real: a foto do patrimônio é a soma de sempre');
     eq([chamadas.cartoes, chamadas.emprestimos, chamadas.financiamentos, chamadas.investimentos, chamadas.caixinhas],
       [1, 1, 1, 1, 1], 'grupo em real: cartões, empréstimos, investimentos e caixinhas seguem sendo buscados');
   }
@@ -801,6 +871,14 @@ const ANTIGO = (() => {
         M.cartaoForaDaBase({ nome: 'sem moeda no select' }, 'USD'), M.cartaoForaDaBase(null, 'USD')],
       [true, false, false, false, false], '⚠️ só trava cartão fora da base; grupo em REAL nunca trava; sem a coluna `moeda` não trava às cegas');
       ok(!/banco/.test(M.motivoCartaoForaDaBase({ nome: 'Amex', moeda: 'BRL' }, 'USD')), 'cartão manual: o texto não promete que o pagamento vem do banco');
+
+      const { comDinheiroNaBase } = carregar(criarBanco({}))('services/polpCelcoinSync.js');
+      const doBanco = { valor: 100, preco: 3, nome: 'CDB' };
+      eq(comDinheiroNaBase(doBanco, ['valor'], 1, ['preco']) === doBanco, true,
+        'taxa 1 (todo grupo em real) devolve o MESMO objeto — não copia nem reescreve');
+      eq(comDinheiroNaBase(doBanco, ['valor'], 0.5, ['preco']), { valor: 50, preco: 1.5, nome: 'CDB' },
+        'fora da base converte só os campos de dinheiro; o resto fica');
+      eq(doBanco, { valor: 100, preco: 3, nome: 'CDB' }, 'e o objeto original não é alterado');
 
       const { agruparParcelas } = carregar(criarBanco({}))('services/consultaParcela.js');
       const futuro = '2099-01-10T12:00:00.000Z';

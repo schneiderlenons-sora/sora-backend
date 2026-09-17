@@ -446,6 +446,25 @@ function formatar(valor, moeda) {
   return `${MOEDAS[m].simbolo} ${txt}`;
 }
 
+/**
+ * Soma o saldo de uma lista de carteiras NA MOEDA BASE, buscando câmbio só se
+ * houver carteira fora da base (migration 168).
+ *
+ * ⚠️ Existe pra foto do patrimônio, que somava `wallets.saldo` CRU: a conta do
+ * banco (em real) num grupo em dólar entrava como dólar, e a coroa num grupo em
+ * real entrava como real. Sem nenhuma carteira fora da base é a soma de sempre,
+ * sem ida de rede. Carteira sem câmbio fica fora (nunca entra crua).
+ * Quem busca as carteiras TEM de pedir `moeda` no select.
+ */
+async function totalDeSaldosNaBase(wallets, base) {
+  const ws = wallets || [];
+  const b = normalizarMoeda(base);
+  if (!ws.some((w) => normalizarMoeda(w.moeda) !== b)) {
+    return ws.reduce((s, w) => s + (Number(w.saldo) || 0), 0);
+  }
+  return somarSaldos(ws, await taxasParaBase(ws.map((w) => w.moeda), b), b).total;
+}
+
 /** Valor nativo de uma transação (pra tela da conta em moeda estrangeira). */
 function valorNativo(tx) {
   if (tx?.valor_moeda !== null && tx?.valor_moeda !== undefined) return Number(tx.valor_moeda);
@@ -612,7 +631,7 @@ module.exports = {
   // Moeda base do grupo (migration 168) — o BRL vira pivô, não significado.
   taxaEntre, paraBase, moedaBaseDoGrupo, esquecerMoedaBase, baseDisponivel, marcarBaseIndisponivel,
   taxasParaBase, saldoNaBase, comSaldoNaBase, fatorCotacaoParaBase, cartaoForaDaBase, motivoCartaoForaDaBase,
-  saldoEmBRL, somarSaldos,
+  saldoEmBRL, somarSaldos, totalDeSaldosNaBase,
   camposTransacao, valorNativo, originalDoValorNaBase, formatar,
   comSaldoBRL, aquecerCotacoes, atualizarRecorrenciasEstrangeiras,
 };

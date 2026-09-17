@@ -1544,11 +1544,16 @@ cron.schedule('59 23 * * *', async () => {
 
     const { data: invs } = await supabase.from('investimentos')
       .select('valor_atual').eq('grupo_id', u.grupo_ativo);
+    // `moeda` no select: sem ela toda carteira seria lida como real.
     const { data: wallets } = await supabase.from('wallets')
-      .select('saldo').eq('grupo_id', u.grupo_ativo);
+      .select('saldo, moeda').eq('grupo_id', u.grupo_ativo);
 
     const totalInv     = (invs    || []).reduce((s,i) => s + i.valor_atual, 0);
-    const totalWallets = (wallets || []).reduce((s,w) => s + w.saldo, 0);
+    // ⚠️ NA MOEDA BASE (migration 168): somava `saldo` CRU — a conta do banco
+    // em real num grupo em dólar entrava como dólar, e a coroa num grupo em
+    // real como real. Sem carteira fora da base é a soma de sempre, sem rede.
+    const { totalDeSaldosNaBase, moedaBaseDoGrupo: baseDoGrupo } = require('../services/moeda');
+    const totalWallets = await totalDeSaldosNaBase(wallets, await baseDoGrupo(u.grupo_ativo));
     const patrimonioTotal = totalInv + totalWallets;
 
     // Busca patrimônio do dia anterior para calcular rentabilidade

@@ -28,7 +28,9 @@
 const crypto   = require('crypto');
 const supabase = require('../db/supabase');
 const celcoin  = require('./polpCelcoin');
-const { normalizarMoeda, MOEDAS, moedaBaseDoGrupo, taxasParaBase, camposTransacao } = require('./moeda');
+const {
+  normalizarMoeda, MOEDAS, moedaBaseDoGrupo, taxasParaBase, taxaEntre, camposTransacao, totalDeSaldosNaBase,
+} = require('./moeda');
 const {
   categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA, CATEGORIA_ESTORNO,
   ehPagamentoFaturaDescricao, ehMovimentoInvestimento,
@@ -2200,6 +2202,22 @@ function normalizeInvestimento(inv) {
 // cai em BRL pra desconhecida, e aceitar isso calado transformaria pesos em
 // reais. Aqui a divergência é registrada no log, que é o sinal pra somar a
 // moeda na lista de `services/moeda.js` (é uma linha).
+/**
+ * Os campos de DINHEIRO de um item do banco levados pra moeda base do grupo
+ * (migration 168) — empréstimo, investimento, movimentação, caixinha.
+ *
+ * `taxa === 1` (item já na base: todo grupo em real hoje) devolve o MESMO
+ * objeto, sem cópia. Preço unitário NÃO arredonda em centavo (a base tem cota
+ * de R$ 0,0101 — ver aporteInvestimento); o resto arredonda em centavo.
+ */
+function comDinheiroNaBase(obj, campos, taxa, camposPreco = []) {
+  if (!obj || taxa === 1) return obj;
+  const out = { ...obj };
+  for (const c of campos) if (typeof out[c] === 'number') out[c] = cent(out[c] * taxa);
+  for (const c of camposPreco) if (typeof out[c] === 'number') out[c] = Math.round(out[c] * taxa * 1e8) / 1e8;
+  return out;
+}
+
 function moedaDaConta(n) {
   const bruta = String(n && n.moeda ? n.moeda : 'BRL').toUpperCase().trim();
   const ok = normalizarMoeda(bruta);
@@ -2978,11 +2996,12 @@ async function fotografarPatrimonio(grupoId) {
   if (!(investido > 0)) return;
 
   const { data: wallets } = await supabase.from('wallets')
-    .select('saldo, tipo').eq('grupo_id', grupoId);
+    .select('saldo, tipo, moeda').eq('grupo_id', grupoId);
   // Cartão fica de fora: o `saldo` dele é fatura (dívida), não patrimônio.
-  const emConta = (wallets || [])
-    .filter(w => w.tipo !== 'Crédito')
-    .reduce((s, w) => s + (Number(w.saldo) || 0), 0);
+  // ⚠️ NA MOEDA BASE (migration 168): a conta do banco em real num grupo em
+  // dólar entrava crua, como dólar. Sem conta fora da base, a soma de sempre.
+  const emConta = await totalDeSaldosNaBase(
+    (wallets || []).filter(w => w.tipo !== 'Crédito'), await moedaBaseDoGrupo(grupoId));
 
   const hoje = hojeSP();
   const { data: doDia } = await supabase.from('patrimonio_historico')
@@ -3016,7 +3035,9 @@ async function fotografarPatrimonio(grupoId) {
  * Devolve quantas linhas novas entraram (0 quando não há nada ou a migration
  * ainda não rodou).
  */
-async function sincronizarMovimentos(grupoId, path, ofId, investimentoId) {
+// `taxa` (opcional): leva a movimentação pra moeda base do grupo, a mesma do
+// investimento. Congelada na entrada — a linha nunca é regravada.
+async function sincronizarMovimentos(grupoId, path, ofId, investimentoId, taxa = 1) {
   if (!path || !ofId) return 0;
 
   // O investimento tem de existir no nosso banco — é a FK da tabela. O id vem
@@ -3043,7 +3064,7 @@ async function sincronizarMovimentos(grupoId, path, ofId, investimentoId) {
   const linhas = [];
   const vistos = new Set();
   for (const b of brutos) {
-    const m = normalizeMovimento(b);
+    const m = comDinheiroNaBase(normalizeMovimento(b), ['valor', 'valor_bruto', 'ir', 'iof'], taxa, ['preco_unitario']);
     if (!m.externalId || !m.data) continue;
     if (vistos.has(m.externalId)) continue;   // o payload repete o mesmo id
     vistos.add(m.externalId);
@@ -3174,23 +3195,28 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
 
   // ── Moeda base do grupo (migration 168) ─────────────────────────────────
   //
-  // ⚠️ GRUPO FORA DO REAL IMPORTA CONTAS E CARTÕES (decisões do dono,
-  // 17/09/2026). O Open Finance brasileiro só fala real: a conta e o cartão
-  // entram EM REAL dentro do grupo, e cada lançamento é convertido pra base —
-  // igual à conta em dólar lançada à mão num grupo em real.
+  // ⚠️ GRUPO FORA DO REAL IMPORTA TUDO, CONVERTIDO (decisões do dono,
+  // 17/09/2026). O Open Finance brasileiro só fala real:
+  //   · CONTA e CARTÃO entram EM REAL dentro do grupo, e cada lançamento é
+  //     gravado convertido pra base, com o original ao lado — igual à conta em
+  //     dólar lançada à mão num grupo em real. O cartão fica na moeda dele
+  //     (fatura, limite, pagamentos em real) e pagar/antecipar pela Sora é
+  //     travado nele (`moeda.cartaoForaDaBase`).
+  //   · EMPRÉSTIMO, INVESTIMENTO, MOVIMENTAÇÃO E CAIXINHA vivem em tabelas que
+  //     o painel soma como moeda do grupo, sem coluna de original: entram
+  //     CONVERTIDOS pelo câmbio do dia e são regravados a cada sync (o valor
+  //     em dólar de um CDB em real muda com o câmbio — é o certo). Sem câmbio
+  //     o item NÃO entra: gravar real como dólar é o erro que isto impede.
   //
-  // O CARTÃO fica na moeda dele: fatura, limite, faturas publicadas,
-  // pagamentos e parcelas previstas seguem em real, e a soma da fatura usa o
-  // valor original (`valorFatura`, `valor_moeda ?? valor`). Pagar/antecipar
-  // pela Sora fica travado nesse cartão (`moeda.cartaoForaDaBase`).
-  //
-  // EMPRÉSTIMO, INVESTIMENTO E CAIXINHA FICAM DE FORA por enquanto: gravam
-  // valor em real em tabelas que o painel soma como moeda do grupo, sem
-  // conversão — mostrariam número plausível e errado.
-  //
-  // Num grupo em real `grupoForaDoReal` é false e nada abaixo muda.
+  // Num grupo em real todo item do banco já está na base: taxa 1, nada muda.
   const base = await moedaBaseDoGrupo(grupoId);
   const grupoForaDoReal = base !== 'BRL';
+  // Taxa da moeda de um item do banco pra base. 1 na base, `null` sem câmbio.
+  const taxaDoBanco = async (moedaItem) => {
+    const m = normalizarMoeda(moedaItem);
+    if (m === base) return 1;
+    return taxaEntre(m, base, await taxasParaBase([m], base));
+  };
 
   // 1. Estado do consentimento. Sem AUTHORISED não há dado pra importar.
   let consent = null;
@@ -3216,8 +3242,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
 
     if (grupoForaDoReal) {
       relatorio.avisos.push(
-        `grupo em ${base}: contas e cartões são importados (lançamentos convertidos) — empréstimos, `
-        + 'investimentos e caixinhas do banco ainda não');
+        `grupo em ${base}: valores do banco (em real) convertidos pra ${base} pelo câmbio do dia`);
     }
 
     // 2. CONTAS → wallet + transações
@@ -3240,16 +3265,24 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // 2b. CAIXINHAS (saldos reservados) — só quando o banco diz que existem.
         // Bloco à parte e tolerante: caixinha é informativa, e falha aqui não
         // pode derrubar a conta nem as transações, que são o essencial.
-        if (raw.balance && raw.balance.has_reserved_balance === true && !grupoForaDoReal) {
+        if (raw.balance && raw.balance.has_reserved_balance === true) {
           try {
             const reservas = await celcoin.listarSaldosReservados(n.externalId);
             const vistos = [];
             let total = 0;
             for (const r of reservas) {
-              const c = normalizeCaixinha(r, n.externalId);
-              if (!c) continue;
+              const c0 = normalizeCaixinha(r, n.externalId);
+              if (!c0) continue;
+              // ⚠️ Sem câmbio a caixinha não é regravada, mas CONTA como vista:
+              // a reconciliação abaixo apagaria a que já existe.
+              vistos.push(c0.externalId);
+              const tCx = await taxaDoBanco(c0.moeda);
+              if (tCx === null) {
+                relatorio.avisos.push(`${c0.nome}: sem câmbio pra ${base} — caixinha não atualizada`);
+                continue;
+              }
+              const c = tCx === 1 ? c0 : { ...comDinheiroNaBase(c0, ['saldo'], tCx), moeda: base };
               await upsertCaixinha(grupoId, userId, conexao.id, c);
-              vistos.push(c.externalId);
               total = cent(total + c.saldo);
             }
             // Lista vazia é resposta VÁLIDA ("tem o produto, não tem reserva") —
@@ -3415,13 +3448,18 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
 
     // 4. EMPRÉSTIMOS + FINANCIAMENTOS → aba Dívidas
     for (const [kind, lista] of [
-      ['emprestimo', grupoForaDoReal ? [] : await celcoin.listarEmprestimos(consentId)],
-      ['financiamento', grupoForaDoReal ? [] : await celcoin.listarFinanciamentos(consentId)],
+      ['emprestimo', await celcoin.listarEmprestimos(consentId)],
+      ['financiamento', await celcoin.listarFinanciamentos(consentId)],
     ]) {
       for (const raw of lista) {
         try {
-          const d = normalizeDivida(raw, kind);
-          if (!d) { relatorio.dividas.push({ pulado: 'sem valor contratado', id: raw.id }); continue; }
+          const d0 = normalizeDivida(raw, kind);
+          if (!d0) { relatorio.dividas.push({ pulado: 'sem valor contratado', id: raw.id }); continue; }
+          // Moeda do contrato (o Open Finance brasileiro manda real) → base do grupo.
+          const contrato = contratoDe(raw);
+          const tDiv = await taxaDoBanco(contrato.currency || moeda(contrato.contract_amount));
+          if (tDiv === null) { relatorio.dividas.push({ pulado: `sem câmbio pra ${base}`, titulo: d0.titulo }); continue; }
+          const d = comDinheiroNaBase(d0, ['valor_total', 'valor_parcela', 'saldo_devedor'], tDiv);
           const r = await upsertDivida(grupoId, userId, d);
           if (r === 'sem_migration') relatorio.avisos.push('rode sql/100_dividas_open_finance.sql (dívidas sem dedup até então)');
           if (r === 'adotada') {
@@ -3435,13 +3473,26 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     }
 
     // 5. INVESTIMENTOS (5 famílias) → aba Investimentos
-    for (const raw of grupoForaDoReal ? [] : await celcoin.listarInvestimentos(consentId)) {
+    for (const raw of await celcoin.listarInvestimentos(consentId)) {
       try {
-        const n = normalizeInvestimento(raw);
-        if (n.valor_atual == null) {
-          relatorio.investimentos.push({ pulado: 'saldo ainda não sincronizado', nome: n.nome });
+        const n0 = normalizeInvestimento(raw);
+        if (n0.valor_atual == null) {
+          relatorio.investimentos.push({ pulado: 'saldo ainda não sincronizado', nome: n0.nome });
           continue;
         }
+        // Moeda da posição → base do grupo. `rentabilidade` é razão (não muda)
+        // e `quantidade` não é dinheiro.
+        const tInv = await taxaDoBanco(n0.moeda);
+        if (tInv === null) {
+          relatorio.investimentos.push({ pulado: `sem câmbio pra ${base}`, nome: n0.nome });
+          continue;
+        }
+        const n = tInv === 1 ? n0 : {
+          ...comDinheiroNaBase(n0,
+            ['valor_aportado', 'valor_atual', 'valor_bruto', 'ir_provisionado', 'iof_provisionado', 'saldo_bloqueado'],
+            tInv, ['preco_unitario']),
+          moeda: base,
+        };
         const r = await upsertInvestimento(grupoId, n);
         relatorio.investimentos.push({ nome: n.nome, tipo: n.tipo, valor: n.valor_atual, resultado: r.resultado });
 
@@ -3461,7 +3512,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           try {
             // O id vem de `upsertInvestimento`, que acabou de ler a linha —
             // uma leitura a menos por investimento, por sync.
-            await sincronizarMovimentos(grupoId, raw.__path, n.externalId, r.id);
+            await sincronizarMovimentos(grupoId, raw.__path, n.externalId, r.id, tInv);
           } catch (e) {
             console.warn('[celcoin] movimentos de investimento:', e.message);
           }
@@ -3546,4 +3597,5 @@ module.exports = {
   // As duas primeiras são puras; as outras tocam banco e são exercitadas com o
   // Supabase falso do eval.
   algoMudou, mesmoValor, upsertInvestimento, sincronizarMovimentos,
+  comDinheiroNaBase,
 };
