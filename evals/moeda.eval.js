@@ -255,6 +255,61 @@ console.log('── N+2. as camadas contra "câmbio indisponível" ──');
   ok(/cron\.schedule\('0 5 \* \* \*'/.test(jobs), 'todo dia às 05:00, antes do horário de uso');
 }
 console.log('  ok');
+
+// ── MOEDA BASE (migration 168): o BRL vira PIVÔ ──────────────────────────
+// A tabela de câmbio só sabe "quanto vale 1 X em reais". Todo par sai de uma
+// divisão. O que esta seção trava:
+//   · com base BRL, `paraBase` é IDÊNTICO a `paraBRL` (regressão zero pros
+//     217 grupos de hoje);
+//   · faltando qualquer ponta, a taxa é null — NUNCA 1 (1 somaria coroa com
+//     real e daria número plausível e errado);
+//   · ida e volta entre duas moedas estrangeiras volta ao valor original.
+console.log('── moeda base: pivô pelo real ──');
+{
+  // Cotações reais gravadas em cotacoes_moeda (15/09/2026).
+  const tab = { USD: 5.1435, NOK: 0.5515, EUR: 5.9453, JPY: 0.0331 };
+  const perto = (a, b, tol = 1e-9) => Math.abs(a - b) <= tol;
+
+  eq(M.taxaEntre('USD', 'USD', tab), 1, 'mesma moeda → 1');
+  eq(M.taxaEntre('BRL', 'BRL', {}), 1, 'BRL→BRL → 1 mesmo sem tabela');
+  ok(perto(M.taxaEntre('USD', 'BRL', tab), 5.1435), 'USD→BRL = taxa gravada');
+  ok(perto(M.taxaEntre('BRL', 'USD', tab), 1 / 5.1435), 'BRL→USD = inverso');
+  // O par do MVP (decisão do dono: USD e NOK primeiro).
+  ok(perto(M.taxaEntre('USD', 'NOK', tab), 5.1435 / 0.5515), 'USD→NOK pelo pivô');
+  ok(perto(M.taxaEntre('USD', 'NOK', tab), 9.3264, 1e-4), `USD→NOK ≈ 9,33 (deu ${M.taxaEntre('USD', 'NOK', tab)})`);
+  ok(perto(M.taxaEntre('NOK', 'USD', tab) * M.taxaEntre('USD', 'NOK', tab), 1), 'NOK→USD é o inverso exato de USD→NOK');
+
+  // ⚠️ Faltando ponta: null, nunca 1.
+  eq(M.taxaEntre('USD', 'NOK', { USD: 5.1435 }), null, 'sem a cotação do DESTINO → null');
+  eq(M.taxaEntre('USD', 'NOK', { NOK: 0.5515 }), null, 'sem a cotação da ORIGEM → null');
+  eq(M.taxaEntre('USD', 'BRL', {}), null, 'estrangeira sem tabela → null');
+  eq(M.taxaEntre('USD', 'NOK', null), null, 'tabela nula → null');
+  eq(M.taxaEntre('USD', 'NOK', { USD: 5, NOK: 0 }), null, 'cotação zero no destino → null (divisão por zero)');
+  eq(M.taxaEntre('USD', 'NOK', { USD: 5, NOK: NaN }), null, 'cotação NaN → null');
+
+  // ⚠️ REGRESSÃO ZERO: base BRL tem de dar exatamente o paraBRL de hoje.
+  for (const [v, m] of [[100, 'BRL'], [100, 'USD'], [6834.56, 'USD'], [4090.34, 'NOK'], [1250, 'JPY'], [0, 'EUR'], [-50, 'USD']]) {
+    const antes = M.paraBRL(v, m, tab);
+    const agora = M.paraBase(v, m, 'BRL', tab);
+    ok(antes === agora, `paraBase(${v}, ${m}, BRL) = ${agora} ≠ paraBRL = ${antes}`);
+  }
+  // Com câmbio faltando, os dois têm de devolver null juntos.
+  ok(M.paraBRL(10, 'USD', {}) === null && M.paraBase(10, 'USD', 'BRL', {}) === null,
+     'sem câmbio, paraBase e paraBRL dão null juntos');
+
+  // Base estrangeira
+  ok(perto(M.paraBase(100, 'USD', 'NOK', tab), 100 * 5.1435 / 0.5515), '100 USD em NOK');
+  ok(perto(M.paraBase(100, 'NOK', 'NOK', tab), 100), 'NOK em base NOK não converte');
+  ok(perto(M.paraBase(100, 'BRL', 'USD', tab), 100 / 5.1435), 'real numa base em dólar');
+  eq(M.paraBase(100, 'EUR', 'NOK', { EUR: 5.9453 }), null, '⚠️ base NOK sem cotação do NOK → null, nunca soma cru');
+
+  // Ida e volta USD → NOK → USD volta ao original.
+  const ida = M.paraBase(250, 'USD', 'NOK', tab);
+  const volta = M.paraBase(ida, 'NOK', 'USD', tab);
+  ok(perto(volta, 250, 1e-9), `ida e volta deveria voltar a 250, deu ${volta}`);
+}
+console.log('  ok');
+
 console.log('');
 if (falhas.length) {
   console.error(`❌ ${falhas.length} falha(s):`);

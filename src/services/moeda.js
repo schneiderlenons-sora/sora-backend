@@ -142,9 +142,87 @@ async function taxas(moedas) {
   return Object.fromEntries(pares);
 }
 
+// ── MOEDA BASE DO GRUPO (migration 168) ─────────────────────────────────────
+//
+// ⚠️ O REAL DEIXOU DE SER "A MOEDA DO SISTEMA" E VIROU O PIVÔ. `cotacoes_moeda`
+// guarda quanto vale 1 unidade de cada moeda EM REAIS — é só isso que as fontes
+// externas sabem responder. Qualquer outro par sai de uma divisão:
+//
+//     USD → NOK  =  (USD→BRL) ÷ (NOK→BRL)  =  5,1435 ÷ 0,5515  =  9,33
+//
+// Nenhuma tabela nova, nenhuma fonte nova. O BRL passa a ser detalhe de
+// implementação em vez de significado — é o que permite um grupo viver em dólar
+// ou em coroa sem que o resto do sistema precise saber disso.
+
+/**
+ * Taxa pra converter de uma moeda pra outra, via pivô.
+ * `tabela` é o mapa moeda → taxa em BRL (o que `taxas()` devolve).
+ *
+ * ⚠️ Devolve `null` quando falta QUALQUER uma das duas pontas — nunca 1. Cair
+ * pra 1 somaria coroa com real na mesma conta, e o número sairia plausível e
+ * errado, que é o pior defeito possível aqui.
+ */
+function taxaEntre(de, para, tabela) {
+  const a = normalizarMoeda(de);
+  const b = normalizarMoeda(para);
+  if (a === b) return 1;
+
+  const emBRL = (m) => (m === PADRAO ? 1 : (tabela ? tabela[m] : null));
+  const ta = emBRL(a);
+  const tb = emBRL(b);
+  if (!ta || !tb || !Number.isFinite(ta) || !Number.isFinite(tb) || tb === 0) return null;
+  return ta / tb;
+}
+
+/**
+ * Converte um valor da moeda nativa pra MOEDA BASE do grupo.
+ * Generaliza `paraBRL`: com `base = 'BRL'` o resultado é idêntico.
+ */
+function paraBase(valor, moeda, base, tabela) {
+  const v = Number(valor) || 0;
+  const t = taxaEntre(moeda, base, tabela);
+  if (t === null) return null;
+  return v * t;
+}
+
+/**
+ * Lê a moeda base de um grupo.
+ *
+ * ⚠️ TOLERANTE À MIGRATION 168, com CACHE DE PROCESSO no "a coluna existe?".
+ * Sem o cache, uma base sem a migration pagaria uma consulta perdida por
+ * chamada. É estado de ESQUEMA, não de usuário — pode ser compartilhado entre
+ * requisições sem risco de vazar nada entre clientes.
+ *
+ * ⚠️ O CACHE EXPIRA EM 10 MINUTOS, não dura o processo inteiro. Com uma flag
+ * que nunca volta, o backend que já estava no ar quando a migration rodou
+ * seguiria achando que a coluna não existe até o próximo restart — e a moeda
+ * escolhida pelo cliente seria ignorada em silêncio. O custo de tentar de novo
+ * é uma consulta perdida a cada 10 min, e só enquanto a migration não rodar.
+ */
+const RETENTAR_BASE_MS = 10 * 60 * 1000;
+let baseAusenteAte = 0;
+function baseDisponivel() { return Date.now() >= baseAusenteAte; }
+function marcarBaseIndisponivel() { baseAusenteAte = Date.now() + RETENTAR_BASE_MS; }
+
+async function moedaBaseDoGrupo(grupoId) {
+  if (!grupoId || !baseDisponivel()) return PADRAO;
+  try {
+    const { data, error } = await supabase.from('grupos')
+      .select('moeda_base').eq('id', grupoId).maybeSingle();
+    if (error) {
+      if (/moeda_base/i.test(error.message || '')) marcarBaseIndisponivel();
+      return PADRAO;
+    }
+    return normalizarMoeda(data?.moeda_base);
+  } catch { return PADRAO; }
+}
+
 /**
  * Converte um valor da moeda nativa pra BRL.
  * Devolve `null` quando não há câmbio — NUNCA 0.
+ *
+ * ⚠️ Caso particular de `paraBase` com base fixa em BRL. Continua existindo
+ * porque 13 arquivos a chamam; some quando a Fase 5 do plano migrar todos.
  */
 function paraBRL(valor, moeda, tabela) {
   const v = Number(valor) || 0;
@@ -345,6 +423,8 @@ module.exports = {
   PADRAO, MOEDAS,
   normalizarMoeda, ehEstrangeira,
   taxa, taxas, paraBRL,
+  // Moeda base do grupo (migration 168) — o BRL vira pivô, não significado.
+  taxaEntre, paraBase, moedaBaseDoGrupo, baseDisponivel, marcarBaseIndisponivel,
   saldoEmBRL, somarSaldos,
   camposTransacao, valorNativo, formatar,
   comSaldoBRL, aquecerCotacoes, atualizarRecorrenciasEstrangeiras,

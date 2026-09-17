@@ -217,7 +217,7 @@ router.post('/resetar', auth, async (req, res) => {
 router.get('/:phone', auth, async (req, res) => {
   try {
     const { data: user } = await supabase.from('users')
-      .select('*, grupos!users_grupo_ativo_fkey(id, nome)')
+      .select('*, grupos!fk_users_grupo_ativo(id, nome)')
       .eq('id', req.authUser?.id || '__none__').single();
     if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
     res.json(user);

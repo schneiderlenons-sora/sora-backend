@@ -169,7 +169,7 @@ function variantesPhone(phone) {
 async function obterContexto(phone) {
   const { data: user } = await supabase
     .from('users')
-    .select('*, grupos!users_grupo_ativo_fkey(*)')
+    .select('*, grupos!fk_users_grupo_ativo(*)')
     .eq('phone', phone)
     .single();
   return user;
