@@ -22,7 +22,7 @@ const { normalizarPlano } = require('../config/planos');
 const { competenciaAtual, cicloPorCompetencia, competenciaVizinha } = require('../services/cicloFatura');
 // Conta em moeda estrangeira (migration 144) — o caixa soma na moeda BASE do
 // grupo (migration 168).
-const { normalizarMoeda, taxasParaBase, moedaBaseDoGrupo, somarSaldos } = require('../services/moeda');
+const { normalizarMoeda, taxasParaBase, taxaEntre, moedaBaseDoGrupo, somarSaldos } = require('../services/moeda');
 
 const PLANOS_ORACULO = ['premium', 'platinum'];
 
@@ -60,7 +60,10 @@ async function lerFoto(grupoId) {
 
   const [wRes, rRes, dRes] = await Promise.all([
     supabase.from('wallets')
-      .select('id, nome, tipo, saldo, limite, dia_fechamento, dia_vencimento, of_conta_id, arquivada')
+      // ⚠️ `moeda` NO SELECT. Sem ela `normalizarMoeda(undefined)` dá 'BRL' pra
+      // toda carteira: a conversão abaixo nunca rodava pra conta estrangeira
+      // num grupo em real, e num grupo em dólar trataria TODA conta como real.
+      .select('id, nome, tipo, saldo, limite, dia_fechamento, dia_vencimento, of_conta_id, arquivada, moeda')
       .eq('grupo_id', grupoId),
     supabase.from('recorrencias')
       .select('tipo, valor, carteira, modo_lancamento, valor_variavel')
@@ -89,8 +92,9 @@ async function lerFoto(grupoId) {
   // que caberia; o inverso aprovaria uma que não cabe.
   const contasOraculo = wallets.filter((w) => w.tipo !== 'Crédito');
   const baseOraculo = await moedaBaseDoGrupo(grupoId);
-  const temEstrangeira = contasOraculo.some((w) => normalizarMoeda(w.moeda) !== baseOraculo);
-  const tabelaCambio = temEstrangeira ? await taxasParaBase(contasOraculo.map((w) => w.moeda), baseOraculo) : {};
+  // A tabela cobre as contas E os cartões (os cartões convertem mais abaixo).
+  const temEstrangeira = wallets.some((w) => normalizarMoeda(w.moeda) !== baseOraculo);
+  const tabelaCambio = temEstrangeira ? await taxasParaBase(wallets.map((w) => w.moeda), baseOraculo) : {};
   const caixa = cent(somarSaldos(contasOraculo, tabelaCambio, baseOraculo).total);
 
   // ── Renda e despesa fixas ────────────────────────────────────────────────
@@ -131,6 +135,15 @@ async function lerFoto(grupoId) {
       faturasEmDia = (faturasEmDia === false) ? false : !vencida;
     } catch { /* tolerante: sem a fatura o cartão ainda serve pro limite */ }
 
+    // ⚠️ CARTÃO FORA DA MOEDA BASE (migration 168): limite, fatura e parcelas
+    // estão na moeda DO CARTÃO, e o preço da compra está na do grupo. Sem
+    // câmbio o cartão fica FORA — mesma regra conservadora do caixa: sem saber
+    // o limite livre na moeda da compra, não se aprova compra nele.
+    // Cartão na base: taxa 1 e os centavos ficam idênticos.
+    const taxaCartao = taxaEntre(w.moeda, baseOraculo, tabelaCambio);
+    if (taxaCartao === null) continue;
+    const naBase = (centavos) => (taxaCartao === 1 ? centavos : Math.round(centavos * taxaCartao));
+
     // Parcelas futuras já comprometidas neste cartão (as que o banco conhece).
     let previstas = 0;
     try {
@@ -141,10 +154,10 @@ async function lerFoto(grupoId) {
       previstas = (data || []).reduce((s, p) => s + cent(p.valor), 0);
     } catch { /* migration 116 pode não ter rodado — projeção é opcional */ }
 
-    parcelasFuturasTotal += previstas;
+    parcelasFuturasTotal += naBase(previstas);
     cartoes.push({
-      id: w.id, nome: w.nome, limite: cent(w.limite),
-      faturaAberta, parcelasFuturas: previstas,
+      id: w.id, nome: w.nome, limite: naBase(cent(w.limite)),
+      faturaAberta: naBase(faturaAberta), parcelasFuturas: naBase(previstas),
     });
   }
 

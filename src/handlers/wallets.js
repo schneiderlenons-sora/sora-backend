@@ -10,14 +10,22 @@ const { aPagarCartoes, avisoParcial: avisoParcialCartoes } = require('../service
 
 // Soma os gastos de uma carteira (conta/cartão) num intervalo [ini, fimExcl).
 // excluirTransfer = ignora transferências (elas não são gasto de verdade).
+//
+// Devolve a soma nas DUAS moedas (migration 168): `naBase` soma `valor` (moeda
+// do grupo — é o que entra num total junto com outras carteiras) e `naCarteira`
+// soma o ORIGINAL (`valor_moeda`), que é o que o CARTÃO compara com o limite.
+// Carteira na base não tem `valor_moeda`: os dois números são iguais.
 async function somarGastosCarteira(grupoId, nome, ini, fimExcl, excluirTransfer = false) {
   const { data } = await supabase.from('transacoes')
-    .select('valor, transferencia')
+    .select('valor, valor_moeda, transferencia')
     .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
     .ilike('carteira_nome', nome).gte('data', ini).lt('data', fimExcl);
   return (data || [])
     .filter(t => !(excluirTransfer && t.transferencia))
-    .reduce((s, t) => s + (t.valor || 0), 0);
+    .reduce((s, t) => ({
+      naBase: s.naBase + (t.valor || 0),
+      naCarteira: s.naCarteira + ((t.valor_moeda ?? t.valor) || 0),
+    }), { naBase: 0, naCarteira: 0 });
 }
 
 // Tipos válidos de conta
@@ -455,10 +463,11 @@ module.exports = async function handleWallets(data, ctx) {
     for (const w of wallets) {
       if (w.tipo === 'Crédito') {
         const c = cicloPorCompetencia(w, competenciaAtual(w));
-        const fatura = await somarGastosCarteira(grupoId, w.nome, c.ini, c.fimExcl);
-        cartoes.push({ nome: w.nome, fatura, limite: w.limite });
+        const soma = await somarGastosCarteira(grupoId, w.nome, c.ini, c.fimExcl);
+        // `fatura` na moeda do cartão (a do limite); `faturaBase` pro total.
+        cartoes.push({ nome: w.nome, fatura: soma.naCarteira, faturaBase: soma.naBase, limite: w.limite });
       } else {
-        const gasto = await somarGastosCarteira(grupoId, w.nome, iniMes, fimMes, true);
+        const gasto = (await somarGastosCarteira(grupoId, w.nome, iniMes, fimMes, true)).naBase;
         contas.push({ nome: w.nome, gasto, tipo: w.tipo });
       }
     }
@@ -479,7 +488,7 @@ module.exports = async function handleWallets(data, ctx) {
       }).join('\n');
     }
 
-    const total = cartoes.reduce((s, c) => s + c.fatura, 0) + contas.reduce((s, c) => s + c.gasto, 0);
+    const total = cartoes.reduce((s, c) => s + c.faturaBase, 0) + contas.reduce((s, c) => s + c.gasto, 0);
     msg += `\n\n💰 *Total: R$ ${total.toFixed(2)}*`;
 
     await enviarBotaoLink(phone, { message: msg, label: 'Ver no painel', url: 'https://forsora.com/dashboard' });

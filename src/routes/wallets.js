@@ -22,7 +22,31 @@ const { lerPrevistas: parcelasPrevistasDe } = require('../services/parcelasPrevi
 // o painel recebe `saldo_brl` pronto e não precisa buscar câmbio no navegador —
 // senão cada uma das 5 telas que somam saldo teria a sua própria cotação, e
 // elas divergiriam entre si.
-const { normalizarMoeda, moedaBaseDoGrupo, comSaldoNaBase } = require('../services/moeda');
+const {
+  normalizarMoeda, moedaBaseDoGrupo, comSaldoNaBase,
+  taxasParaBase, taxaEntre, cartaoForaDaBase, motivoCartaoForaDaBase,
+} = require('../services/moeda');
+
+/**
+ * Campos de moeda de uma fatura (migration 168). A fatura sai NA MOEDA DO
+ * CARTÃO — é o número que o app do banco mostra — e `taxa_base` leva pra moeda
+ * do grupo quem SOMA cartões. Cartão na base (hoje, toda a base) sai com taxa 1.
+ * `bloqueio_pagamento` é o texto do porquê de não aceitar pagamento/antecipação
+ * manual, ou null — em grupo em real é SEMPRE null.
+ */
+function camposMoedaFatura(cartao, base, tabela) {
+  return {
+    moeda: normalizarMoeda(cartao.moeda),
+    moeda_base: base,
+    taxa_base: taxaEntre(cartao.moeda, base, tabela),
+    bloqueio_pagamento: cartaoForaDaBase(cartao, base) ? motivoCartaoForaDaBase(cartao, base) : null,
+  };
+}
+
+/** Tabela de câmbio dos cartões até a base. Sem cartão fora da base: `{}`, sem rede. */
+async function tabelaDosCartoes(cartoes, base) {
+  try { return await taxasParaBase((cartoes || []).map((c) => c.moeda), base); } catch { return {}; }
+}
 
 // A conversão mora em `services/moeda.js` (comSaldoNaBase) — o `/api/dashboard`
 // precisa da MESMA, e enquanto ela viveu aqui só esta rota convertia.
@@ -317,7 +341,15 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
     if (!itens.length) return res.status(400).json({ erro: 'Escolha a conta e o valor do pagamento.' });
 
     const { data: cartao } = await supabase.from('wallets')
-      .select('id, nome, dia_fechamento, dia_vencimento').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
+      .select('id, nome, dia_fechamento, dia_vencimento, moeda, of_conta_id').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
+
+    // ⚠️ CARTÃO EM OUTRA MOEDA QUE A DO GRUPO (migration 168) não aceita
+    // pagamento manual — ver moeda.cartaoForaDaBase. Recusa ANTES de debitar
+    // qualquer conta. Grupo em real nunca cai aqui.
+    const baseGrupo = await moedaBaseDoGrupo(grupoId);
+    if (cartaoForaDaBase(cartao, baseGrupo)) {
+      return res.status(409).json({ erro: motivoCartaoForaDaBase(cartao, baseGrupo), codigo: 'cartao_outra_moeda' });
+    }
 
     // Uma transação por item. Conta real → debita o saldo; externo → só registra
     // (sem mexer em saldo). `descricao` (ex.: "Esposa") vira parte da observação
@@ -367,9 +399,10 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
     if (!cartaoId) return res.status(400).json({ erro: 'cartao_id obrigatório' });
 
     const { data: cartao } = await supabase.from('wallets')
-      .select('id, nome, of_conta_id, saldo, dia_fechamento, dia_vencimento')
+      .select('id, nome, of_conta_id, saldo, dia_fechamento, dia_vencimento, moeda')
       .eq('id', cartaoId).eq('grupo_id', grupoId).maybeSingle();
     if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
+    const baseGrupo = await moedaBaseDoGrupo(grupoId);
 
     const competencia = /^\d{4}-\d{2}$/.test(req.query.competencia || '')
       ? req.query.competencia
@@ -405,6 +438,7 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
 
     res.json({
       ...st, ...vista, competencia, rollover,
+      ...camposMoedaFatura(cartao, baseGrupo, await tabelaDosCartoes([cartao], baseGrupo)),
       // Fatura do EMISSOR nesta competência — o modal usa pra agrupar os
       // lançamentos como o banco agrupa (pertenceAFatura, modo híbrido).
       of_bill_id: billDaComp,
@@ -436,6 +470,10 @@ router.get('/faturas/:phone', auth, async (req, res) => {
     const { data: cartoes } = await supabase.from('wallets')
       .select('*')
       .eq('grupo_id', grupoId).eq('tipo', 'Crédito').order('created_at', { ascending: true });
+
+    // Moeda de cada fatura (migration 168) — ver camposMoedaFatura.
+    const baseGrupo = await moedaBaseDoGrupo(grupoId);
+    const tabelaCartoes = await tabelaDosCartoes(cartoes, baseGrupo);
 
     const faturas = [];
     for (const c of cartoes || []) {
@@ -505,6 +543,8 @@ router.get('/faturas/:phone', auth, async (req, res) => {
 
       faturas.push({
         cartao_id: c.id, nome: c.nome, limite: c.limite ?? null,
+        // Todos os valores desta linha estão na moeda do CARTÃO.
+        ...camposMoedaFatura(c, baseGrupo, tabelaCartoes),
         competencia, ini: ciclo.ini, fim: ciclo.fim, fimExcl: ciclo.fimExcl,
         venc: ciclo.venc, label: ciclo.label, porCiclo: ciclo.porCiclo,
         of: ehOF, fatura, pago, restante, vencida, quitada, proxima,

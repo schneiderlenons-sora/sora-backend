@@ -163,7 +163,7 @@ async function somaFaturaCiclo(grupoId, cartaoNome, ciclo, cicloAnterior) {
   // seriam duas idas pra cada fatura calculada.
   const [{ data }, { data: ult }] = await Promise.all([
     supabase.from('transacoes')
-      .select('valor, tipo, categoria, transferencia, data, of_bill_post_date, parcela_num')
+      .select('valor, valor_moeda, tipo, categoria, transferencia, data, of_bill_post_date, parcela_num')
       .eq('grupo_id', grupoId).ilike('carteira_nome', cartaoNome)
       .gte('data', folga(inicioBusca, -8)).lt('data', folga(ciclo.fimExcl, 8)),
     // ⚠️ O RELÓGIO DO EMISSOR É DO CARTÃO, NUNCA DA JANELA — e essa distinção
@@ -356,12 +356,12 @@ async function registrarPagamentosDoOF(grupoId, cartao) {
     // Só o que veio do banco (`of_tx_id`) e é reconhecidamente pagamento de
     // fatura. Lançamento manual continua entrando pelo fluxo do painel.
     const { data: pgs } = await supabase.from('transacoes')
-      .select('id, valor, data, categoria, transferencia, of_tx_id')
+      .select('id, valor, valor_moeda, data, categoria, transferencia, of_tx_id')
       .eq('grupo_id', grupoId).ilike('carteira_nome', cartao.nome)
       .eq('tipo', 'Recebimento').not('of_tx_id', 'is', null)
       .order('data', { ascending: false }).limit(200);
     const candidatos = (pgs || []).filter(
-      (t) => t.transferencia === true && ehPagamentoFaturaCat(t.categoria) && Number(t.valor) > 0);
+      (t) => t.transferencia === true && ehPagamentoFaturaCat(t.categoria) && Number(t.valor_moeda ?? t.valor) > 0);
     if (!candidatos.length) return 0;
 
     // Quais já foram registrados (chave: transacao_id).
@@ -377,7 +377,8 @@ async function registrarPagamentosDoOF(grupoId, cartao) {
       if (!competencia) continue;
       novos.push({
         grupo_id: grupoId, cartao_id: cartao.id, competencia,
-        valor: cent(t.valor), data: String(t.data).slice(0, 10), transacao_id: t.id,
+        // Na moeda do CARTÃO (o original), igual à fatura que ele abate.
+        valor: cent(t.valor_moeda ?? t.valor), data: String(t.data).slice(0, 10), transacao_id: t.id,
       });
     }
     if (!novos.length) return 0;

@@ -243,6 +243,46 @@ function fatorCotacaoParaBase(moedaCotacao, base, tabela) {
   return taxaEntre(q, b, tabela);
 }
 
+/**
+ * O cartão está numa moeda DIFERENTE da base do grupo? (migration 168)
+ *
+ * Hoje só acontece com cartão do Open Finance (o Open Finance brasileiro só
+ * fala real) num grupo em dólar/coroa. Cartão criado à mão nasce na base.
+ *
+ * ⚠️ GRUPO EM REAL NUNCA BLOQUEIA: devolve false com base BRL, qualquer que seja
+ * a moeda do cartão. É o que garante que todo grupo que já existe (todos em
+ * real) siga pagando e antecipando exatamente como antes.
+ *
+ * ⚠️ `moeda` AUSENTE NÃO BLOQUEIA: quem chama TEM de pedir a coluna `moeda` no
+ * select — sem ela não há como saber, e bloquear às cegas travaria o pagamento
+ * de todo cartão num grupo em dólar.
+ */
+function cartaoForaDaBase(cartao, base) {
+  if (!cartao || cartao.moeda === undefined) return false;
+  if (normalizarMoeda(base) === PADRAO) return false;
+  return normalizarMoeda(cartao.moeda) !== normalizarMoeda(base);
+}
+
+/**
+ * Por que o pagamento/antecipação MANUAL desse cartão não é aceito.
+ *
+ * ⚠️ Travado no MVP (17/09/2026): debitar uma conta pela fatura de um cartão em
+ * outra moeda misturaria moedas no saldo e na transação da conta — e o
+ * pagamento desse cartão já chega pelo próprio banco
+ * (`faturaRollover.registrarPagamentosDoOF`).
+ */
+function motivoCartaoForaDaBase(cartao, base) {
+  const nomeCartao = cartao && cartao.nome ? ` ${cartao.nome}` : '';
+  const moedaCartao = MOEDAS[normalizarMoeda(cartao && cartao.moeda)].nome.toLowerCase();
+  const moedaGrupo = MOEDAS[normalizarMoeda(base)].nome.toLowerCase();
+  // "Chega pelo banco" só é verdade no cartão do Open Finance — pedir
+  // `of_conta_id` no select pra ter o texto completo.
+  const peloBanco = cartao && cartao.of_conta_id ? 'O pagamento dele chega pelo próprio banco — ' : '';
+  return `O cartão${nomeCartao} é em ${moedaCartao} e o seu grupo usa ${moedaGrupo}. `
+    + `${peloBanco}${peloBanco ? 'pagar' : 'Pagar'} ou antecipar pela Sora ainda não está `
+    + 'disponível nesse caso.';
+}
+
 /** Saldo da carteira na moeda base do grupo. `null` sem câmbio — NUNCA 0. */
 function saldoNaBase(wallet, base, tabela) {
   return paraBase(wallet?.saldo, wallet?.moeda, base, tabela);
@@ -548,7 +588,7 @@ module.exports = {
   taxa, taxas, paraBRL,
   // Moeda base do grupo (migration 168) — o BRL vira pivô, não significado.
   taxaEntre, paraBase, moedaBaseDoGrupo, esquecerMoedaBase, baseDisponivel, marcarBaseIndisponivel,
-  taxasParaBase, saldoNaBase, comSaldoNaBase, fatorCotacaoParaBase,
+  taxasParaBase, saldoNaBase, comSaldoNaBase, fatorCotacaoParaBase, cartaoForaDaBase, motivoCartaoForaDaBase,
   saldoEmBRL, somarSaldos,
   camposTransacao, valorNativo, formatar,
   comSaldoBRL, aquecerCotacoes, atualizarRecorrenciasEstrangeiras,

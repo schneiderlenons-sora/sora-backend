@@ -60,7 +60,16 @@ function elegivelBase(t) {
   if (!t) return false;
   if (t.parcela_total) return false;      // parcela repete de propósito
   if (t.recorrente) return false;         // conta fixa idem
-  return Number(t.valor) > 0;
+  return valorOriginal(t) > 0;
+}
+
+// ⚠️ Compara pelo valor ORIGINAL da conta (migration 168). Em conta fora da moeda
+// do grupo, a mesma compra lançada à mão num dia e trazida pelo banco no outro
+// sai com `valor` convertido por taxas de dias diferentes — pelo convertido,
+// a duplicata nunca bateria. Sem `valor_moeda` (conta na moeda do grupo) é o
+// próprio `valor`.
+function valorOriginal(t) {
+  return Number(t.valor_moeda ?? t.valor);
 }
 
 /**
@@ -82,7 +91,7 @@ const daOF = (t) => !!(t.of_tx_id || t.pluggy_tx_id);
 function ehDuplicata(a, b) {
   if (!elegivelBase(a) || !elegivelBase(b)) return null;
   if (a.id && b.id && a.id === b.id) return null;
-  if (Number(a.valor) !== Number(b.valor)) return null;
+  if (valorOriginal(a) !== valorOriginal(b)) return null;
 
   // ⚠️⚠️ AS DUAS TRAVAS QUE PROTEGEM O PAGAMENTO DE FATURA ⚠️⚠️
   //
@@ -148,7 +157,7 @@ function ehDuplicata(a, b) {
 function ehSuspeita(a, b) {
   if (!elegivel(a) || !elegivel(b)) return null;
   if (a.id && b.id && a.id === b.id) return null;
-  if (Number(a.valor) !== Number(b.valor)) return null;
+  if (valorOriginal(a) !== valorOriginal(b)) return null;
   if (normTexto(a.carteira_nome) !== normTexto(b.carteira_nome)) return null;
   // Descrição igual é obrigatória aqui: sem ela sobra "mesmo valor no mesmo
   // dia", que em conta movimentada acusa qualquer coisa.
@@ -240,7 +249,7 @@ function explicar(grupo) {
 
 // ── Acesso ao banco ─────────────────────────────────────────────────────────
 
-const COLUNAS = 'id, id_curto, valor, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia';
+const COLUNAS = 'id, id_curto, valor, valor_moeda, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia';
 
 /**
  * Duplicatas do grupo nos últimos `dias`.

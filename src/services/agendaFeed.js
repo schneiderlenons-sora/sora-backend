@@ -127,8 +127,25 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
     const { valorExibido } = require('./faturaVista');
     const { competenciaAtual, cicloPorCompetencia } = require('./cicloFatura');
     const { data } = await supabase.from('wallets')
-      .select('id, nome, saldo, of_conta_id, dia_fechamento, dia_vencimento')
+      .select('id, nome, saldo, of_conta_id, dia_fechamento, dia_vencimento, moeda')
       .eq('grupo_id', grupoId).eq('tipo', 'Crédito');
+
+    // ⚠️ O valor do evento vai NA MOEDA DO GRUPO (migration 168): a agenda
+    // formata todo evento com a moeda base, e a fatura de um cartão em outra
+    // moeda sairia com o símbolo errado. Sem câmbio o evento fica sem valor
+    // (ele já é tolerante a isso). Cartão na base: nada muda, nem ida de rede.
+    const { moedaBaseDoGrupo, taxasParaBase, taxaEntre, normalizarMoeda } = require('./moeda');
+    const cartoesForaDaBase = [];
+    let baseGrupo = null;
+    if ((data || []).length) {
+      baseGrupo = await moedaBaseDoGrupo(grupoId);
+      for (const w of data) if (normalizarMoeda(w.moeda) !== baseGrupo) cartoesForaDaBase.push(w.moeda);
+    }
+    let tabelaCartoes = {};
+    if (cartoesForaDaBase.length) {
+      try { tabelaCartoes = await taxasParaBase(cartoesForaDaBase, baseGrupo); } catch { tabelaCartoes = {}; }
+    }
+
     for (const w of data || []) {
       // Valor da fatura em aberto (só o vencimento mais próximo — não vale a
       // pena somar ciclo a ciclo pra um feed que pode varrer meses) + se ela
@@ -144,6 +161,10 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
         const { lerPrevistas } = require('./parcelasPrevistas');
         const vista = await valorExibido(w, comp, st, { parcelasPrevistas: lerPrevistas });
         valorFatura = vista.restante || null;
+        if (valorFatura !== null && normalizarMoeda(w.moeda) !== baseGrupo) {
+          const t = taxaEntre(w.moeda, baseGrupo, tabelaCartoes);
+          valorFatura = t === null ? null : Math.round(valorFatura * t * 100) / 100;
+        }
         quitada = !!vista.quitada;
       } catch { /* tolerante: o evento vale mesmo sem o valor */ }
       const vencAtual = (() => {

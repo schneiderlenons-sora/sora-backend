@@ -18,6 +18,8 @@ const {
   taxasParaBase: taxasParaBaseTx,
   moedaBaseDoGrupo: moedaBaseTx,
   camposTransacao,
+  cartaoForaDaBase,
+  motivoCartaoForaDaBase,
 } = require('../services/moeda');
 
 const norm = p => p?.replace(/\D/g, '');
@@ -361,9 +363,20 @@ router.post('/parcelado', auth, exigirPermissao('admin', 'escrita'), async (req,
     if (!(vp > 0)) return res.status(400).json({ erro: 'Valor da parcela inválido.' });
 
     // Parcelado é só em CARTÃO DE CRÉDITO.
-    const { data: wsGrupo } = await supabase.from('wallets').select('id, nome, tipo, saldo').eq('grupo_id', grupoId);
+    const { data: wsGrupo } = await supabase.from('wallets').select('id, nome, tipo, saldo, moeda').eq('grupo_id', grupoId);
     const card = (wsGrupo || []).find(w => normNome(w.nome) === normNome(carteira_nome) && w.tipo === 'Crédito');
     if (!card) return res.status(400).json({ erro: 'Compra parcelada só pode ser lançada em um cartão de crédito.' });
+
+    // Cartão fora da moeda base do grupo (migration 168): o valor digitado está
+    // na moeda DO CARTÃO — a parcela guarda o original em `valor_moeda` (é o
+    // que a fatura soma) e `valor` convertido, igual ao POST avulso. Cartão na
+    // base devolve `moeda` null e a linha sai idêntica à de antes.
+    const baseGrupo   = await moedaBaseTx(grupoId);
+    const moedaCartao = card.moeda == null ? baseGrupo : normalizarMoedaTx(card.moeda);
+    const campoMoeda  = camposTransacao(vp, moedaCartao, await taxasParaBaseTx([moedaCartao], baseGrupo), baseGrupo);
+    const valoresDaParcela = campoMoeda.moeda
+      ? { valor: campoMoeda.valor, moeda: campoMoeda.moeda, valor_moeda: campoMoeda.valor_moeda, taxa_brl: campoMoeda.taxa_brl }
+      : { valor: vp };
 
     const pagasSet = new Set((Array.isArray(pagas) ? pagas : []).map(Number));
     const grupoParcela = 'P' + Math.random().toString(36).substring(2, 10).toUpperCase();
@@ -379,7 +392,7 @@ router.post('/parcelado', auth, exigirPermissao('admin', 'escrita'), async (req,
         criado_por:    userId,
         tipo:          'Gasto',
         categoria:     categoria || '📦 Outros',
-        valor:         vp,
+        ...valoresDaParcela,
         observacao:    (observacao || '').toString().slice(0, 200),
         carteira_nome: card.nome,
         pago:          pagasSet.has(i),
@@ -733,9 +746,23 @@ router.post('/antecipar-cartao', auth, exigirPermissao('admin', 'escrita'), asyn
 
     // Soma só das parcelas em aberto (evita debitar o que já estava pago)
     const { data: parcelas } = await supabase.from('transacoes')
-      .select('id, valor, pago').eq('grupo_id', grupoId).in('id', ids);
+      .select('id, valor, pago, moeda, carteira_nome').eq('grupo_id', grupoId).in('id', ids);
     const emAberto = (parcelas || []).filter(p => p.pago === false);
     if (emAberto.length === 0) return res.json({ ok: true, debitado: 0 });
+
+    // ⚠️ Parcela de cartão em outra moeda que a do grupo (migration 168): sem
+    // antecipação manual — ver moeda.cartaoForaDaBase. `moeda` só é preenchida
+    // quando a carteira NÃO está na base, então a base só é lida quando há uma
+    // assim. Recusa ANTES de marcar qualquer parcela. Grupo em real nunca recusa.
+    const foraDaBase = emAberto.find(p => p.moeda);
+    if (foraDaBase) {
+      const baseGrupo = await moedaBaseTx(grupoId);
+      const cartaoDaParcela = { nome: foraDaBase.carteira_nome, moeda: foraDaBase.moeda };
+      if (cartaoForaDaBase(cartaoDaParcela, baseGrupo)) {
+        return res.status(409).json({ erro: motivoCartaoForaDaBase(cartaoDaParcela, baseGrupo), codigo: 'cartao_outra_moeda' });
+      }
+    }
+
     const total = emAberto.reduce((s, p) => s + (p.valor || 0), 0);
 
     // Marca como pagas

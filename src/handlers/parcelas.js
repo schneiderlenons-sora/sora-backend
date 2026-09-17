@@ -4,6 +4,12 @@ const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const { termoCasaCompra, parcelaJaCobrada, agruparParcelas } = require('../services/consultaParcela');
 const { criarPendente } = require('../services/pendentes');
 const { oferecerDesconto } = require('../services/descontoConta');
+// Cartão numa moeda diferente da base do grupo (migration 168) — ver
+// services/moeda.cartaoForaDaBase. Em grupo em real nada disto muda o fluxo.
+const {
+  moedaBaseDoGrupo, taxasParaBase, camposTransacao, normalizarMoeda,
+  cartaoForaDaBase, motivoCartaoForaDaBase,
+} = require('../services/moeda');
 
 const gerarId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
@@ -25,7 +31,7 @@ const ehCredito = (w) => /cr[eé]dito/i.test(String(w && w.tipo || ''));
 /** Só os cartões de crédito ATIVOS do grupo. */
 async function listarCartoes(grupoId) {
   const { data } = await supabase.from('wallets')
-    .select('id, nome, tipo, saldo, arquivada')
+    .select('id, nome, tipo, saldo, arquivada, moeda')
     .eq('grupo_id', grupoId)
     .order('created_at', { ascending: true });
   return (data || []).filter((w) => !w.arquivada && ehCredito(w));
@@ -175,7 +181,7 @@ module.exports = async function handleParcelas(data, ctx) {
     const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
     const semRuido = (s) => norm(s).replace(/\b(cartao|credito|debito|fatura|conta|banco|meu|minha|do|da|de|no|na|o|a)\b/g, '').replace(/\s+/g, ' ').trim();
     const { data: todosCartoes } = await supabase.from('wallets')
-      .select('id, nome, dia_fechamento, dia_vencimento, of_conta_id, saldo').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
+      .select('id, nome, dia_fechamento, dia_vencimento, of_conta_id, saldo, moeda').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
       .order('created_at', { ascending: true });
     let cartoes = todosCartoes || [];
     const termoN = semRuido(termo);
@@ -198,6 +204,14 @@ module.exports = async function handleParcelas(data, ctx) {
       return;
     }
     const cartao = cartoes[0];
+
+    // ⚠️ Cartão em outra moeda que a do grupo: sem pagamento manual (mesma
+    // recusa do painel, `POST /wallets/fatura/pagar`). Grupo em real nunca cai aqui.
+    const baseGrupo = await moedaBaseDoGrupo(grupoId);
+    if (cartaoForaDaBase(cartao, baseGrupo)) {
+      await enviarTexto(phone, `💳 ${motivoCartaoForaDaBase(cartao, baseGrupo)}`);
+      return;
+    }
 
     // Fatura pelo CICLO REAL de fechamento — MESMA fonte do painel, do rollover
     // (096) e dos crons (services/cicloFatura + statusFatura). Antes isto usava
@@ -323,6 +337,20 @@ module.exports = async function handleParcelas(data, ctx) {
       ? (cent(valorParcela) + sobra) / 100
       : valorParcela);
 
+    // Cartão fora da moeda base do grupo (migration 168): a parcela guarda o
+    // valor ORIGINAL (moeda do cartão, que é o que a fatura soma) e `valor`
+    // convertido — igual ao lançamento avulso. Cartão na base devolve `moeda`
+    // null e a linha sai idêntica à de antes.
+    const baseGrupo = await moedaBaseDoGrupo(grupoId);
+    const moedaCartao = wallet.moeda == null ? baseGrupo : normalizarMoeda(wallet.moeda);
+    const tabelaCartao = await taxasParaBase([moedaCartao], baseGrupo);
+    const valoresDaParcela = (i) => {
+      const c = camposTransacao(valorDaParcela(i), moedaCartao, tabelaCartao, baseGrupo);
+      return c.moeda
+        ? { valor: c.valor, moeda: c.moeda, valor_moeda: c.valor_moeda, taxa_brl: c.taxa_brl }
+        : { valor: c.valor };
+    };
+
     // Mesmo schema do painel (migration 071): parcela_num/total/grupo — assim o
     // "listar parcelas", a badge "1/3" e o "excluir todas" funcionam igual.
     const grupoParcela = 'P' + Math.random().toString(36).substring(2, 10).toUpperCase();
@@ -334,7 +362,7 @@ module.exports = async function handleParcelas(data, ctx) {
         criado_por:    user?.id || null,
         tipo:          'Gasto',
         categoria:     categoria || 'Outros',
-        valor:         valorDaParcela(i),
+        ...valoresDaParcela(i),
         observacao:    descricao,
         carteira_nome: wallet.nome,
         pago:          false,
@@ -389,6 +417,21 @@ module.exports = async function handleParcelas(data, ctx) {
     }
 
     const alvo = data.todas ? aVencer : [aVencer[0]];
+
+    // ⚠️ Parcela de cartão em outra moeda que a do grupo: sem antecipação
+    // manual (mesma recusa do painel). A linha diz sozinha — `moeda` só é
+    // preenchida quando a carteira NÃO está na base (ver moeda.camposTransacao)
+    // —, então a base só é lida quando há uma assim. Grupo em real nunca recusa.
+    const foraDaBase = alvo.find((t) => t.moeda);
+    if (foraDaBase) {
+      const baseGrupo = await moedaBaseDoGrupo(grupoId);
+      const cartaoDaParcela = { nome: foraDaBase.carteira_nome, moeda: foraDaBase.moeda };
+      if (cartaoForaDaBase(cartaoDaParcela, baseGrupo)) {
+        await enviarTexto(phone, `💳 ${motivoCartaoForaDaBase(cartaoDaParcela, baseGrupo)}`);
+        return;
+      }
+    }
+
     const totalPago = alvo.reduce((s, t) => s + (t.valor || 0), 0);
 
     // Pagar fatura debita de uma conta — pergunta de qual (igual ao painel).

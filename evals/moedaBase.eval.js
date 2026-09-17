@@ -15,6 +15,9 @@
 // Rodar:  npm run eval:moeda-base
 // =============================================================================
 const path = require('path');
+// handlers/parcelas → handlers/transacoes → services/ia instancia o cliente da
+// OpenAI no require. Nenhuma chamada é feita aqui.
+process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk-eval-sem-rede';
 
 const falhas = [];
 const eq = (a, b, m) => {
@@ -35,29 +38,46 @@ function criarBanco(inicial, opcoes = {}) {
   let seq = 0;
   function from(nome) {
     const filtros = [];
-    let modo = 'select', payload = null, retornar = false, unica = null;
+    let modo = 'select', payload = null, retornar = false, unica = null, colunas = '*';
     const api = {
-      select() { if (modo !== 'select') retornar = true; return api; },
+      select(c) { if (modo !== 'select') retornar = true; colunas = c || '*'; return api; },
       insert(p) { modo = 'insert'; payload = p; return api; },
       update(p) { modo = 'update'; payload = p; return api; },
       upsert(p) { modo = 'upsert'; payload = p; return api; },
       delete() { modo = 'delete'; return api; },
       eq(c, v) { filtros.push((r) => r[c] === v); return api; },
-      ilike(c, v) { filtros.push((r) => String(r[c] ?? '').toLowerCase() === String(v ?? '').toLowerCase()); return api; },
+      neq(c, v) { filtros.push((r) => r[c] !== v); return api; },
+      // `%` vira curinga (antecipar parcela busca `%termo%`); sem `%`, igualdade
+      // sem caixa — o que as seções anteriores já usavam.
+      ilike(c, v) {
+        const padrao = String(v ?? '').toLowerCase();
+        const re = new RegExp(`^${padrao.split('%').map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+        filtros.push((r) => re.test(String(r[c] ?? '').toLowerCase()));
+        return api;
+      },
       is(c, v) { filtros.push((r) => (r[c] ?? null) === v); return api; },
       not(c, op, v) { filtros.push((r) => (op === 'is' ? (r[c] ?? null) !== v : true)); return api; },
       in(c, arr) { const s = new Set(arr); filtros.push((r) => s.has(r[c])); return api; },
-      filter() { return api; }, gte() { return api; }, lte() { return api; },
+      filter() { return api; }, gte() { return api; }, lte() { return api; }, lt() { return api; },
       order() { return api; },
       limit() { return api; },
       single() { unica = 'single'; return api; },
       maybeSingle() { unica = 'maybe'; return api; },
       then(res, rej) { return Promise.resolve().then(executar).then(res, rej); },
     };
+    // ⚠️ O SELECT PROJETA AS COLUNAS, como o banco de verdade. Devolver a linha
+    // inteira escondia o defeito de ler uma coluna que a query não pediu (foi o
+    // caso do Oráculo, que somava contas em dólar como real por não pedir `moeda`).
+    function projetar(r) {
+      if (typeof colunas !== 'string' || colunas.includes('*') || colunas.includes('(')) return { ...r };
+      const o = {};
+      for (const c of colunas.split(',').map((s) => s.trim()).filter(Boolean)) o[c] = r[c] === undefined ? null : r[c];
+      return o;
+    }
     function responder(linhas) {
-      if (unica === 'single') return linhas.length === 1 ? { data: { ...linhas[0] }, error: null } : { data: null, error: { message: 'single' } };
-      if (unica === 'maybe') return linhas.length > 1 ? { data: null, error: { message: 'multiple' } } : { data: linhas[0] ? { ...linhas[0] } : null, error: null };
-      return { data: linhas.map((r) => ({ ...r })), error: null };
+      if (unica === 'single') return linhas.length === 1 ? { data: projetar(linhas[0]), error: null } : { data: null, error: { message: 'single' } };
+      if (unica === 'maybe') return linhas.length > 1 ? { data: null, error: { message: 'multiple' } } : { data: linhas[0] ? projetar(linhas[0]) : null, error: null };
+      return { data: linhas.map(projetar), error: null };
     }
     function executar() {
       if (modo === 'select') leituras[nome] = (leituras[nome] || 0) + 1;
@@ -498,6 +518,266 @@ const ANTIGO = (() => {
     eq(tB.map((t) => [t.valor, 'moeda' in t, 'valor_moeda' in t]), [[514.35, false, false]], 'grupo em real: a linha sai SEM colunas de moeda, como antes');
     eq([chamadas.cartoes, chamadas.emprestimos, chamadas.financiamentos, chamadas.investimentos, chamadas.caixinhas],
       [1, 1, 1, 1, 1], 'grupo em real: cartões, empréstimos, investimentos e caixinhas seguem sendo buscados');
+  }
+  console.log('  ok');
+
+  // ── 9. Cartão numa moeda diferente da base ─────────────────────────────────
+  //
+  // O caso real é o cartão do Open Finance (só fala real) num grupo em dólar.
+  // A fatura, o limite e os pagamentos estão NA MOEDA DO CARTÃO; o que soma
+  // cartão com o resto converte pra base. E pagar/antecipar pela Sora fica
+  // travado nesse caso — mas NUNCA num grupo em real.
+  console.log('── 9. cartão fora da moeda base: fatura na moeda dele, total na do grupo ──');
+  {
+    const cf = carregar(criarBanco({}))('services/cicloFatura.js');
+    const CICLO = { dia_fechamento: 5, dia_vencimento: 15 };
+    const compAtual = cf.competenciaAtual(CICLO);
+    const ciclo = cf.cicloPorCompetencia(CICLO, compAtual);
+    const noCiclo = `${ciclo.ini}T12:00:00.000Z`;
+    const noFuturo = `${cf.competenciaVizinha(CICLO, compAtual, 3)}-10T12:00:00.000Z`;
+
+    const cenario = () => ({
+      grupos: [{ id: 'gBRL', moeda_base: 'BRL' }, { id: 'gUSD', moeda_base: 'USD' }],
+      wallets: [
+        { id: 'b-itau', grupo_id: 'gBRL', nome: 'Itaú', tipo: 'Corrente', saldo: 3000, moeda: 'BRL' },
+        { id: 'b-nu', grupo_id: 'gBRL', nome: 'Nubank Crédito', tipo: 'Crédito', saldo: 0, limite: 5000, moeda: 'BRL', of_conta_id: 'of-b', ...CICLO },
+        { id: 'u-chase', grupo_id: 'gUSD', nome: 'Chase', tipo: 'Corrente', saldo: 1000, moeda: 'USD' },
+        { id: 'u-nu', grupo_id: 'gUSD', nome: 'Nubank Crédito', tipo: 'Crédito', saldo: 0, limite: 5000, moeda: 'BRL', of_conta_id: 'of-u', ...CICLO },
+        { id: 'u-amex', grupo_id: 'gUSD', nome: 'Amex', tipo: 'Crédito', saldo: 0, limite: 2000, moeda: 'USD', ...CICLO },
+      ],
+      transacoes: [
+        { id: 'tb', grupo_id: 'gBRL', tipo: 'Gasto', categoria: 'Mercado', valor: 514.35, carteira_nome: 'Nubank Crédito', data: noCiclo, pago: true },
+        { id: 'tu', grupo_id: 'gUSD', tipo: 'Gasto', categoria: 'Mercado', valor: 100, moeda: 'BRL', valor_moeda: 514.35, taxa_brl: 1 / TAXAS.USD, carteira_nome: 'Nubank Crédito', data: noCiclo, pago: true },
+        { id: 'ta', grupo_id: 'gUSD', tipo: 'Gasto', categoria: 'Mercado', valor: 40, carteira_nome: 'Amex', data: noCiclo, pago: true },
+      ],
+    });
+    const parcelasFuturas = [
+      { id: 'pu', grupo_id: 'gUSD', tipo: 'Gasto', categoria: 'Eletrônicos', valor: 19.44, moeda: 'BRL', valor_moeda: 100, taxa_brl: 1 / TAXAS.USD,
+        carteira_nome: 'Nubank Crédito', observacao: 'Fone', data: noFuturo, pago: false, parcela_num: 3, parcela_total: 3 },
+      { id: 'pb', grupo_id: 'gBRL', tipo: 'Gasto', categoria: 'Eletrônicos', valor: 100,
+        carteira_nome: 'Nubank Crédito', observacao: 'Fone', data: noFuturo, pago: false, parcela_num: 3, parcela_total: 3 },
+    ];
+
+    // 9a. Painel: a fatura, o payload e as travas.
+    {
+      const b = criarBanco(cenario());
+      const chamadas = [];
+      const L = carregar(b, chamadas);
+      const w = (id) => b.tabelas.wallets.find((x) => x.id === id);
+      const saldo = (id) => cent(w(id).saldo);
+
+      const { statusFatura } = L('services/faturaRollover.js');
+      eq((await statusFatura('gUSD', w('u-nu'), compAtual)).fatura, 514.35,
+        '⚠️ a fatura do cartão em real num grupo em dólar soma o ORIGINAL (R$ 514,35), não os US$ 100');
+      eq((await statusFatura('gBRL', w('b-nu'), compAtual)).fatura, 514.35, 'grupo em real: a mesma fatura de sempre');
+      eq((await statusFatura('gUSD', w('u-amex'), compAtual)).fatura, 40, 'cartão em dólar num grupo em dólar: US$ 40');
+
+      const W = L('routes/wallets.js');
+      const faturas = rota(W, 'get', '/faturas/:phone');
+      const fB = (await chamar(faturas, { grupoId: 'gBRL' })).body.faturas.find((f) => f.cartao_id === 'b-nu');
+      eq([fB.fatura, fB.restante, fB.moeda, fB.moeda_base, fB.taxa_base, fB.bloqueio_pagamento],
+        [514.35, 514.35, 'BRL', 'BRL', 1, null], 'grupo em real: /faturas igual, com moeda do grupo, taxa 1 e sem bloqueio');
+      eq(chamadas.length, 0, 'grupo em real: /faturas não busca câmbio');
+
+      const listaU = (await chamar(faturas, { grupoId: 'gUSD' })).body.faturas;
+      const fU = listaU.find((f) => f.cartao_id === 'u-nu');
+      const fA = listaU.find((f) => f.cartao_id === 'u-amex');
+      eq([fU.fatura, fU.restante, fU.limite, fU.moeda, fU.moeda_base, fU.taxa_base],
+        [514.35, 514.35, 5000, 'BRL', 'USD', 1 / TAXAS.USD], '⚠️ grupo em dólar: a fatura do cartão em real vem EM REAL, com a taxa pra dólar ao lado');
+      ok(/real/.test(fU.bloqueio_pagamento || '') && /dólar/.test(fU.bloqueio_pagamento || '') && /banco/.test(fU.bloqueio_pagamento || ''),
+        `o bloqueio explica as duas moedas e que o pagamento vem do banco — veio ${fU.bloqueio_pagamento}`);
+      eq([fA.fatura, fA.moeda, fA.taxa_base, fA.bloqueio_pagamento], [40, 'USD', 1, null], 'cartão em dólar num grupo em dólar: taxa 1, sem bloqueio');
+
+      const status = rota(W, 'get', '/fatura/status/:phone');
+      const sU = (await chamar(status, { authUser: { id: 'u1', grupoAtivo: 'gUSD' }, query: { cartao_id: 'u-nu' } })).body;
+      eq([sU.restante, sU.moeda, sU.moeda_base, sU.taxa_base, !!sU.bloqueio_pagamento], [514.35, 'BRL', 'USD', 1 / TAXAS.USD, true],
+        '/fatura/status traz a mesma moeda e o mesmo bloqueio de /faturas');
+      const sB = (await chamar(status, { authUser: { id: 'u1', grupoAtivo: 'gBRL' }, query: { cartao_id: 'b-nu' } })).body;
+      eq([sB.restante, sB.moeda, sB.taxa_base, sB.bloqueio_pagamento], [514.35, 'BRL', 1, null], '/fatura/status em grupo em real: sem bloqueio');
+
+      const pagar = rota(W, 'post', '/fatura/pagar');
+      const nTx = b.tabelas.transacoes.length;
+      const pU = await chamar(pagar, { grupoId: 'gUSD', body: { cartao_id: 'u-nu', wallet_id: 'u-chase', valor: 100 } });
+      eq([pU.statusCode, pU.body.codigo, saldo('u-chase'), b.tabelas.transacoes.length, (b.tabelas.pagamentos_fatura || []).length],
+        [409, 'cartao_outra_moeda', 1000, nTx, 0], '⚠️ pagar pelo painel o cartão em real num grupo em dólar é RECUSADO antes de debitar qualquer conta');
+      const pA = await chamar(pagar, { grupoId: 'gUSD', body: { cartao_id: 'u-amex', wallet_id: 'u-chase', valor: 40 } });
+      eq([pA.statusCode, saldo('u-chase')], [200, 960], 'cartão em dólar num grupo em dólar: paga normal');
+      const pB = await chamar(pagar, { grupoId: 'gBRL', body: { cartao_id: 'b-nu', wallet_id: 'b-itau', valor: 514.35 } });
+      eq([pB.statusCode, saldo('b-itau')], [200, cent(3000 - 514.35)], 'grupo em real: o cartão do Open Finance segue aceitando pagamento pelo painel');
+
+      b.tabelas.transacoes.push(...JSON.parse(JSON.stringify(parcelasFuturas)));
+      const R = L('routes/transacoes.js');
+      const antecipar = rota(R, 'post', '/antecipar-cartao');
+      const tx = (id) => b.tabelas.transacoes.find((t) => t.id === id);
+      const aU = await chamar(antecipar, { grupoId: 'gUSD', body: { ids: ['pu'], conta_nome: 'Chase' } });
+      eq([aU.statusCode, aU.body.codigo, tx('pu').pago, saldo('u-chase')], [409, 'cartao_outra_moeda', false, 960],
+        '⚠️ antecipar parcela do cartão em real num grupo em dólar é recusado ANTES de marcar a parcela');
+      const aB = await chamar(antecipar, { grupoId: 'gBRL', body: { ids: ['pb'], conta_nome: 'Itaú' } });
+      eq([aB.statusCode, aB.body.debitado, tx('pb').pago], [200, 100, true], 'grupo em real: antecipa como antes');
+
+      const parcelado = rota(R, 'post', '/parcelado');
+      const sofa = (g) => b.tabelas.transacoes.filter((t) => t.grupo_id === g && t.observacao === 'Sofá');
+      await chamar(parcelado, { grupoId: 'gUSD', userId: 'u1', body: { categoria: 'Casa', observacao: 'Sofá', carteira_nome: 'Nubank Crédito', valor_parcela: 100, num_parcelas: 2 } });
+      eq(sofa('gUSD').map((t) => [t.valor, t.moeda, t.valor_moeda]), [[cent(100 / TAXAS.USD), 'BRL', 100], [cent(100 / TAXAS.USD), 'BRL', 100]],
+        '⚠️ parcelado pelo painel no cartão em real: R$ 100 por parcela, US$ 19,44 na base');
+      await chamar(parcelado, { grupoId: 'gBRL', userId: 'u1', body: { categoria: 'Casa', observacao: 'Sofá', carteira_nome: 'Nubank Crédito', valor_parcela: 100, num_parcelas: 2 } });
+      eq(sofa('gBRL').map((t) => [t.valor, 'moeda' in t, 'valor_moeda' in t]), [[100, false, false], [100, false, false]],
+        'parcelado em grupo em real: a linha sai SEM colunas de moeda, como antes');
+    }
+
+    // 9b. WhatsApp: pagar, antecipar, parcelar e "gastos por cartão".
+    {
+      const b = criarBanco(cenario());
+      b.tabelas.transacoes.push(...JSON.parse(JSON.stringify(parcelasFuturas)));
+      const L = carregar(b);
+      const msgs = [];
+      const mensageiro = require(path.resolve(__dirname, '../src/services/mensageiro.js'));
+      mensageiro.enviarTexto = async (p, t) => { msgs.push(t); };
+      mensageiro.enviarBotaoLink = async (p, o) => { msgs.push(o.message); };
+      const parcelas = L('handlers/parcelas.js');
+      const ctx = (grupoId) => ({ phone: '5511999999999', grupoId, user: { id: 'u1' } });
+      const pendentes = () => (b.tabelas.transacoes_pendentes || []).length;
+      const tx = (id) => b.tabelas.transacoes.find((t) => t.id === id);
+
+      msgs.length = 0;
+      await parcelas({ acao: 'pagar_fatura', termo: 'nubank' }, ctx('gUSD'));
+      ok(msgs.length === 1 && /real/.test(msgs[0]) && /dólar/.test(msgs[0]), `zap: "pagar fatura nubank" num grupo em dólar explica a recusa — veio ${JSON.stringify(msgs)}`);
+      eq(pendentes(), 0, '⚠️ e NÃO abre a pergunta de qual conta debitar');
+      msgs.length = 0;
+      await parcelas({ acao: 'pagar_fatura', termo: 'nubank' }, ctx('gBRL'));
+      ok(msgs.some((m) => /Com qual conta/.test(m)) && pendentes() === 1, `zap, grupo em real: segue perguntando de qual conta — veio ${JSON.stringify(msgs)}`);
+      msgs.length = 0;
+      await parcelas({ acao: 'pagar_fatura', termo: 'amex' }, ctx('gUSD'));
+      ok(msgs.some((m) => /Com qual conta/.test(m)), `zap: cartão em dólar num grupo em dólar segue perguntando de qual conta — veio ${JSON.stringify(msgs)}`);
+
+      b.tabelas.transacoes_pendentes = [];
+      msgs.length = 0;
+      await parcelas({ acao: 'antecipar_parcela', termo: 'Fone' }, ctx('gUSD'));
+      ok(msgs.length === 1 && /real/.test(msgs[0]) && /dólar/.test(msgs[0]), `zap: antecipar a parcela do cartão em real num grupo em dólar explica a recusa — veio ${JSON.stringify(msgs)}`);
+      eq([pendentes(), tx('pu').pago], [0, false], '⚠️ e não pergunta conta nem mexe na parcela');
+      msgs.length = 0;
+      await parcelas({ acao: 'antecipar_parcela', termo: 'Fone' }, ctx('gBRL'));
+      ok(msgs.some((m) => /De qual conta pago/.test(m)) && pendentes() === 1, `zap, grupo em real: antecipar segue perguntando a conta — veio ${JSON.stringify(msgs)}`);
+
+      const compra = { acao: 'compra_parcelada', descricao: 'Tênis', numParcelas: 3, valorParcela: 100, valorTotal: 300, categoria: 'Roupas', carteira: 'Nubank Crédito' };
+      const tenis = (g) => b.tabelas.transacoes.filter((t) => t.grupo_id === g && t.observacao === 'Tênis');
+      await parcelas(compra, ctx('gUSD'));
+      eq(tenis('gUSD').map((t) => [t.valor, t.moeda, t.valor_moeda]), [1, 2, 3].map(() => [cent(100 / TAXAS.USD), 'BRL', 100]),
+        '⚠️ zap: "comprei tênis 300 em 3x no nubank" no cartão em real guarda R$ 100 por parcela e US$ 19,44 na base');
+      await parcelas(compra, ctx('gBRL'));
+      eq(tenis('gBRL').map((t) => [t.valor, 'moeda' in t, 'valor_moeda' in t]), [1, 2, 3].map(() => [100, false, false]),
+        'zap, grupo em real: a parcela sai SEM colunas de moeda, como antes');
+    }
+
+    // 9c. O que SOMA cartão com o resto: gastos por carteira, Oráculo, Agenda.
+    {
+      const b = criarBanco(cenario());
+      const L = carregar(b);
+      const msgs = [];
+      const mensageiro = require(path.resolve(__dirname, '../src/services/mensageiro.js'));
+      mensageiro.enviarTexto = async (p, t) => { msgs.push(t); };
+      mensageiro.enviarBotaoLink = async (p, o) => { msgs.push(o.message); };
+      const carteiras = L('handlers/wallets.js');
+      await carteiras({ acao: 'gastos_carteiras' }, { phone: '5511999999999', grupoId: 'gUSD', user: { id: 'u1' } });
+      ok(/\*Nubank Crédito:\* R\$ 514\.35/.test(msgs[0] || '') && /Total: R\$ 140\.00/.test(msgs[0] || ''),
+        `⚠️ zap "gastos por cartão": a fatura do cartão em real sai no original e o TOTAL soma US$ 100 + US$ 40 — veio ${msgs[0]}`);
+      msgs.length = 0;
+      await carteiras({ acao: 'gastos_carteiras' }, { phone: '5511999999999', grupoId: 'gBRL', user: { id: 'u1' } });
+      ok(/\*Nubank Crédito:\* R\$ 514\.35/.test(msgs[0] || '') && /Total: R\$ 514\.35/.test(msgs[0] || ''),
+        `grupo em real: "gastos por cartão" igual a antes — veio ${msgs[0]}`);
+
+      const { lerFoto } = L('handlers/oraculo.js');
+      const fotoU = await lerFoto('gUSD');
+      const oU = fotoU.cartoes.find((c) => c.id === 'u-nu');
+      const oA = fotoU.cartoes.find((c) => c.id === 'u-amex');
+      eq([oU.limite, oU.faturaAberta, oA.limite, oA.faturaAberta, fotoU.caixa],
+        [Math.round(500000 * (1 / TAXAS.USD)), Math.round(51435 * (1 / TAXAS.USD)), 200000, 4000, 100000],
+        '⚠️ Oráculo num grupo em dólar: limite e fatura do cartão em real convertidos pra dólar (centavos)');
+      const fotoB = await lerFoto('gBRL');
+      const oB = fotoB.cartoes.find((c) => c.id === 'b-nu');
+      eq([oB.limite, oB.faturaAberta, fotoB.caixa], [500000, 51435, 300000], 'Oráculo em grupo em real: igual a antes');
+
+      const { montarFeed } = L('services/agendaFeed.js');
+      const faturasDaAgenda = async (g) => (await montarFeed(g, ciclo.venc, ciclo.venc))
+        .filter((e) => e.source === 'fatura').map((e) => [e.id, e.valor]).sort();
+      eq(await faturasDaAgenda('gUSD'), [[`fat-u-amex-${ciclo.venc}`, 40], [`fat-u-nu-${ciclo.venc}`, 100]],
+        '⚠️ Agenda num grupo em dólar: a fatura de R$ 514,35 aparece como US$ 100');
+      eq(await faturasDaAgenda('gBRL'), [[`fat-b-nu-${ciclo.venc}`, 514.35]], 'Agenda em grupo em real: igual a antes');
+    }
+
+    // 9d. As regras puras.
+    {
+      const M = carregar(criarBanco({}))('services/moeda.js');
+      eq([M.cartaoForaDaBase({ moeda: 'BRL' }, 'USD'), M.cartaoForaDaBase({ moeda: 'USD' }, 'USD'), M.cartaoForaDaBase({ moeda: 'USD' }, 'BRL'),
+        M.cartaoForaDaBase({ nome: 'sem moeda no select' }, 'USD'), M.cartaoForaDaBase(null, 'USD')],
+      [true, false, false, false, false], '⚠️ só trava cartão fora da base; grupo em REAL nunca trava; sem a coluna `moeda` não trava às cegas');
+      ok(!/banco/.test(M.motivoCartaoForaDaBase({ nome: 'Amex', moeda: 'BRL' }, 'USD')), 'cartão manual: o texto não promete que o pagamento vem do banco');
+    }
+
+    // 9e. O pagamento que o BANCO traz e a duplicata comparam o ORIGINAL.
+    {
+      const hoje = cf.hojeSP();
+      const b = criarBanco({
+        ...cenario(),
+        transacoes: [
+          { id: 'pgU', grupo_id: 'gUSD', tipo: 'Recebimento', transferencia: true, categoria: 'Fatura', valor: 100, moeda: 'BRL',
+            valor_moeda: 514.35, taxa_brl: 1 / TAXAS.USD, of_tx_id: 'of-pg-u', carteira_nome: 'Nubank Crédito', data: hoje },
+          { id: 'pgB', grupo_id: 'gBRL', tipo: 'Recebimento', transferencia: true, categoria: 'Fatura', valor: 514.35,
+            of_tx_id: 'of-pg-b', carteira_nome: 'Nubank Crédito', data: hoje },
+        ],
+      });
+      const L = carregar(b);
+      const { registrarPagamentosDoOF } = L('services/faturaRollover.js');
+      const w = (id) => b.tabelas.wallets.find((x) => x.id === id);
+      await registrarPagamentosDoOF('gUSD', w('u-nu'));
+      await registrarPagamentosDoOF('gBRL', w('b-nu'));
+      const pago = (id) => (b.tabelas.pagamentos_fatura || []).filter((p) => p.cartao_id === id).map((p) => p.valor);
+      eq(pago('u-nu'), [514.35], '⚠️ pagamento da fatura trazido pelo banco num grupo em dólar abate R$ 514,35 (a moeda da fatura), não US$ 100');
+      eq(pago('b-nu'), [514.35], 'grupo em real: o pagamento do banco abate como antes');
+
+      // `carregar` troca duplicadas.js por um stub (as rotas só disparam o aviso);
+      // aqui é a regra de verdade.
+      const arqDuplicadas = path.resolve(__dirname, '../src/services/duplicadas.js');
+      delete require.cache[arqDuplicadas];
+      const { ehDuplicata } = require(arqDuplicadas);
+      const manual = { id: 'm', tipo: 'Gasto', valor: 100, moeda: 'BRL', valor_moeda: 514.35, carteira_nome: 'Nubank Crédito', observacao: 'Mercado', data: '2026-09-10' };
+      const doBanco = { ...manual, id: 'o', valor: 99.98, of_tx_id: 'of-x', data: '2026-09-11' };
+      eq(ehDuplicata(manual, doBanco), 'manual-e-banco', '⚠️ a mesma compra de R$ 514,35 convertida por taxas de dias diferentes AINDA é duplicata');
+      eq(ehDuplicata(manual, { ...doBanco, valor: 100, valor_moeda: 520 }), null, 'compras de valores originais diferentes não são duplicata, mesmo com o convertido igual');
+    }
+
+    // 9f. O aviso AUTOMÁTICO de fatura (cron) — a terceira porta pro pagamento.
+    {
+      const b = criarBanco(cenario());
+      const L = carregar(b);
+      const raizSrc = path.resolve(__dirname, '../src');
+      const fixarModulo = (arq, exports) => { require.cache[arq] = { id: arq, filename: arq, loaded: true, exports }; };
+      // O jobs registra crons ao ser exigido e manda aviso proativo por template.
+      fixarModulo(require.resolve('node-cron'), { schedule: () => ({ stop() {} }) });
+      const proativos = [];
+      fixarModulo(path.join(raizSrc, 'services/proativo.js'), {
+        provedor: () => 'zapi',
+        enviarProativo: async (phone, o) => { proativos.push(o.texto); },
+        enviarProativoDetalhado: async (phone, o) => { proativos.push(o.texto); return { ok: true }; },
+      });
+      const msgs = [];
+      require(path.join(raizSrc, 'services/mensageiro.js')).enviarTexto = async (p, t) => { msgs.push(t); };
+      const logOriginal = console.log;
+      console.log = () => {};            // o jobs anuncia cada cron no require
+      let avisarFatura;
+      try { ({ avisarFatura } = L('jobs/index.js')); } finally { console.log = logOriginal; }
+
+      const w = (id) => b.tabelas.wallets.find((x) => x.id === id);
+      const pendentes = () => (b.tabelas.transacoes_pendentes || []).length;
+      const dono = { id: 'u1', phone: '5511999990001' };
+      await avisarFatura({ titulo: '💳 *Fatura do Nubank Crédito fechou*', ciclo, total: 514.35, dono, cartao: w('u-nu'), competencia: compAtual });
+      eq([pendentes(), msgs.length, proativos.length], [0, 0, 1], '⚠️ aviso automático num grupo em dólar: só AVISA, sem abrir a pergunta de qual conta pagar');
+      ok(/Total: R\$ 514\.35/.test(proativos[0] || '') && !/Com qual conta/.test(proativos[0] || ''),
+        `o aviso traz o valor da fatura em real e não pergunta a conta — veio ${proativos[0]}`);
+      await avisarFatura({ titulo: '💳 *Fatura do Nubank Crédito fechou*', ciclo, total: 514.35, dono, cartao: w('b-nu'), competencia: compAtual });
+      ok(pendentes() === 1 && msgs.some((m) => /Com qual conta você quer pagar/.test(m)),
+        `grupo em real: o aviso segue oferecendo o pagamento — veio ${JSON.stringify(msgs)}`);
+    }
   }
   console.log('  ok');
 

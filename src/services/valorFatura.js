@@ -66,7 +66,13 @@ function valorNaFatura(t) {
   // do banco — o defeito que este arquivo inteiro existe pra evitar.
   if (t.ignorar_em === 'tudo') return 0;
 
-  const v = Math.abs(Number(t.valor) || 0);
+  // ⚠️ NA MOEDA DO CARTÃO, não na do grupo (migration 168). Num grupo em dólar
+  //    o cartão brasileiro guarda `valor` em dólar e o original em real em
+  //    `valor_moeda` — e TUDO que a fatura compara (total publicado pelo banco,
+  //    limite, pagamentos, parcelas previstas) está em real. Sem `valor_moeda`
+  //    (todo cartão na moeda do grupo — hoje, a base inteira) é o `valor`.
+  //    ⚠️ Quem busca transação pra somar fatura PRECISA pedir `valor_moeda`.
+  const v = Math.abs(Number(t.valor_moeda ?? t.valor) || 0);
 
   if (t.tipo === 'Gasto') return v;
   if (t.tipo !== 'Recebimento') return 0;

@@ -214,6 +214,16 @@ async function avisarFatura({ titulo, ciclo, total, dono, cartao, competencia })
     + `\n📅 Vence em ${vd}/${vm}`
     + (ciclo.porCiclo ? `\n🧾 Ciclo: ${ciclo.label}` : '');
 
+  // ⚠️ CARTÃO EM OUTRA MOEDA QUE A DO GRUPO (migration 168): só AVISA, sem
+  // perguntar de qual conta pagar — é a mesma trava do painel e do "pagar
+  // fatura" do zap, e esta pergunta era uma terceira porta pro mesmo débito.
+  // Grupo em real nunca cai aqui. `cartao.moeda` vem do select de processarFaturas.
+  const { moedaBaseDoGrupo, cartaoForaDaBase } = require('../services/moeda');
+  if (cartaoForaDaBase(cartao, await moedaBaseDoGrupo(cartao.grupo_id))) {
+    await lembrete(dono.phone, `${titulo}${detalhe}`);
+    return;
+  }
+
   const { oferecerDesconto } = require('../services/descontoConta');
   const ofereceu = await oferecerDesconto({
     user: { id: dono.id }, phone: dono.phone, grupoId: cartao.grupo_id,
@@ -249,7 +259,7 @@ async function processarFaturas() {
   // Traz todos os cartões com ciclo definido e decide em JS (o helper clampa o
   // dia ao último do mês, então fech=31 fecha em 28/02).
   const { data: cartoes } = await supabase.from('wallets')
-    .select('id, nome, grupo_id, criado_por, saldo, of_conta_id, dia_fechamento, dia_vencimento, ultimo_aviso_fechamento, ultimo_aviso_vencimento')
+    .select('id, nome, grupo_id, criado_por, saldo, of_conta_id, dia_fechamento, dia_vencimento, ultimo_aviso_fechamento, ultimo_aviso_vencimento, moeda')
     .eq('tipo', 'Crédito')
     .not('dia_fechamento', 'is', null);
 
@@ -1929,6 +1939,7 @@ cron.schedule('0 5 * * *', async () => {
 });
 console.log('   • Todo dia 05:00 — aquece as cotações de câmbio');
 
-// Exportado SÓ pra teste (evals/lembreteFila.eval.js). O arquivo registra crons
-// ao ser exigido, então o eval stuba `node-cron` antes de importar.
-module.exports = { lembrete };
+// Exportado SÓ pra teste (evals/lembreteFila.eval.js e evals/moedaBase.eval.js).
+// O arquivo registra crons ao ser exigido, então o eval stuba `node-cron` antes
+// de importar.
+module.exports = { lembrete, avisarFatura };
