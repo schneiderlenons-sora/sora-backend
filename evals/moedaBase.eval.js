@@ -87,7 +87,7 @@ function criarBanco(inicial, opcoes = {}) {
 
 // Carrega módulos REAIS com banco e cotação falsos (cache de require zerado a
 // cada cenário: o cache de câmbio e o da base são estado de módulo).
-function carregar(banco, cotacoesChamadas = []) {
+function carregar(banco, cotacoesChamadas = [], mercado = {}) {
   const raiz = path.resolve(__dirname, '../src');
   const fixar = (rel, exports) => {
     const f = path.join(raiz, rel);
@@ -97,7 +97,13 @@ function carregar(banco, cotacoesChamadas = []) {
   fixar('db/supabase.js', banco.client);
   fixar('services/cotacoes.js', {
     taxaParaBRLDetalhe: async (m) => { cotacoesChamadas.push(m); return { taxa: TAXAS[m] ?? null, fonte: 'eval' }; },
+    taxaParaBRL: async (m) => (m === 'BRL' ? 1 : TAXAS[m] ?? null),
+    buscarCotacaoAcao: async (t) => mercado[t] || null,
+    buscarCotacaoCripto: async (t) => mercado[t] || null,
+    buscarDividendos: async (t) => (mercado[t] && mercado[t].dividendos) || 0,
+    buscarTickers: async () => [], buscarCriptos: async () => [], listarCriptos: async () => [],
   });
+  fixar('middlewares/plano.js', { exigirPlano: () => (req, res, next) => next() });
   fixar('middlewares/auth.js', (req, res, next) => next());
   fixar('middlewares/permissao.js', { exigirPermissao: () => (req, res, next) => next() });
   fixar('services/limites.js', { verificarLimiteEmBackground() {}, verificarLimite: async () => {} });
@@ -361,6 +367,59 @@ const ANTIGO = (() => {
     eq([emDolar.total, emDolar.semCambio], [200, 0], 'a pagar num grupo em dólar: US$ 100 + R$ 514,35 = US$ 200');
     const emReal = await aPagarCartoes('gBRL', cartoes, TAXAS, { vistaDoCartao: vista });
     eq(emReal.total, cent(100 * TAXAS.USD + 514.35), 'sem base: soma em real, como antes');
+  }
+  console.log('  ok');
+
+  // ── 7. Investimentos: cotação em real vira a moeda do grupo ────────────────
+  console.log('── 7. investimentos: preço de mercado na moeda base ──');
+  {
+    const M = carregar(criarBanco({}))('services/moeda.js');
+    eq(M.fatorCotacaoParaBase('BRL', 'BRL', {}), 1, 'grupo em real: fator 1');
+    eq(M.fatorCotacaoParaBase('USD', 'BRL', {}), 1, '⚠️ grupo em real com ação em dólar: SEM conversão, como sempre foi (defeito do MELI espera decisão)');
+    eq(M.fatorCotacaoParaBase('BRL', 'USD', TAXAS), 1 / TAXAS.USD, 'grupo em dólar com ação da B3: real → dólar');
+    eq(M.fatorCotacaoParaBase('USD', 'USD', TAXAS), 1, 'grupo em dólar com ação em dólar: nada a converter');
+    eq(M.fatorCotacaoParaBase('GBp', 'USD', TAXAS), 1, 'moeda fora do catálogo não é confundida com real');
+    eq(M.fatorCotacaoParaBase('BRL', 'NOK', { USD: 5 }), null, '⚠️ sem cotação da base: null (quem chama não grava)');
+
+    const mercado = {
+      'ITSA4.SA': { precoAtual: 10, variacaoDia: 1, moeda: 'BRL', dividendos: 0.5 },
+      'AAPL':     { precoAtual: 200, variacaoDia: 2, moeda: 'USD', dividendos: 0 },
+      'bitcoin':  { precoAtual: 500000, variacaoDia: 3, moeda: 'BRL' },
+    };
+    const cenario = () => ({
+      grupos: [{ id: 'gBRL', moeda_base: 'BRL' }, { id: 'gUSD', moeda_base: 'USD' }],
+      users: [{ id: 'uB', grupo_ativo: 'gBRL' }, { id: 'uU', grupo_ativo: 'gUSD' }],
+      investimentos: [
+        { id: 'b1', grupo_id: 'gBRL', tipo: 'Ações', ticker: 'ITSA4.SA', quantidade: 100, valor_aportado: 900 },
+        { id: 'b2', grupo_id: 'gBRL', tipo: 'Ações', ticker: 'AAPL', quantidade: 2, valor_aportado: 300 },
+        { id: 'u1', grupo_id: 'gUSD', tipo: 'Ações', ticker: 'ITSA4.SA', quantidade: 100, valor_aportado: 180 },
+        { id: 'u2', grupo_id: 'gUSD', tipo: 'Ações', ticker: 'AAPL', quantidade: 2, valor_aportado: 300 },
+        { id: 'u3', grupo_id: 'gUSD', tipo: 'Cripto', ticker: 'bitcoin', quantidade: 0.01, valor_aportado: 900 },
+      ],
+    });
+    const b = criarBanco(cenario());
+    const R = carregar(b, [], mercado)('routes/investimentos.js');
+    const atualizar = rota(R, 'post', '/atualizar-precos/:phone');
+    const sleep = global.setTimeout;
+    global.setTimeout = (fn) => sleep(fn, 0);   // sem os 600 ms de rate limit no eval
+    try {
+      await chamar(atualizar, { authUser: { id: 'uB' }, params: { phone: 'x' } });
+      await chamar(atualizar, { authUser: { id: 'uU' }, params: { phone: 'x' } });
+    } finally { global.setTimeout = sleep; }
+    const inv = (id) => b.tabelas.investimentos.find((i) => i.id === id);
+    eq([inv('b1').valor_atual, inv('b1').dividendos_acumulados], [1000, 50], 'grupo em real, B3: igual a antes (10 × 100, dividendos 0,50 × 100)');
+    eq(inv('b2').valor_atual, 400, 'grupo em real, Nasdaq: igual a antes (sem conversão)');
+    eq([cent(inv('u1').valor_atual), cent(inv('u1').dividendos_acumulados)], [cent(1000 / TAXAS.USD), cent(50 / TAXAS.USD)], '⚠️ grupo em dólar, B3: R$ 1.000 vira US$ 194,42 (e os dividendos também)');
+    eq(inv('u2').valor_atual, 400, 'grupo em dólar, Nasdaq: US$ 400 direto');
+    eq(cent(inv('u3').valor_atual), cent(5000 / TAXAS.USD), 'grupo em dólar, bitcoin cotado em real: convertido');
+
+    const cotacao = rota(R, 'get', '/cotacao');
+    const cB = await chamar(cotacao, { authUser: { id: 'uB', grupoAtivo: 'gBRL' }, query: { ticker: 'AAPL', tipo: 'acao' } });
+    eq([cB.body.precoBRL, cB.body.precoBase, cB.body.moedaBase, cB.body.taxaBase], [200 * TAXAS.USD, 200 * TAXAS.USD, 'BRL', TAXAS.USD], 'cotação no grupo em real: precoBase = precoBRL (campos antigos intactos)');
+    const cU = await chamar(cotacao, { authUser: { id: 'uU', grupoAtivo: 'gUSD' }, query: { ticker: 'AAPL', tipo: 'acao' } });
+    eq([cU.body.precoBase, cU.body.moedaBase], [200, 'USD'], 'cotação de ação em dólar num grupo em dólar: o próprio preço');
+    const cU2 = await chamar(cotacao, { authUser: { id: 'uU', grupoAtivo: 'gUSD' }, query: { ticker: 'ITSA4.SA', tipo: 'acao' } });
+    eq([cent(cU2.body.precoBase), cU2.body.precoBRL], [cent(10 / TAXAS.USD), 10], 'cotação da B3 num grupo em dólar: convertida');
   }
   console.log('  ok');
 

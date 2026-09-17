@@ -213,6 +213,30 @@ async function taxasParaBase(moedas, base = PADRAO) {
   return taxas([...fora, b]);
 }
 
+/**
+ * Fator que leva o preço de uma COTAÇÃO DE MERCADO (Yahoo, CoinGecko) até a
+ * moeda base do grupo.
+ *
+ * ⚠️ SÓ CONVERTE COTAÇÃO EM REAL (ações da B3, cripto cotada em brl). Cotação em
+ * outra moeda (Nasdaq em dólar) segue SEM conversão, exatamente como sempre foi:
+ * converter também mudaria o número de clientes em real — medido em 17/09/2026,
+ * um "MELI" (40 cotas, aportado R$ 2.729,20) exibido como R$ 73.157,60 porque o
+ * preço em dólar da Nasdaq entra como real. Esse defeito é ANTERIOR à moeda base
+ * e espera decisão do dono; aqui ele só não se espalha.
+ *
+ * Num grupo em real o fator é SEMPRE 1. Devolve `null` quando é preciso
+ * converter e não há câmbio — quem chama NÃO grava (um preço em real num grupo
+ * em dólar é o erro que isto existe pra impedir).
+ */
+function fatorCotacaoParaBase(moedaCotacao, base, tabela) {
+  const b = normalizarMoeda(base);
+  // Cru, sem `normalizarMoeda`: ela transformaria moeda fora do catálogo (a "GBp"
+  // da bolsa de Londres) em BRL, e aí a converteria como se fosse real.
+  const q = String(moedaCotacao || PADRAO).trim().toUpperCase();
+  if (q !== PADRAO || b === PADRAO) return 1;
+  return taxaEntre(PADRAO, b, tabela);
+}
+
 /** Saldo da carteira na moeda base do grupo. `null` sem câmbio — NUNCA 0. */
 function saldoNaBase(wallet, base, tabela) {
   return paraBase(wallet?.saldo, wallet?.moeda, base, tabela);
@@ -518,7 +542,7 @@ module.exports = {
   taxa, taxas, paraBRL,
   // Moeda base do grupo (migration 168) — o BRL vira pivô, não significado.
   taxaEntre, paraBase, moedaBaseDoGrupo, esquecerMoedaBase, baseDisponivel, marcarBaseIndisponivel,
-  taxasParaBase, saldoNaBase, comSaldoNaBase,
+  taxasParaBase, saldoNaBase, comSaldoNaBase, fatorCotacaoParaBase,
   saldoEmBRL, somarSaldos,
   camposTransacao, valorNativo, formatar,
   comSaldoBRL, aquecerCotacoes, atualizarRecorrenciasEstrangeiras,

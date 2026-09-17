@@ -1459,9 +1459,15 @@ cron.schedule('0 3 * * *', async () => {
       // Os preços de ações/FIIs dos clientes ficaram CONGELADOS o tempo
       // inteiro em que isso passou despercebido — nunca chegava no update.
       const { buscarCotacaoAcao, buscarDividendos } = require('../services/cotacoes');
+      const { moedaBaseDoGrupo, taxasParaBase, fatorCotacaoParaBase } = require('../services/moeda');
       const cot = await buscarCotacaoAcao(inv.ticker);
       if (!cot || cot.precoAtual == null) throw new Error('cotação indisponível');
-      const precoAtual  = cot.precoAtual;
+      // Moeda base do grupo (migration 168): cotação em real vira a moeda do
+      // grupo. Em grupo em real o fator é 1. Sem câmbio, não grava.
+      const baseInv = await moedaBaseDoGrupo(inv.grupo_id);
+      const fator = fatorCotacaoParaBase(cot.moeda, baseInv, await taxasParaBase(['BRL'], baseInv));
+      if (fator === null) throw new Error('câmbio para a moeda base indisponível');
+      const precoAtual  = cot.precoAtual * fator;
       const novoValor   = precoAtual * inv.quantidade;
 
       // Busca dividendos desde a data de compra (por AÇÃO — multiplica pela
@@ -1469,7 +1475,7 @@ cron.schedule('0 3 * * *', async () => {
       let dividendos = inv.dividendos_acumulados || 0;
       try {
         const porAcao = await buscarDividendos(inv.ticker, inv.data_compra);
-        dividendos = (porAcao || 0) * inv.quantidade;
+        dividendos = (porAcao || 0) * fator * inv.quantidade;
       } catch { /* sem dividendos para esse ativo */ }
 
       const rentabilidade = inv.valor_aportado > 0

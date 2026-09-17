@@ -11,6 +11,8 @@ const {
   buscarCotacaoAcao, buscarDividendos, buscarTickers,
   buscarCotacaoCripto, buscarCriptos, listarCriptos, taxaParaBRL,
 } = require('../services/cotacoes');
+// Moeda base do grupo (migration 168): cotação em real vira a moeda do grupo.
+const { moedaBaseDoGrupo, taxasParaBase, taxaEntre, fatorCotacaoParaBase } = require('../services/moeda');
 const { debitarConta } = require('../services/contaDebito');
 
 const norm = p => p?.replace(/\D/g, '');
@@ -43,32 +45,47 @@ router.get('/buscar-cripto', auth, async (req, res) => {
 });
 
 // GET /api/investimentos/cotacao?ticker=AAPL&tipo=acao|cripto
-// Retorna o preço atual JÁ em reais (converte moeda estrangeira via câmbio).
+// Retorna o preço atual JÁ em reais (converte moeda estrangeira via câmbio) e,
+// desde a migration 168, também NA MOEDA BASE do grupo (`precoBase`/`moedaBase`/
+// `taxaBase`). Num grupo em real, `precoBase` é o próprio `precoBRL`.
 router.get('/cotacao', auth, async (req, res) => {
   try {
     const ticker = (req.query.ticker || '').toString().trim();
     const tipo   = (req.query.tipo || '').toString().toLowerCase();
     if (!ticker) return res.json({});
 
+    const base = await moedaBaseDoGrupo(req.authUser?.grupoAtivo || await getGrupoId(req));
+    // Preço em real → base. Sem câmbio da base, os campos na base não vêm (a
+    // tela pede o preço à mão em vez de preencher real como se fosse dólar).
+    const naBase = async (precoBRL, taxaParaBRLDoAtivo) => {
+      if (base === 'BRL') return { precoBase: precoBRL, moedaBase: base, ...(taxaParaBRLDoAtivo ? { taxaBase: taxaParaBRLDoAtivo } : {}) };
+      const t = taxaEntre('BRL', base, await taxasParaBase(['BRL'], base));
+      if (t === null) return {};
+      return { precoBase: precoBRL * t, moedaBase: base, ...(taxaParaBRLDoAtivo ? { taxaBase: taxaParaBRLDoAtivo * t } : {}) };
+    };
+
     if (tipo === 'cripto') {
       const c = await buscarCotacaoCripto(ticker.toLowerCase());
       if (c?.precoAtual == null) return res.json({});
-      return res.json({ precoBRL: c.precoAtual, moeda: 'BRL', variacaoDia: c.variacaoDia ?? 0 });
+      return res.json({ precoBRL: c.precoAtual, moeda: 'BRL', variacaoDia: c.variacaoDia ?? 0, ...(await naBase(c.precoAtual)) });
     }
 
     const c = await buscarCotacaoAcao(ticker);
     if (c?.precoAtual == null) return res.json({});
     const moeda = c.moeda || 'BRL';
     if (moeda === 'BRL') {
-      return res.json({ precoBRL: c.precoAtual, moeda: 'BRL', variacaoDia: c.variacaoDia ?? 0 });
+      return res.json({ precoBRL: c.precoAtual, moeda: 'BRL', variacaoDia: c.variacaoDia ?? 0, ...(await naBase(c.precoAtual)) });
     }
+    // Ativo cotado JÁ na moeda base do grupo: nada a converter.
+    const jaNaBase = moeda === base ? { precoBase: c.precoAtual, moedaBase: base } : {};
     // Moeda estrangeira → converte pra real.
     const taxa = await taxaParaBRL(moeda);
-    if (!taxa) return res.json({ precoOriginal: c.precoAtual, moeda }); // sem câmbio
+    if (!taxa) return res.json({ precoOriginal: c.precoAtual, moeda, ...jaNaBase }); // sem câmbio
     return res.json({
       precoBRL: c.precoAtual * taxa, moeda: 'BRL',
       precoOriginal: c.precoAtual, moedaOriginal: moeda, taxa,
       variacaoDia: c.variacaoDia ?? 0,
+      ...(moeda === base ? jaNaBase : await naBase(c.precoAtual * taxa, taxa)),
     });
   } catch (err) {
     res.json({});
@@ -506,6 +523,10 @@ router.post('/atualizar-precos/:phone', auth, exigirPlano('kit', 'premium', 'pla
 
     const { data: invs } = await supabase.from('investimentos').select('*').eq('grupo_id', grupoId);
     let atualizados = 0;
+    // Moeda base do grupo (migration 168): cotação em real vira a moeda do grupo.
+    // Em grupo em real o fator é 1 e a tabela sai vazia, sem ida de rede.
+    const base = await moedaBaseDoGrupo(grupoId);
+    const tabelaBase = await taxasParaBase(['BRL'], base);
 
     for (const inv of invs || []) {
       if (!inv.ticker) continue;
@@ -516,10 +537,14 @@ router.post('/atualizar-precos/:phone', auth, exigirPlano('kit', 'premium', 'pla
         cotacao = await buscarCotacaoAcao(inv.ticker);
       }
       if (!cotacao || cotacao.precoAtual == null) continue;
+      // ⚠️ Sem câmbio pra base, NÃO grava: preço em real num grupo em dólar
+      //    é número plausível e errado.
+      const fator = fatorCotacaoParaBase(cotacao.moeda, base, tabelaBase);
+      if (fator === null) continue;
 
-      const valorAtual = cotacao.precoAtual * (inv.quantidade || 0);
+      const valorAtual = cotacao.precoAtual * fator * (inv.quantidade || 0);
       const divs = ['Ações', 'FIIs', 'ETFs'].includes(inv.tipo)
-        ? await buscarDividendos(inv.ticker, inv.data_compra)
+        ? await buscarDividendos(inv.ticker, inv.data_compra) * fator
         : 0;
       const valorTotal = valorAtual + (divs * (inv.quantidade || 0));
       const rent = inv.valor_aportado > 0 ? (valorTotal - inv.valor_aportado) / inv.valor_aportado : 0;
