@@ -47,6 +47,7 @@ function criarBanco(inicial, opcoes = {}) {
       is(c, v) { filtros.push((r) => (r[c] ?? null) === v); return api; },
       not(c, op, v) { filtros.push((r) => (op === 'is' ? (r[c] ?? null) !== v : true)); return api; },
       in(c, arr) { const s = new Set(arr); filtros.push((r) => s.has(r[c])); return api; },
+      filter() { return api; }, gte() { return api; }, lte() { return api; },
       order() { return api; },
       limit() { return api; },
       single() { unica = 'single'; return api; },
@@ -87,7 +88,7 @@ function criarBanco(inicial, opcoes = {}) {
 
 // Carrega módulos REAIS com banco e cotação falsos (cache de require zerado a
 // cada cenário: o cache de câmbio e o da base são estado de módulo).
-function carregar(banco, cotacoesChamadas = [], mercado = {}) {
+function carregar(banco, cotacoesChamadas = [], mercado = {}, celcoin = null) {
   const raiz = path.resolve(__dirname, '../src');
   const fixar = (rel, exports) => {
     const f = path.join(raiz, rel);
@@ -104,6 +105,8 @@ function carregar(banco, cotacoesChamadas = [], mercado = {}) {
     buscarTickers: async () => [], buscarCriptos: async () => [], listarCriptos: async () => [],
   });
   fixar('middlewares/plano.js', { exigirPlano: () => (req, res, next) => next() });
+  if (celcoin) fixar('services/polpCelcoin.js', celcoin);
+  fixar('services/duplicadas.js', { avisarDuplicadasEmBackground() {} });
   fixar('middlewares/auth.js', (req, res, next) => next());
   fixar('middlewares/permissao.js', { exigirPermissao: () => (req, res, next) => next() });
   fixar('services/limites.js', { verificarLimiteEmBackground() {}, verificarLimite: async () => {} });
@@ -424,6 +427,77 @@ const ANTIGO = (() => {
     eq([cU.body.precoBase, cU.body.moedaBase], [200, 'USD'], 'cotação de ação em dólar num grupo em dólar: o próprio preço');
     const cU2 = await chamar(cotacao, { authUser: { id: 'uU', grupoAtivo: 'gUSD' }, query: { ticker: 'ITSA4.SA', tipo: 'acao' } });
     eq([cent(cU2.body.precoBase), cU2.body.precoBRL], [cent(10 / TAXAS.USD), 10], 'cotação da B3 num grupo em dólar: convertida');
+  }
+  console.log('  ok');
+
+  // ── 8. Open Finance: conta em real dentro de grupo em dólar ────────────────
+  console.log('── 8. Open Finance num grupo fora do real: só contas, lançamentos convertidos ──');
+  {
+    const chamadas = {};
+    const conta = (id) => ({
+      id, brand_name: 'Nubank', type: 'CONTA_DEPOSITO_A_VISTA',
+      identification: { type: 'CONTA_DEPOSITO_A_VISTA', subtype: 'INDIVIDUAL', currency: 'BRL' },
+      balance: { available_amount: { amount: '5143.50', currency: 'BRL' }, has_reserved_balance: true },
+    });
+    const txsConta = [
+      { id: 'of-t1', transaction_name: 'MERCADO SAO JOSE', credit_debit_type: 'DEBITO',
+        completed_authorised_payment_type: 'TRANSACAO_EFETIVADA', transaction_amount: { amount: '514.35' },
+        transaction_date_time: '2026-09-10T10:00:00Z' },
+    ];
+    const celcoin = () => {
+      const conta1 = async (nome, v) => { chamadas[nome] = (chamadas[nome] || 0) + 1; return v; };
+      return {
+        getConsentimento: async () => ({ status: 'AUTHORISED' }),
+        listarContas: () => conta1('contas', [conta('acc-1')]),
+        listarTransacoesConta: () => conta1('txConta', txsConta),
+        listarSaldosReservados: () => conta1('caixinhas', []),
+        listarCartoes: () => conta1('cartoes', []),
+        listarEmprestimos: () => conta1('emprestimos', []),
+        listarFinanciamentos: () => conta1('financiamentos', []),
+        listarInvestimentos: () => conta1('investimentos', []),
+      };
+    };
+    const cenario = (grupo, base) => ({
+      grupos: [{ id: grupo, moeda_base: base }],
+      of_conexoes: [{ id: 'con-1', provider: 'polp-celcoin', external_id: 'cons-1', grupo_id: grupo, user_id: 'u1', instituicao: 'Nubank' }],
+    });
+
+    // Grupo em DÓLAR.
+    const bU = criarBanco(cenario('gUSD', 'USD'));
+    const syncU = carregar(bU, [], {}, celcoin())('services/polpCelcoinSync.js');
+    const rU = await syncU.sincronizarConsentimento('cons-1');
+    const wU = bU.tabelas.wallets.filter((w) => w.grupo_id === 'gUSD');
+    const tU = bU.tabelas.transacoes.filter((t) => t.grupo_id === 'gUSD');
+    eq([wU.length, wU[0] && wU[0].moeda], [1, 'BRL'], 'a conta do banco entra como conta EM REAL dentro do grupo em dólar');
+    eq(tU.map((t) => [t.valor, t.moeda, t.valor_moeda, t.taxa_brl]), [[100, 'BRL', 514.35, 1 / TAXAS.USD]],
+      '⚠️ o lançamento de R$ 514,35 entra como US$ 100, com o original em real ao lado');
+    eq([chamadas.cartoes, chamadas.emprestimos, chamadas.financiamentos, chamadas.investimentos, chamadas.caixinhas],
+      [undefined, undefined, undefined, undefined, undefined], '⚠️ cartões, empréstimos, investimentos e caixinhas NEM são buscados');
+    ok((rU.avisos || []).some((a) => /grupo em USD/.test(a)), `o relatório do sync diz o que ficou de fora — veio ${JSON.stringify(rU.avisos)}`);
+
+    // A cobrança do banco ASSUME a previsão da conta fixa (reconciliarPrevisto):
+    // o valor original e a taxa têm de passar a ser os do banco.
+    bU.tabelas.transacoes.push({ id: 'prev-1', grupo_id: 'gUSD', tipo: 'Gasto', valor: 100, data: '2026-09-11',
+      carteira_nome: wU[0].nome, recorrente: true, pago: false, of_tx_id: null,
+      moeda: 'BRL', valor_moeda: 480, taxa_brl: 0.2 });
+    txsConta.push({ id: 'of-t2', transaction_name: 'LUZ', credit_debit_type: 'DEBITO',
+      completed_authorised_payment_type: 'TRANSACAO_EFETIVADA', transaction_amount: { amount: '514.35' },
+      transaction_date_time: '2026-09-12T10:00:00Z' });
+    await syncU.sincronizarConsentimento('cons-1');
+    const prev = bU.tabelas.transacoes.find((t) => t.id === 'prev-1');
+    eq([prev.of_tx_id, prev.valor, prev.moeda, prev.valor_moeda, prev.taxa_brl, prev.pago], ['of-t2', 100, 'BRL', 514.35, 1 / TAXAS.USD, true],
+      '⚠️ previsão assumida pelo banco: original R$ 514,35 e a taxa do dia (não os R$ 480 previstos)');
+
+    // Grupo em REAL: tudo como antes.
+    for (const k of Object.keys(chamadas)) delete chamadas[k];
+    txsConta.length = 1;
+    const bB = criarBanco(cenario('gBRL', 'BRL'));
+    const syncB = carregar(bB, [], {}, celcoin())('services/polpCelcoinSync.js');
+    await syncB.sincronizarConsentimento('cons-1');
+    const tB = bB.tabelas.transacoes.filter((t) => t.grupo_id === 'gBRL');
+    eq(tB.map((t) => [t.valor, 'moeda' in t, 'valor_moeda' in t]), [[514.35, false, false]], 'grupo em real: a linha sai SEM colunas de moeda, como antes');
+    eq([chamadas.cartoes, chamadas.emprestimos, chamadas.financiamentos, chamadas.investimentos, chamadas.caixinhas],
+      [1, 1, 1, 1, 1], 'grupo em real: cartões, empréstimos, investimentos e caixinhas seguem sendo buscados');
   }
   console.log('  ok');
 

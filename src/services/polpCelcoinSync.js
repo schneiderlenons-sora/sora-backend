@@ -28,7 +28,7 @@
 const crypto   = require('crypto');
 const supabase = require('../db/supabase');
 const celcoin  = require('./polpCelcoin');
-const { normalizarMoeda, MOEDAS } = require('./moeda');
+const { normalizarMoeda, MOEDAS, moedaBaseDoGrupo, taxasParaBase, camposTransacao } = require('./moeda');
 const {
   categorizarDescricao, mapearCategoriaPluggy, CATEGORIA_FATURA, CATEGORIA_ESTORNO,
   ehPagamentoFaturaDescricao, ehMovimentoInvestimento,
@@ -2604,7 +2604,11 @@ async function reconciliarParcelas(grupoId, normalizadas) {
 }
 
 /** Insere transações novas (dedup por of_tx_id). Devolve quantas entraram. */
-async function inserirTransacoes(grupoId, userId, walletNome, txs) {
+// `cambio` (opcional): `{ moedaConta, base, tabela }` quando a conta NÃO está na
+// moeda base do grupo (migration 168) — o lançamento é gravado convertido, com o
+// valor original ao lado, igual à conta em moeda estrangeira lançada à mão. Sem
+// ele (todo grupo em real, com conta em real), a linha sai idêntica à de antes.
+async function inserirTransacoes(grupoId, userId, walletNome, txs, cambio = null) {
   const validas = txs.filter(Boolean);
   if (!validas.length) return 0;
 
@@ -2658,11 +2662,17 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs) {
     }
   } catch { /* melhoria cosmética: nunca derruba o sync */ }
 
+  const converter = !!cambio && normalizarMoeda(cambio.moedaConta) !== normalizarMoeda(cambio.base);
   let novas = validas.filter((t) => !existentes.has(t.externalId)).map((t) => ({
     id_curto: idCurto(), grupo_id: grupoId, criado_por: userId || null,
     tipo: t.ehGasto ? 'Gasto' : 'Recebimento',
     categoria: t.categoria || 'Outros',
     valor: t.valor,
+    // ⚠️ Conta fora da moeda base: `valor` na base, o original em `valor_moeda`
+    //    (ver services/moeda.camposTransacao). Sem isto, num grupo em dólar
+    //    R$ 100 do banco contariam como US$ 100 em todo o painel.
+    ...(converter ? (({ valor, moeda, valor_moeda, taxa_brl }) => ({ valor, moeda, valor_moeda, taxa_brl }))(
+      camposTransacao(t.valor, cambio.moedaConta, cambio.tabela, cambio.base)) : {}),
     observacao: (t.descricao || '').slice(0, 200),
     carteira_nome: walletNome,
     // Gasto em cartão nasce pago (ver CLAUDE.md). A exceção é a parcela ainda
@@ -3162,6 +3172,23 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
   const fromDate = new Date(Date.now() - dias * 864e5).toISOString().slice(0, 10);
   const relatorio = { contas: [], caixinhas: [], cartoes: [], dividas: [], investimentos: [], avisos: [] };
 
+  // ── Moeda base do grupo (migration 168) ─────────────────────────────────
+  //
+  // ⚠️ GRUPO FORA DO REAL SÓ IMPORTA CONTAS E LANÇAMENTOS (decisão do dono,
+  // 17/09/2026). O Open Finance brasileiro só fala real: a conta entra como
+  // conta em real dentro do grupo, e cada lançamento é convertido pra base —
+  // igual à conta em dólar lançada à mão num grupo em real.
+  //
+  // CARTÃO, EMPRÉSTIMO, INVESTIMENTO E CAIXINHA FICAM DE FORA por enquanto:
+  // todos gravam valor em real em tabelas que o painel soma como moeda do
+  // grupo, e a fatura do cartão soma `transacoes.valor` como se fosse a moeda
+  // do cartão. Importá-los sem conversão mostraria número plausível e errado.
+  // O cartão vem numa etapa própria (plano da moeda base, Fase 5).
+  //
+  // Num grupo em real `grupoForaDoReal` é false e nada abaixo muda.
+  const base = await moedaBaseDoGrupo(grupoId);
+  const grupoForaDoReal = base !== 'BRL';
+
   // 1. Estado do consentimento. Sem AUTHORISED não há dado pra importar.
   let consent = null;
   try { consent = await celcoin.getConsentimento(consentId); }
@@ -3184,13 +3211,23 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
   try {
     let novasTx = 0;
 
+    if (grupoForaDoReal) {
+      relatorio.avisos.push(
+        `grupo em ${base}: só contas e lançamentos são importados — cartões, empréstimos, `
+        + 'investimentos e caixinhas do banco ainda não');
+    }
+
     // 2. CONTAS → wallet + transações
     for (const raw of await celcoin.listarContas(consentId)) {
       try {
         const n = normalizeConta(raw, conexao.instituicao);
         const walletNome = await upsertWallet(grupoId, userId, n, n.saldo, consentId);
         const txs = await celcoin.listarTransacoesConta(n.externalId, { fromDate });
-        const novas = await inserirTransacoes(grupoId, userId, walletNome, txs.map(normalizeTxConta));
+        // Conta fora da moeda base: lançamentos convertidos (ver inserirTransacoes).
+        const moedaConta = moedaDaConta(n);
+        const cambio = moedaConta === base ? null
+          : { moedaConta, base, tabela: await taxasParaBase([moedaConta], base) };
+        const novas = await inserirTransacoes(grupoId, userId, walletNome, txs.map(normalizeTxConta), cambio);
         novasTx += novas;
         relatorio.contas.push({
           conta: walletNome, saldo: n.saldo, txs: txs.length, novas,
@@ -3200,7 +3237,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // 2b. CAIXINHAS (saldos reservados) — só quando o banco diz que existem.
         // Bloco à parte e tolerante: caixinha é informativa, e falha aqui não
         // pode derrubar a conta nem as transações, que são o essencial.
-        if (raw.balance && raw.balance.has_reserved_balance === true) {
+        if (raw.balance && raw.balance.has_reserved_balance === true && !grupoForaDoReal) {
           try {
             const reservas = await celcoin.listarSaldosReservados(n.externalId);
             const vistos = [];
@@ -3222,7 +3259,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     }
 
     // 3. CARTÕES → wallet 'Crédito' + fatura (datas reais!) + transações
-    for (const raw of await celcoin.listarCartoes(consentId)) {
+    for (const raw of grupoForaDoReal ? [] : await celcoin.listarCartoes(consentId)) {
       try {
         const bills = await celcoin.listarFaturas(raw.id);
         const n = normalizeCartao(raw, bills, hoje, conexao.instituicao);
@@ -3369,8 +3406,8 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
 
     // 4. EMPRÉSTIMOS + FINANCIAMENTOS → aba Dívidas
     for (const [kind, lista] of [
-      ['emprestimo', await celcoin.listarEmprestimos(consentId)],
-      ['financiamento', await celcoin.listarFinanciamentos(consentId)],
+      ['emprestimo', grupoForaDoReal ? [] : await celcoin.listarEmprestimos(consentId)],
+      ['financiamento', grupoForaDoReal ? [] : await celcoin.listarFinanciamentos(consentId)],
     ]) {
       for (const raw of lista) {
         try {
@@ -3389,7 +3426,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     }
 
     // 5. INVESTIMENTOS (5 famílias) → aba Investimentos
-    for (const raw of await celcoin.listarInvestimentos(consentId)) {
+    for (const raw of grupoForaDoReal ? [] : await celcoin.listarInvestimentos(consentId)) {
       try {
         const n = normalizeInvestimento(raw);
         if (n.valor_atual == null) {

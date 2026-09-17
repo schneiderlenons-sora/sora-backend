@@ -112,6 +112,11 @@ async function reconciliar(grupoId, novas) {
       pago: true,
       of_tx_id: real.of_tx_id || null,
       of_card: real.of_card || null,
+      // Conta fora da moeda base do grupo (migration 168): o valor ORIGINAL e a
+      // taxa também passam a ser os do banco — senão a linha ficaria com o
+      // nativo da PREVISÃO. Só quando a linha do banco os traz: em conta na
+      // base o update sai idêntico ao de antes.
+      ...('moeda' in real ? { moeda: real.moeda, valor_moeda: real.valor_moeda, taxa_brl: real.taxa_brl } : {}),
     }).eq('id', alvo.id);
 
     if (error) { restantes.push(real); continue; } // falhou → insere normal
