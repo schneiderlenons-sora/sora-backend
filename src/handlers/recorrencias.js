@@ -9,6 +9,8 @@ const {
   formatar: fmtMoedaRec,
 } = require('../services/moeda');
 const { enviarTexto } = require('../services/mensageiro');
+// Conta do Open Finance nunca tem saldo ajustado à mão (regra de ouro).
+const { moverSaldo } = require('../services/saldoCarteira');
 
 const norm = (s) => (s || '').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 const semPrefixo = (obs) => (obs || '').replace(/^\[previsto\]\s*/i, '').trim();
@@ -205,7 +207,7 @@ module.exports = async function handleRecorrencias(data, ctx) {
     const mult = ehGasto ? -1 : 1;
     if (wallet) {
       const passoConf = camposConf.valor_moeda ?? camposConf.valor;
-      await supabase.from('wallets').update({ saldo: (wallet.saldo || 0) + (passoConf * mult) }).eq('id', wallet.id);
+      await moverSaldo(wallet, passoConf * mult);
     }
 
     const linhaConta = wallet

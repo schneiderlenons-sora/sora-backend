@@ -31,6 +31,7 @@
     "eval:vencimento-divida": "node evals/vencimentoDivida.eval.js",
     "eval:divida-duplicada": "node evals/dividaDuplicada.eval.js",
     "eval:dividas-escopo": "node evals/dividasEscopo.eval.js",
+    "eval:saldo-conta-banco": "node evals/saldoContaBanco.eval.js",
     "eval:valor-fatura": "node evals/valorFatura.eval.js",
     "eval:duplicadas": "node evals/duplicadas.eval.js",
     "eval:agentes": "node evals/agentes.eval.js",

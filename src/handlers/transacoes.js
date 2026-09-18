@@ -4,6 +4,8 @@ const { enviarTexto, enviarMenu, enviarImagem, enviarBotaoLink } = require('../s
 // sync do Open Finance. Vai por TEMPLATE porque, em grupo, quem não lançou está
 // fora da janela de 24h e o texto livre falharia calado pra essa pessoa.
 const { verificarLimite } = require('../services/limites');
+// Conta do Open Finance nunca tem saldo ajustado à mão (regra de ouro).
+const { moverSaldo, gravarSaldo, avisoContaDoBanco } = require('../services/saldoCarteira');
 const { analisarGastos } = require('../services/ia');
 const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
@@ -537,17 +539,17 @@ module.exports = async function handleTransacoes(data, ctx) {
     const mult = data.tipo === 'Gasto' ? -1 : 1;
     const { data: wallet } = await supabase
       .from('wallets')
-      .select('id, saldo')
+      .select('id, saldo, of_conta_id')
       .eq('grupo_id', grupoId)
       .ilike('nome', carteiraNome)
       .single();
+    // Conta do banco: o saldo não anda, e a resposta explica por quê.
+    const contaDoBanco = !!(wallet && wallet.of_conta_id);
 
     if (wallet) {
-      await supabase.from('wallets')
-        // ⚠️ NATIVO, não BRL: gastar 200 kr tira 200 do saldo da conta em
-        // coroa, não os R$ 110 que isso vale hoje. Mesma regra da rota.
-        .update({ saldo: wallet.saldo + (campoMoeda.valor_moeda ?? campoMoeda.valor) * mult })
-        .eq('id', wallet.id);
+      // ⚠️ NATIVO, não BRL: gastar 200 kr tira 200 do saldo da conta em
+      // coroa, não os R$ 110 que isso vale hoje. Mesma regra da rota.
+      await moverSaldo(wallet, (campoMoeda.valor_moeda ?? campoMoeda.valor) * mult);
     } else if (carteiraNome === 'Dinheiro') {
       await supabase.from('wallets').upsert({
         grupo_id: grupoId, nome: 'Dinheiro', tipo: 'Dinheiro',
@@ -637,7 +639,8 @@ module.exports = async function handleTransacoes(data, ctx) {
       `💸 Valor: ${valorTxt}\n` +
       `🔄 Tipo: ${tipo}\n` +
       `🏦 Conta: ${carteiraNome}\n` +
-      `📅 Data: ${dataFmt}${notaReceita}\n\n` +
+      `📅 Data: ${dataFmt}${notaReceita}` +
+      (contaDoBanco ? `\n\n${avisoContaDoBanco(carteiraNome)}` : '') + `\n\n` +
       `❌ Para desfazer: *excluir transação ${idCurto}*`;
 
     await enviarMenu(phone, msg);
@@ -683,24 +686,20 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     // Reverte saldo da carteira antiga
     const { data: walletAntiga } = await supabase
-      .from('wallets').select('id, saldo')
+      .from('wallets').select('id, saldo, of_conta_id')
       .eq('grupo_id', grupoId).ilike('nome', tx.carteira_nome).single();
     if (walletAntiga) {
-      await supabase.from('wallets')
-        // ⚠️ NATIVO: `wallets.saldo` está na moeda da conta e `valor` em BRL.
-        //    Numa conta em coroa, mexer no saldo com o BRL erra ~45%.
-        .update({ saldo: walletAntiga.saldo - ((tx.valor_moeda ?? tx.valor) * mult) })
-        .eq('id', walletAntiga.id);
+      // ⚠️ NATIVO: `wallets.saldo` está na moeda da conta e `valor` em BRL.
+      //    Numa conta em coroa, mexer no saldo com o BRL erra ~45%.
+      await moverSaldo(walletAntiga, -((tx.valor_moeda ?? tx.valor) * mult));
     }
 
     // Aplica saldo na carteira nova
     const { data: walletNova } = await supabase
-      .from('wallets').select('id, saldo')
+      .from('wallets').select('id, saldo, of_conta_id')
       .eq('grupo_id', grupoId).ilike('nome', novaCarteira).single();
     if (walletNova) {
-      await supabase.from('wallets')
-        .update({ saldo: walletNova.saldo + ((tx.valor_moeda ?? tx.valor) * mult) })
-        .eq('id', walletNova.id);
+      await moverSaldo(walletNova, (tx.valor_moeda ?? tx.valor) * mult);
     } else {
       // Carteira não existe — cria automaticamente
       const { error: eCria } = await supabase.from('wallets').upsert({
@@ -722,10 +721,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       if (eCria) {
         console.error('[atualizar conta] falhei ao criar a carteira de destino:', eCria.message);
         // Desfaz o estorno feito na carteira antiga: a transação vai FICAR nela.
-        if (walletAntiga) {
-          await supabase.from('wallets')
-            .update({ saldo: walletAntiga.saldo }).eq('id', walletAntiga.id);
-        }
+        if (walletAntiga) await gravarSaldo(walletAntiga, walletAntiga.saldo);
         await enviarTexto(phone,
           `❌ Não consegui mover pra *${novaCarteira}* — a conta não existe e não deu pra criar.\n` +
           `A transação continua em *${tx.carteira_nome}*. Cria a conta pelo painel e tenta de novo.`
@@ -741,7 +737,8 @@ module.exports = async function handleTransacoes(data, ctx) {
 
     await enviarTexto(phone,
       `✅ Atualizei! Última transação (*${tx.id_curto}*) agora está em *${novaCarteira}*.\n` +
-      `💸 ${fmt(tx.valor)} — ${tx.observacao || tx.categoria}`
+      `💸 ${fmt(tx.valor)} — ${tx.observacao || tx.categoria}` +
+      (walletNova && walletNova.of_conta_id ? `\n\n${avisoContaDoBanco(novaCarteira)}` : '')
     );
     return;
   }
@@ -767,15 +764,13 @@ module.exports = async function handleTransacoes(data, ctx) {
     // Reverte o saldo da carteira
     const mult = tx.tipo === 'Gasto' ? 1 : -1;
     const { data: wallet } = await supabase
-      .from('wallets').select('id, saldo')
+      .from('wallets').select('id, saldo, of_conta_id')
       .eq('grupo_id', grupoId).ilike('nome', tx.carteira_nome).single();
 
     if (wallet) {
-      await supabase.from('wallets')
-        // ⚠️ NATIVO: `wallets.saldo` está na moeda da conta e `valor` em BRL.
-        //    Numa conta em coroa, mexer no saldo com o BRL erra ~45%.
-        .update({ saldo: wallet.saldo + ((tx.valor_moeda ?? tx.valor) * mult) })
-        .eq('id', wallet.id);
+      // ⚠️ NATIVO: `wallets.saldo` está na moeda da conta e `valor` em BRL.
+      //    Numa conta em coroa, mexer no saldo com o BRL erra ~45%.
+      await moverSaldo(wallet, (tx.valor_moeda ?? tx.valor) * mult);
     }
 
     await supabase.from('transacoes').delete().eq('id', tx.id);

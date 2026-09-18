@@ -105,9 +105,14 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     // vira Ajuste (rastro). Se é CRIAÇÃO, o saldo é abertura (patrimônio) e NÃO
     // gera transação — você já tinha o dinheiro, não recebeu agora.
     const { data: antes } = await supabase.from('wallets')
-      .select('id, saldo').eq('grupo_id', grupoId).eq('nome', nome).maybeSingle();
+      .select('id, saldo, of_conta_id').eq('grupo_id', grupoId).eq('nome', nome).maybeSingle();
 
     const row = { grupo_id: grupoId, nome, tipo, saldo, limite };
+    // ⚠️ CONTA DO OPEN FINANCE: o saldo é o do banco (regra de ouro). Gravar o
+    // que veio do painel duraria até o próximo sync — e ainda deixaria um
+    // lançamento de Ajuste sem dinheiro por trás. O resto da edição vale.
+    const saldoDoBanco = !!(antes && antes.of_conta_id);
+    if (saldoDoBanco) delete row.saldo;
     // Cheque especial (migration 094) — teto de saldo negativo da conta. Só
     // inclui quando enviado; guarda em módulo (positivo). Tolerante: se a
     // coluna não existe ainda, o upsert abaixo falha e cai no catch — por isso
@@ -170,7 +175,7 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 
     // EDIÇÃO com saldo novo → registra o Ajuste. (Criação não entra: `antes` é
     // null. Saldo omitido no body também não — o upsert nem mexeu na coluna.)
-    if (antes && saldo !== undefined && saldo !== null) {
+    if (antes && !saldoDoBanco && saldo !== undefined && saldo !== null) {
       const diff = Math.round(((Number(saldo) || 0) - (antes.saldo || 0)) * 100) / 100;
       if (diff !== 0) {
         const { registrarAjuste } = require('../services/ajusteSaldo');
@@ -235,7 +240,8 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     const patch = {};
     if (renomeando)                    patch.nome   = nomeNovo;
     if (tipo   !== undefined)          patch.tipo   = tipo;
-    if (saldo  !== undefined && saldo !== null) patch.saldo = saldo;
+    // Conta do Open Finance: o saldo é o do banco (regra de ouro).
+    if (saldo  !== undefined && saldo !== null && !atual.of_conta_id) patch.saldo = saldo;
     if (limite !== undefined)          patch.limite = limite;
     if (cheque_especial !== undefined) patch.cheque_especial = Math.abs(Number(cheque_especial) || 0);
     if (bandeira !== undefined)        patch.bandeira = bandeira || null;
@@ -628,7 +634,7 @@ router.post('/transferir', auth, exigirPermissao('admin', 'escrita'), async (req
     // cheque_especial: teto de negativo (migration 094). Select tolerante: se a
     // coluna não existe ainda, refaz com '*' e trata como 0.
     let { data: contas, error: selErr } = await supabase.from('wallets')
-      .select('id, nome, saldo, cheque_especial').eq('grupo_id', grupoId).in('id', [origem_id, destino_id]);
+      .select('id, nome, saldo, cheque_especial, moeda, of_conta_id').eq('grupo_id', grupoId).in('id', [origem_id, destino_id]);
     if (selErr) {
       ({ data: contas } = await supabase.from('wallets')
         .select('*').eq('grupo_id', grupoId).in('id', [origem_id, destino_id]));
@@ -646,8 +652,10 @@ router.post('/transferir', auth, exigirPermissao('admin', 'escrita'), async (req
       return res.status(400).json({ erro: `Saldo insuficiente em ${origem.nome}${extra}.` });
     }
 
-    await supabase.from('wallets').update({ saldo: (origem.saldo || 0) - v }).eq('id', origem.id);
-    await supabase.from('wallets').update({ saldo: (destino.saldo || 0) + v }).eq('id', destino.id);
+    // Conta do Open Finance não anda à mão (regra de ouro) — só a ponta manual.
+    const { moverSaldo } = require('../services/saldoCarteira');
+    await moverSaldo(origem, -v);
+    await moverSaldo(destino, v);
 
     const tx = await registrarTransferencia({
       grupoId, origemNome: origem.nome, destinoNome: destino.nome, valor: v, userId: req.userId,

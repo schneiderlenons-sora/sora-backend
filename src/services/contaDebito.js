@@ -9,6 +9,8 @@
 // mesmo mecanismo do gasto comum (que já move o saldo por match de nome).
 // =============================================================================
 const supabase = require('../db/supabase');
+// Conta do Open Finance nunca tem saldo ajustado à mão (regra de ouro).
+const { moverSaldo } = require('./saldoCarteira');
 const { CATEGORIA_FATURA, ehPagamentoFatura } = require('./categorizar');
 
 async function debitarConta({ grupoId, walletId, valor, categoria, observacao, userId, data }) {
@@ -45,8 +47,7 @@ async function debitarConta({ grupoId, walletId, valor, categoria, observacao, u
   }
   if (error) throw error;
 
-  await supabase.from('wallets')
-    .update({ saldo: (wallet.saldo || 0) - v }).eq('id', wallet.id);
+  await moverSaldo(wallet, -v);
 
   return { tx, conta: { id: wallet.id, nome: wallet.nome } };
 }
@@ -94,8 +95,7 @@ async function creditarConta({ grupoId, walletId, valor, categoria, observacao, 
   }
   if (error) throw error;
 
-  await supabase.from('wallets')
-    .update({ saldo: (wallet.saldo || 0) + v }).eq('id', wallet.id);
+  await moverSaldo(wallet, v);
 
   return { tx, conta: { id: wallet.id, nome: wallet.nome } };
 }

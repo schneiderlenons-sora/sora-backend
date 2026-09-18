@@ -2,6 +2,8 @@ const supabase = require('../db/supabase');
 const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { registrarAjuste } = require('../services/ajusteSaldo');
+// Conta do Open Finance nunca tem saldo ajustado à mão (regra de ouro).
+const { moverSaldo, avisoContaDoBanco } = require('../services/saldoCarteira');
 // Conta em moeda estrangeira (migration 144). Cada linha sai NA MOEDA DELA; o
 // total converte pra moeda BASE do grupo (migration 168), porque somar dólar
 // com real seria mentira.
@@ -240,10 +242,16 @@ module.exports = async function handleWallets(data, ctx) {
     }
 
     const { data: wallet } = await supabase.from('wallets')
-      .select('id, nome, saldo, moeda').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
+      .select('id, nome, saldo, moeda, of_conta_id').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
 
     if (!wallet) {
       await enviarTexto(phone, `❌ Conta *${nomeFinal}* não encontrada. Crie primeiro com "${nomeFinal.toLowerCase()} 0".`);
+      return;
+    }
+    // ⚠️ Conta do banco: o próximo sync desfaria o ajuste, e o lançamento de
+    // Ajuste ficaria no histórico sem dinheiro nenhum por trás.
+    if (wallet.of_conta_id) {
+      await enviarTexto(phone, `🏦 *${wallet.nome}* está conectada ao seu banco pelo Open Finance: o saldo vem de lá e eu não altero à mão — ele se atualiza sozinho a cada sincronização.`);
       return;
     }
     // Saldo é NATIVO: uma conta em coroa responde em coroa.
@@ -272,10 +280,14 @@ module.exports = async function handleWallets(data, ctx) {
     }
 
     const { data: wallet } = await supabase.from('wallets')
-      .select('id, nome, saldo, moeda').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
+      .select('id, nome, saldo, moeda, of_conta_id').eq('grupo_id', grupoId).ilike('nome', nomeFinal).single();
 
     if (!wallet) {
       await enviarTexto(phone, `❌ Conta *${nomeFinal}* não encontrada.`);
+      return;
+    }
+    if (wallet.of_conta_id) {
+      await enviarTexto(phone, `🏦 *${wallet.nome}* está conectada ao seu banco pelo Open Finance: o saldo vem de lá e eu não altero à mão — ele se atualiza sozinho a cada sincronização.`);
       return;
     }
     const fmtConta = (v) => fmtMoeda(v, wallet.moeda || base);
@@ -381,10 +393,10 @@ module.exports = async function handleWallets(data, ctx) {
     // cheque_especial (migration 094): permite ir negativo até esse teto.
     // Select tolerante (coluna pode não existir ainda → refaz sem ela).
     let { data: origem, error: origemErr } = await supabase.from('wallets')
-      .select('id, saldo, moeda, cheque_especial').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single();
+      .select('id, saldo, moeda, cheque_especial, of_conta_id').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single();
     if (origemErr) {
       ({ data: origem } = await supabase.from('wallets')
-        .select('id, saldo, moeda').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single());
+        .select('id, saldo, moeda, of_conta_id').eq('grupo_id', grupoId).ilike('nome', nomeOrigem).single());
     }
 
     if (!origem) {
@@ -398,14 +410,14 @@ module.exports = async function handleWallets(data, ctx) {
     }
 
     // Debita origem
-    await supabase.from('wallets').update({ saldo: origem.saldo - valor }).eq('id', origem.id);
+    await moverSaldo(origem, -valor);
 
     // Credita destino (cria se não existir)
     const { data: destino } = await supabase.from('wallets')
-      .select('id, saldo').eq('grupo_id', grupoId).ilike('nome', nomeDestino).single();
+      .select('id, saldo, of_conta_id').eq('grupo_id', grupoId).ilike('nome', nomeDestino).single();
 
     if (destino) {
-      await supabase.from('wallets').update({ saldo: destino.saldo + valor }).eq('id', destino.id);
+      await moverSaldo(destino, valor);
     } else {
       const { data: novoDest } = await supabase.from('wallets').insert({
         grupo_id: grupoId, nome: nomeDestino,
@@ -426,7 +438,9 @@ module.exports = async function handleWallets(data, ctx) {
       `💸 *Transferência realizada!*\n\n` +
       `📤 Saída: *${nomeOrigem}*\n` +
       `📥 Entrada: *${nomeDestino}*\n` +
-      `💵 Valor: ${fmtMoeda(valor, origem.moeda || base)}`
+      `💵 Valor: ${fmtMoeda(valor, origem.moeda || base)}` +
+      (origem.of_conta_id ? `\n\n${avisoContaDoBanco(nomeOrigem)}` : '') +
+      (destino && destino.of_conta_id ? `\n\n${avisoContaDoBanco(nomeDestino)}` : '')
     );
     return;
   }

@@ -17,6 +17,8 @@ const supabase = require('../db/supabase');
 const { ehPagamentoFatura } = require('../services/categorizar');
 const { enviarTexto } = require('../services/mensageiro');
 const { criarPendente, removerPendente } = require('../services/pendentes');
+// Conta do Open Finance nunca tem saldo ajustado à mão (regra de ouro).
+const { moverSaldo, gravarSaldo, avisoContaDoBanco } = require('../services/saldoCarteira');
 // Conta em moeda estrangeira (migration 144): mover uma transação de conta
 // pode mudar a MOEDA dela — ver `moverCarteira`.
 const {
@@ -82,24 +84,20 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
 
   // Reverte saldo da carteira antiga
   const { data: walletAntiga } = await supabase
-    .from('wallets').select('id, saldo')
+    .from('wallets').select('id, saldo, of_conta_id')
     .eq('grupo_id', grupoId).ilike('nome', tx.carteira_nome).single();
   if (walletAntiga) {
-    await supabase.from('wallets')
-      // ⚠️ NATIVO: é por ele que o saldo andou na entrada (o BRL fica só na
-      // transação). Estornar o BRL aqui deixaria a conta antiga errada.
-      .update({ saldo: walletAntiga.saldo - (nativo * mult) })
-      .eq('id', walletAntiga.id);
+    // ⚠️ NATIVO: é por ele que o saldo andou na entrada (o BRL fica só na
+    // transação). Estornar o BRL aqui deixaria a conta antiga errada.
+    await moverSaldo(walletAntiga, -(nativo * mult));
   }
 
   // Aplica saldo na nova
   const { data: walletNova } = await supabase
-    .from('wallets').select('id, saldo')
+    .from('wallets').select('id, saldo, of_conta_id')
     .eq('grupo_id', grupoId).ilike('nome', novaCarteiraNome).single();
   if (walletNova) {
-    await supabase.from('wallets')
-      .update({ saldo: walletNova.saldo + (nativo * mult) })
-      .eq('id', walletNova.id);
+    await moverSaldo(walletNova, nativo * mult);
   } else {
     // ⚠️ A CARTEIRA DE DESTINO NÃO EXISTE — E ISSO NÃO PODE SER IGNORADO.
     //
@@ -136,11 +134,7 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
     // estrago maior do que simplesmente não mover.
     if (eCria) {
       console.error('[moverCarteira] não consegui criar a carteira de destino:', eCria.message);
-      if (walletAntiga) {
-        await supabase.from('wallets')
-          .update({ saldo: walletAntiga.saldo })
-          .eq('id', walletAntiga.id);
-      }
+      if (walletAntiga) await gravarSaldo(walletAntiga, walletAntiga.saldo);
       return { ok: false, conversao: null };
     }
   }
@@ -165,6 +159,8 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
 
   return {
     ok: true,
+    // Conta do banco: a resposta explica por que o saldo não andou.
+    contaDoBanco: !!(walletDestino && walletDestino.of_conta_id),
     // O que a resposta do WhatsApp precisa pra explicar a mudança.
     conversao: mudouMoeda && campos.moeda
       ? { texto: `${fmtMoedaMv(campos.valor_moeda, campos.moeda)} (≈ ${fmtMoedaMv(campos.valor, baseMv)})` }
@@ -322,6 +318,7 @@ async function resolverPendente(pendente, mensagem, ctx) {
       (movida?.conversao
         ? `💱 Essa conta é em outra moeda, então lancei ${movida.conversao.texto}.\n`
         : '') +
+      (movida?.contaDoBanco ? `${avisoContaDoBanco(escolhida.nome)}\n` : '') +
       `\n` +
       `⭐ Quer marcar *${escolhida.nome}* como sua conta principal?\n` +
       `Assim eu uso ela automaticamente quando você não disser o banco.\n\n` +
@@ -368,11 +365,8 @@ async function resolverPendente(pendente, mensagem, ctx) {
       await supabase.from('transacoes').update({ pago: true }).in('id', emAberto.map(p => p.id));
       // Debita o saldo da conta escolhida
       const { data: conta } = await supabase.from('wallets')
-        .select('id, saldo').eq('id', escolhida.id).maybeSingle();
-      if (conta) {
-        await supabase.from('wallets')
-          .update({ saldo: (conta.saldo || 0) - total }).eq('id', conta.id);
-      }
+        .select('id, saldo, of_conta_id').eq('id', escolhida.id).maybeSingle();
+      if (conta) await moverSaldo(conta, -total);
     }
     await removerPendente(pendente.id);
     const ehFatura = pendente.contexto?.modo === 'fatura';
