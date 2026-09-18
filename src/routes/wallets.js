@@ -218,6 +218,7 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     const {
       nome, tipo, saldo, limite, cheque_especial,
       dia_fechamento, dia_vencimento, bandeira, ultimos4, nos_previstos, moeda,
+      conta_pagamento_id,
     } = req.body;
 
     const nomeNovo = typeof nome === 'string' ? nome.trim().slice(0, 60) : null;
@@ -263,6 +264,26 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     // moeda nova, e quem trocou por engano é quem sabe o número certo.
     if (moeda !== undefined) patch.moeda = normalizarMoeda(moeda);
 
+    // De qual CONTA sai o pagamento da fatura (migration 170) — é o que põe a
+    // fatura no Extrato Futuro daquela conta. Só em cartão, só apontando pra
+    // uma conta de DÉBITO do MESMO grupo (senão um id qualquer ligaria o cartão
+    // à conta de outra família). `null` desfaz a escolha.
+    if (conta_pagamento_id !== undefined) {
+      if (atual.tipo !== 'Crédito') {
+        return res.status(400).json({ erro: 'Só cartão de crédito tem conta de pagamento.' });
+      }
+      if (conta_pagamento_id === null || conta_pagamento_id === '') {
+        patch.conta_pagamento_id = null;
+      } else {
+        const { data: conta } = await supabase.from('wallets')
+          .select('id, tipo').eq('id', conta_pagamento_id).eq('grupo_id', grupoId).maybeSingle();
+        if (!conta || conta.tipo === 'Crédito') {
+          return res.status(400).json({ erro: 'Escolha uma conta bancária deste grupo para pagar a fatura.' });
+        }
+        patch.conta_pagamento_id = conta.id;
+      }
+    }
+
     if (!Object.keys(patch).length) return res.json(atual);
 
     // Renomeia a WALLET primeiro: é a operação que pode falhar por constraint,
@@ -271,6 +292,13 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
       .update(patch).eq('id', atual.id).select().single();
     // Tolerante às migrations 094 (cheque_especial), 114 (datas_manuais) e
     // 123 (nos_previstos): tenta com tudo e refaz só com o essencial.
+    // ⚠️ A conta de pagamento NÃO entra no refazer-sem-a-coluna: se ela foi
+    // pedida e a 170 não rodou, o certo é dizer isso, e não fingir que salvou.
+    if (error && patch.conta_pagamento_id !== undefined && /conta_pagamento_id/i.test(error.message || '')) {
+      return res.status(400).json({
+        erro: 'Recurso ainda não liberado no banco. Rode a migration sql/170_cartao_conta_pagamento.sql.',
+      });
+    }
     if (error) {
       const { cheque_especial: _c, datas_manuais: _d, nos_previstos: _n, ...simples } = patch;
       // ⚠️ Sem nada pra regravar, a única mudança pedida era justamente a

@@ -201,6 +201,36 @@ const ctx = { phone: '5511999990001', grupoId: 'g1', user: { id: 'u1' } };
       await chamar(rota(montar(b), 'post', '/transferir'), { body: { origem_id: 'wOF', destino_id: 'wMan', valor: 100 } });
       eq([saldo(b, 'wOF'), saldo(b, 'wMan')], [1848.51, 496], 'transferir pelo painel: só a ponta manual anda');
     }
+
+    // ── 7. De qual conta sai a fatura (migration 170) ──
+    console.log('── 7. conta de pagamento da fatura ──');
+    {
+      const comCartao = () => ({
+        ...base(),
+        wallets: [
+          ...base().wallets,
+          { id: 'wCard', grupo_id: 'g1', nome: 'Cartão X', tipo: 'Crédito', saldo: -300 },
+          { id: 'wCard2', grupo_id: 'g1', nome: 'Cartão Y', tipo: 'Crédito', saldo: 0 },
+          { id: 'wAlheia', grupo_id: 'OUTRO', nome: 'Conta de outra família', tipo: 'Corrente', saldo: 10 },
+        ],
+      });
+      const put = async (b, id, conta) => chamar(rota(montar(b), 'put', '/:id'), { params: { id }, body: { conta_pagamento_id: conta } });
+      const cp = (b) => b.tabelas.wallets.find((w) => w.id === 'wCard').conta_pagamento_id;
+
+      let b = criarBanco(comCartao());
+      let r = await put(b, 'wCard', 'wMan');
+      eq([r.statusCode, cp(b)], [200, 'wMan'], 'cartão aponta pra uma conta de débito do grupo');
+      r = await put(b, 'wCard', null);
+      eq([r.statusCode, cp(b)], [200, null], 'null desfaz a escolha');
+
+      b = criarBanco(comCartao());
+      r = await put(b, 'wCard', 'wAlheia');
+      eq([r.statusCode, cp(b)], [400, undefined], '⚠️ conta de OUTRO grupo é recusada (senão ligaria à família errada)');
+      r = await put(b, 'wCard', 'wCard2');
+      eq([r.statusCode, cp(b)], [400, undefined], 'cartão não paga cartão');
+      r = await put(b, 'wMan', 'wOF');
+      eq(r.statusCode, 400, 'conta bancária não tem conta de pagamento');
+    }
   }
 
   console.log('');
