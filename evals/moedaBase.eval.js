@@ -956,6 +956,79 @@ const ANTIGO = (() => {
   }
   console.log('  ok');
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 10. ENTRADA: o símbolo da moeda é RUÍDO, em qualquer moeda do catálogo
+  // ══════════════════════════════════════════════════════════════════════════
+  // A Fase 3 cuidou da SAÍDA. Esta seção é a entrada: quem escreve pelo
+  // WhatsApp diz "gastei US$ 50" ou "gastei 50 coroas", e o número dito é
+  // NATIVO da carteira onde a transação cai (`camposTransacao`) — o símbolo
+  // nunca disse a moeda do lançamento.
+  //
+  // ⚠️ O modo de falha medido NÃO era "não entendeu": "gastei US$ 50 no
+  // mercado" caía em BUSCAR e respondia "nenhum gasto encontrado para
+  // mercado"; e "gastei 50 dólares no mercado" salvava com observação
+  // "dólares", categoria "Outros" e carteira_nome "mercado" — conta que não
+  // existe, a família do bug da conta-fantasma.
+  //
+  // ⚠️ ESTE É O ESPELHO de `MOEDAS` em services/moeda.js: o interpretador não
+  // pode importar o catálogo (ele instancia o Supabase no import), então a
+  // lista de símbolos está escrita à mão lá. Esta seção falha no dia em que
+  // alguém acrescentar uma moeda e esquecer do interpretador.
+  console.log('── 10. entrada: símbolo de moeda é ruído em qualquer moeda ──');
+  {
+    const { interpretarRapido } = require('../src/handlers/interpretador');
+    const { MOEDAS } = require('../src/services/moeda');
+
+    // A frase em real é a REFERÊNCIA: todas as outras têm de dar o mesmo.
+    const alvo = interpretarRapido('gastei 50 no mercado');
+    eq([alvo.acao, alvo.valor, alvo.categoria, alvo.observacao, alvo.carteira_nome],
+      ['salvar', 50, 'Mercado', 'mercado', null],
+      'referência: "gastei 50 no mercado" em real');
+
+    const igual = (frase) => {
+      const r = interpretarRapido(frase) || {};
+      return r.acao === alvo.acao && r.valor === alvo.valor && r.categoria === alvo.categoria
+        && r.observacao === alvo.observacao && r.carteira_nome === alvo.carteira_nome;
+    };
+
+    for (const [cod, m] of Object.entries(MOEDAS)) {
+      ok(igual(`gastei ${m.simbolo} 50 no mercado`), `prefixo "${m.simbolo}" (${cod}) com espaço é ruído`);
+      ok(igual(`gastei ${m.simbolo}50 no mercado`), `prefixo "${m.simbolo}" (${cod}) colado é ruído`);
+    }
+
+    // Milhar e decimal continuam em grafia BR (decisão de 17/09: a grafia segue
+    // o IDIOMA, não a moeda) — o prefixo não pode estragar o `parseValor`.
+    const mil = interpretarRapido('gastei US$ 1.250,00 no mercado') || {};
+    eq([mil.acao, mil.valor], ['salvar', 1250], '⚠️ "US$ 1.250,00" vira 1250, não 1,25');
+
+    // Palavra da moeda DEPOIS do número, incluindo sem acento (é como se digita).
+    for (const p of ['dólares', 'dolares', 'coroas', 'kr', 'euros', 'libras', 'ienes', 'usd', 'nok']) {
+      ok(igual(`gastei 50 ${p} no mercado`), `sufixo "${p}" não vira descrição nem carteira`);
+    }
+
+    // ⚠️ "peso(s)" e "franco(s)" ficaram FORA da lista de sufixo de propósito:
+    // são palavras comuns em português, e "peso" ainda é campo do Grow. Aqui
+    // NÃO vai asserção — escrevi uma ("gastei 50 no peso" segue com descrição
+    // "peso") e a mutação provou que ela NÃO MORDE: o "no" entre o número e a
+    // palavra já impede o casamento, então passaria igual com "peso" na lista.
+    // Asserção que não morde dá confiança falsa; o motivo fica no comentário,
+    // que é honesto sobre o que está e o que não está travado.
+
+    // ⚠️ O LOOKAHEAD DE DÍGITO É O QUE PROTEGE A DESCRIÇÃO, e é o lado caro de
+    // tirar "kr"/"chf" sempre: sem ele, "gastei 50 na kr modas" perderia o
+    // "kr" da descrição. Medido em 24.366 observações da base, ZERO casam
+    // /\b(kr|chf)\s*\d/ — mas as que têm "kr" NO MEIO do texto precisam sair
+    // inteiras. (Primeiro escrevi aqui "quanto custa o $ hoje"; a mutação
+    // mostrou que aquilo não mordia. Estas três mordem.)
+    for (const f of ['gastei 50 na kr modas', 'gastei 50 no € shop', 'paguei 50 na loja kr']) {
+      const r = interpretarRapido(f) || {};
+      const esperado = f.replace(/^\w+ 50 (?:na|no) /, '');
+      ok(r.observacao === esperado,
+        `descrição com símbolo no meio sai inteira: "${f}" → esperado ${JSON.stringify(esperado)}, veio ${JSON.stringify(r.observacao)}`);
+    }
+  }
+  console.log('  ok');
+
   console.log('');
   if (falhas.length) {
     console.log(`❌ ${falhas.length} falha(s):`);

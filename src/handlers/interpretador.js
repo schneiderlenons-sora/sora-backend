@@ -387,9 +387,43 @@ function interpretarRapido(message) {
   //
   // `parseValor` já cuida do resto do formato BR (tira o ponto de milhar e
   // troca a vírgula decimal), então "R$ 1.250,00" chega como 1250, não 1,25.
+  //
+  // ⚠️ E É QUALQUER MOEDA DO CATÁLOGO, não só o real (migration 168). O regex
+  // antigo era `r?\$`: tirava o cifrão e COLAVA a letra no número —
+  // "gastei US$ 50 no mercado" virava "gastei us50 no mercado", não casava a
+  // regra de salvar e caía em BUSCAR ("nenhum gasto encontrado para mercado").
+  // Exatamente o modo de falha do bug do áudio de set/2026. E o "kr" da coroa
+  // nem cifrão tem pra casar.
+  //
+  // ⚠️ A MOEDA DEPOIS DO NÚMERO ERA PIOR QUE O PREFIXO: medido,
+  // "gastei 50 dólares no mercado" saía com observação "dólares",
+  // categoria "Outros" e **carteira_nome "mercado"** — uma conta que não
+  // existe, a família do bug da conta-fantasma. O VALOR já estava certo nos
+  // dois casos (50), então esta linha não muda número nenhum: conserta
+  // descrição, categoria e conta.
+  //
+  // ⚠️ Não é decisão de moeda, é limpeza de ruído: o número dito continua
+  // sendo NATIVO da carteira onde a transação cai (`camposTransacao` em
+  // services/moeda.js). O símbolo nunca disse a moeda do lançamento — "R$" e
+  // "reais" já eram descartados assim.
+  //
+  // ⚠️ ESPELHA `MOEDAS` de services/moeda.js — moeda nova entra aqui também.
+  //    `eval:moeda-base` §10 trava isso símbolo por símbolo. Não dá pra
+  //    importar o catálogo: services/moeda.js instancia o cliente do Supabase
+  //    no import, e este arquivo é de propósito sem dependência de banco.
+  //
+  // ⚠️ "peso(s)" e "franco(s)" ficam DE FORA da lista de sufixo: são palavras
+  //    comuns em português ("50 pesos" × "o peso do saco") e MXN/ARS/CLP/CHF
+  //    não estão no MVP. Os SÍMBOLOS delas seguem sendo tirados — MX$ e CHF
+  //    não são ambíguos.
+  //
+  // Medido em 24.366 observações da base: ZERO casam /\b(kr|chf)\s*\d/, então
+  // tirar essas duas antes de um número não atrapalha quem já usa.
   const msg = message.toLowerCase().trim()
-    .replace(/r?\$\s*(?=\d)/g, '')
-    .replace(/(\d)\s+(?:reais|real|conto|contos|pila|pilas|mango|mangos|pau|paus|prata|pratas|din[\s-]?din|dinheiro)\b/gi, '$1');
+    .replace(/(?:\b(?:us|ar|mx|clp|c|a|r)\s*)?\$\s*(?=\d)/g, '')
+    .replace(/\b(?:chf|kr)\s*(?=\d)/g, '')
+    .replace(/[€£¥]\s*(?=\d)/g, '')
+    .replace(/(\d)\s+(?:reais|real|conto|contos|pila|pilas|mango|mangos|pau|paus|prata|pratas|din[\s-]?din|dinheiro|d[oó]lar|d[oó]lares|usd|coroa|coroas|kr|nok|euro|euros|eur|libra|libras|gbp|iene|ienes|jpy)\b/gi, '$1');
 
   let m;
 
