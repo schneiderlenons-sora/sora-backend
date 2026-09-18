@@ -16,7 +16,7 @@
 // Rodar:  npm run eval:vencimento-divida
 // =============================================================================
 const {
-  proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, emAtraso,
+  proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, emAtraso, vencidaNoMes, statusDeAtraso,
 } = require('../src/services/vencimentoDivida');
 
 const falhas = [];
@@ -190,6 +190,36 @@ console.log('── 8. emAtraso (selo do card) ──');
   for (const [nome, divida, hoje, esperado] of casos) {
     eq(emAtraso(divida, hoje), esperado, `emAtraso — ${nome}`);
   }
+}
+console.log('  ok');
+
+// ── O SELO "EM ATRASO" (vencidaNoMes / statusDeAtraso) ────────────────────
+// Relato (set/2026): "mudei o vencimento do dia 15 pro 20 e continua em
+// atraso". O cron marcava e nada desmarcava; e o teste dele (`pago < venc`)
+// punia quem pagou adiantado.
+console.log('── selo em atraso ──');
+{
+  const H = '2026-09-18';
+  const casos = [
+    ['dia 15 sem pagamento → atrasada', { dia_vencimento: 15, status: 'ativa' }, true],
+    ['MUDOU pro dia 20 → não venceu ainda', { dia_vencimento: 20, status: 'em_atraso' }, false],
+    ['vence HOJE não é atraso', { dia_vencimento: 18 }, false],
+    ['pagou ADIANTADO dia 7 a do dia 10 → em dia', { dia_vencimento: 10, ultimo_pagamento: '2026-09-07' }, false],
+    ['pagou dia 12 a do dia 10 (atrasado, mas pagou) → em dia', { dia_vencimento: 10, ultimo_pagamento: '2026-09-12' }, false],
+    ['pagou só a de agosto → setembro atrasada', { dia_vencimento: 10, ultimo_pagamento: '2026-08-09' }, true],
+    ['contratada DEPOIS do vencimento do mês → não atrasada', { dia_vencimento: 10, data_inicio: '2026-09-15' }, false],
+    ['contratada no próprio dia do vencimento → não atrasada', { dia_vencimento: 10, data_inicio: '2026-09-10' }, false],
+    ['todas as parcelas pagas → não atrasada', { dia_vencimento: 10, parcelas_total: 4, parcelas_pagas: 4 }, false],
+    ['quitada nunca', { dia_vencimento: 10, status: 'quitada' }, false],
+    ['banco diz que a próxima é mês que vem → não atrasada', { dia_vencimento: 10, proximo_vencimento: '2026-10-10' }, false],
+    ['sem dia de vencimento → nunca', { status: 'ativa' }, false],
+  ];
+  for (const [nome, d, esperado] of casos) eq(vencidaNoMes(d, H), esperado, `vencidaNoMes — ${nome}`);
+
+  eq(statusDeAtraso({ dia_vencimento: 20, status: 'em_atraso' }, H), 'ativa', 'status: em_atraso volta pra ativa');
+  eq(statusDeAtraso({ dia_vencimento: 15, status: 'ativa' }, H), 'em_atraso', 'status: ativa vira em_atraso');
+  eq(statusDeAtraso({ dia_vencimento: 15, status: 'quitada' }, H), 'quitada', 'status: quitada nunca é mexida');
+  eq(statusDeAtraso({ dia_vencimento: 15, status: 'cancelada' }, H), 'cancelada', 'status: outro valor nunca é mexido');
 }
 console.log('  ok');
 

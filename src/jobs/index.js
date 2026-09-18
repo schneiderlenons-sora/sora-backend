@@ -1292,7 +1292,7 @@ cron.schedule('0 9 * * *', async () => {
   console.log('🔔 Processando lembretes de dívidas...');
   const {
     proximoVencimento, ultimoPagamentoPorDivida, hojeSP,
-    ocorrencia: ocorrenciaVenc, diffDias: diffDiasVenc,
+    ocorrencia: ocorrenciaVenc, diffDias: diffDiasVenc, vencidaNoMes, statusDeAtraso,
   } = require('../services/vencimentoDivida');
   // Data no fuso SP: o Render roda em UTC e `toISOString()` às 21h no BR já
   // devolve o dia seguinte — o lembrete saía no dia errado.
@@ -1301,7 +1301,7 @@ cron.schedule('0 9 * * *', async () => {
   // Busca todas as dívidas ativas com lembrete ligado e dia_vencimento definido
   const { data: dividas } = await supabase
     .from('dividas')
-    .select('id, grupo_id, titulo, credor, valor_parcela, parcelas_total, parcelas_pagas, dia_vencimento, data_inicio, ultimo_lembrete_em')
+    .select('id, grupo_id, titulo, credor, valor_parcela, parcelas_total, parcelas_pagas, dia_vencimento, data_inicio, ultimo_lembrete_em, status, of_id, proximo_vencimento')
     .in('status', ['ativa', 'em_atraso'])
     .eq('lembretes_ativos', true)
     .not('dia_vencimento', 'is', null);
@@ -1312,6 +1312,22 @@ cron.schedule('0 9 * * *', async () => {
   const ultimoPg = await ultimoPagamentoPorDivida((dividas || []).map((d) => d.id));
 
   for (const d of dividas || []) {
+    // ── O SELO "EM ATRASO" ANDA NOS DOIS SENTIDOS ─────────────────────────
+    // Antes o cron só MARCAVA (e só nos dias de aviso); nada desmarcava — a
+    // dívida mudada do dia 15 pro 20 seguia "EM ATRASO". Agora o status é
+    // recalculado a cada passada pela regra única (`vencidaNoMes`) e só é
+    // gravado quando muda. ⚠️ Dívida do Open Finance fica de fora: o status
+    // dela vem do BANCO (polpCelcoinSync), e o cron não pode desmentir o sync.
+    if (!d.of_id) {
+      const novo = statusDeAtraso({ ...d, ultimo_pagamento: ultimoPg[d.id] || null }, hojeStr);
+      if (novo && novo !== d.status) {
+        try {
+          await supabase.from('dividas').update({ status: novo }).eq('id', d.id).in('status', ['ativa', 'em_atraso']);
+          d.status = novo;
+        } catch { /* tolerante: tenta de novo na próxima passada */ }
+      }
+    }
+
     // Não envia duas vezes no mesmo dia
     if (d.ultimo_lembrete_em === hojeStr) continue;
 
@@ -1361,8 +1377,10 @@ cron.schedule('0 9 * * *', async () => {
       const vencEsteMes = ocorrenciaVenc(Y, M, d.dia_vencimento);
       const diasAtraso = diffDiasVenc(vencEsteMes, hojeStr);
       if (diasAtraso > 0 && diasAtraso <= 30) {
-        const pago = ultimoPg[d.id];
-        if (!pago || pago < vencEsteMes) {
+        // ⚠️ Era `!pago || pago < vencEsteMes`: quem pagou ADIANTADO (dia 7 a
+        // parcela do dia 10) levava "DÍVIDA EM ATRASO" no dia 11. A regra
+        // única conta o pagamento pela parcela que ele quitou.
+        if (vencidaNoMes({ ...d, ultimo_pagamento: ultimoPg[d.id] || null }, hojeStr)) {
           // Avisa só uma vez por semana
           if (diasAtraso === 1 || diasAtraso === 7 || diasAtraso === 15 || diasAtraso === 30) {
             mensagem = `⚠️ *DÍVIDA EM ATRASO*\n\n📌 *${d.titulo}*\n📅 Vencimento era dia ${d.dia_vencimento} (${diasAtraso} dia${diasAtraso > 1 ? 's' : ''} atrás)\n💵 ${d.valor_parcela ? fmtDiv(d.valor_parcela) : ''}\n\nO atraso costuma vir com juros — quanto antes melhor.`;
@@ -1373,8 +1391,6 @@ cron.schedule('0 9 * * *', async () => {
               `Venceu dia ${d.dia_vencimento} — há ${diasAtraso} dia${diasAtraso > 1 ? 's' : ''}`,
               acaoDivida,
             ];
-            // Marca status em_atraso
-            await supabase.from('dividas').update({ status: 'em_atraso' }).eq('id', d.id);
           }
         }
       }

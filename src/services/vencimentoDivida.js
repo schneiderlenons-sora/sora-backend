@@ -214,7 +214,55 @@ function emAtraso(divida, hoje = hojeSP()) {
   return vencimentoCoberto(pago, dia) < ultimaVencida;
 }
 
+/**
+ * A parcela DESTE MÊS já venceu e não foi paga? — é o que grava (e agora
+ * também APAGA) o `status = 'em_atraso'` da dívida.
+ *
+ * ⚠️ DIFERENTE DE `emAtraso`: aquela só afirma atraso com um pagamento
+ * registrado como prova (a dívida do Open Finance não tem nenhum). Esta é a
+ * regra do CRON de lembrete, que sempre marcou atraso pelo calendário — só que
+ * ele tinha três defeitos, e todos viravam selo "EM ATRASO" errado no card:
+ *   1. comparava a DATA do pagamento com o vencimento (`pago < venc`): quem
+ *      pagou dia 7 a parcela do dia 10 virava "atrasado" no dia 11;
+ *   2. ignorava `data_inicio`: dívida cadastrada depois do vencimento do mês
+ *      já nascia atrasada;
+ *   3. a flag era de MÃO ÚNICA — mudar o dia de vencimento (relato: "mudei do
+ *      15 pro 20 e continua em atraso") não a tirava nunca.
+ * Aqui o pagamento conta pela parcela que ele QUITOU (`vencimentoCoberto`), a
+ * mesma regra do card.
+ *
+ * Só do backend (não tem espelho no front): o painel lê a coluna `status`.
+ */
+function vencidaNoMes(divida, hoje = hojeSP()) {
+  const dia = Number(divida && divida.dia_vencimento);
+  if (!dia || dia < 1 || dia > 31) return false;
+  if (divida.status === 'quitada') return false;
+  const total = Number(divida.parcelas_total) || 0;
+  if (total > 0 && (Number(divida.parcelas_pagas) || 0) >= total) return false;
+
+  const { Y, M } = partes(hoje);
+  const venc = ocorrencia(Y, M, dia);
+  if (venc >= hoje) return false;                    // ainda não venceu (hoje = "vence hoje")
+  if (divida.data_inicio && venc <= String(divida.data_inicio).slice(0, 10)) return false;
+  // Data do banco (migration 154) pra frente = o emissor diz que não venceu.
+  if (divida.proximo_vencimento && String(divida.proximo_vencimento).slice(0, 10) > venc) return false;
+
+  const pago = divida.ultimo_pagamento ? String(divida.ultimo_pagamento).slice(0, 10) : null;
+  if (pago && vencimentoCoberto(pago, dia) >= venc) return false;
+  return true;
+}
+
+/**
+ * O status que a dívida deve ter AGORA, partindo do atual. Só alterna entre
+ * 'ativa' e 'em_atraso' — 'quitada' (ou outro valor) nunca é mexido aqui.
+ */
+function statusDeAtraso(divida, hoje = hojeSP()) {
+  const atual = divida && divida.status;
+  if (atual !== 'ativa' && atual !== 'em_atraso') return atual;
+  return vencidaNoMes(divida, hoje) ? 'em_atraso' : 'ativa';
+}
+
 module.exports = {
   proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, ultimoDiaDoMes, hojeSP,
-  ultimoPagamentoPorDivida, emAtraso,
+  ultimoPagamentoPorDivida, emAtraso, vencidaNoMes, statusDeAtraso,
 };

@@ -4,7 +4,7 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta } = require('../services/contaDebito');
-const { proximoVencimento, ultimoPagamentoPorDivida, hojeSP, emAtraso } = require('../services/vencimentoDivida');
+const { proximoVencimento, ultimoPagamentoPorDivida, hojeSP, emAtraso, statusDeAtraso } = require('../services/vencimentoDivida');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -201,7 +201,26 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
       r = Object.keys(patch).length > 1 ? await upd() : r;
     }
     if (r.error) throw r.error;
-    res.json(r.data);
+
+    // ── EDITAR RECALCULA O "EM ATRASO" ────────────────────────────────────
+    // Relato: "mudei o vencimento do dia 15 pro 20 e o card continua EM
+    // ATRASO". O status era gravado pelo cron e nada o revia. Mesma regra
+    // única do cron (`statusDeAtraso`). ⚠️ Não mexe quando o próprio pedido
+    // manda `status` (decisão explícita de quem chamou) nem em dívida do Open
+    // Finance (o status vem do banco). Falhar aqui não desfaz a edição.
+    let final = r.data;
+    if (final && !final.of_id && !('status' in req.body)) {
+      try {
+        const mapa = await ultimoPagamentoPorDivida([final.id]);
+        const novo = statusDeAtraso({ ...final, ultimo_pagamento: mapa[final.id] || null });
+        if (novo && novo !== final.status) {
+          const r2 = await supabase.from('dividas').update({ status: novo })
+            .eq('id', final.id).eq('grupo_id', req.grupoId).select().single();
+          if (!r2.error && r2.data) final = r2.data;
+        }
+      } catch (e) { console.warn('[dividas/put] status:', e.message); }
+    }
+    res.json(final);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
