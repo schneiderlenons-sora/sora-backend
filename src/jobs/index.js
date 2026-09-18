@@ -388,6 +388,44 @@ cron.schedule('0 * * * *', async () => {
       (r) => !venceHoje(r, sp.dataStr) && lembreteHoje(r, sp.dataStr),
     );
 
+    // ── OCORRÊNCIA JÁ RESOLVIDA NESTE MÊS NÃO É LANÇADA DE NOVO ────────────
+    //
+    // ⚠️ O dedup de baixo ("já lançada HOJE, mesma categoria e valor") não
+    // enxerga o que foi resolvido ANTES do vencimento. Quem recebeu o vale do
+    // dia 20 no dia 18 e deu baixa pelo painel ("Já recebi", migration 165)
+    // teria a receita lançada DE NOVO no dia 20 — saldo em dobro. E o "Pular"
+    // ("só este mês") era ignorado: a conta pulada era lançada mesmo assim.
+    // Medido em 18/09/2026: 2 ocorrências lançadas em dobro (data corrigida pra
+    // 10/09 e relançada no dia 12) e 7 puladas, uma delas vencendo dia 20.
+    //
+    // A chave é a da quitação: recorrencia_id + competencia. Só vale pro que
+    // VENCE HOJE (a competência é o mês corrente) — o aviso antecipado pode ser
+    // de uma conta do mês seguinte, e aí a chave seria outra.
+    // ⚠️ SEMANAL FICA DE FORA: tem várias ocorrências no mesmo mês, e a chave
+    // mensal faria a 1ª semana bloquear as seguintes.
+    // ⚠️ "movido" (adiada) NÃO entra aqui — segue como antes.
+    // ⚠️ TOLERANTE: se a leitura falhar, o conjunto fica vazio e o cron se
+    // comporta exatamente como antes (lança). Falhar calado pro lado de NÃO
+    // lançar pararia as contas fixas da base inteira.
+    const resolvidasNoMes = new Set();
+    try {
+      const ids = recorrencias
+        .filter((r) => (r.frequencia || 'mensal') !== 'semanal')
+        .map((r) => r.id);
+      if (ids.length) {
+        const [txV, ajV] = await Promise.all([
+          supabase.from('transacoes').select('recorrencia_id')
+            .in('recorrencia_id', ids).eq('competencia', ymSP)
+            .then((r) => r, () => ({ data: [] })),
+          supabase.from('previsao_ajustes').select('recorrencia_id')
+            .in('recorrencia_id', ids).eq('competencia', ymSP).eq('status', 'pulado')
+            .then((r) => r, () => ({ data: [] })),
+        ]);
+        for (const t of txV.data || []) resolvidasNoMes.add(t.recorrencia_id);
+        for (const a of ajV.data || []) resolvidasNoMes.add(a.recorrencia_id);
+      }
+    } catch { resolvidasNoMes.clear(); }
+
     // Acumula por telefone → UMA mensagem. Um balde por MODO, porque o que a
     // Sora promete é diferente em cada um e prometer errado a faz parecer
     // quebrada:
@@ -405,6 +443,9 @@ cron.schedule('0 * * * *', async () => {
     };
 
     for (const rec of recorrencias || []) {
+      // Já paga/recebida antes do vencimento, ou pulada: nem lança nem avisa.
+      if (resolvidasNoMes.has(rec.id)) continue;
+
       // ── MODO DE LANÇAMENTO (migration 112) ────────────────────────────────
       // Escolha do usuário, por conta fixa. Sem a migration, `modo_lancamento`
       // vem undefined e tudo segue como antes ('lancar').

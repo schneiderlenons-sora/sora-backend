@@ -31,6 +31,7 @@ const { arvoreDoGrupo, emojiPara, familiaDe, limpar: limparCat } = require('../s
 // Regra canônica do que NÃO é consumo — a mesma do painel. Duplicar a regra aqui
 // foi o que fez o zap somar fatura e transferência e divergir da tela.
 const { ehTransferencia } = require('../services/resumoTransacoes');
+const { blocoDividas, lerDividas } = require('../services/resumoDividas');
 
 // Intervalo de datas de um período de consulta (resumo/busca), no fuso de São
 // Paulo (UTC-3, sem horário de verão). fim=null → até agora. Retorna null quando
@@ -1016,6 +1017,14 @@ module.exports = async function handleTransacoes(data, ctx) {
       }
     }
 
+    // 📋 Dívidas em aberto — pedido do dono (set/2026). Só no resumo do MÊS,
+    // como o patrimônio e as pendências: dívida é estado, não movimento do
+    // período. ⚠️ Tolerante: se a leitura falhar, o resumo sai como antes.
+    let blocoDiv = '';
+    if (ehMes) {
+      try { blocoDiv = blocoDividas(await lerDividas(grupoId), fmt); } catch { blocoDiv = ''; }
+    }
+
     const labelSaldo = ehMes ? 'Saldo do mês' : 'Saldo';
     // Painel vai num BOTÃO (cta_url) em vez de link cru — evita o preview de
     // imagem bugado do link em cima da mensagem. "resumo" é in-window (o usuário
@@ -1037,6 +1046,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     //   ONDE foi   → por categoria e por conta
     //   QUANTO deu → gastos, receitas, saldo, patrimônio
     //   O QUE VEM  → o que ainda vence no mês
+    //   O QUE DEVO → as dívidas em aberto (só no resumo do mês)
     //
     // ⚠️ A régua só entra ENTRE blocos que existem. Resumo de quem não tem
     // conta fixa cadastrada terminaria com um traço solto no fim da mensagem.
@@ -1054,7 +1064,7 @@ module.exports = async function handleTransacoes(data, ctx) {
       `💰 *${labelSaldo}: ${fmt(saldo)}*${statusMeta}${blocoMovimentado}` +
       `${blocoPatrimonio}`;
 
-    const partesResumo = [blocoOnde, blocoQuanto, blocoPendentes.trim()]
+    const partesResumo = [blocoOnde, blocoQuanto, blocoPendentes.trim(), blocoDiv]
       .map((b) => b.trim())
       .filter(Boolean);
 

@@ -1,5 +1,6 @@
 const { extrairTermoParcela } = require('../services/consultaParcela');
 const { categorizarDescricao } = require('../services/categorizar');
+const { detectarAPagar } = require('../services/aPagarPeriodo');
 
 // Detecta categoria pelo texto da mensagem
 function detectarCategoria(msg) {
@@ -426,6 +427,14 @@ function interpretarRapido(message) {
     .replace(/(\d)\s+(?:reais|real|conto|contos|pila|pilas|mango|mangos|pau|paus|prata|pratas|din[\s-]?din|dinheiro|d[oó]lar|d[oó]lares|usd|coroa|coroas|kr|nok|euro|euros|eur|libra|libras|gbp|iene|ienes|jpy)\b/gi, '$1');
 
   let m;
+
+  // --- O QUE TENHO PRA PAGAR <período> ---
+  // Antes de TUDO: "o que tenho pra pagar essa semana" tem "pagar" e "semana",
+  // e várias regras abaixo (pagar fatura/dívida, resumo da semana) pegariam um
+  // pedaço da frase. O detector exige PERGUNTA e recusa frase com valor ou com
+  // "paguei" — lançamento nunca cai aqui (travado em eval:a-pagar).
+  const aPagar = detectarAPagar(message);
+  if (aPagar) return aPagar;
 
   // --- CANCELAR PLANO / ASSINATURA (orienta a cancelar pela Stripe) ---
   // Específico de plano/assinatura — não conflita com "cancelar recorrência X"

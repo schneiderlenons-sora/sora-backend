@@ -665,6 +665,11 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
         TR('handler:transacoes:done');
         break;
 
+      // "O que tenho pra pagar essa semana/hoje/esse mês?"
+      case 'a_pagar':
+        await require('../handlers/aPagar')(data, ctx);
+        break;
+
       // Contas bancárias + cartões de crédito
       case 'set_wallet':
       case 'set_cartao':

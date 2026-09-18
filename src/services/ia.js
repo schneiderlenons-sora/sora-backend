@@ -83,6 +83,9 @@ RELATÓRIOS / PERGUNTAS SOBRE AS FINANÇAS (entenda linguagem natural, não só 
 {"acao":"buscar","termo":"mercado"} ← "quanto gastei com mercado?", "meus gastos de uber", "gastos em farmácia"
    A busca também aceita "periodo" (opcional, mesma lista do resumo). Ex.: "gastos com uber hoje"→termo uber periodo hoje · "quanto gastei com mercado mês passado?"→termo mercado periodo mes_passado. Sem período = todos os recentes.
 {"acao":"ver_saldos"} ← "quanto eu tenho?", "meu saldo", "quanto tem nas contas?", "tô com quanto?"
+{"acao":"a_pagar","periodo":{"tipo":"semana"}} ← "o que tenho pra pagar essa semana?", "quais contas vencem hoje?", "tenho boleto pra pagar amanhã?", "o que falta pagar esse mês?"
+   "periodo.tipo" pode ser: hoje, amanha, semana, proxima_semana, mes, proximo_mes, ou dias (com "n": {"tipo":"dias","n":15}). Sem período dito → {"tipo":"dias","n":7}.
+   ⚠️ É CONSULTA do que VAI vencer. "paguei a luz 120" é lançamento (salvar), e "quanto gastei essa semana" é resumo.
 
 PARCELAS:
 {"acao":"compra_parcelada","descricao":"fone","carteira":"Nubank Crédito","numParcelas":3,"valorParcela":150,"valorTotal":450,"categoria":"Outros"}
