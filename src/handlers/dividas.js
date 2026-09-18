@@ -122,11 +122,22 @@ module.exports = async function handleDividas(data, ctx) {
 
   // ── LISTAR DÍVIDAS ─────────────────────────────────────────────
   if (data.acao === 'listar_dividas') {
+    // ⚠️ SEM GRUPO NÃO HÁ LISTA. Consultar sem o filtro devolve a base inteira.
+    if (!grupoId) {
+      await enviarTexto(phone, '✨ Você não tem dívidas ativas. Continue assim!');
+      return;
+    }
     const { data: dividas } = await supabase.from('dividas')
       // ⚠️ Mesmo motivo de `encontrarDivida`: a lista é só texto, e
       // `imagem_url` chegaria a ~1,5 MB por chamada nos grupos que têm foto
       // cadastrada em várias dívidas.
       .select('titulo, credor, valor_parcela, valor_total, parcelas_total, parcelas_pagas, dia_vencimento, lembretes_ativos')
+      // ⚠️ O FILTRO DE GRUPO. Ele sumiu no commit c97c271 (06/09/2026), que só
+      // queria trocar o `select('*')` por colunas estreitas e levou o
+      // `.eq('grupo_id')` junto: o "minhas dívidas" passou a listar as dívidas
+      // de TODOS os clientes (relato: "140 dívidas ativas"). Travado em
+      // `eval:dividas-escopo`.
+      .eq('grupo_id', grupoId)
       .in('status', ['ativa', 'em_atraso'])
       .order('dia_vencimento', { ascending: true });
 
