@@ -2134,8 +2134,13 @@ function normalizeInvestimento(inv) {
   // o que já estava em %, e um CDB que rendeu 6,76% aparecia como **676%**.
   // Medido antes de corrigir: 49 linhas na base em percentual contra 2 em
   // fração. Migration 136 normaliza o histórico.
+  // ⚠️ ARREDONDADA NA ESCALA DA COLUNA (6 casas — medido na base: nenhuma das
+  // 633 linhas do OF passa disso). Com o float cru, "0,0676234512…" nunca era
+  // igual aos "0,067623" que o banco devolvia, e o sync REGRAVAVA todo
+  // investimento com rendimento a cada rodada (medido em 18/09: 31.880 leituras,
+  // 31.879 UPDATEs). O banco arredondaria de qualquer jeito — nada se perde.
   const rentabilidade = aportado && atual != null && aportado > 0
-    ? (atual - aportado) / aportado
+    ? Math.round(((atual - aportado) / aportado) * 1e6) / 1e6
     : 0;
 
   return {
@@ -2148,7 +2153,8 @@ function normalizeInvestimento(inv) {
     quantidade,
     preco_unitario: precoUnit,
     valor_aportado: aportado,
-    valor_atual: atual,
+    // numeric(12,2) no banco: com mais casas que isso a comparação nunca batia.
+    valor_atual: atual == null ? null : cent(atual),
     rentabilidade,
     moeda: moeda(b.net_amount || b.gross_amount),
     data_compra: ymd(p.purchase_date) || ymd(b.reference_date_time || b.reference_date),
@@ -2963,11 +2969,30 @@ function algoMudou(atual, alvo) {
   return false;
 }
 
+/**
+ * 'YYYY-MM-DD' se o valor é uma data PURA — escrita assim, ou como a meia-noite
+ * UTC que o Postgres devolve quando a coluna é `timestamptz`. Senão, null.
+ */
+function diaPuro(v) {
+  if (typeof v !== 'string') return null;
+  const m = v.match(/^(\d{4}-\d{2}-\d{2})(?:T00:00:00(?:\.0+)?(?:Z|[+-]00(?::?00)?))?$/);
+  return m ? m[1] : null;
+}
+
 function mesmoValor(a, b) {
   if (a === b) return true;
   const vazioA = a === null || a === undefined;
   const vazioB = b === null || b === undefined;
   if (vazioA || vazioB) return vazioA && vazioB;
+  // ⚠️ DATA GRAVADA × DATA LIDA. `investimentos.data_compra` é `timestamptz`:
+  // o sync escreve "2026-01-15" e o banco devolve "2026-01-15T00:00:00+00:00".
+  // Comparando como texto, TODO investimento com data de compra era regravado
+  // a cada sync — foi o que manteve o UPDATE em 1:1 com a leitura depois da
+  // correção de 16/09. Só meia-noite UTC conta como a mesma data: um horário
+  // de verdade segue comparado ao pé da letra.
+  const da = diaPuro(a);
+  const db = diaPuro(b);
+  if (da && db) return da === db;
   // Booleano nunca compara por número: `Number(true)` é 1, e 1 === true diria
   // "igual" pra coisas diferentes.
   if (typeof a === 'boolean' || typeof b === 'boolean') return a === b;

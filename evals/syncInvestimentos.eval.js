@@ -218,6 +218,32 @@ console.log('── 1. mesmoValor / algoMudou ──');
   ok(!S.algoMudou(linhaGravada(), { ultima_atualizacao: 'qualquer coisa' }),
      '⚠️ só o carimbo de horário NÃO conta como mudança — é o que torna a economia possível');
   ok(S.algoMudou(undefined, { valor_atual: 1 }), 'sem linha atual, mudou');
+
+  // ── 1B. O FORMATO QUE O BANCO DEVOLVE DE VERDADE (18/09/2026) ──────────────
+  // ⚠️ A seção acima comparava data pura com data pura, e por isso PASSOU com a
+  // economia zerada em produção: `data_compra` é `timestamptz` e volta como
+  // "2026-01-15T00:00:00+00:00" — contra o "2026-01-15" que o sync escreve.
+  // Medido: 31.880 leituras e 31.879 UPDATEs em 38h; simulando nas 633 linhas
+  // reais, a regra antiga regravava as 633 e a nova, nenhuma.
+  ok(S.mesmoValor('2026-01-15T00:00:00+00:00', '2026-01-15'), '⚠️ data do timestamptz = data escrita');
+  ok(S.mesmoValor('2026-01-15', '2026-01-15T00:00:00Z'), 'nos dois sentidos, e com Z');
+  ok(S.mesmoValor('2026-01-15T00:00:00.000+00:00', '2026-01-15'), 'com milissegundos zerados');
+  ok(!S.mesmoValor('2026-01-15T00:00:00+00:00', '2026-01-16'), 'dia diferente segue diferente');
+  ok(!S.mesmoValor('2026-01-15T14:30:00+00:00', '2026-01-15'), '⚠️ horário DE VERDADE não vira "mesma data"');
+  ok(!S.mesmoValor('2026-01-15T00:00:00-03:00', '2026-01-15'), 'meia-noite de outro fuso é outro instante');
+
+  // ⚠️ E a rentabilidade: o banco guarda 6 casas; o float cru nunca batia.
+  // 100 de lucro sobre 900 = 0,1111… — dízima, como é quase sempre na vida real
+  // (uma conta exata como 0,06762 esconderia o defeito: o float cru bateria).
+  const inv = S.normalizeInvestimento({
+    id: 'x', __familia: 'bank_fixed_incomes',
+    balance: { net_amount: '1000', quantity: '3', purchase_unit_price: '300' },
+    product: {},
+  });
+  ok(Math.abs(inv.rentabilidade * 1e6 - Math.round(inv.rentabilidade * 1e6)) < 1e-6,
+     `rentabilidade sai com no máximo 6 casas — veio ${inv.rentabilidade}`);
+  ok(!S.algoMudou({ rentabilidade: 0.111111, valor_atual: 1000 }, { rentabilidade: inv.rentabilidade, valor_atual: inv.valor_atual }),
+     `⚠️ a linha gravada (0,111111) não é regravada — veio ${inv.rentabilidade}`);
 }
 console.log('  ok');
 
