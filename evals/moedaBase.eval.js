@@ -38,9 +38,15 @@ function criarBanco(inicial, opcoes = {}) {
   let seq = 0;
   function from(nome) {
     const filtros = [];
-    let modo = 'select', payload = null, retornar = false, unica = null, colunas = '*';
+    let modo = 'select', payload = null, retornar = false, unica = null, colunas = '*', soContar = false;
     const api = {
-      select(c) { if (modo !== 'select') retornar = true; colunas = c || '*'; return api; },
+      select(c, o) { if (modo !== 'select') retornar = true; colunas = c || '*'; soContar = !!(o && o.head); return api; },
+      // `or('moeda.is.null,moeda.eq.BRL')` — só o que a troca de moeda usa.
+      or(expr) {
+        const conds = String(expr).split(',').map((p) => p.split('.'));
+        filtros.push((r) => conds.some(([c, op, v]) => (op === 'is' ? (r[c] ?? null) === null : String(r[c]) === v)));
+        return api;
+      },
       insert(p) { modo = 'insert'; payload = p; return api; },
       update(p) { modo = 'update'; payload = p; return api; },
       upsert(p) { modo = 'upsert'; payload = p; return api; },
@@ -85,6 +91,9 @@ function criarBanco(inicial, opcoes = {}) {
       return o;
     }
     function responder(linhas) {
+      // ⚠️ `contagemNula` imita o PostgREST numa tabela que não existe: 204,
+      // SEM error e count null. Foi assim que a trava da moeda quase nasceu furada.
+      if (soContar) return { data: null, error: null, count: opcoes.contagemNula && opcoes.contagemNula[nome] ? null : linhas.length };
       if (unica === 'single') return linhas.length === 1 ? { data: projetar(linhas[0]), error: null } : { data: null, error: { message: 'single' } };
       if (unica === 'maybe') return linhas.length > 1 ? { data: null, error: { message: 'multiple' } } : { data: linhas[0] ? projetar(linhas[0]) : null, error: null };
       return { data: linhas.map(projetar), error: null };
@@ -1025,6 +1034,91 @@ const ANTIGO = (() => {
       const esperado = f.replace(/^\w+ 50 (?:na|no) /, '');
       ok(r.observacao === esperado,
         `descrição com símbolo no meio sai inteira: "${f}" → esperado ${JSON.stringify(esperado)}, veio ${JSON.stringify(r.observacao)}`);
+    }
+  }
+  console.log('  ok');
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 11. ESCOLHER A MOEDA (Fase 6): grupo vazio troca, com dinheiro TRAVA
+  // ══════════════════════════════════════════════════════════════════════════
+  // Passa pela ROTA real (`routes/grupos.js`), não só pelo service.
+  console.log('── 11. escolher a moeda base: troca no vazio, trava com dinheiro ──');
+  {
+    const base = () => ({
+      grupos: [{ id: 'g1', dono_id: 'u1', moeda_base: 'BRL' }],
+      wallets: [
+        { id: 'w1', grupo_id: 'g1', nome: 'Dinheiro', tipo: 'Débito', moeda: 'BRL', saldo: 0 },
+        { id: 'w2', grupo_id: 'g1', nome: 'Wise', tipo: 'Débito', moeda: 'EUR', saldo: 0 },
+      ],
+    });
+    const cenario = async (extra, opcoes, userId = 'u1', moeda = 'USD') => {
+      const banco = criarBanco({ ...base(), ...extra }, opcoes);
+      const req = carregar(banco);
+      const router = req('routes/grupos.js');
+      const put = await chamar(rota(router, 'put', '/moeda-base'),
+        { body: { moeda }, authUser: { id: userId, grupoAtivo: 'g1' } });
+      return { put, banco, m: req('services/moeda.js') };
+    };
+
+    // grupo vazio, dono: troca — e a conta vazia na base antiga vai junto
+    {
+      const { put, banco, m } = await cenario({});
+      eq([put.statusCode, put.body && put.body.moeda], [200, 'USD'], 'grupo vazio: o dono troca pra dólar');
+      eq(banco.tabelas.grupos[0].moeda_base, 'USD', 'a base gravada é a nova');
+      eq(banco.tabelas.wallets.map((w) => w.moeda), ['USD', 'EUR'],
+        '"Dinheiro" (vazia, na base antiga) vira dólar; a conta em euro aberta de propósito fica em euro');
+      eq(await m.moedaBaseDoGrupo('g1'), 'USD', '⚠️ o cache da base é esquecido — senão converteria pela antiga por 10 min');
+    }
+
+    // quem não é dono não escolhe a moeda do grupo
+    {
+      const { put, banco } = await cenario({}, {}, 'u2');
+      eq([put.statusCode, put.body && put.body.motivo], [409, 'nao_dono'], 'membro que não é dono recebe 409 nao_dono');
+      eq(banco.tabelas.grupos[0].moeda_base, 'BRL', 'e a base não muda');
+    }
+
+    // dinheiro em qualquer tabela trava — com o porquê escrito
+    const comDinheiro = [
+      ['uma transação', { transacoes: [{ id: 't1', grupo_id: 'g1', valor: 10 }] }],
+      ['um gasto fixo', { recorrencias: [{ id: 'r1', grupo_id: 'g1', valor: 10 }] }],
+      ['uma dívida', { dividas: [{ id: 'd1', grupo_id: 'g1' }] }],
+      ['uma meta', { metas: [{ id: 'm1', grupo_id: 'g1' }] }],
+      ['um investimento', { investimentos: [{ id: 'i1', grupo_id: 'g1' }] }],
+      ['um limite de categoria', { category_limits: [{ id: 'l1', grupo_id: 'g1' }] }],
+      ['uma conta com saldo', { wallets: [{ id: 'w1', grupo_id: 'g1', nome: 'Dinheiro', moeda: 'BRL', saldo: 50 }] }],
+      ['um cartão com limite', { wallets: [{ id: 'w1', grupo_id: 'g1', nome: 'Nu', moeda: 'BRL', saldo: 0, limite: 3000 }] }],
+      ['uma conta do banco', { wallets: [{ id: 'w1', grupo_id: 'g1', nome: 'Itaú', moeda: 'BRL', saldo: 0, of_conta_id: 'x' }] }],
+    ];
+    for (const [nome, extra] of comDinheiro) {
+      const { put, banco } = await cenario(extra);
+      ok(put.statusCode === 409 && put.body.motivo === 'tem_dados' && /converter todo o histórico/.test(put.body.explicacao || ''),
+        `com ${nome}: 409 tem_dados, explicando o porquê — veio ${put.statusCode} ${JSON.stringify(put.body)}`);
+      eq(banco.tabelas.grupos[0].moeda_base, 'BRL', `com ${nome}: a base NÃO muda`);
+    }
+
+    // ⚠️ FALHA DE LEITURA TRAVA — as duas formas dela
+    {
+      const { put } = await cenario({}, { erroEm: { transacoes: 'timeout' } });
+      eq(put.statusCode, 409, '⚠️ erro ao ler transações: trava (dizer "vazio" sem olhar liberaria um grupo com histórico)');
+      const nulo = await cenario({}, { contagemNula: { category_limits: true } });
+      eq(nulo.put.statusCode, 409, '⚠️ contagem NULL (tabela que não existe, erro engolido pelo head): trava');
+    }
+
+    // só as moedas oferecidas; pedir a mesma é no-op
+    {
+      const { put } = await cenario({}, {}, 'u1', 'JPY');
+      eq(put.statusCode, 400, 'moeda fora das oferecidas (BRL/USD/NOK) → 400');
+      const mesma = await cenario({ transacoes: [{ id: 't1', grupo_id: 'g1' }] }, {}, 'u1', 'BRL');
+      eq(mesma.put.statusCode, 200, 'pedir a moeda que o grupo JÁ tem responde ok mesmo travado (o passo 1 reenvia sem culpa)');
+    }
+
+    // GET: devolve opções e o estado da trava
+    {
+      const banco = criarBanco({ ...base(), transacoes: [{ id: 't1', grupo_id: 'g1' }] });
+      const req = carregar(banco);
+      const get = await chamar(rota(req('routes/grupos.js'), 'get', '/moeda-base'), { authUser: { id: 'u1', grupoAtivo: 'g1' } });
+      eq([get.body.moeda, get.body.travada, get.body.motivo, get.body.opcoes.map((o) => o.codigo)],
+        ['BRL', true, 'tem_dados', ['BRL', 'USD', 'NOK']], 'GET: moeda atual, trava e as três opções');
     }
   }
   console.log('  ok');

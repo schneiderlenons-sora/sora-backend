@@ -24,6 +24,47 @@ async function papelNoGrupo(grupoId, userId) {
   return null;
 }
 
+// ── Moeda base do grupo ATIVO (Fase 6 do plano da moeda base) ─────────────
+// ⚠️ Declarada ANTES de `/:phone`, que casaria "moeda-base" como telefone.
+const TEXTO_TRAVA = {
+  nao_dono: 'A moeda é do grupo inteiro, e só quem criou o grupo escolhe.',
+  tem_dados: 'Já tem dinheiro lançado neste grupo, e ele foi registrado nesta moeda. Trocar agora exigiria converter todo o histórico — por isso a moeda fica fixa.',
+};
+
+router.get('/moeda-base', auth, async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo;
+    if (!grupoId) return res.status(404).json({ erro: 'Sem grupo ativo' });
+    const m = require('../services/moeda');
+    const moeda = await m.moedaBaseDoGrupo(grupoId);
+    const motivo = await m.motivoMoedaTravada(grupoId, req.authUser.id);
+    res.json({
+      moeda,
+      opcoes: m.MOEDAS_BASE_OFERECIDAS.map((c) => ({ codigo: c, nome: m.MOEDAS[c].nome, simbolo: m.MOEDAS[c].simbolo })),
+      travada: !!motivo,
+      motivo,
+      explicacao: motivo ? TEXTO_TRAVA[motivo] : null,
+    });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.put('/moeda-base', auth, async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo;
+    if (!grupoId) return res.status(404).json({ erro: 'Sem grupo ativo' });
+    const m = require('../services/moeda');
+    const pedida = String(req.body?.moeda || '').trim().toUpperCase();
+    if (!m.MOEDAS_BASE_OFERECIDAS.includes(pedida)) {
+      return res.status(400).json({ erro: 'Moeda não oferecida', opcoes: m.MOEDAS_BASE_OFERECIDAS });
+    }
+    if (pedida === await m.moedaBaseDoGrupo(grupoId)) return res.json({ ok: true, moeda: pedida });
+    const motivo = await m.motivoMoedaTravada(grupoId, req.authUser.id);
+    if (motivo) return res.status(409).json({ erro: 'moeda_travada', motivo, explicacao: TEXTO_TRAVA[motivo] });
+    const moeda = await m.definirMoedaBase(grupoId, pedida);
+    res.json({ ok: true, moeda });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 router.get('/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);

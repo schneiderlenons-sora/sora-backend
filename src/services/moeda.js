@@ -325,6 +325,66 @@ const cacheBase = new Map();   // grupoId → { base, em }
 
 function esquecerMoedaBase(grupoId) { cacheBase.delete(grupoId); }
 
+// ── ESCOLHER A MOEDA BASE (Fase 6 do plano) ─────────────────────────────────
+// Oferecidas no MVP: real + as duas que o plano ativou primeiro. Acrescentar é
+// só somar aqui — o catálogo (`MOEDAS`) já tem as outras.
+const MOEDAS_BASE_OFERECIDAS = ['BRL', 'USD', 'NOK'];
+
+// Tabelas onde existe DINHEIRO do grupo. ⚠️ Trocar a base com qualquer linha
+// aqui exigiria reescrever o valor dela com uma taxa (são 51 colunas de dinheiro
+// em 40 tabelas) — é o que o plano travou no MVP. Grupo vazio troca à vontade.
+const TABELAS_COM_DINHEIRO = ['transacoes', 'recorrencias', 'dividas', 'metas', 'investimentos', 'category_limits'];
+
+/**
+ * Por que este usuário NÃO pode trocar a moeda deste grupo — ou null se pode.
+ *   'nao_dono'  → a moeda é do grupo; só quem o criou escolhe.
+ *   'tem_dados' → já existe dinheiro lançado (travado no MVP).
+ * ⚠️ FALHA DE LEITURA TRAVA. Dizer "está vazio" sem ter conseguido olhar
+ *    liberaria a troca num grupo com histórico — e o número errado que sai
+ *    disso fica congelado na linha.
+ */
+async function motivoMoedaTravada(grupoId, userId) {
+  const { data: g, error } = await supabase.from('grupos')
+    .select('dono_id').eq('id', grupoId).maybeSingle();
+  if (error || !g) return 'tem_dados';
+  if (g.dono_id !== userId) return 'nao_dono';
+  for (const t of TABELAS_COM_DINHEIRO) {
+    const { count, error: e } = await supabase.from(t)
+      .select('id', { count: 'exact', head: true }).eq('grupo_id', grupoId);
+    // ⚠️ CONTAGEM NULL TAMBÉM TRAVA. Consulta `head` ENGOLE o erro: numa tabela
+    // que não existe ela volta 204, sem `error` e com `count: null` — medido
+    // (a lista nasceu com 'limites', que não existe; o nome é category_limits).
+    if (e || count == null || count > 0) return 'tem_dados';
+  }
+  // Conta com saldo (ou vinda do banco) também é dinheiro. Conta VAZIA não:
+  // é o "Dinheiro" que o cadastro cria, e ela troca de moeda junto com o grupo.
+  const { data: ws, error: ew } = await supabase.from('wallets')
+    .select('saldo, limite, of_conta_id').eq('grupo_id', grupoId);
+  if (ew) return 'tem_dados';
+  if ((ws || []).some((w) => Number(w.saldo) || Number(w.limite) || w.of_conta_id)) return 'tem_dados';
+  return null;
+}
+
+/**
+ * Troca a moeda base de um grupo VAZIO. Quem chama já conferiu
+ * `motivoMoedaTravada`. As contas vazias que estavam na base antiga vão junto
+ * (o trigger da 169 as criou com a base de então); conta que o usuário abriu
+ * em outra moeda de propósito fica como está.
+ */
+async function definirMoedaBase(grupoId, moeda) {
+  const nova = normalizarMoeda(moeda);
+  const antiga = await moedaBaseDoGrupo(grupoId);
+  const { error } = await supabase.from('grupos').update({ moeda_base: nova }).eq('id', grupoId);
+  if (error) throw new Error(error.message);
+  if (antiga !== nova) {
+    await supabase.from('wallets').update({ moeda: nova })
+      .eq('grupo_id', grupoId).or(`moeda.is.null,moeda.eq.${antiga}`);
+  }
+  // ⚠️ Sem isto a instância seguiria convertendo pela base antiga por 10 min.
+  esquecerMoedaBase(grupoId);
+  return nova;
+}
+
 async function moedaBaseDoGrupo(grupoId) {
   if (!grupoId || !baseDisponivel()) return PADRAO;
   const hit = cacheBase.get(grupoId);
@@ -646,6 +706,7 @@ module.exports = {
   taxa, taxas, paraBRL,
   // Moeda base do grupo (migration 168) — o BRL vira pivô, não significado.
   taxaEntre, paraBase, moedaBaseDoGrupo, esquecerMoedaBase, baseDisponivel, marcarBaseIndisponivel,
+  MOEDAS_BASE_OFERECIDAS, motivoMoedaTravada, definirMoedaBase,
   taxasParaBase, saldoNaBase, comSaldoNaBase, fatorCotacaoParaBase, cartaoForaDaBase, motivoCartaoForaDaBase,
   saldoEmBRL, somarSaldos, totalDeSaldosNaBase,
   camposTransacao, valorNativo, originalDoValorNaBase, formatar, formatadorDoGrupo,
