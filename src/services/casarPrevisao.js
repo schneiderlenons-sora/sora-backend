@@ -144,10 +144,13 @@ function casar(previsoes, transacoes) {
     // ⚠️ AQUI MORA A SEGURANÇA. Qualquer sombra de dúvida derruba o automático
     // pra sugestão — a chave global governa só o caso limpo.
     const automatico = !variasCobrancas && !variasPrevisoes && !variavel && !aproximado;
-    const motivo = variasPrevisoes ? 'outra conta fixa casa com a mesma cobranca'
-      : variasCobrancas ? 'mais de uma cobranca parecida na janela'
-      : variavel ? 'conta de valor variavel'
-      : aproximado ? 'valor fora da tolerancia apertada, dentro da larga'
+    // ⚠️ Texto voltado pro CLIENTE — `ExtratoFuturo.tsx` mostra isto cru, sem
+    // dicionário de tradução ("Confira antes: {motivo}."). Frase curta, com
+    // acento, que faz sentido depois de dois-pontos.
+    const motivo = variasPrevisoes ? 'outra conta fixa bate com a mesma cobrança'
+      : variasCobrancas ? 'mais de uma cobrança parecida nesses dias'
+      : variavel ? 'o valor desta conta costuma variar'
+      : aproximado ? 'o valor veio um pouco diferente do previsto'
       : undefined;
 
     saida.push({

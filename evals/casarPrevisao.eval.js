@@ -74,7 +74,7 @@ console.log('── 4. valor variável só sugere ──');
   const r = casar([luz], [tx({ valor: 200.5, of_tx_id: 'of-9' })]);
   eq(r.length, 1, 'ainda SUGERE (o usuário confirma)');
   eq(r[0].automatico, false, 'mas nunca quita sozinha');
-  eq(r[0].motivo, 'conta de valor variavel', 'e diz por quê');
+  eq(r[0].motivo, 'o valor desta conta costuma variar', 'e diz por quê');
 }
 console.log('  ok');
 
@@ -115,7 +115,7 @@ console.log('── 7. banda larga (conta fixa que balança) ──');
   const r = casar([internet], [tx({ valor: 177.53, of_tx_id: 'of-internet' })]);
   eq(r.length, 1, 'a banda larga ACHA (era o que faltava pro cliente)');
   eq(r[0].automatico, false, 'mas NUNCA automática — só sugestão, mesmo sem valor_variavel');
-  eq(r[0].motivo, 'valor fora da tolerancia apertada, dentro da larga', 'e diz por quê');
+  eq(r[0].motivo, 'o valor veio um pouco diferente do previsto', 'e diz por quê');
 
   // fora até da banda larga
   eq(casar([internet], [tx({ valor: 400, of_tx_id: 'of-longe' })]).length, 0,
