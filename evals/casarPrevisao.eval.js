@@ -82,8 +82,8 @@ console.log('  ok');
 console.log('── 5. fora do casamento ──');
 {
   eq(casar([PREV], [tx({ carteira_nome: 'Nubank' })]).length, 0, 'carteira diferente não casa');
-  eq(casar([PREV], [tx({ valor: 1705 })]).length, 0, 'valor fora da tolerância não casa');
   eq(casar([PREV], [tx({ valor: 1700.90 })]).length, 1, 'dentro de R$ 1,00 casa');
+  eq(casar([PREV], [tx({ valor: 5000 })]).length, 0, 'fora até da banda larga (30%) não casa');
   eq(casar([PREV], [tx({ of_tx_id: null })]).length, 0, 'transação MANUAL não entra (só cobrança do banco)');
   eq(casar([PREV], [tx({ recorrencia_id: 'rX' })]).length, 0, 'transação já amarrada não entra de novo');
   eq(casar([PREV], [tx({ tipo: 'Recebimento' })]).length, 0, 'tipo diferente não casa');
@@ -101,6 +101,43 @@ console.log('── 6. carteira normalizada ──');
   const p = { ...PREV, carteira: 'Conta Corrente' };
   eq(casar([p], [tx({ carteira_nome: 'conta corrente' })]).length, 1, 'ignora caixa');
   eq(casar([{ ...PREV, carteira: 'Cartão' }], [tx({ carteira_nome: 'cartao' })]).length, 1, 'ignora acento');
+}
+console.log('  ok');
+
+// ── 7. BANDA LARGA — a conta fixa que balança sem ser "variável" (set/2026) ─
+//
+// Relato real: Internet prevista R$169,90, veio do banco R$177,53 (plano
+// reajustou). A banda apertada (±R$1) não acha nada; a larga (30%) acha —
+// mas NUNCA automática, mesmo sem a recorrência estar marcada valor_variavel.
+console.log('── 7. banda larga (conta fixa que balança) ──');
+{
+  const internet = { ...PREV, recorrencia_id: 'rI', valor: 169.90, valor_variavel: false };
+  const r = casar([internet], [tx({ valor: 177.53, of_tx_id: 'of-internet' })]);
+  eq(r.length, 1, 'a banda larga ACHA (era o que faltava pro cliente)');
+  eq(r[0].automatico, false, 'mas NUNCA automática — só sugestão, mesmo sem valor_variavel');
+  eq(r[0].motivo, 'valor fora da tolerancia apertada, dentro da larga', 'e diz por quê');
+
+  // fora até da banda larga
+  eq(casar([internet], [tx({ valor: 400, of_tx_id: 'of-longe' })]).length, 0,
+    'mas fora dos 30% continua sem casar — a folga não é infinita');
+
+  // ⚠️ SÓ tenta a banda larga quando a apertada não achou NADA. Se já achou
+  // dentro da apertada, não busca mais candidatos — evita trazer ambiguidade
+  // que não existia.
+  const dupla = casar([internet], [
+    tx({ id: 'tx-certo', valor: 169.90, of_tx_id: 'of-certo' }),          // dentro da apertada
+    tx({ id: 'tx-parecido', valor: 177.53, of_tx_id: 'of-parecido', data: '2026-09-11' }), // só da larga
+  ]);
+  eq(dupla.length, 1, 'achou na apertada, não mistura com a larga');
+  eq(dupla[0].transacao_id, 'tx-certo', 'e é a certa');
+  eq(dupla[0].automatico, true, 'automática — a larga nem entrou em jogo');
+
+  // valor_variavel + banda larga: continua não automática (o mesmo já valia
+  // pra variável sozinho — aqui os dois motivos coexistem, o que importa é
+  // que automatico continua false).
+  const luzLarga = { ...PREV, recorrencia_id: 'rL', valor: 100, valor_variavel: true };
+  const rl = casar([luzLarga], [tx({ valor: 125, of_tx_id: 'of-luz' })]);
+  eq(rl[0].automatico, false, 'variável + banda larga: continua não automática');
 }
 console.log('  ok');
 

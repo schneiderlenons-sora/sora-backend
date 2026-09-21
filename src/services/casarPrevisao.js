@@ -27,8 +27,25 @@
 // O que casa é o que o banco e a previsão realmente têm em comum:
 //
 //   CARTEIRA  obrigatória  — a cobrança tem de sair da conta certa
-//   VALOR     ±R$ 1,00     — mesma tolerância do `parcelasPrevistas`
+//   VALOR     em DUAS bandas (ver abaixo)
 //   DATA      ±5 dias      — cobre pagamento adiantado e atrasado
+//
+// ── ⚠️ VALOR EM DUAS BANDAS (set/2026) ──────────────────────────────────────
+//
+// Relato de cliente: a conta de Internet prevista em R$169,90 veio do banco
+// por R$177,53 (o plano reajustou) — a "Internet" ficava PARA SEMPRE como
+// previsão em aberto, convivendo na tela com a transação real já paga, porque
+// R$7,63 é mais que a tolerância apertada. Ele via os dois ao mesmo tempo e
+// achava (com razão) que estava duplicado — e pediu uma "conciliação manual".
+//
+// A banda apertada (±R$1) continua a mesma, e continua sendo a ÚNICA que pode
+// virar baixa AUTOMÁTICA — essa garantia não muda. O que muda: quando NADA
+// casa na banda apertada, uma segunda passada tenta uma banda LARGA (30% do
+// valor previsto, nunca menos que R$1) — e o resultado dessa passada É SEMPRE
+// SUGESTÃO, nunca automático, mesmo numa conta que não é `valor_variavel`. A
+// conta fixa que balança um pouco de mês pra mês (a internet, a luz sem ser
+// marcada como variável) ganha a mesma cortesia que já existia só pra quem
+// marcou o campo — sem abrir mão da segurança do `baixa_automatica`.
 //
 // ── ⚠️ O PROBLEMA DIFÍCIL NÃO É ACHAR, É NÃO QUITAR A ERRADA ────────────────
 //
@@ -41,12 +58,15 @@
 //      como sugestão, sempre — mesmo com a chave ligada.
 //   2. CONTA DE VALOR VARIÁVEL NUNCA É AUTOMÁTICA. O valor é o sinal forte do
 //      casamento; numa conta que varia, ele não existe.
-//   3. Só entra transação que VEIO DO BANCO (`of_tx_id`) e que ainda não está
+//   3. BANDA LARGA NUNCA É AUTOMÁTICA. Só a banda apertada dá certeza o
+//      bastante pra quitar sozinha.
+//   4. Só entra transação que VEIO DO BANCO (`of_tx_id`) e que ainda não está
 //      amarrada a nenhuma ocorrência.
 // =============================================================================
 
-const TOLERANCIA_VALOR = 1.00;   // R$ — igual ao parcelasPrevistas
-const JANELA_DIAS      = 5;
+const TOLERANCIA_VALOR      = 1.00;   // R$ — igual ao parcelasPrevistas (banda apertada, elegível a automático)
+const TOLERANCIA_AMPLA_PCT  = 0.30;   // 30% do valor previsto — banda larga, NUNCA automática
+const JANELA_DIAS           = 5;
 
 const cent = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -80,15 +100,28 @@ function casar(previsoes, transacoes) {
     const alvo = cent(p.valor);
     if (!(alvo > 0)) continue;
     const carteiraP = normCarteira(p.carteira);
-    const achadas = candidatas.filter((t) => {
+
+    // CARTEIRA, TIPO e JANELA são o filtro base — a banda de valor entra
+    // depois, em duas tentativas.
+    const base = candidatas.filter((t) => {
       if (p.tipo && t.tipo && p.tipo !== t.tipo) return false;
       // ⚠️ Carteira é OBRIGATÓRIA. Sem ela não dá pra afirmar que a cobrança é
       // desta conta, e "quase certo" aqui vale zero.
       if (!carteiraP || normCarteira(t.carteira_nome) !== carteiraP) return false;
-      if (Math.abs(cent(t.valor) - alvo) > TOLERANCIA_VALOR) return false;
       return Math.abs(diasEntre(p.vencimento, t.data)) <= JANELA_DIAS;
     });
-    if (achadas.length) porPrevisao.set(`${p.recorrencia_id}:${p.competencia}`, { p, achadas });
+
+    let achadas = base.filter((t) => Math.abs(cent(t.valor) - alvo) <= TOLERANCIA_VALOR);
+    let aproximado = false;
+    // Só tenta a banda larga quando a apertada não achou nada — se já achou
+    // dentro da banda de confiança, não vale a pena arriscar trazer junto uma
+    // cobrança mais distante e só criar ambiguidade à toa.
+    if (!achadas.length) {
+      const folga = Math.max(TOLERANCIA_VALOR, alvo * TOLERANCIA_AMPLA_PCT);
+      achadas = base.filter((t) => Math.abs(cent(t.valor) - alvo) <= folga);
+      aproximado = achadas.length > 0;
+    }
+    if (achadas.length) porPrevisao.set(`${p.recorrencia_id}:${p.competencia}`, { p, achadas, aproximado });
   }
 
   // 2ª passada: quantas previsões disputam CADA cobrança.
@@ -98,7 +131,7 @@ function casar(previsoes, transacoes) {
   }
 
   const saida = [];
-  for (const { p, achadas } of porPrevisao.values()) {
+  for (const { p, achadas, aproximado } of porPrevisao.values()) {
     // Mais perto do vencimento primeiro — o empate é resolvido pela data, que é
     // o critério mais defensável quando os valores são idênticos.
     const t = [...achadas].sort((x, y) =>
@@ -110,10 +143,11 @@ function casar(previsoes, transacoes) {
 
     // ⚠️ AQUI MORA A SEGURANÇA. Qualquer sombra de dúvida derruba o automático
     // pra sugestão — a chave global governa só o caso limpo.
-    const automatico = !variasCobrancas && !variasPrevisoes && !variavel;
+    const automatico = !variasCobrancas && !variasPrevisoes && !variavel && !aproximado;
     const motivo = variasPrevisoes ? 'outra conta fixa casa com a mesma cobranca'
       : variasCobrancas ? 'mais de uma cobranca parecida na janela'
       : variavel ? 'conta de valor variavel'
+      : aproximado ? 'valor fora da tolerancia apertada, dentro da larga'
       : undefined;
 
     saida.push({
@@ -129,4 +163,4 @@ function casar(previsoes, transacoes) {
   return saida;
 }
 
-module.exports = { casar, TOLERANCIA_VALOR, JANELA_DIAS, normCarteira, diasEntre };
+module.exports = { casar, TOLERANCIA_VALOR, TOLERANCIA_AMPLA_PCT, JANELA_DIAS, normCarteira, diasEntre };
