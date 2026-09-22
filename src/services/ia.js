@@ -309,13 +309,23 @@ Formatos (use EXATAMENTE):
 - Humor:                 "me sinto [palavra]"
 - Lista de compras:      "comprar [itens]"
 
-Regras: períodos→hora ("de manhã"=9h, "de tarde"=14h, "de noite"=20h); mantenha o dia em palavras (amanhã/terça/dia 20), NÃO calcule a data.`;
+Regras:
+- períodos→hora ("de manhã"=9h, "de tarde"=14h, "de noite"=20h)
+- ⚠️ DATA: COPIE do jeito que a pessoa escreveu, sem converter NADA.
+  Escreveu número (25/09, 3/12, "dia 20")? Repita o NÚMERO IGUAL.
+  Escreveu palavra (amanhã, terça, sexta)? Repita a PALAVRA IGUAL.
+  NUNCA troque número por dia da semana, nem dia da semana por número.
+  NUNCA calcule que dia da semana cai uma data — você erra essa conta.`;
     // Few-shot: ancora a extração mesmo em frases indiretas.
+    // ⚠️ O 1º exemplo de agenda é DATA NUMÉRICA de propósito: sem ele o modelo
+    // se espelhava no exemplo de dia da semana ("quinta") e convertia 25/09 →
+    // "quinta", errando a conta. Ver `preservarDataOriginal` em handlers/grow.js.
     const exemplos = [
       ['tô precisando comprar pão, leite e café', '{"comando":"comprar pão, leite e café"}'],
       ['acabei de voltar da academia', '{"comando":"fiz academia"}'],
       ['preciso lembrar de ligar pro contador', '{"comando":"tarefa ligar pro contador"}'],
       ['hoje foi um dia péssimo', '{"comando":"me sinto péssimo"}'],
+      ['Dr.Aluísio Cardiologista, 25/09 às 10:00', '{"comando":"marca Dr.Aluísio Cardiologista 25/09 10h"}'],
       ['anota aí que tenho médico quinta de manhã', '{"comando":"marca médico quinta 9h"}'],
       ['qual a capital da frança?', '{"comando":null}'],
     ];

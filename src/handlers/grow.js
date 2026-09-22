@@ -98,6 +98,40 @@ function parseHoraPt(t) {
   return { hora: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, matched };
 }
 
+const escaparRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// ─── A IA NÃO PODE MEXER NA DATA QUE A PESSOA ESCREVEU ──────────────────────
+//
+// ⚠️ BUG REAL (set/2026), relatado por cliente e reproduzido: mandar
+// "Dr.Aluísio Cardiologista, 25/09 às 10:00" (sem o verbo "marca", então o
+// parser local não reconhece e cai no fallback de IA) fazia a IA traduzir pra
+// "marca Dr.Aluísio Cardiologista QUINTA 10h" — ela converteu a data numérica
+// em dia da semana e ERROU a conta: 25/09/2026 é SEXTA. O parser local então
+// calculou a próxima quinta, 24/09, e o compromisso nasceu no dia errado.
+//
+// Converter dd/mm em dia da semana exige aritmética de calendário, que é
+// exatamente onde LLM falha. O prompt foi corrigido (regra explícita +
+// few-shot com data numérica), mas prompt NÃO É GARANTIA: medido no modelo
+// real, "Dr. Aluísio" (com espaço) devolvia "dia 25" e "Dr.Aluísio" (sem
+// espaço) devolvia "quinta" — a MESMA data, um caractere de diferença.
+//
+// Por isso a trava é aqui, no código: quando a pessoa escreveu a data de forma
+// EXPLÍCITA (25/09, "dia 25"), ela vence o que a IA devolveu. Data relativa
+// ("amanhã", "terça") fica de fora de propósito — ali a IA só repassa a
+// palavra, e é o parser local quem faz a conta.
+const RE_DATA_EXPLICITA = /^\d{1,2}\/\d{1,2}|^dia\s+\d{1,2}/i;
+
+function preservarDataOriginal(mensagem, cmd) {
+  if (!cmd) return cmd;
+  const dtOrig = parseDataPt(String(mensagem || '').toLowerCase());
+  if (!dtOrig || !RE_DATA_EXPLICITA.test(dtOrig.matched)) return cmd;
+
+  const dtCmd = parseDataPt(cmd.toLowerCase());
+  if (dtCmd && dtCmd.iso === dtOrig.iso) return cmd;            // IA manteve — ok
+  if (!dtCmd) return `${cmd} ${dtOrig.matched}`;                 // IA PERDEU a data
+  return cmd.replace(new RegExp(escaparRe(dtCmd.matched), 'i'), dtOrig.matched); // IA TROCOU
+}
+
 // ─── Antecedência do lembrete em MINUTOS, a partir da fala ──────────────
 // "me avisa 1 dia antes" · "avisa 30 min antes" · "lembra 2h antes" · "na hora".
 // Cap em 2 dias (2880) — é a janela que o cron JOB 1J consegue antecipar.
@@ -1052,7 +1086,9 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   if (!opts.semIA) {
     try {
       const { interpretarGrowComando } = require('../services/ia');
-      const cmd = await interpretarGrowComando(mensagem);
+      // ⚠️ `preservarDataOriginal` é a trava: a IA traduz o FORMATO da frase,
+      // nunca a data que a pessoa escreveu. Ver o comentário na declaração.
+      const cmd = preservarDataOriginal(mensagem, await interpretarGrowComando(mensagem));
       if (cmd && cmd.toLowerCase().trim() !== msg) {
         console.log(`🌱→IA traduziu: "${mensagem}" → "${cmd}"`);
         return await handleGrow(cmd, ctx, { semIA: true });
@@ -1094,6 +1130,8 @@ module.exports.tituloCompromisso   = tituloCompromisso;
 // Parsers PT expostos pro eval montar o cenário real (data/hora → matched).
 module.exports.parseDataPt         = parseDataPt;
 module.exports.parseHoraPt         = parseHoraPt;
+// Trava contra a IA reescrever a data da pessoa (eval:agenda-data-ia).
+module.exports.preservarDataOriginal = preservarDataOriginal;
 module.exports.extrairTextoNota    = extrairTextoNota;
 module.exports.categoriaTarefa     = categoriaTarefa;
 module.exports.temDataHora         = temDataHora;
