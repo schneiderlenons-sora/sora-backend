@@ -3,6 +3,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
+const { resolvidasNoMes } = require('../services/resolvidasNoMes');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -80,10 +81,19 @@ router.get('/:phone', auth, async (req, res) => {
     if (error) ({ data, error } = await listar(`${cols}, valor_variavel`));
     if (error) ({ data, error } = await listar(cols));
     if (error) throw error;
+    // ⚠️ `resolvida_no_mes` é calculada NO SERVIDOR de propósito: a regra mora
+    // em `services/resolvidasNoMes.js` e é a MESMA do cron e do resumo do
+    // WhatsApp. Refazer a consulta no painel criaria a 4ª cópia divergente —
+    // e foi exatamente esse tipo de divergência que produziu o relato de
+    // set/2026 (conta paga ANTES do vencimento seguia no card "Ainda vence
+    // este mês", embora a transação já estivesse amarrada à recorrência).
+    const ymSP = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
+    const resolvidas = await resolvidasNoMes(data || [], ymSP);
     // Sem a 112 o painel ainda precisa dos campos pra desenhar os controles —
     // devolve o padrão de sempre em vez de `undefined` (que viraria toggle vazio).
     res.json((data || []).map((r) => ({
       ...r,
+      resolvida_no_mes: resolvidas.has(r.id),
       modo_lancamento: r.modo_lancamento || 'lancar',
       lembrete: r.lembrete === undefined || r.lembrete === null ? true : r.lembrete,
       // Migration 157. ⚠️ Os defaults DESCREVEM o comportamento de sempre —

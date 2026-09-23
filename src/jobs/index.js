@@ -6,6 +6,7 @@ const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageir
 const { criarPendente } = require('../services/pendentes');
 const { garantirCarteira } = require('../services/carteiraGarantida');
 const { avisosLigados, briefingLigado } = require('../services/avisos');
+const { resolvidasNoMes: resolvidasDoMes } = require('../services/resolvidasNoMes');
 const { enviarProativo, enviarProativoDetalhado, provedor } = require('../services/proativo');
 const { falar, templateAgente, templateDoAviso, templateLista, aberturaDe } = require('../agentes');
 // ⚠️ NADA de `require('yahoo-finance2').default` direto aqui — é o padrão da
@@ -407,24 +408,13 @@ cron.schedule('0 * * * *', async () => {
     // ⚠️ TOLERANTE: se a leitura falhar, o conjunto fica vazio e o cron se
     // comporta exatamente como antes (lança). Falhar calado pro lado de NÃO
     // lançar pararia as contas fixas da base inteira.
-    const resolvidasNoMes = new Set();
-    try {
-      const ids = recorrencias
-        .filter((r) => (r.frequencia || 'mensal') !== 'semanal')
-        .map((r) => r.id);
-      if (ids.length) {
-        const [txV, ajV] = await Promise.all([
-          supabase.from('transacoes').select('recorrencia_id')
-            .in('recorrencia_id', ids).eq('competencia', ymSP)
-            .then((r) => r, () => ({ data: [] })),
-          supabase.from('previsao_ajustes').select('recorrencia_id')
-            .in('recorrencia_id', ids).eq('competencia', ymSP).eq('status', 'pulado')
-            .then((r) => r, () => ({ data: [] })),
-        ]);
-        for (const t of txV.data || []) resolvidasNoMes.add(t.recorrencia_id);
-        for (const a of ajV.data || []) resolvidasNoMes.add(a.recorrencia_id);
-      }
-    } catch { resolvidasNoMes.clear(); }
+    //
+    // ⚠️ A REGRA MORA EM `services/resolvidasNoMes.js` — ela também responde ao
+    // card "Ainda vence este mês" do painel e ao "📌 Ainda neste mês" do resumo
+    // do WhatsApp. Era cópia inline aqui, e as outras duas telas nunca souberam
+    // dela: conta paga ANTES do vencimento seguia aparecendo nas duas
+    // (relato de set/2026). Mexeu na regra, mexa lá — não volte a copiar.
+    const resolvidasNoMes = await resolvidasDoMes(recorrencias, ymSP);
 
     // Acumula por telefone → UMA mensagem. Um balde por MODO, porque o que a
     // Sora promete é diferente em cada um e prometer errado a faz parecer

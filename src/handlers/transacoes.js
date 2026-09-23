@@ -4,6 +4,7 @@ const { enviarTexto, enviarMenu, enviarImagem, enviarBotaoLink } = require('../s
 // sync do Open Finance. Vai por TEMPLATE porque, em grupo, quem não lançou está
 // fora da janela de 24h e o texto livre falharia calado pra essa pessoa.
 const { verificarLimite } = require('../services/limites');
+const { resolvidasNoMes } = require('../services/resolvidasNoMes');
 // Conta do Open Finance nunca tem saldo ajustado à mão (regra de ouro).
 const { moverSaldo, gravarSaldo, avisoContaDoBanco } = require('../services/saldoCarteira');
 const { analisarGastos } = require('../services/ia');
@@ -1000,10 +1001,19 @@ module.exports = async function handleTransacoes(data, ctx) {
       let recs = [];
       try {
         const { data: r } = await supabase.from('recorrencias')
-          .select('descricao, valor, dia_vencimento, valor_variavel')
+          .select('id, descricao, valor, dia_vencimento, valor_variavel, frequencia')
           .eq('grupo_id', grupoId).eq('ativa', true).eq('tipo', 'Gasto')
           .gte('dia_vencimento', diaHoje).order('dia_vencimento');
         recs = r || [];
+        // ⚠️ CONTA JÁ PAGA NÃO É "AINDA NESTE MÊS". Relato de set/2026: o
+        // cliente pagou luz, gás e internet no dia 21 — ANTES do vencimento
+        // (25, 26 e 28) — e as três seguiram listadas aqui. A query só olhava
+        // `dia_vencimento >= hoje` e nunca perguntava se já tinham sido pagas,
+        // embora as transações estivessem no banco com `recorrencia_id` +
+        // `competencia`. Mesma regra do cron e do card do painel.
+        const ymSP = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
+        const resolvidas = await resolvidasNoMes(recs, ymSP);
+        if (resolvidas.size) recs = recs.filter((x) => !resolvidas.has(x.id));
       } catch { recs = []; }
       let totalAVencer = 0;
       const linhasP = recs.map(r => {
