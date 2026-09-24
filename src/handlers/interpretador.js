@@ -223,6 +223,73 @@ const ABREV_PT = ['jan', 'fev', null, 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 
 const MESES_EXIBE = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 
+// ─── CONSULTA DE FATURA: qual cartão e qual competência ─────────────────────
+//
+// ⚠️ SEPARADO do `parsePeriodoExtenso` DE PROPÓSITO. Aquele resolve mês
+// nomeado SEMPRE PRA TRÁS ("em dezembro", em setembro, é dezembro do ano
+// passado) — o que está certo pra gasto que já aconteceu e ERRADO pra fatura:
+// fatura de mês futuro EXISTE (é onde caem as parcelas). Foi exatamente o
+// pedido do relato: "fatura ... do mês de outubro", com outubro sendo o mês
+// QUE VEM. Aqui a escolha é o mês MAIS PRÓXIMO, podendo ser à frente.
+const MESES_FATURA = [
+  'janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
+
+/**
+ * Competência ('YYYY-MM') pedida na frase, ou null pra "a atual".
+ * Entende mês por nome, "mês que vem"/"próxima" e "mês passado"/"anterior".
+ */
+function competenciaPedida(texto) {
+  const t = ' ' + String(texto || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') + ' ';
+  const [Y, M] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    .split('-').map(Number);
+
+  const desloca = (n) => {
+    const d = new Date(Date.UTC(Y, M - 1 + n, 1));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  };
+
+  if (/\b(mes\s+que\s+vem|proxim[ao]\s+(mes|fatura)|fatura\s+que\s+vem)\b/.test(t)) return desloca(1);
+  if (/\b(mes\s+passado|mes\s+anterior|fatura\s+passada|fatura\s+anterior)\b/.test(t)) return desloca(-1);
+
+  for (let i = 0; i < 12; i++) {
+    if (!new RegExp(`\\b${MESES_FATURA[i]}\\b`).test(t)) continue;
+    // ⚠️ O MÊS MAIS PRÓXIMO, à frente ou atrás. Em setembro, "outubro" é o mês
+    // que vem (+1) e "agosto" é o passado (−1); "janeiro" resolve pro janeiro
+    // mais perto (+4 → próximo ano) em vez do de 8 meses atrás.
+    const dist = ((i + 1) - M + 12) % 12;        // 0..11 pra frente
+    const n = dist <= 6 ? dist : dist - 12;      // >6 meses à frente = passado
+    return desloca(n);
+  }
+  return null;                                    // sem mês dito → a atual
+}
+
+/**
+ * O nome do cartão citado numa pergunta de fatura, ou null.
+ *
+ * Devolve o TERMO cru — quem casa com a carteira real é o
+ * `resolverCarteiraReal` (fuzzy, canônico do projeto). Aqui só se tira o que
+ * com certeza não é nome de cartão: o verbo, a palavra "fatura/extrato", o
+ * mês e o ruído de pergunta.
+ */
+function termoDoCartao(texto) {
+  let t = ' ' + String(texto || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') + ' ';
+  t = t
+    .replace(/\b(relatorio|resumo|extrato|detalhe[s]?|fatura[s]?)\b/g, ' ')
+    .replace(/\b(quanto|qual|quais|como|esta|ta|e|sera|me|da|do|de|dos|das|no|na|nos|nas|em|a|o|as|os|um|uma|meu|minha|meus|minhas)\b/g, ' ')
+    .replace(/\b(mostr\w+|exib\w+|ver|vejo|veja|ve|traz\w*|trag\w+|list\w+|abrir|abre|manda|envia|pux\w+|quero|gostaria|poderia|pode)\b/g, ' ')
+    .replace(/\b(cartao|cartoes|credito|conta|banco)\b/g, ' ')
+    .replace(/\b(mes|mês|ano|periodo|atual|passad[ao]|anterior|proxim[ao]|que\s+vem|vem)\b/g, ' ')
+    .replace(new RegExp(`\\b(${MESES_FATURA.join('|')})\\b`, 'g'), ' ')
+    .replace(/[?!.,;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Sobrou nada → é pergunta genérica ("qual minha fatura?"), não sobre um
+  // cartão específico: deixa passar pra quem trata o caso geral.
+  return t.length >= 2 ? t : null;
+}
+
 /** Data (UTC) da meia-noite de São Paulo no 1º dia de `ano`/`mes` (1..12). */
 function primeiroDiaSP(ano, mes) {
   const y = ano + Math.floor((mes - 1) / 12);
@@ -932,6 +999,24 @@ function interpretarRapido(message) {
       && /\b(amanh[ãa]|hoje|depois\s+de\s+amanh|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|semana|m[êe]s|dia\s+\d|\d{1,2}\/\d{1,2}|[àa]s?\s+\d{1,2}|\d{1,2}\s*h|daqui)\b/i.test(msg))
     return null;
 
+  // ── CONSULTAR A FATURA DE UM CARTÃO ──────────────────────────────────────
+  //
+  // "fatura do nubank" · "relatório da fatura do mercado pago de outubro" ·
+  // "extrato do cartão c6" · "quanto está a fatura do inter"
+  //
+  // ⚠️ VEM ANTES DO `resumo`, e é por isso que ela existe. Relato de set/2026:
+  // "Relatório da fatura do mercado pago credito do mês de outubro" devolvia o
+  // RESUMO GERAL do mês corrente — a regra ampla de `resumo|relat[oó]rio` logo
+  // abaixo é um CATCH-ALL e engolia a frase inteira, perdendo o cartão E o mês.
+  // Mesma família do catch-all de "gasto" já corrigido em set/2026.
+  //
+  // ⚠️ `pagar_fatura` roda MUITO antes (linha ~696) porque é AÇÃO, não
+  // consulta — "paguei a fatura do nubank" nunca chega aqui.
+  if (/\bfatura\b|\bextrato\b/i.test(msg) && !/\bfaturamento\b/i.test(msg)) {
+    const termo = termoDoCartao(msg);
+    if (termo) return { acao: 'fatura_cartao', termo, competencia: competenciaPedida(msg) };
+  }
+
   // --- COMANDOS SIMPLES ---
   // "painel" só vira comando em mensagem curta (ex.: "painel", "abrir painel") —
   // não quando a palavra aparece no meio de uma frase ("...da aba de estudos do painel").
@@ -1070,4 +1155,4 @@ function interpretarRapido(message) {
   return null;
 }
 
-module.exports = { interpretarRapido, detectarCategoria, detectarPeriodo, parsePeriodoExtenso };
+module.exports = { interpretarRapido, detectarCategoria, detectarPeriodo, parsePeriodoExtenso, competenciaPedida };

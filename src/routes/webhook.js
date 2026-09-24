@@ -691,6 +691,23 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
         await require('../handlers/parcelas')(data, ctx);
         break;
 
+      // CONSULTAR a fatura de um cartão ("fatura do nubank de outubro").
+      // Separado de `pagar_fatura` de propósito: aquilo é ação, isto é
+      // leitura — e o valor sai da fonte única (`faturaVista`), não de soma
+      // local, pra o zap nunca divergir do painel.
+      case 'fatura_cartao': {
+        // ⚠️ O MÊS É RESOLVIDO AQUI, NUNCA PELA IA. Quando a frase cai no
+        // fallback de IA ela devolve só o nome do cartão: pedir a
+        // competência a um LLM é aritmética de calendário, que foi
+        // exatamente o que fez a Sora salvar consulta em 24/09 quando o
+        // cliente disse 25/09 (ver a seção da Agenda no CLAUDE.md).
+        // competenciaPedida é determinística e lê o texto original.
+        const { competenciaPedida } = require('../handlers/interpretador');
+        const comp = data.competencia || competenciaPedida(mensagem);
+        await require('../handlers/faturaCartao')({ ...data, competencia: comp }, ctx);
+        break;
+      }
+
       // Limites e metas de gastos
       case 'set_limite':
       case 'set_meta':

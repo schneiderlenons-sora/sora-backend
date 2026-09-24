@@ -51,6 +51,10 @@ CONTAS BANCÁRIAS:
 {"acao":"set_wallet","nome":"Carteira","valor":200,"tipo":"Dinheiro"}
 {"acao":"adicionar_saldo","nome":"Inter","valor":200}
 {"acao":"alterar_saldo","nome":"Nubank","valor":2000}
+{"acao":"fatura_cartao","termo":"nubank"} <- "fatura do nubank", "quanto ta a fatura do inter?", "quanto devo no cartao do c6?", "extrato do cartao nubank", "relatorio da fatura do mercado pago"
+   "termo" = SO o nome do cartao. Tire "fatura", "cartao", "credito", "relatorio", "extrato" e o mes citado.
+   NAO calcule o mes e NAO mande o campo "competencia" — quem resolve o mes e o codigo, lendo a frase original.
+   E CONSULTA. "paguei a fatura do nubank" e pagar_fatura; "quanto gastei esse mes" e resumo; "qual meu faturamento" nao e isto.
 {"acao":"ver_saldos"}
 - QUAL usar (não confunda):
   · set_wallet = CRIAR conta nova. Ex.: "nubank 1000", "criar conta no inter com 500".

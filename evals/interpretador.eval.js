@@ -16,6 +16,23 @@
 
 const { interpretarRapido, parsePeriodoExtenso } = require('../src/handlers/interpretador');
 
+// ⚠️ Competência esperada CALCULADA a partir de hoje (fuso SP), nunca cravada.
+//    'outubro' é o mês QUE VEM em setembro e o mês PASSADO em novembro — um
+//    literal faria o eval passar hoje e quebrar sozinho na virada do mês.
+const MESES_EV = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+function compRel(n) {
+  const [y, m] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + n, 1));
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+}
+// Mesma janela do interpretador: >6 meses à frente é lido como passado.
+function compDoMes(nome) {
+  const [, m] = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').map(Number);
+  const dist = ((MESES_EV.indexOf(nome) + 1) - m + 12) % 12;
+  return compRel(dist <= 6 ? dist : dist - 12);
+}
+
 const CASOS = [
   // ── VALOR COM PREFIXO "R$" — o formato que vem do ÁUDIO ───────────────────
   //
@@ -331,10 +348,48 @@ const CASOS = [
   { msg: 'quanto gastei esse mês?', expect: { acao: 'resumo', periodo: 'mes' } },
   { msg: 'no que gasto mais?', expect: { acao: 'resumo' } },
   { msg: 'quero cadastrar um gasto fixo', expect: null },
+  // ── CONSULTAR A FATURA DE UM CARTÃO ───────────────────────────────────────
+  //
+  // ⚠️ RELATO DE SET/2026: "Relatório da fatura do mercado pago credito do mês
+  // de outubro" devolvia o RESUMO GERAL do mês corrente. Duas causas somadas:
+  // não existia comando de CONSULTAR fatura (só pagar), e a regra ampla de
+  // `resumo|relat[oó]rio` é um CATCH-ALL que engolia a frase inteira — perdendo
+  // o cartão E o mês. Mesma família do catch-all de "gasto" (set/2026).
+  //
+  // ⚠️ A COMPETÊNCIA É CALCULADA A PARTIR DE HOJE, nunca cravada: "outubro"
+  // significa coisas diferentes em setembro e em novembro. Cravar '2026-10'
+  // faria o eval passar hoje e falhar sozinho no mês que vem.
+  { msg: 'Relatório da fatura do mercado pago credito do mês de outubro', expect: { acao: 'fatura_cartao', termo: 'mercado pago', competencia: compDoMes('outubro') } },
+  { msg: 'fatura do nubank',                  expect: { acao: 'fatura_cartao', termo: 'nubank', competencia: null } },
+  { msg: 'quanto está a fatura do inter',     expect: { acao: 'fatura_cartao', termo: 'inter' } },
+  { msg: 'extrato do cartão c6',              expect: { acao: 'fatura_cartao', termo: 'c6' } },
+  { msg: 'me mostra a fatura do nubank do mês passado', expect: { acao: 'fatura_cartao', termo: 'nubank', competencia: compRel(-1) } },
+  { msg: 'fatura do nubank do mês que vem',   expect: { acao: 'fatura_cartao', termo: 'nubank', competencia: compRel(1) } },
+
+  // ⚠️ AS TRÊS REGRESSÕES QUE A REGRA NOVA PODERIA CAUSAR. Ela roda ANTES do
+  //    catch-all de resumo, então é ela que tem de provar que não sequestrou
+  //    nem o resumo geral, nem a AÇÃO de pagar, nem a busca por termo.
+  { msg: 'relatorio do mes',                  expect: { acao: 'resumo' } },
+  { msg: 'paguei a fatura do nubank',         expect: { acao: 'pagar_fatura' } },
+  { msg: 'quanto gastei no mercado',          expect: { acao: 'buscar' } },
+
+  // ⚠️ "FATURAMENTO" NÃO É FATURA — e quem abre a porta é *extrato*, não
+  //    *fatura*: o limite de palavra já barra "faturamento" sozinho, mas
+  //    "extrato do faturamento da loja" casa por *extrato* e viraria consulta
+  //    de CARTÃO, levando quem tem a aba Negócios pro lugar errado. Medido:
+  //    sem a guarda sai fatura_cartao com termo "faturamento loja".
+  //    ⚠️ A 1ª versão deste caso usava "qual o meu faturamento esse mês" e
+  //    SOBREVIVEU à mutação — passava por acidente, porque ali a regra nem
+  //    dispara. Caso que não mata a mutação não está testando a linha.
+  { msg: 'extrato do faturamento da loja', expect: (r) => !r || r.acao !== 'fatura_cartao' },
+
 ];
 
 // Match parcial: cada campo de `expect` precisa bater no resultado.
 function bate(expect, got) {
+  // Predicado: pra afirmar uma NEGAÇÃO ("isto não pode virar X"),
+  // que match parcial de campos não consegue expressar.
+  if (typeof expect === 'function') return !!expect(got);
   if (expect === null) return got === null || got === undefined;
   if (!got) return false;
   for (const k of Object.keys(expect)) {
