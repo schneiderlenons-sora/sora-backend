@@ -24,6 +24,7 @@ const { valorExibido } = require('../services/faturaVista');
 const { lerPrevistas } = require('../services/parcelasPrevistas');
 const { formatar, moedaBaseDoGrupo } = require('../services/moeda');
 const { ehPagamentoFatura } = require('../services/categorizar');
+const { rotuloParcela } = require('../services/consultaParcela');
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
@@ -83,8 +84,14 @@ module.exports = async function handleFaturaCartao(data, ctx) {
   const vista = await valorExibido(cartao, comp, st, { parcelasPrevistas: lerPrevistas });
 
   // ── As compras do ciclo, que é o "relatório" que a pessoa pediu ──────────
+  // ⚠️ `parcela_num`/`parcela_total` entram no select pra a lista poder dizer
+  // QUAL parcela é a daquele mês — pedido do cliente logo depois de este
+  // relatório entrar no ar ("ficaria melhor se as compras que são parceladas
+  // mostrassem qual parcela é aquele mês"). Medido: 2.327 dos 11.041 gastos
+  // desde 01/08 são parcela (21%), e os campos já vinham estruturados — era a
+  // lista que não os lia.
   const { data: txs } = await supabase.from('transacoes')
-    .select('data, valor, valor_moeda, categoria, observacao, transferencia, tipo')
+    .select('data, valor, valor_moeda, categoria, observacao, transferencia, tipo, parcela_num, parcela_total')
     .eq('grupo_id', grupoId).ilike('carteira_nome', cartao.nome)
     .gte('data', ciclo.ini).lt('data', ciclo.fimExcl)
     .order('data', { ascending: true });
@@ -101,7 +108,13 @@ module.exports = async function handleFaturaCartao(data, ctx) {
   const fmtC = (v) => formatar(v, moedaCartao);   // cartão fica na moeda DELE
 
   const dia = (d) => String(d).slice(8, 10) + '/' + String(d).slice(5, 7);
-  const nome = (t) => (t.observacao || t.categoria || 'lançamento').slice(0, 28);
+  // ⚠️ O CORTE EM 28 ACONTECE ANTES do rótulo de parcela, nunca depois: cortar
+  // o texto já montado comeria justamente o "3/9" do fim, que é a informação
+  // que o cliente pediu.
+  const nome = (t) => {
+    const desc = (t.observacao || t.categoria || 'lançamento').slice(0, 28);
+    return desc + rotuloParcela(t, t.observacao || t.categoria);
+  };
   const valorDe = (t) => (t.valor_moeda ?? t.valor) || 0;
 
   // Lista enxuta: o WhatsApp corta mensagem longa, e fatura com 80 linhas

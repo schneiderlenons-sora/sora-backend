@@ -11,7 +11,8 @@
 //
 // Rodar:  npm run eval:consulta-parcela
 // =============================================================================
-const { extrairTermoParcela, termoCasaCompra, diaSP, parcelaJaCobrada, agruparParcelas } = require('../src/services/consultaParcela');
+const { extrairTermoParcela, termoCasaCompra, diaSP, parcelaJaCobrada, agruparParcelas,
+        rotuloParcela } = require('../src/services/consultaParcela');
 const { interpretarRapido } = require('../src/handlers/interpretador');
 
 const falhas = [];
@@ -167,6 +168,43 @@ console.log('── 6. parcela cujo dia chegou já foi cobrada ──');
   ok(m.restantes <= antigoRestantes, 'a regra nova só tira parcela da lista, nunca põe');
 }
 console.log('  ok');
+
+// ── 7. "QUAL PARCELA É ESSA?" NA LISTA DA FATURA ───────────────────────────
+//
+// Pedido de cliente (set/2026), logo depois de o relatório de fatura entrar no
+// ar: "ficaria melhor se as compras que são parceladas mostrassem qual parcela
+// é aquele mês". Os campos já vinham estruturados; a lista é que não os lia.
+console.log('── 7. rótulo de parcela na lista ──');
+{
+  // Este eval só tem `ok`; o `eq` local dá a mensagem com esperado × recebido.
+  const eq = (a, b, m) => ok(a === b, m + ' (esperado ' + JSON.stringify(b) + ', veio ' + JSON.stringify(a) + ')');
+  const r = (tx, desc) => rotuloParcela(tx, desc);
+
+  eq(r({ parcela_num: 3, parcela_total: 9 }, 'Samsung S25'), ' · 3/9', 'parcelada mostra N/M');
+  eq(r({ parcela_num: 1, parcela_total: 12 }, 'Notebook'),   ' · 1/12', 'primeira parcela também');
+  eq(r({ parcela_num: 12, parcela_total: 12 }, 'Notebook'),  ' · 12/12', 'última parcela também');
+
+  // ⚠️ O CASO QUE EVITA RUÍDO EM 8 DE CADA 10 LINHAS. Compra à vista chega ora
+  // como 1/1, ora como null (medido: 82 × 8.632 desde 01/08). Rotular "(1/1)"
+  // em cada compra normal encheria a fatura de informação inútil.
+  eq(r({ parcela_num: 1, parcela_total: 1 }, 'Mercado'), '', 'à vista marcada 1/1 não rotula');
+  eq(r({ parcela_num: null, parcela_total: null }, 'Padaria'), '', 'sem os campos não rotula');
+  eq(r({}, 'Padaria'), '', 'objeto vazio não rotula');
+  eq(r(null, 'Padaria'), '', 'tx null não quebra');
+
+  // ⚠️ NÃO REPETE O QUE JÁ ESTÁ NO TEXTO. Parte das descrições vem do banco com
+  // o marcador colado (medido: 69 na amostra) — sem isto a linha sairia
+  // "HOTEIS.COM 12/12 · 12/12".
+  eq(r({ parcela_num: 12, parcela_total: 12 }, 'HOTEIS.COM 12/12'), '', 'não duplica o marcador do banco');
+  eq(r({ parcela_num: 2, parcela_total: 3 }, 'CHINOCA 2 / 3'), '', 'ignora espaço no marcador do banco');
+  // Mas um número PARECIDO que não é o marcador não pode suprimir o rótulo.
+  eq(r({ parcela_num: 2, parcela_total: 3 }, 'PNEU 205/55'), ' · 2/3', 'número diferente não suprime');
+
+  // Texto em número (o payload do painel manda string).
+  eq(r({ parcela_num: '3', parcela_total: '9' }, 'Tênis'), ' · 3/9', 'número em texto');
+}
+console.log('  ok');
+
 
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {

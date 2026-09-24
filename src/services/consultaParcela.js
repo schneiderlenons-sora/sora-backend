@@ -187,7 +187,34 @@ function agruparParcelas(comGrupo, semGrupo, hoje) {
   }
   return grupos;
 }
+
+// ── "QUAL PARCELA É ESSA?" NA LISTA DA FATURA ───────────────────────────────
+//
+// Pedido de cliente (set/2026), logo depois de o relatório de fatura entrar no
+// ar: "ficaria melhor se as compras que são parceladas mostrassem qual parcela
+// é aquele mês". Medido na base: 2.327 dos 11.041 gastos desde 01/08 são
+// parcela (21%) — e os campos já vinham estruturados em `parcela_num` /
+// `parcela_total`, a lista é que não os lia.
+//
+// ⚠️ SÓ COM `parcela_total > 1`. Compra à vista chega ora como `1/1`, ora
+// como null (82 x 8.632 na medição); rotular "(1/1)" em cada linha seria ruído
+// em 8 de cada 10 compras.
+//
+// ⚠️ NÃO REPETE O QUE JÁ ESTÁ NO TEXTO. Parte das descrições vem do banco com o
+// marcador colado ("HOTEIS.COM 12/12") — são 69 na amostra. Sem esta checagem
+// a linha sairia "HOTEIS.COM 12/12 (12/12)".
+function rotuloParcela(tx, descricao) {
+  const num = parseInt(tx && tx.parcela_num, 10);
+  const tot = parseInt(tx && tx.parcela_total, 10);
+  if (!num || !tot || tot <= 1) return '';
+  const marcador = num + '/' + tot;
+  // Compara sem espaço pra pegar "12 / 12" também.
+  const texto = String(descricao || '').replace(/\s+/g, '');
+  if (texto.includes(marcador)) return '';
+  return ' · ' + marcador;
+}
+
 module.exports = {
   extrairTermoParcela, termoCasaCompra, VERBO_DE_ACAO, RE_PARCELAS_DE,
-  diaSP, parcelaJaCobrada, agruparParcelas,
+  diaSP, parcelaJaCobrada, agruparParcelas, rotuloParcela,
 };
