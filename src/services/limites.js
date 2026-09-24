@@ -196,10 +196,26 @@ async function verificarLimite(grupoId, phone, user) {
   const fimMes = `${prox.getFullYear()}-${String(prox.getMonth() + 1).padStart(2, '0')}-01`;
 
   // Gastos do mês do grupo — usado pelos dois tipos de limite.
-  const { data: gastos } = await supabase
-    .from('transacoes').select('valor, categoria')
-    .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
-    .gte('data', `${mesRef}-01`).lt('data', fimMes);
+  //
+  // ⚠️ `ignorar_em` é pedida de forma TOLERANTE: `ehTransferencia` a lê, mas
+  // pedir coluna inexistente faz o SELECT INTEIRO falhar — e aí o alerta some
+  // pra todo mundo. Mesmo cuidado do `calcularResumo`.
+  let gastos = null;
+  {
+    const q = (campos) => supabase.from('transacoes').select(campos)
+      .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
+      .gte('data', `${mesRef}-01`).lt('data', fimMes);
+    let r = await q('valor, categoria, transferencia, ignorar_em');
+    if (r.error) r = await q('valor, categoria, transferencia');
+    gastos = r.data || [];
+  }
+
+  // ⚠️ A SOMA USA A MESMA REGRA DO PAINEL (`ehTransferencia`). Sem ela o alerta
+  // contava pagamento de fatura, ajuste de saldo e "não considerar" — ou seja,
+  // disparava por um total que a tela do cliente não mostra em lugar nenhum.
+  // É a divergência "zap × painel" que este projeto já pagou caro pra fechar.
+  const { ehTransferencia } = require('./resumoTransacoes');
+  gastos = gastos.filter((g) => !ehTransferencia(g));
 
   // ── Limites POR CATEGORIA (subcategoria conta pro pai) ─────────────────────
   const { data: limites } = await supabase

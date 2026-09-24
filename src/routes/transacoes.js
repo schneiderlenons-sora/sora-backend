@@ -327,7 +327,13 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     // usa o painel nunca era avisado, e hoje é por lá (e pelo Open Finance) que
     // entra o volume. Em background: aviso é efeito colateral, não pode atrasar
     // a resposta nem derrubar o lançamento se o WhatsApp falhar.
-    if (tx.pago && tipo === 'Gasto') {
+    //
+    // ⚠️ SEM A CONDIÇÃO `tx.pago`, e isso é correção de bug (24/09/2026). A SOMA
+    // do limite conta todo gasto do mês, pago ou pendente — mas o gatilho só
+    // rodava no pago. Quem lança como pendente estourava o teto sem aviso nenhum:
+    // a tela dizia 823% e o WhatsApp ficava mudo. Gatilho e soma têm de olhar o
+    // MESMO conjunto.
+    if (tipo === 'Gasto') {
       require('../services/limites').verificarLimiteEmBackground(grupoId, phone);
     }
 

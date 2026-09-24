@@ -362,7 +362,18 @@ cron.schedule('0 * * * *', async () => {
    * lancadas — em silencio, pra base inteira. Na falha, grava sem o
    * vinculo: o comportamento volta a ser o de antes, que funciona.
    */
+  // ⚠️ OS GRUPOS QUE RECEBERAM LANÇAMENTO, pro alerta de limite rodar depois.
+  //
+  // O cron era a MAIOR fonte de gasto que nunca disparava alerta: `verificarLimite`
+  // era chamado só pelo zap, pelo painel e pelo sync do OF — 3 dos 12 caminhos que
+  // inserem em `transacoes`. Quem tem o orçamento dominado por conta fixa via a
+  // meta estourar em silêncio (relato de 24/09/2026: 823% do teto, zero avisos).
+  //
+  // ⚠️ UMA verificação POR GRUPO, no fim — nunca por lançamento. O laço percorre
+  // a base inteira, e chamar aqui dentro seria N consultas por rodada.
+  const gruposComLancamento = new Set();
   async function inserirLancamento(linha, recId) {
+    if (linha && linha.grupo_id && linha.tipo === 'Gasto') gruposComLancamento.add(linha.grupo_id);
     const comVinculo = { ...linha, recorrencia_id: recId, competencia: ymSP };
     const r = await supabase.from('transacoes').insert(comVinculo);
     if (r && r.error) await supabase.from('transacoes').insert(linha);
@@ -682,6 +693,14 @@ cron.schedule('0 * * * *', async () => {
         lista: { assunto: 'Contas fixas de hoje', itens: itensRec },
       });
     }
+  }
+
+  // Alerta de limite pelos lançamentos que o cron acabou de fazer. Em background
+  // e tolerante: aviso é efeito colateral e não pode derrubar o resto do cron.
+  // A dedup do próprio serviço (`alerta_enviado`) garante um aviso por mês.
+  for (const gid of gruposComLancamento) {
+    try { require('../services/limites').verificarLimiteEmBackground(gid, null); }
+    catch (e) { console.warn('[cron] alerta de limite:', e.message); }
   }
 
   // ── 1B. LEMBRETES ───────────────────────────────────────────────
