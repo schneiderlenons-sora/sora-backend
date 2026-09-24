@@ -157,6 +157,47 @@ async function moverCarteira(txId, novaCarteiraNome, grupoId) {
       .update({ carteira_nome: novaCarteiraNome, valor: campos.valor }).eq('id', txId);
   }
 
+  // ── O "DINHEIRO" ERA SÓ UM DEPÓSITO TEMPORÁRIO: some depois de esvaziar ──
+  //
+  // Relato de cliente (set/2026): "não consigo remover a conta dinheiro". Ele
+  // apagava e ela voltava. Não era a exclusão — era a RECRIAÇÃO.
+  //
+  // Quem tem várias contas e nenhuma padrão cai no "Caso 5" do
+  // `handlers/transacoes.js`: a Sora grava o lançamento em "Dinheiro" só pra
+  // ter onde pousar, PERGUNTA de qual conta foi, e move ao responder. Só que o
+  // pouso criava a carteira de verdade (o upsert de lá) e ela ficava na tela
+  // pra sempre. Medido na conta dele: 6 contas e `wallet_padrao_id` nulo — ou
+  // seja, TODO lançamento sem conta citada a ressuscitava.
+  //
+  // ⚠️ Não dá pra simplesmente parar de criar a carteira no pouso: a transação
+  // ficaria apontando pra um nome que não é wallet de ninguém enquanto a
+  // pergunta não é respondida — a CONTA-FANTASMA que o CLAUDE.md documenta, e
+  // que fica pra sempre se a pessoa nunca responder. Por isso a limpeza é AQUI,
+  // depois de a transação sair em segurança.
+  //
+  // ⚠️ As três condições são estreitas de propósito. Quem usa "Dinheiro" como
+  // conta de verdade tem lançamento nela ou saldo, e nunca é tocado; e se for a
+  // ÚNICA conta, apagá-la deixaria a pessoa sem nenhuma.
+  if (walletAntiga && /^dinheiro$/i.test(String(tx.carteira_nome || '').trim())) {
+    try {
+      const { count: restantes } = await supabase.from('transacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('grupo_id', grupoId).ilike('carteira_nome', 'Dinheiro');
+      const { count: outras } = await supabase.from('wallets')
+        .select('id', { count: 'exact', head: true })
+        .eq('grupo_id', grupoId).neq('id', walletAntiga.id);
+      const { data: atual } = await supabase.from('wallets')
+        .select('saldo').eq('id', walletAntiga.id).maybeSingle();
+
+      if ((restantes || 0) === 0 && (outras || 0) > 0 && Math.abs(Number(atual?.saldo) || 0) < 0.01) {
+        await supabase.from('wallets').delete().eq('id', walletAntiga.id).eq('grupo_id', grupoId);
+      }
+    } catch (e) {
+      // Falhar aqui não pode desfazer a movimentação, que já deu certo.
+      console.warn('[moverCarteira] limpeza do Dinheiro temporário:', e.message);
+    }
+  }
+
   return {
     ok: true,
     // Conta do banco: a resposta explica por que o saldo não andou.

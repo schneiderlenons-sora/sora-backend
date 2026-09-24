@@ -54,11 +54,65 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 
 router.put('/:id', auth, async (req, res) => {
   try {
-    const { nome, icone, cor, arquivada, tipo } = req.body;
+    const grupoId = req.authUser?.grupoAtivo || '__nenhum__';
+    const { nome, icone, cor, arquivada, tipo, parent_id } = req.body;
     const patch = { nome, icone, cor, arquivada };
     if (['despesa', 'receita', 'ambos'].includes(tipo)) patch.tipo = tipo;
-    const { data } = await supabase.from('categorias')
-      .update(patch).eq('id', req.params.id).eq('grupo_id', req.authUser?.grupoAtivo || '__nenhum__').select().single();
+
+    // ── MOVER PRA BAIXO DE OUTRA CATEGORIA ────────────────────────────────
+    //
+    // Relato de cliente (set/2026): "criei uma categoria Carro, mas não consigo
+    // colocar Prestação do veículo como subcategoria dela. Eu altero mas ele
+    // não grava". Medido: as duas na RAIZ.
+    //
+    // ⚠️ O POST SEMPRE ACEITOU `parent_id`; o PUT NUNCA — ele nem estava na
+    // desestruturação, então o campo era descartado em SILÊNCIO. E o modal
+    // MOSTRA o seletor "É subcategoria de" na edição, então a pessoa escolhe,
+    // salva, e nada acontece. Mesma família do `is_reserva_emergencia` da
+    // migration 147, que também era jogado fora por uma whitelist.
+    //
+    // `'parent_id' in req.body` e não `if (parent_id)`: mandar `null` é como
+    // se TIRA a categoria de baixo do pai, e um `if` truthy descartaria isso.
+    if ('parent_id' in req.body) {
+      const novoPai = parent_id || null;
+
+      if (novoPai === req.params.id) {
+        return res.status(400).json({ erro: 'Uma categoria não pode ser subcategoria dela mesma.' });
+      }
+
+      if (novoPai) {
+        // ⚠️ A TAXONOMIA TEM DOIS NÍVEIS, e as duas checagens abaixo são o que
+        // impede um terceiro. Um neto quebraria o `nomesDoLimite` (que soma a
+        // categoria + as filhas DIRETAS, um nível só), a árvore do painel e o
+        // categorizador. Ver "Categorias v3" no CLAUDE.md.
+        const { data: pai } = await supabase.from('categorias')
+          .select('id, parent_id').eq('id', novoPai).eq('grupo_id', grupoId).maybeSingle();
+        if (!pai) {
+          return res.status(400).json({ erro: 'Categoria de destino não encontrada.' });
+        }
+        if (pai.parent_id) {
+          return res.status(400).json({
+            erro: 'Essa categoria já é uma subcategoria. Escolha uma categoria principal.',
+          });
+        }
+        const { count: filhas } = await supabase.from('categorias')
+          .select('id', { count: 'exact', head: true })
+          .eq('parent_id', req.params.id).eq('grupo_id', grupoId);
+        if ((filhas || 0) > 0) {
+          return res.status(400).json({
+            erro: `Esta categoria tem ${filhas} subcategoria(s). Mova-as antes de transformá-la em subcategoria.`,
+          });
+        }
+      }
+      patch.parent_id = novoPai;
+    }
+
+    // ⚠️ O ERRO É LIDO. Era `const { data } = await ...` sem `error`: uma falha
+    // devolvia `data` null com HTTP 200, e o painel fechava o modal dizendo que
+    // salvou. Mesma família dos bugs das migrations 121 e 147.
+    const { data, error } = await supabase.from('categorias')
+      .update(patch).eq('id', req.params.id).eq('grupo_id', grupoId).select().single();
+    if (error) return res.status(500).json({ erro: error.message });
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
