@@ -4,7 +4,7 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta } = require('../services/contaDebito');
-const { proximoVencimento, ultimoPagamentoPorDivida, hojeSP, emAtraso, statusDeAtraso } = require('../services/vencimentoDivida');
+const { proximoVencimento, ultimoPagamentoPorDivida, hojeSP, emAtraso, statusDeAtraso, statusPorParcelas } = require('../services/vencimentoDivida');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -202,13 +202,56 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     }
     if (r.error) throw r.error;
 
+    let final = r.data;
+
+    // ── EDITAR AS PARCELAS PAGAS REABRE (ou QUITA) A DÍVIDA ───────────────
+    //
+    // Relato (set/2026): "quitei uma parcela sem querer e reabri ela
+    // diminuindo uma parcela. Mas ainda assim ela ficou como Quitada".
+    // Medido na conta dele: IPVA com `status='quitada'` e parcelas 2/3.
+    //
+    // ⚠️ O POST SEMPRE RECALCULOU o status pelas parcelas; o PUT NUNCA. E o
+    // `statusDeAtraso` logo abaixo não cobre isto de propósito — ele só anda
+    // entre 'ativa' e 'em_atraso' e devolve 'quitada' intacta. Ou seja, não
+    // existia caminho nenhum que reabrisse uma dívida quitada por engano.
+    //
+    // ⚠️ SÓ COM `parcelas_total` > 0. Dívida sem parcelas é quitada pelo botão
+    // "quitar tudo" (rota abaixo), e recalcular às cegas desquitaria TODAS
+    // elas em QUALQUER edição — até numa troca de título.
+    // ⚠️ E só quando a edição MEXEU nas parcelas: editar o título de uma
+    // dívida quitada não pode reabrir nada.
+    // ⚠️ Respeita `status` explícito no corpo e pula dívida do Open Finance,
+    // pelos mesmos motivos do bloco de atraso. Roda ANTES dele: reaberta, a
+    // parcela vencida ainda precisa poder virar "em atraso".
+    if (final && !final.of_id && !('status' in req.body)
+        && ('parcelas_pagas' in req.body || 'parcelas_total' in req.body)) {
+      // Regra no serviço (`eval:vencimento-divida` §7), ao lado do
+      // `statusDeAtraso` — é a mesma família de pergunta.
+      const alvo = statusPorParcelas(final);
+      if (alvo) {
+        const deveQuitar  = alvo === 'quitada';
+        const estaQuitada = final.status === 'quitada';
+        if (deveQuitar !== estaQuitada) {
+          // Ao reabrir, a data de quitação sai junto: deixá-la faria o card
+          // dizer "Quitada em <data>" numa dívida que está em aberto.
+          const patch2 = deveQuitar
+            ? { status: 'quitada', data_quitacao: hojeSP() }
+            : { status: 'ativa',   data_quitacao: null };
+          try {
+            const r2 = await supabase.from('dividas').update(patch2)
+              .eq('id', final.id).eq('grupo_id', req.grupoId).select().single();
+            if (!r2.error && r2.data) final = r2.data;
+          } catch (e) { console.warn('[dividas/put] reabrir:', e.message); }
+        }
+      }
+    }
+
     // ── EDITAR RECALCULA O "EM ATRASO" ────────────────────────────────────
     // Relato: "mudei o vencimento do dia 15 pro 20 e o card continua EM
     // ATRASO". O status era gravado pelo cron e nada o revia. Mesma regra
     // única do cron (`statusDeAtraso`). ⚠️ Não mexe quando o próprio pedido
     // manda `status` (decisão explícita de quem chamou) nem em dívida do Open
     // Finance (o status vem do banco). Falhar aqui não desfaz a edição.
-    let final = r.data;
     if (final && !final.of_id && !('status' in req.body)) {
       try {
         const mapa = await ultimoPagamentoPorDivida([final.id]);

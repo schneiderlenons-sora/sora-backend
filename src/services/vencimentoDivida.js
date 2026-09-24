@@ -262,7 +262,29 @@ function statusDeAtraso(divida, hoje = hojeSP()) {
   return vencidaNoMes(divida, hoje) ? 'em_atraso' : 'ativa';
 }
 
+
+/**
+ * A divida deveria estar QUITADA pelas parcelas? Devolve 'quitada', 'ativa'
+ * ou null (= nao da pra dizer, nao mexa).
+ *
+ * ⚠️ Relato de set/2026: o cliente quitou uma parcela sem querer, editou
+ * baixando as parcelas pagas de 3 para 2, e o card CONTINUOU "Quitada". O
+ * POST sempre recalculou o status pelas parcelas; o PUT nunca. E o
+ * `statusDeAtraso` acima nao cobre isso de proposito: ele so anda entre
+ * 'ativa' e 'em_atraso' e devolve 'quitada' intacta.
+ *
+ * ⚠️ SEM `parcelas_total` DEVOLVE null. Divida sem parcelas e quitada pelo
+ * botao "quitar tudo", e responder 'ativa' aqui desquitaria todas elas na
+ * primeira edicao — inclusive numa troca de titulo.
+ */
+function statusPorParcelas(divida) {
+  const total = parseInt(divida && divida.parcelas_total, 10) || 0;
+  if (total <= 0) return null;
+  const pagas = parseInt(divida && divida.parcelas_pagas, 10) || 0;
+  return pagas >= total ? 'quitada' : 'ativa';
+}
+
 module.exports = {
   proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, ultimoDiaDoMes, hojeSP,
-  ultimoPagamentoPorDivida, emAtraso, vencidaNoMes, statusDeAtraso,
+  ultimoPagamentoPorDivida, emAtraso, vencidaNoMes, statusDeAtraso, statusPorParcelas,
 };

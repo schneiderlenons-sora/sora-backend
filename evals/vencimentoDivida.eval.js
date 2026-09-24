@@ -16,7 +16,7 @@
 // Rodar:  npm run eval:vencimento-divida
 // =============================================================================
 const {
-  proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, emAtraso, vencidaNoMes, statusDeAtraso,
+  proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, emAtraso, vencidaNoMes, statusDeAtraso, statusPorParcelas,
 } = require('../src/services/vencimentoDivida');
 
 const falhas = [];
@@ -223,6 +223,31 @@ console.log('── selo em atraso ──');
 }
 console.log('  ok');
 
+// ── 7. REABRIR DIVIDA: status pelas PARCELAS ──────────────────────────────
+//
+// Relato (set/2026): o cliente quitou uma parcela sem querer, editou baixando
+// as pagas de 3 pra 2, e o card CONTINUOU "Quitada". O POST sempre recalculou
+// o status pelas parcelas; o PUT nunca, e `statusDeAtraso` devolve 'quitada'
+// intacta de proposito. Medido: 3 dividas na base nesse estado.
+console.log('── 7. status pelas parcelas (reabrir) ──');
+{
+  eq(statusPorParcelas({ parcelas_pagas: 2, parcelas_total: 3 }), 'ativa',   'parcela a menos REABRE');
+  eq(statusPorParcelas({ parcelas_pagas: 3, parcelas_total: 3 }), 'quitada', 'todas pagas = quitada');
+  eq(statusPorParcelas({ parcelas_pagas: 4, parcelas_total: 3 }), 'quitada', 'pagas acima do total segue quitada');
+  eq(statusPorParcelas({ parcelas_pagas: 0, parcelas_total: 3 }), 'ativa',   'nenhuma paga = ativa');
+
+  // ⚠️ O CASO QUE PROTEGE O RESTO DA BASE: divida SEM parcelas e quitada pelo
+  // botao "quitar tudo". Responder 'ativa' aqui desquitaria todas elas na
+  // primeira edicao — ate numa troca de titulo. `null` = nao mexa.
+  eq(statusPorParcelas({ parcelas_pagas: 0, parcelas_total: null }), null, 'sem parcelas: nao opina');
+  eq(statusPorParcelas({ parcelas_pagas: 5, parcelas_total: 0 }),    null, 'total zero: nao opina');
+  eq(statusPorParcelas({}),                                          null, 'objeto vazio: nao opina');
+  eq(statusPorParcelas(null),                                        null, 'null: nao opina');
+
+  // Texto vindo do payload do painel (input numerico devolve string).
+  eq(statusPorParcelas({ parcelas_pagas: '2', parcelas_total: '3' }), 'ativa', 'numero em texto');
+}
+console.log('  ok');
 // ── Resultado ────────────────────────────────────────────────────────────
 console.log('');
 if (falhas.length) {
