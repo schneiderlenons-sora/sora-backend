@@ -7,7 +7,8 @@
 //
 // Rodar:  npm run eval:limites
 // =============================================================================
-const { templateLimite, ALVO_GERAL, limpaCat } = require('../src/services/limites');
+const { templateLimite, ALVO_GERAL, ALVO_GERAL_ANUAL, limpaCat,
+        ehChaveAnual, chaveDoPeriodo } = require('../src/services/limites');
 
 const falhas = [];
 const ok = (c, m) => { if (!c) falhas.push(m); };
@@ -108,6 +109,44 @@ console.log('── 5. normalização ──');
   eq(limpaCat('Alimentação'), 'alimentacao', 'tira acento');
   eq(limpaCat('  CASA e Decoração '), 'casa e decoracao', 'minúsculo e sem borda');
   eq(limpaCat(null), '', 'null vira vazio');
+}
+console.log('  ok');
+
+// ── 6. LIMITE ANUAL: a chave e o que separa os dois tetos ──────────────────
+//
+// O teto anual mora na MESMA category_limits que o mensal, e quem os separa e
+// o mes_referencia (2026 x 2026-09). Toda a feature se apoia nisso: se as duas
+// chaves colidirem, gravar o teto do ano SOBRESCREVE o do mes.
+console.log('── 6. limite anual ──');
+{
+  eq(ehChaveAnual('2026'), true,      'ano e chave anual');
+  eq(ehChaveAnual('2026-09'), false,  'mes nao e chave anual');
+  eq(ehChaveAnual(null), false,        'nulo nao e anual');
+  eq(ehChaveAnual(''), false,          'vazio nao e anual');
+
+  const hoje = '2026-09-24';
+  eq(chaveDoPeriodo('anual', null, hoje),  '2026',    'anual sem ref usa o ano de hoje');
+  eq(chaveDoPeriodo('mensal', null, hoje), '2026-09', 'mensal sem ref usa o mes de hoje');
+  // Periodo ausente tem de continuar MENSAL: e o que a base inteira usa hoje,
+  // e todo payload antigo chega sem esse campo.
+  eq(chaveDoPeriodo(undefined, null, hoje), '2026-09', 'sem periodo = mensal');
+
+  // ⚠️ A COLISAO E O ERRO QUE DESTRUIRIA DADO: mesma categoria com teto mensal
+  // e anual precisa gerar chaves DIFERENTES, senao o upsert (que conflita por
+  // grupo+categoria+mes_referencia) sobrescreve um com o outro.
+  ok(chaveDoPeriodo('anual', null, hoje) !== chaveDoPeriodo('mensal', null, hoje),
+     'teto anual e mensal da mesma categoria nunca colidem');
+
+  // Ref explicita e ACEITA, mas sempre cortada no formato do periodo: mandar
+  // 2026-09 pedindo anual grava 2026, nao uma chave de 7 que viraria mes.
+  eq(chaveDoPeriodo('anual', '2026-09', hoje), '2026', 'anual corta a ref pro ano');
+  eq(chaveDoPeriodo('mensal', '2026', hoje), '2026', 'mensal com ref curta devolve o que veio');
+
+  // O rotulo entra depois de "seu limite de ___" no template aprovado.
+  eq(ALVO_GERAL_ANUAL, 'gasto geral do ano', 'rotulo do teto geral anual');
+  const fraseAno = `Aviso sobre o seu limite de ${ALVO_GERAL_ANUAL}.`;
+  eq(fraseAno, 'Aviso sobre o seu limite de gasto geral do ano.', 'frase anual montada');
+  ok(ALVO_GERAL_ANUAL !== ALVO_GERAL, 'anual e mensal tem rotulos distintos');
 }
 console.log('  ok');
 

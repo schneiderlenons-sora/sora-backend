@@ -254,6 +254,116 @@ async function verificarLimite(grupoId, phone, user) {
   }
 
   await verificarLimiteGeral(grupoId, phone, user, mesRef, gastos || []);
+
+  // ⚠️ TOLERANTE E SEPARADO: um teto anual que falhe não pode derrubar o
+  // alerta MENSAL, que é o que a base inteira usa hoje.
+  try { await verificarLimiteAnual(grupoId, phone, user, mesRef.slice(0, 4)); }
+  catch (e) { console.warn('[limites] pass anual:', e && e.message); }
+}
+
+
+// ── LIMITES ANUAIS ───────────────────────────────────────────────────────────
+//
+// Pedido de cliente (set/2026): "limites mensais e anuais — o de vocês é
+// somente mensal". Gasto sazonal (IPVA, seguro, viagem) estoura um mês e cabe
+// no ano; sem teto anual não há como planejar isso.
+//
+// ⚠️ NÃO PRECISA DA COLUNA `periodo` PRA FUNCIONAR, e isso é de propósito. O
+// teto anual mora na MESMA `category_limits`, com `mes_referencia` guardando
+// só o ano ('2026'). Como os dois passes filtram por `mes_referencia`, eles se
+// separam sozinhos — e se a migration 171 ainda não rodou, o pass anual
+// simplesmente não acha linha nenhuma e sai. Pedir `periodo` no `select` aqui
+// mataria o alerta MENSAL de todo mundo até a migration rodar (é a lição do
+// `getUser` do Grow, registrada no CLAUDE.md).
+const ALVO_GERAL_ANUAL = 'gasto geral do ano';
+
+/**
+ * Verifica os tetos ANUAIS do grupo (categoria + geral).
+ *
+ * ⚠️ SÓ LÊ AS TRANSAÇÕES DO ANO SE HOUVER ALGUM TETO ANUAL. A leitura do ano
+ * inteiro é bem mais cara que a do mês, e a esmagadora maioria dos grupos não
+ * usa teto anual — pagar essa consulta em todo lançamento de todo mundo pra
+ * quase sempre não ter nada pra checar sairia caro no egress (o custo do
+ * Supabase é o NÚMERO de idas, ver CLAUDE.md).
+ */
+async function verificarLimiteAnual(grupoId, phone, user, ano) {
+  const { data: limitesAno } = await supabase.from('category_limits')
+    .select('*').eq('grupo_id', grupoId).eq('mes_referencia', ano);
+
+  const u = user && user.meta_anual !== undefined ? user : (await supabase.from('users')
+    .select('meta_anual, meta_anual_ativo, meta_anual_alerta_ativo, meta_anual_alerta_pct, meta_anual_alerta_enviado, phone')
+    .eq('grupo_ativo', grupoId).limit(1).maybeSingle()
+    .then((r) => r.data, () => null));
+
+  const metaAno = Number(u?.meta_anual) || 0;
+  const metaValeAgora = metaAno
+    && (u.meta_anual_ativo ?? true)
+    && (u.meta_anual_alerta_ativo ?? true)
+    && u.meta_anual_alerta_enviado !== ano;
+
+  const temCategoria = (limitesAno || []).some(
+    (l) => l.ativo !== false && l.limite_mensal && !l.alerta_enviado);
+
+  if (!temCategoria && !metaValeAgora) return;   // nada a checar → nada a ler
+
+  const base = await require('./moeda').moedaBaseDoGrupo(grupoId);
+
+  // Mesma leitura tolerante e o mesmo `ehTransferencia` do pass mensal — se as
+  // duas somas divergirem, o cliente recebe dois avisos que não fecham entre si.
+  const q = (campos) => supabase.from('transacoes').select(campos)
+    .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
+    .gte('data', `${ano}-01-01`).lt('data', `${Number(ano) + 1}-01-01`);
+  let r = await q('valor, categoria, transferencia, ignorar_em');
+  if (r.error) r = await q('valor, categoria, transferencia');
+  const { ehTransferencia } = require('./resumoTransacoes');
+  const gastosAno = (r.data || []).filter((g) => !ehTransferencia(g));
+
+  // ── Teto anual POR CATEGORIA ───────────────────────────────────────────
+  if (temCategoria) {
+    const { data: cats } = await supabase
+      .from('categorias').select('id, nome, parent_id').eq('grupo_id', grupoId);
+
+    for (const limite of limitesAno) {
+      if (limite.ativo === false || !limite.limite_mensal || limite.alerta_enviado) continue;
+      const nomes = new Set(nomesDoLimite(limite.categoria, cats));
+      const total = gastosAno
+        .filter((g) => nomes.has(limpaCat(g.categoria)))
+        .reduce((s, g) => s + (g.valor || 0), 0);
+
+      const pct = (total / limite.limite_mensal) * 100;
+      if (pct < (limite.percentual_alerta || 80)) continue;
+
+      const nomeCat = String(limite.categoria || '').replace(/\p{Extended_Pictographic}/gu, '').trim();
+      // "seu limite de Carro no ano" — o template encaixa o alvo depois de
+      // "limite de", então o rótulo precisa ler natural nessa posição.
+      const alvo = `${nomeCat} no ano`;
+      const enviado = await avisarGrupo(grupoId, phone,
+        `⚠️ *Limite anual de ${limite.categoria}*: os gastos do ano chegaram a *${pct.toFixed(0)}%* do teto.\n` +
+        `Teto do ano: ${brlNa(limite.limite_mensal, base)} | Gasto no ano: ${brlNa(total, base)}`,
+        (nome, seed) => templateLimite(nome, alvo, pct, total, limite.limite_mensal, seed, base));
+
+      if (enviado) {
+        await supabase.from('category_limits').update({ alerta_enviado: true }).eq('id', limite.id);
+      }
+    }
+  }
+
+  // ── Teto GERAL do ano ──────────────────────────────────────────────────
+  if (!metaValeAgora) return;
+  const totalAno = gastosAno.reduce((s, g) => s + (g.valor || 0), 0);
+  const pctAno = (totalAno / metaAno) * 100;
+  if (pctAno < (u.meta_anual_alerta_pct ?? 80)) return;
+
+  const enviado = await avisarGrupo(grupoId, phone,
+    `🚨 *Limite geral do ANO*: os gastos de ${ano} chegaram a *${pctAno.toFixed(0)}%* da meta anual.\n` +
+    `Meta do ano: ${brlNa(metaAno, base)} | Gasto no ano: ${brlNa(totalAno, base)}`,
+    (nome, seed) => templateLimite(nome, ALVO_GERAL_ANUAL, pctAno, totalAno, metaAno, seed, base));
+
+  if (!enviado) return;   // não queima o aviso do ano num envio que falhou
+  try {
+    await supabase.from('users').update({ meta_anual_alerta_enviado: ano })
+      .eq('phone', u.phone || String(phone || '').replace(/\D/g, ''));
+  } catch (e) { console.warn('[limite anual] flag alerta:', e.message); }
 }
 
 /** Alerta quando o gasto TOTAL do mês atinge o % da meta mensal. */
@@ -306,7 +416,28 @@ function verificarLimiteEmBackground(grupoId, phone, user) {
   });
 }
 
+
+// ── A CHAVE QUE SEPARA MENSAL DE ANUAL ───────────────────────────────────────
+//
+// Os dois tetos moram na MESMA tabela; quem os distingue e o mes_referencia:
+// 4 caracteres (2026) = ano, 7 (2026-09) = mes. A unique do banco e por essa
+// coluna, entao a separacao ja vem de graca e sem constraint nova.
+//
+// ⚠️ FONTE UNICA de proposito: a rota, o servico de alerta e o painel tem de
+// concordar em qual linha e anual. Tres copias dessa comparacao seriam tres
+// chances de um teto anual ser lido como mensal (ou sumir da tela).
+const ehChaveAnual = (ref) => String(ref || '').trim().length === 4;
+
+/** Chave de gravacao: ano quando o periodo e anual, mes caso contrario. */
+function chaveDoPeriodo(periodo, ref, hojeISO) {
+  const hoje = hojeISO || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  return periodo === 'anual'
+    ? String(ref || hoje).slice(0, 4)
+    : String(ref || hoje).slice(0, 7);
+}
+
 module.exports = {
-  verificarLimite, verificarLimiteEmBackground, avisarGrupo,
-  templateLimite, ALVO_GERAL, limpaCat, nomesDoLimite,
+  verificarLimite, verificarLimiteEmBackground, verificarLimiteAnual, avisarGrupo,
+  templateLimite, ALVO_GERAL, ALVO_GERAL_ANUAL, limpaCat, nomesDoLimite,
+  ehChaveAnual, chaveDoPeriodo,
 };
