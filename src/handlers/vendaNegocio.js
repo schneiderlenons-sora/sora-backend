@@ -17,6 +17,7 @@
 const supabase = require('../db/supabase');
 const { interpretarVenda } = require('../services/vendaTexto');
 const { enviarTexto } = require('../services/mensageiro');
+const { empresasDoUsuario, empresaAssumida, papelPermite } = require('../services/acessoEmpresa');
 
 const hojeSP = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const fmt = (c) => new Intl.NumberFormat('pt-BR',
@@ -45,11 +46,31 @@ async function capturaVenda(mensagem, { phone, user }) {
   if (!v) return false;
 
   // Empresa: só loja física/híbrida. Infoproduto vende pela plataforma.
-  const { data: empresas } = await supabase.from('empresas')
-    .select('id, nome, tipo').eq('user_id', user.id).eq('ativa', true)
-    .order('created_at', { ascending: true });
-  const empresa = (empresas || []).find(e => e.tipo === 'fisico' || e.tipo === 'hibrido');
+  //
+  // ⚠️ ALCANÇADAS, não só as próprias (migration 173): é justamente pelo zap
+  // que o vendedor convidado registra a venda — era o pedido do relato ("cada
+  // um pelo seu próprio WhatsApp, na mesma empresa"). Filtrar por `user_id`
+  // fazia a mensagem dele voltar como finança pessoal.
+  // O papel 'leitura' (o contador) fica de fora: ele vê o DRE, não lança venda.
+  const alcancadas = (await empresasDoUsuario(user.id))
+    .filter(e => (e.tipo === 'fisico' || e.tipo === 'hibrido') && papelPermite(e.papel, 'operador'));
+
+  // `empresaAssumida` devolve null com 2+ lojas e nenhuma marcada como padrão
+  // — ela não escolhe no lugar de ninguém.
+  //
+  // ⚠️ MAS AQUI NÃO DÁ PRA RECUSAR A VENDA. Medido em 25/09/2026: 3 clientes
+  // estão nessa situação (um deles com as 6 lojas do relato), e hoje a Sora
+  // registra na primeira loja. Passar a responder "escolha a principal"
+  // QUEBRARIA a venda por WhatsApp desses três — e a tela onde se marca o
+  // padrão só existe na fase 3. Regressão travando venda é pior que o
+  // problema que ela resolve.
+  //
+  // Então mantém-se o comportamento de hoje (a primeira), mas o silêncio
+  // acaba: a confirmação NOMEIA a loja em que caiu. Um palpite errado passa a
+  // ser visível no mesmo segundo, em vez de sujar o caixa por semanas.
+  const empresa = empresaAssumida(alcancadas) || alcancadas[0];
   if (!empresa) return false;
+  const precisaDizerALoja = alcancadas.length > 1;
 
   // Produto cadastrado dá preço, custo e baixa de estoque. Sem ele a venda
   // ainda vale — item avulso é melhor que venda não registrada.
@@ -150,6 +171,9 @@ async function capturaVenda(mensagem, { phone, user }) {
     `✅ Venda registrada — *${fmt(total)}*`,
     `${v.quantidade || 1}× ${item.nome}${clienteNome ? ` · ${clienteNome}` : ''}`,
   ];
+  // ⚠️ Com mais de uma loja alcançada, DIZER EM QUAL caiu. É o que transforma
+  // um palpite errado em algo corrigível na hora (ver o bloco da empresa).
+  if (precisaDizerALoja) linhas.push(`Loja: *${empresa.nome}*`);
   if (v.aPrazo) linhas.push(`_Fiado_ — entrou em contas a receber, não no caixa de hoje.`);
   if (sobrou != null) linhas.push(`Estoque de ${item.nome}: ${sobrou}`);
   if (!prod && v.produto) linhas.push(`_Item avulso: cadastre "${v.produto}" pra acompanhar margem e estoque._`);

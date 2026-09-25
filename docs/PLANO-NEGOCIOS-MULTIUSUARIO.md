@@ -231,15 +231,91 @@ e o cliente volta a reclamar.
 
 ## 5. Fases
 
-| # | Entrega | Risco |
-|---|---|---|
-| 1 | Migration 173 + `acessoEmpresa.js` + backfill | baixo (nada lê ainda) |
-| 2 | As 28 trocas nas rotas + middleware `exigirEmpresa` | **alto — é controle de acesso** |
-| 3 | Aba "Equipe" no painel + convite por empresa | médio |
-| 4 | WhatsApp: resolver empresa por membro + perguntar qual | médio |
-| 5 | Autoria nas listas + papel `leitura` para contador | baixo |
+| # | Entrega | Risco | Estado |
+|---|---|---|---|
+| 1 | Migration 173 + `acessoEmpresa.js` + backfill | baixo (nada lê ainda) | ✅ feita |
+| 2 | Escopo por empresa nas rotas + papéis + WhatsApp | **alto — é controle de acesso** | ✅ feita |
+| 3 | Aba "Equipe" no painel + convite por empresa | médio | pendente |
+| 4 | WhatsApp: perguntar qual empresa quando houver dúvida | médio | parcial (ver abaixo) |
+| 5 | Autoria nas listas | baixo | pendente |
 
 **Cada fase vai para produção separada**, e a 2 só depois da 1 estar rodando.
+
+### O que a fase 2 entregou (25/09/2026)
+
+`empresaDoUsuario` virou uma casca sobre `acessoEmpresa.podeNaEmpresa`, e com
+isso os 9 pontos que já passavam por ela foram convertidos de uma vez. O que
+precisou de mão foram os **11 `.eq('user_id', user.id)` de update/delete por
+id** — eles são o que travava o multiusuário na prática: o gerente não
+conseguia dar baixa numa conta lançada pelo dono, e o erro saía como
+"não encontrado", sem explicar nada. Hoje quem responde é `linhaAlcancada`.
+
+⚠️ **`routes/negociosOperacao.js` (clientes, produtos, vendas, estoque,
+compras, equipe) coube numa mudança só** — ele tem UMA porta (`contexto()`),
+enquanto `routes/negocios.js` repetia o escopo em cada rota. O papel mínimo ali
+sai do **método HTTP** (GET → `leitura`, resto → `operador`), justamente para
+que uma rota criada depois nasça protegida sem ninguém lembrar.
+
+**Papéis aplicados:** `leitura` lê e não escreve · `operador` escreve e não
+renomeia a empresa · `admin` renomeia e configura · **arquivar é só do DONO**,
+nem do admin convidado (some com o histórico da equipe inteira, sem desfazer).
+A 173 foi atualizada para dizer isso — código e doc não podem divergir.
+
+**WhatsApp:** `vendaNegocio` passou a olhar as empresas ALCANÇADAS (antes
+`user_id`, o que fazia a mensagem do vendedor convidado voltar como finança
+pessoal), e o papel `leitura` fica de fora — o contador vê o DRE, não lança
+venda.
+
+⚠️ **Com 2+ lojas e nenhuma padrão, a venda NÃO é recusada** — embora
+`empresaAssumida` devolva `null` ali de propósito. Medido: **3 clientes** estão
+nessa situação (um com as 6 lojas do relato), e hoje a Sora registra na
+primeira. Responder "escolha a principal" quebraria a venda por WhatsApp desses
+três, e a tela onde se marca o padrão só chega na fase 3 — regressão que trava
+venda é pior que o problema que resolve. Mantém-se a primeira loja, mas o
+silêncio acaba: a confirmação **nomeia a loja** em que caiu, então um palpite
+errado é visível no mesmo segundo em vez de sujar o caixa por semanas. A fase 4
+fecha isso de verdade (aceitar a loja dita na frase e lembrar a escolha).
+
+### Achados fora do plano, corrigidos junto
+
+Ao converter o escopo apareceram **seis rotas sem checagem de dono NENHUMA** —
+`auth` só provava que quem chamava estava logado, e qualquer conta apagava a
+linha de qualquer outra sabendo o id:
+
+- `DELETE /integracoes/:id` e `POST /integracoes/:id/importar-historico`
+- `DELETE /custos/:id`
+- `POST /insights/:id/visto` e `/dispensar`
+- `DELETE /conciliacao/:id`
+
+Não eram regressão do multiusuário: já estavam em produção. Entraram junto por
+serem as mesmas linhas que a fase reescreveu.
+
+E **o `POST /custos` nunca gravou `empresa_id`** — é a origem das 3 linhas
+órfãs medidas na base (de 30/07 e 03/09, ou seja, DEPOIS de a 090 rodar: não
+foi o backfill que falhou, era o insert). Migration **174** carimba o passado,
+**só onde não há dúvida** (dono com uma empresa ativa só); um dos três donos
+tem três empresas, e escolher uma seria jogar o custo no DRE errado. A leitura
+degrada pro lado de **mostrar**: o `GET /custos` tem ramo explícito para as
+órfãs do próprio dono, senão elas sumiriam da tela de quem as lançou.
+
+Junto: `dre-detalhado`, `forecast` e o `snapAnt` do `wrapped` somavam **todas
+as empresas do usuário** enquanto o `/dre` ao lado já filtrava por empresa — em
+quem tem duas lojas, o detalhamento contradizia o próprio DRE logo acima. E o
+upsert de `config_negocio` apontava para `onConflict: 'user_id'`, chave que a
+090 §4 substituiu por `empresa_id` (com uma empresa só ninguém sentiu; com
+duas, a config da segunda colidiria com a da primeira).
+
+⚠️ **`conciliacao_negocio` FICA por `user_id`, de propósito** — é a única rota
+da aba que não virou por empresa. Ela casa evento do negócio com `transacoes`,
+que é o extrato **pessoal** de quem conciliou; abrir por empresa entregaria a
+conta bancária pessoal do dono ao funcionário do financeiro, que é exatamente
+o motivo de a equipe não reusar o grupo pessoal (seção 3).
+
+⚠️ **`agendaFeed` continua por `grupo_id`**, então os lembretes de contas e
+folha no briefing do WhatsApp seguem indo só para o grupo do dono. Não é
+regressão (o dono recebe como sempre), mas o membro convidado não recebe.
+Ligar isso é decisão de produto — começar a mandar mensagem sobre a folha de
+pagamento de outra pessoa não pode ser efeito colateral de uma fase de acesso.
 
 ---
 

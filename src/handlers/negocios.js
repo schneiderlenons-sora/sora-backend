@@ -4,6 +4,7 @@
  */
 const supabase = require('../db/supabase');
 const { montarDre } = require('../services/dre');
+const { empresasDoUsuario } = require('../services/acessoEmpresa');
 
 // Centavos util
 const r$ = (reais) => Math.round((parseFloat(reais) || 0) * 100);
@@ -323,13 +324,15 @@ async function gerarDre(userId, grupoId, periodo, empresaId) {
   const fim = fimDate.toISOString().slice(0, 10);
 
   // Empresa alvo — sem empresa não existe DRE. Sem o parâmetro, cai na
-  // primeira empresa ativa do usuário (compat com chamadas antigas).
+  // primeira que o usuário ALCANÇA (compat com chamadas antigas).
+  //
+  // ⚠️ Alcançadas, não só as próprias (migration 173): o membro convidado não
+  // é dono de nenhuma empresa, e a busca por `user_id` devolvia null — o DRE
+  // dele sairia vazio com a loja cheia de lançamentos.
   let empId = empresaId;
   if (!empId) {
-    const { data: emp } = await supabase.from('empresas')
-      .select('id').eq('user_id', userId).eq('ativa', true)
-      .order('created_at', { ascending: true }).limit(1).maybeSingle();
-    empId = emp?.id || null;
+    const lista = await empresasDoUsuario(userId);
+    empId = (lista.find((e) => e.padrao) || lista[0])?.id || null;
   }
   if (!empId) return null;
 

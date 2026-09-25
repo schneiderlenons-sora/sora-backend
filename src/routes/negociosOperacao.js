@@ -15,6 +15,7 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { comissaoDe, resumoMensal } = require('../services/folha');
 const { analisar: analisarLoja } = require('../services/insightsLoja');
+const { podeNaEmpresa } = require('../services/acessoEmpresa');
 
 async function getUser(req) {
   const { data } = await supabase.from('users')
@@ -23,22 +24,35 @@ async function getUser(req) {
 }
 const temAcesso = (u) => u?.plano === 'premium' || u?.plano === 'platinum';
 
-/** Empresa do usuário (anti-IDOR: sempre valida a posse). */
-async function empresaDoUsuario(userId, empresaId) {
-  if (!empresaId) return null;
-  const { data } = await supabase.from('empresas')
-    .select('id').eq('id', empresaId).eq('user_id', userId).maybeSingle();
-  return data || null;
-}
-
-/** Guarda comum: autenticado + plano + empresa dele. */
-async function contexto(req, res, empresaIdBruto) {
+/**
+ * Guarda comum: autenticado + plano + empresa que ele ALCANÇA.
+ *
+ * ⚠️ Este arquivo inteiro passa por AQUI — clientes, produtos, vendas,
+ * estoque, compras, fornecedores e comissão. Foi por isso que ele coube numa
+ * mudança só, enquanto `routes/negocios.js` precisou de onze: lá o escopo
+ * estava repetido em cada rota, aqui existe uma porta.
+ *
+ * "Alcança" deixou de ser "é o dono" (migration 173) — e é justamente aqui
+ * que o vendedor convidado precisa entrar, porque é onde a VENDA é
+ * registrada. A regra mora em services/acessoEmpresa.js.
+ */
+async function contexto(req, res, empresaIdBruto, minimo = null) {
   const user = await getUser(req);
   if (!user?.grupo_ativo) { res.status(404).json({ erro: 'Usuário não encontrado.' }); return null; }
   if (!temAcesso(user))   { res.status(403).json({ erro: 'Recurso do plano Premium.' }); return null; }
-  const empresa = await empresaDoUsuario(user.id, empresaIdBruto);
-  if (!empresa)           { res.status(404).json({ erro: 'Empresa não encontrada.' }); return null; }
-  return { user, empresa };
+
+  // ⚠️ O MÍNIMO SAI DO MÉTODO HTTP, não de cada chamada. São ~30 rotas aqui;
+  // passar o papel à mão em todas garantiria que alguma ficasse de fora — e
+  // uma rota esquecida vira exatamente o furo que esta fase veio fechar.
+  // Assim, GET nasce legível pro contador e escrita nasce exigindo operador,
+  // inclusive numa rota criada depois desta linha.
+  const exigido = minimo || (req.method === 'GET' ? 'leitura' : 'operador');
+
+  if (!empresaIdBruto || !(await podeNaEmpresa(user.id, empresaIdBruto, exigido))) {
+    res.status(404).json({ erro: 'Empresa não encontrada.' });
+    return null;
+  }
+  return { user, empresa: { id: empresaIdBruto } };
 }
 
 /** Erro de tabela ausente (migration 106 pendente) → resposta clara, não 500. */

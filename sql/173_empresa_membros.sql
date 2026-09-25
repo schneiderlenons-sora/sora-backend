@@ -27,9 +27,13 @@ create table if not exists public.empresa_membros (
   empresa_id    uuid not null references public.empresas(id) on delete cascade,
   user_id       uuid not null references public.users(id)    on delete cascade,
 
-  -- admin    → tudo, inclusive convidar/remover membro e apagar a empresa
+  -- admin    → tudo: convidar/remover membro, renomear a empresa, configurar
   -- operador → lança, paga, dá baixa, cadastra cliente/produto/fornecedor
   -- leitura  → só vê (DRE, caixa, relatórios) — é o papel do contador
+  --
+  -- ⚠️ ARQUIVAR A EMPRESA FICA FORA, ATÉ DO ADMIN: é só do dono
+  -- (`empresas.user_id`). Arquivar some com caixa, DRE e histórico para a
+  -- equipe INTEIRA de uma vez, e é a única ação sem desfazer de tela.
   papel         text not null default 'operador',
 
   -- Empresa que a Sora assume quando a pessoa manda mensagem sem dizer qual.

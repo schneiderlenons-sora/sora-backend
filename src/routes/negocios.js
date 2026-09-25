@@ -7,6 +7,7 @@ const { gerarDre, sugerirConciliacao } = require('../handlers/negocios');
 const { encrypt, decrypt } = require('../services/cripto');
 const { importarHistoricoHotmart } = require('../services/hotmart-import');
 const { gerarInsights } = require('./../handlers/insights-negocio');
+const { empresasDoUsuario, podeNaEmpresa } = require('../services/acessoEmpresa');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -52,13 +53,26 @@ router.get('/empresas/:phone', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
+    // ⚠️ Não é mais `eq('user_id')`: a lista é a UNIÃO das próprias com as
+    // que chegam por vínculo (173). Cada linha leva o `papel` e o `dono` —
+    // é deles que a tela decide se mostra "Convidar" e "Excluir empresa".
+    const alcancadas = await empresasDoUsuario(user.id);
+    const ids = alcancadas.map((e) => e.id);
+    if (!ids.length) return res.json([]);
+
     const { data, error } = await supabase.from('empresas')
       .select('*')
-      .eq('user_id', user.id)
+      .in('id', ids)
       .eq('ativa', true)
       .order('created_at', { ascending: true });
     if (error) throw error;
-    res.json(data || []);
+
+    const papeis = Object.fromEntries(alcancadas.map((e) => [e.id, e]));
+    res.json((data || []).map((e) => ({
+      ...e,
+      papel: papeis[e.id]?.papel || 'operador',
+      dono:  !!papeis[e.id]?.dono,
+    })));
   } catch (e) {
     res.status(500).json({ erro: e.message });
   }
@@ -107,10 +121,15 @@ router.put('/empresas/:id', auth, async (req, res) => {
     if (logo_url !== undefined) patch.logo_url = logo_url || null;
     Object.keys(patch).forEach(k => patch[k] === undefined && delete patch[k]);
 
+    // ⚠️ Mexer na EMPRESA em si (nome, logo, tipo) exige 'admin'. Operador
+    // lança dinheiro; renomear a empresa alheia não é trabalho dele.
+    if (!(await empresaDoUsuario(user.id, req.params.id, 'admin'))) {
+      return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    }
+
     const { data, error } = await supabase.from('empresas')
       .update(patch)
       .eq('id', req.params.id)
-      .eq('user_id', user.id) // anti-IDOR: só mexe no que é seu
       .select().maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ erro: 'Empresa não encontrada.' });
@@ -127,10 +146,19 @@ router.delete('/empresas/:id', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
+    // ⚠️ ARQUIVAR É SÓ DO DONO — nem o admin convidado. Arquivar some com o
+    // caixa, o DRE e o histórico da empresa PARA TODA A EQUIPE de uma vez;
+    // é a única ação aqui cujo estrago não cabe num "desfazer" de tela. O
+    // dono continua sendo `empresas.user_id`, então a checagem é direta.
+    const { data: alvo } = await supabase.from('empresas')
+      .select('id, user_id').eq('id', req.params.id).maybeSingle();
+    if (!alvo || alvo.user_id !== user.id) {
+      return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    }
+
     const { error } = await supabase.from('empresas')
       .update({ ativa: false })
-      .eq('id', req.params.id)
-      .eq('user_id', user.id);
+      .eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
@@ -145,25 +173,72 @@ router.delete('/empresas/:id', auth, async (req, res) => {
 // status='pendente' + vencimento. `valor` SEMPRE em centavos (inteiro).
 // ─────────────────────────────────────────────────────────────────
 
-/** Confirma que a empresa é do usuário (anti-IDOR em toda operação). */
-async function empresaDoUsuario(userId, empresaId) {
+/**
+ * Confirma que o usuário ALCANÇA a empresa (anti-IDOR em toda operação).
+ *
+ * ⚠️ "Alcança" deixou de ser "é o dono": desde a migration 173 um membro do
+ * financeiro chega à mesma empresa por `empresa_membros`. A decisão inteira
+ * mora em services/acessoEmpresa.js — aqui não pode nascer uma segunda regra.
+ *
+ * `minimo` é o papel exigido: 'leitura' pra GET, 'operador' pra escrever,
+ * 'admin' pra mexer na empresa em si. O contador entra com 'leitura' e vê o
+ * DRE sem poder lançar nada.
+ */
+async function empresaDoUsuario(userId, empresaId, minimo = 'operador') {
   if (!empresaId) return null;
-  const { data } = await supabase.from('empresas')
-    .select('id').eq('id', empresaId).eq('user_id', userId).maybeSingle();
-  return data || null;
+  return (await podeNaEmpresa(userId, empresaId, minimo)) ? { id: empresaId } : null;
 }
 
-/** Empresa alvo de uma leitura: a informada (se for do usuário) ou, na falta,
- *  a primeira ativa — mantém compatibilidade com chamadas sem empresa_id. */
+/** Empresa alvo de uma leitura: a informada (se alcançada) ou, na falta, a
+ *  primeira que o usuário alcança — mantém compatibilidade com chamadas sem
+ *  empresa_id. ⚠️ Percorre as ALCANÇADAS, não só as próprias: sem isso o
+ *  membro convidado abriria o DRE vazio, por não ser dono de nenhuma. */
 async function resolverEmpresaId(userId, empresaIdQuery) {
-  if (empresaIdQuery) {
-    const e = await empresaDoUsuario(userId, empresaIdQuery);
-    if (e) return e.id;
+  if (empresaIdQuery && await podeNaEmpresa(userId, empresaIdQuery, 'leitura')) {
+    return empresaIdQuery;
   }
-  const { data } = await supabase.from('empresas')
-    .select('id').eq('user_id', userId).eq('ativa', true)
-    .order('created_at', { ascending: true }).limit(1).maybeSingle();
-  return data?.id || null;
+  const lista = await empresasDoUsuario(userId);
+  const padrao = lista.find((e) => e.padrao);
+  return (padrao || lista[0])?.id || null;
+}
+
+/**
+ * Anti-IDOR de LINHA: lê a linha pelo id e confirma que o usuário alcança a
+ * EMPRESA dela. Devolve a linha ou `null`.
+ *
+ * ⚠️ SUBSTITUI o `.eq('user_id', user.id)` que estava em 11 updates/deletes.
+ * Aquele filtro é exatamente o que tranca o multiusuário: o gerente não
+ * conseguiria dar baixa numa conta lançada pelo dono, embora a empresa seja
+ * a mesma — e o erro sairia como "não encontrado", sem explicar nada.
+ *
+ * ⚠️ LINHA SEM `empresa_id` CAI NA REGRA ANTIGA (só o próprio dono). Não é
+ * hipótese: medido em 25/09/2026, as 3 linhas de `custos_negocio` da base
+ * estão assim — o backfill da 090 casa por `user_id`+`grupo_id` e não as
+ * alcançou. Liberar pra equipe uma linha cuja empresa não se sabe qual é
+ * seria adivinhar escopo de dinheiro alheio.
+ */
+/**
+ * Derruba o snapshot do DRE daquele mês pra ele ser recalculado.
+ *
+ * ⚠️ POR `empresa_id`, NÃO POR `user_id`. Apagar por usuário derruba o
+ * snapshot de TODAS as empresas dele — na rede de 6 lojas do relato, mudar um
+ * custo da loja A obrigava a recalcular as outras cinco. O ramo por usuário
+ * fica só pra linha legada sem empresa (é o que ela sempre fez).
+ */
+async function invalidarSnapshot(linha, periodo) {
+  const q = supabase.from('dre_snapshots').delete().eq('periodo', periodo);
+  await (linha.empresa_id ? q.eq('empresa_id', linha.empresa_id) : q.eq('user_id', linha.user_id));
+}
+
+async function linhaAlcancada(userId, tabela, id, minimo = 'operador') {
+  if (!id) return null;
+  const { data } = await supabase.from(tabela)
+    .select('*').eq('id', id).maybeSingle();
+  if (!data) return null;
+  if (data.empresa_id) {
+    return (await podeNaEmpresa(userId, data.empresa_id, minimo)) ? data : null;
+  }
+  return data.user_id === userId ? data : null;
 }
 
 function validarLancamento({ tipo, descricao, valor, data, status }) {
@@ -310,10 +385,13 @@ router.put('/lancamentos/:id', auth, async (req, res) => {
     if (b.status === 'pago') patch.pago_em = b.pago_em || new Date().toISOString().slice(0, 10);
     if (b.status === 'pendente') patch.pago_em = null;
 
+    if (!(await linhaAlcancada(user.id, 'lancamentos_negocio', req.params.id))) {
+      return res.status(404).json({ erro: 'Lançamento não encontrado.' });
+    }
+
     const { data, error } = await supabase.from('lancamentos_negocio')
       .update(patch)
       .eq('id', req.params.id)
-      .eq('user_id', user.id) // anti-IDOR
       .select().maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ erro: 'Lançamento não encontrado.' });
@@ -330,8 +408,12 @@ router.delete('/lancamentos/:id', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
+    if (!(await linhaAlcancada(user.id, 'lancamentos_negocio', req.params.id))) {
+      return res.status(404).json({ erro: 'Lançamento não encontrado.' });
+    }
+
     const { error } = await supabase.from('lancamentos_negocio')
-      .delete().eq('id', req.params.id).eq('user_id', user.id);
+      .delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
@@ -443,12 +525,16 @@ router.put('/funcionarios/:id', auth, async (req, res) => {
     if (b.comissao_pct !== undefined) patch109.comissao_pct = Math.max(0, Number(b.comissao_pct) || 0);
     if (b.encargos !== undefined) patch109.encargos = !!b.encargos;
 
+    if (!(await linhaAlcancada(user.id, 'funcionarios_negocio', req.params.id))) {
+      return res.status(404).json({ erro: 'Funcionário não encontrado.' });
+    }
+
     let { data, error } = await supabase.from('funcionarios_negocio')
-      .update({ ...patch, ...patch109 }).eq('id', req.params.id).eq('user_id', user.id) // anti-IDOR
+      .update({ ...patch, ...patch109 }).eq('id', req.params.id)
       .select().maybeSingle();
     if (error && Object.keys(patch109).length) {
       ({ data, error } = await supabase.from('funcionarios_negocio')
-        .update(patch).eq('id', req.params.id).eq('user_id', user.id)
+        .update(patch).eq('id', req.params.id)
         .select().maybeSingle());
     }
     if (error) throw error;
@@ -466,8 +552,12 @@ router.delete('/funcionarios/:id', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
+    if (!(await linhaAlcancada(user.id, 'funcionarios_negocio', req.params.id))) {
+      return res.status(404).json({ erro: 'Funcionário não encontrado.' });
+    }
+
     const { error } = await supabase.from('funcionarios_negocio')
-      .update({ ativo: false }).eq('id', req.params.id).eq('user_id', user.id);
+      .update({ ativo: false }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) {
@@ -483,8 +573,7 @@ router.post('/funcionarios/:id/pagar', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
-    const { data: f } = await supabase.from('funcionarios_negocio')
-      .select('*').eq('id', req.params.id).eq('user_id', user.id).maybeSingle();
+    const f = await linhaAlcancada(user.id, 'funcionarios_negocio', req.params.id);
     if (!f) return res.status(404).json({ erro: 'Funcionário não encontrado.' });
 
     const b = req.body || {};
@@ -526,10 +615,13 @@ router.get('/integracoes/:phone', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
 
+    const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empId) return res.json([]);
+
     const { data, error } = await supabase
       .from('integracoes')
       .select('id, plataforma, apelido, status, ultimo_sync, total_eventos, created_at, ultimo_erro')
-      .eq('user_id', user.id)
+      .eq('empresa_id', empId)
       .order('created_at', { ascending: false });
     if (error) throw error;
     res.json(data || []);
@@ -548,11 +640,19 @@ router.post('/integracoes', auth, async (req, res) => {
     if (!['hotmart','kiwify','eduzz','stripe','mercadopago','asaas','pagseguro','shopify','woocommerce'].includes(plataforma))
       return res.status(400).json({ erro: 'Plataforma inválida.' });
 
+    // ⚠️ `empresa_id` VAI NO INSERT. A integração é de UMA empresa (a loja
+    // digital), e sem a coluna preenchida a linha nasce órfã: não aparece na
+    // listagem por empresa e nenhum membro a alcança. É o mesmo defeito que
+    // deixou as 3 linhas de `custos_negocio` da base sem empresa.
+    const empId = await resolverEmpresaId(user.id, req.body.empresa_id);
+    if (!empId) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+
     const { data, error } = await supabase
       .from('integracoes')
       .insert({
         user_id: user.id,
         grupo_id: user.grupo_ativo,
+        empresa_id: empId,
         plataforma,
         apelido: apelido || null,
         credenciais: encrypt(credenciais || {}),
@@ -570,8 +670,22 @@ router.post('/integracoes', auth, async (req, res) => {
 });
 
 // DELETE /api/negocios/integracoes/:id
+//
+// ⚠️ ESTA ROTA NÃO TINHA DONO NENHUM (achado em 25/09/2026, ao converter o
+// escopo pra empresa). `delete().eq('id', …)` com `auth` só provava que QUEM
+// chamava estava logado — qualquer conta podia apagar a integração de
+// qualquer outra sabendo o id. Não é regressão do multiusuário; é um furo que
+// já estava em produção, e a checagem entra junto por estar na mesma linha.
 router.delete('/integracoes/:id', auth, async (req, res) => {
   try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
+
+    if (!(await linhaAlcancada(user.id, 'integracoes', req.params.id))) {
+      return res.status(404).json({ erro: 'Integração não encontrada.' });
+    }
+
     const { error } = await supabase.from('integracoes').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
@@ -585,9 +699,14 @@ router.delete('/integracoes/:id', auth, async (req, res) => {
 // Roda em background — responde imediatamente com { ok: true, job: 'iniciado' }.
 router.post('/integracoes/:id/importar-historico', auth, async (req, res) => {
   try {
-    const { data: integ, error } = await supabase
-      .from('integracoes').select('*').eq('id', req.params.id).maybeSingle();
-    if (error || !integ) return res.status(404).json({ erro: 'Integração não encontrada.' });
+    // ⚠️ Mesmo furo do DELETE acima: lia a integração de QUALQUER conta pelo
+    // id e disparava a importação nela.
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Disponível no plano Platinum.' });
+
+    const integ = await linhaAlcancada(user.id, 'integracoes', req.params.id);
+    if (!integ) return res.status(404).json({ erro: 'Integração não encontrada.' });
     if (integ.status !== 'ativa') return res.status(409).json({ erro: 'Integração não está ativa.' });
 
     // Marca como sincronizando
@@ -778,21 +897,28 @@ router.get('/dre-detalhado/:phone', auth, async (req, res) => {
     fimDate.setMonth(fimDate.getMonth() + 1);
     const fim = fimDate.toISOString().slice(0, 10);
 
+    // ⚠️ ESTA ROTA SOMAVA TODAS AS EMPRESAS JUNTAS. Enquanto o `/dre` já
+    // filtrava por `empresa_id`, aqui o filtro era `user_id` — quem tem duas
+    // lojas via o detalhamento com as duas somadas, contradizendo o próprio
+    // DRE logo acima. É o escopo por empresa que desfaz isso.
+    const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empId) return res.json(null);
+
     // 1. Eventos do período
     const { data: eventos } = await supabase
       .from('eventos_financeiros').select('*')
-      .eq('user_id', user.id)
+      .eq('empresa_id', empId)
       .gte('data_evento', inicio).lt('data_evento', fim);
 
-    // 2. Custos do período
+    // 2. Custos do período (inclui o legado órfão — ver o GET /custos)
     const { data: custos } = await supabase
       .from('custos_negocio').select('*')
-      .eq('user_id', user.id)
+      .or(`empresa_id.eq.${empId},and(empresa_id.is.null,user_id.eq.${user.id})`)
       .gte('data', inicio).lt('data', fim);
 
     // 3. Config tributária
     const { data: cfg } = await supabase
-      .from('config_negocio').select('*').eq('user_id', user.id).maybeSingle();
+      .from('config_negocio').select('*').eq('empresa_id', empId).maybeSingle();
     const aliquota = cfg?.aliquota_simples ?? 6.0;
     // Opt-in (default OFF) — sem config salvada, NÃO reserva imposto no DRE.
     const reservarImposto = cfg?.reservar_imposto ?? false;
@@ -912,10 +1038,21 @@ router.get('/forecast/:phone', auth, async (req, res) => {
       meses.push(d.toISOString().slice(0, 10));
     }
 
+    // ⚠️ Por EMPRESA: a unique de `dre_snapshots` é (empresa_id, periodo), e
+    // filtrar por usuário traz uma linha por empresa no MESMO mês — a
+    // projeção somaria o mês em dobro em quem tem duas lojas.
+    const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empId) {
+      return res.json({
+        historico: [], projecao: [], confianca: 'baixa',
+        motivo: 'Cadastre uma empresa pra ver a projeção.',
+      });
+    }
+
     const { data: snaps } = await supabase
       .from('dre_snapshots')
       .select('periodo, receita_bruta, lucro_liquido, custos_total, total_vendas')
-      .eq('user_id', user.id)
+      .eq('empresa_id', empId)
       .in('periodo', meses);
 
     // Garante todos 6 meses (mês sem dado vira zero)
@@ -1036,11 +1173,14 @@ router.get('/eventos/:phone', auth, async (req, res) => {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
+    const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empId) return res.json({ eventos: [], total: 0 });
+
     const limit  = Math.min(parseInt(req.query.limit || '50'), 200);
     const offset = parseInt(req.query.offset || '0');
     let q = supabase.from('eventos_financeiros')
       .select('*', { count: 'exact' })
-      .eq('user_id', user.id)
+      .eq('empresa_id', empId)
       .order('data_evento', { ascending: false })
       .range(offset, offset + limit - 1);
     if (req.query.tipo)       q = q.eq('tipo', req.query.tipo);
@@ -1069,10 +1209,19 @@ router.get('/custos/:phone', auth, async (req, res) => {
     const mes = req.query.periodo || new Date().toISOString().slice(0, 7);
     const inicio = mes + '-01';
     const fim = new Date(inicio); fim.setMonth(fim.getMonth() + 1);
+    const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empId) return res.json([]);
+
+    // ⚠️ A LEITURA DEGRADA PRO LADO DE MOSTRAR. Trocar o filtro de `user_id`
+    // por `empresa_id` faria as linhas órfãs SUMIREM da tela de quem as
+    // lançou — e elas existem (3 na base, criadas depois da 090 pelo POST
+    // que não gravava a coluna). O ramo legado devolve as do próprio dono.
+    // A 174 backfilla as que dá pra atribuir sem adivinhar; este ramo cobre
+    // as que ficarem (dono com várias empresas).
     const { data, error } = await supabase
       .from('custos_negocio')
       .select('*')
-      .eq('user_id', user.id)
+      .or(`empresa_id.eq.${empId},and(empresa_id.is.null,user_id.eq.${user.id})`)
       .gte('data', inicio).lt('data', fim.toISOString().slice(0, 10))
       .order('data', { ascending: false });
     if (error) throw error;
@@ -1088,10 +1237,18 @@ router.post('/custos', auth, async (req, res) => {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
+    // ⚠️ O INSERT NUNCA GRAVOU `empresa_id` — é por isso que as 3 linhas de
+    // custo da base estão órfãs (medido em 25/09/2026, 3 de 3). Não era só o
+    // backfill da 090 ter passado longe: toda linha nova nascia assim, e o
+    // custo ficava fora do escopo por empresa para sempre.
+    const empId = await resolverEmpresaId(user.id, req.body.empresa_id);
+    if (!empId) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+
     const valorCentavos = typeof valor === 'number' && valor > 10000 ? valor : Math.round((parseFloat(valor) || 0) * 100);
     const { data: row, error } = await supabase.from('custos_negocio').insert({
       user_id: user.id,
       grupo_id: user.grupo_ativo,
+      empresa_id: empId,
       categoria,
       descricao,
       valor: valorCentavos,
@@ -1103,9 +1260,9 @@ router.post('/custos', auth, async (req, res) => {
     }).select().single();
     if (error) throw error;
 
-    // Invalida snapshot do mês
+    // Invalida snapshot do mês (da EMPRESA, não do usuário — ver o helper)
     const mes = row.data.slice(0, 7) + '-01';
-    await supabase.from('dre_snapshots').delete().eq('user_id', user.id).eq('periodo', mes);
+    await invalidarSnapshot(row, mes);
 
     res.json({ ok: true, custo: row });
   } catch (e) {
@@ -1113,15 +1270,21 @@ router.post('/custos', auth, async (req, res) => {
   }
 });
 
+// ⚠️ TERCEIRA ROTA SEM DONO (achada na mesma varredura): ela lia a linha só
+// pra invalidar o snapshot e apagava por id, sem comparar com ninguém —
+// qualquer conta logada apagava o custo de qualquer outra.
 router.delete('/custos/:id', auth, async (req, res) => {
   try {
-    const { data: row } = await supabase.from('custos_negocio').select('user_id, data').eq('id', req.params.id).maybeSingle();
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+
+    const row = await linhaAlcancada(user.id, 'custos_negocio', req.params.id);
+    if (!row) return res.status(404).json({ erro: 'Custo não encontrado.' });
+
     const { error } = await supabase.from('custos_negocio').delete().eq('id', req.params.id);
     if (error) throw error;
-    if (row) {
-      const mes = row.data.slice(0, 7) + '-01';
-      await supabase.from('dre_snapshots').delete().eq('user_id', row.user_id).eq('periodo', mes);
-    }
+    const mes = row.data.slice(0, 7) + '-01';
+    await invalidarSnapshot(row, mes);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ erro: e.message });
@@ -1423,8 +1586,12 @@ router.put('/contas/:id', auth, async (req, res) => {
     if (b.saldo_inicial !== undefined) patch.saldo_inicial = Math.round(Number(b.saldo_inicial) || 0);
     if (b.cor !== undefined) patch.cor = b.cor || null;
 
+    if (!(await linhaAlcancada(user.id, 'contas_negocio', req.params.id))) {
+      return res.status(404).json({ erro: 'Conta não encontrada.' });
+    }
+
     const { data, error } = await supabase.from('contas_negocio')
-      .update(patch).eq('id', req.params.id).eq('user_id', user.id).select().maybeSingle();
+      .update(patch).eq('id', req.params.id).select().maybeSingle();
     if (error) throw error;
     res.json({ ok: true, conta: data });
   } catch (e) { res.status(500).json({ erro: e.message }); }
@@ -1434,9 +1601,13 @@ router.delete('/contas/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!(await linhaAlcancada(user.id, 'contas_negocio', req.params.id))) {
+      return res.status(404).json({ erro: 'Conta não encontrada.' });
+    }
+
     // Soft delete (ativa=false) — não perde o vínculo dos lançamentos históricos.
     const { error } = await supabase.from('contas_negocio')
-      .update({ ativa: false }).eq('id', req.params.id).eq('user_id', user.id);
+      .update({ ativa: false }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ erro: e.message }); }
@@ -1450,9 +1621,13 @@ router.get('/config/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    const { data } = await supabase.from('config_negocio').select('*').eq('user_id', user.id).maybeSingle();
+    const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    const { data } = empId
+      ? await supabase.from('config_negocio').select('*').eq('empresa_id', empId).maybeSingle()
+      : { data: null };
     res.json(data || {
       user_id: user.id,
+      empresa_id: empId,
       grupo_id: user.grupo_ativo,
       regime_tributario: 'mei',
       aliquota_simples: 6.0,
@@ -1472,19 +1647,30 @@ router.put('/config', auth, async (req, res) => {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
+    // ⚠️ Mudar regime/alíquota muda o DRE da empresa inteira → exige 'admin'.
+    const empId = await resolverEmpresaId(user.id, payload.empresa_id);
+    if (!empId || !(await podeNaEmpresa(user.id, empId, 'admin'))) {
+      return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    }
+
     const upd = {
       user_id: user.id,
       grupo_id: user.grupo_ativo,
       ...payload,
+      empresa_id: empId,
       updated_at: new Date().toISOString(),
     };
+    // ⚠️ `onConflict` É `empresa_id`: a migration 090 §4 trocou a PK de
+    // `user_id` pra `empresa_id`, e o upsert ficou apontando pra chave que
+    // não existe mais. Com uma empresa só ninguém percebeu (1 linha na base);
+    // com duas, a config da segunda colidiria com a da primeira.
     const { data, error } = await supabase
-      .from('config_negocio').upsert(upd, { onConflict: 'user_id' }).select().single();
+      .from('config_negocio').upsert(upd, { onConflict: 'empresa_id' }).select().single();
     if (error) throw error;
 
     // Invalida snapshot do mês corrente (mudança de alíquota muda DRE)
     const mes = new Date().toISOString().slice(0, 7) + '-01';
-    await supabase.from('dre_snapshots').delete().eq('user_id', user.id).eq('periodo', mes);
+    await invalidarSnapshot({ empresa_id: empId }, mes);
 
     res.json(data);
   } catch (e) {
@@ -1500,10 +1686,13 @@ router.get('/insights/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    const empId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empId) return res.json([]);
+
     const { data, error } = await supabase
       .from('insights_negocio')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('empresa_id', empId)
       .eq('dispensado', false)
       .order('created_at', { ascending: false })
       .limit(20);
@@ -1514,8 +1703,16 @@ router.get('/insights/:phone', auth, async (req, res) => {
   }
 });
 
+// ⚠️ As duas abaixo também atualizavam por id SEM conferir dono — estrago
+// pequeno (marcar como visto/dispensado), mas a mesma família das três
+// rotas de dinheiro corrigidas acima, então fecham juntas.
 router.post('/insights/:id/visto', auth, async (req, res) => {
   try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!(await linhaAlcancada(user.id, 'insights_negocio', req.params.id, 'leitura'))) {
+      return res.status(404).json({ erro: 'Insight não encontrado.' });
+    }
     await supabase.from('insights_negocio').update({ visto: true }).eq('id', req.params.id);
     res.json({ ok: true });
   } catch (e) {
@@ -1525,6 +1722,11 @@ router.post('/insights/:id/visto', auth, async (req, res) => {
 
 router.post('/insights/:id/dispensar', auth, async (req, res) => {
   try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!(await linhaAlcancada(user.id, 'insights_negocio', req.params.id))) {
+      return res.status(404).json({ erro: 'Insight não encontrado.' });
+    }
     await supabase.from('insights_negocio').update({ dispensado: true }).eq('id', req.params.id);
     res.json({ ok: true });
   } catch (e) {
@@ -1554,14 +1756,17 @@ router.get('/wrapped/:phone', auth, async (req, res) => {
     // Mês anterior pra comparação
     const dAnt = new Date(inicio); dAnt.setMonth(dAnt.getMonth() - 1);
     const periodoAnt = dAnt.toISOString().slice(0, 10);
+    // ⚠️ Por EMPRESA, igual ao snapshot do mês atual logo acima. Estava por
+    // usuário e, com duas empresas, o `maybeSingle()` batia em duas linhas do
+    // mesmo período — o Wrapped comparava com a empresa errada, ou nem vinha.
     const { data: snapAnt } = await supabase
-      .from('dre_snapshots').select('*').eq('user_id', user.id).eq('periodo', periodoAnt).maybeSingle();
+      .from('dre_snapshots').select('*').eq('empresa_id', empWrap).eq('periodo', periodoAnt).maybeSingle();
 
     // Melhor dia do mês (maior receita)
     const { data: eventos } = await supabase
       .from('eventos_financeiros')
       .select('data_evento, valor_bruto, tipo, plataforma, comprador_nome, comprador_email')
-      .eq('user_id', user.id)
+      .eq('empresa_id', empWrap)
       .gte('data_evento', inicio).lt('data_evento', fim)
       .in('tipo', ['venda', 'assinatura_renovacao']);
 
@@ -1670,6 +1875,12 @@ router.get('/conciliacao/conciliadas/:phone', auth, async (req, res) => {
         evento:eventos_financeiros (id, plataforma, produto_nome, comprador_nome, valor_liquido, data_evento),
         transacao:transacoes (id, descricao, observacao, valor, data, carteira_nome)
       `)
+      // ⚠️ AQUI O ESCOPO CONTINUA POR `user_id`, DE PROPÓSITO — é a única
+      // rota da aba que NÃO virou por empresa. A conciliação casa evento do
+      // negócio com `transacoes`, que é o extrato PESSOAL de quem conciliou.
+      // Abrir por empresa entregaria a conta bancária pessoal do dono ao
+      // funcionário do financeiro, que é exatamente o motivo de a equipe de
+      // empresa não reusar o grupo pessoal (ver o cabeçalho da 173).
       .eq('user_id', user.id)
       .order('conciliado_em', { ascending: false })
       .limit(50);
@@ -1683,9 +1894,17 @@ router.get('/conciliacao/conciliadas/:phone', auth, async (req, res) => {
 // DELETE /api/negocios/conciliacao/:id — desfaz conciliação
 router.delete('/conciliacao/:id', auth, async (req, res) => {
   try {
+    // ⚠️ Também apagava por id sem dono. Aqui a checagem é por `user_id` (e
+    // não por empresa) pelo mesmo motivo do GET acima: a conciliação é do
+    // extrato pessoal de quem a fez.
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+
     const { data: row } = await supabase
-      .from('conciliacao_negocio').select('evento_id').eq('id', req.params.id).maybeSingle();
-    if (!row) return res.status(404).json({ erro: 'Conciliação não encontrada.' });
+      .from('conciliacao_negocio').select('evento_id, user_id').eq('id', req.params.id).maybeSingle();
+    if (!row || row.user_id !== user.id) {
+      return res.status(404).json({ erro: 'Conciliação não encontrada.' });
+    }
     await supabase.from('conciliacao_negocio').delete().eq('id', req.params.id);
     await supabase.from('eventos_financeiros')
       .update({ conciliado: false, transacao_id: null })
