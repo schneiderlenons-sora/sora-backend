@@ -227,6 +227,16 @@ router.post('/produtos', auth, async (req, res) => {
       preco: cent(b.preco), custo: cent(b.custo),
       unidade: String(b.unidade || 'un').trim(),
       eh_servico: !!b.eh_servico,
+      // ⚠️ `controla_estoque` ERA DESCARTADO AQUI E NO PUT (relato de cliente,
+      // 25/09/2026). O painel sempre mandou o campo; o insert/update é que não
+      // o listava, então TODO produto nascia com `false` — e como `movimentar`
+      // começa com `if (!produto.controla_estoque) return null`, a compra
+      // recebida não dava entrada, a venda não dava baixa e a tela de Estoque
+      // ficava eternamente em "Nenhum produto com controle de estoque".
+      // Um campo faltando na lista, três sintomas. Mesma família do
+      // `is_reserva_emergencia` (147) e do `parent_id` das categorias.
+      // Serviço nunca controla estoque — não tem prateleira.
+      controla_estoque: !b.eh_servico && !!b.controla_estoque,
       estoque_min: b.estoque_min == null ? null : cent(b.estoque_min),
       foto_url: b.foto_url || null,
     }).select().single();
@@ -244,7 +254,7 @@ router.post('/produtos', auth, async (req, res) => {
 router.put('/produtos/:id', auth, async (req, res) => {
   try {
     const { data: p } = await supabase.from('produtos_negocio')
-      .select('id, empresa_id').eq('id', req.params.id).maybeSingle();
+      .select('id, empresa_id, eh_servico, controla_estoque').eq('id', req.params.id).maybeSingle();
     if (!p) return res.status(404).json({ erro: 'Produto não encontrado.' });
     const ctx = await contexto(req, res, p.empresa_id);
     if (!ctx) return;
@@ -262,13 +272,39 @@ router.put('/produtos/:id', auth, async (req, res) => {
     if (b.estoque_min !== undefined) patch.estoque_min = b.estoque_min == null ? null : cent(b.estoque_min);
     if (b.foto_url    !== undefined) patch.foto_url = b.foto_url || null;
 
+    // ⚠️ O CAMPO QUE FALTAVA — ver o comentário no POST.
+    // ⚠️ `eh_servico` EFETIVO, não o do corpo: quando o painel manda só
+    // `controla_estoque`, o que vale é o que está gravado. Ler `b.eh_servico`
+    // cru daria `undefined` → serviço vira produto por acidente e o estoque
+    // passa a controlar um corte de cabelo.
+    const ehServicoFinal = b.eh_servico !== undefined ? !!b.eh_servico : !!p.eh_servico;
+    if (b.controla_estoque !== undefined || b.eh_servico !== undefined) {
+      const querControlar = b.controla_estoque !== undefined
+        ? !!b.controla_estoque
+        : !!p.controla_estoque;
+      patch.controla_estoque = !ehServicoFinal && querControlar;
+    }
+
     const { data, error } = await supabase.from('produtos_negocio')
       .update(patch).eq('id', req.params.id).select().single();
     if (error) {
       if (/uq_produtos_sku/.test(error.message || '')) return res.status(409).json({ erro: 'Já existe um produto com esse SKU.' });
       throw error;
     }
-    res.json({ ok: true, produto: data });
+
+    // ⚠️ LIGOU O CONTROLE AGORA (false → true): traz o histórico que já está
+    // lançado. Sem isto o produto entraria na aba Estoque zerado mesmo tendo
+    // compra recebida na tela, e a pessoa teria de recadastrar o que já
+    // cadastrou. Só na TRANSIÇÃO — a cada salvar duplicaria a prateleira.
+    let estoque = null;
+    if (patch.controla_estoque === true && !p.controla_estoque) {
+      try {
+        const { reconstruirDoHistorico } = require('../services/estoque');
+        estoque = await reconstruirDoHistorico({ empresaId: ctx.empresa.id, produtoId: p.id });
+      } catch { /* o produto já foi salvo; o acerto manual continua disponível */ }
+    }
+
+    res.json({ ok: true, produto: data, estoque });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 

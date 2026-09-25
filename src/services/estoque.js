@@ -170,7 +170,91 @@ async function recalcular(produtoId) {
   return saldo;
 }
 
+/**
+ * LIGAR O CONTROLE DE ESTOQUE NUM PRODUTO QUE JÁ TEM HISTÓRICO.
+ *
+ * Relato de cliente (25/09/2026): comprou 10 unidades com a compra marcada
+ * como recebida, vendeu 1, e o estoque ficava zerado. A causa era outra (o
+ * `controla_estoque` nunca podia ser gravado — ver routes/negociosOperacao),
+ * mas consertá-la sozinha deixaria o saldo em ZERO mesmo depois de ligado:
+ * `movimentar` recusa produto sem controle, então nada daquele histórico
+ * virou movimento.
+ *
+ * ⚠️ NÃO É ADIVINHAÇÃO — é releitura do que a própria pessoa lançou: entrada
+ * de cada compra RECEBIDA, saída de cada venda não cancelada. No caso do
+ * relato: 10 − 1 = 9. Mandá-la recadastrar compras que já estão na tela seria
+ * cobrar dela pelo nosso defeito.
+ *
+ * ⚠️ EM ORDEM CRONOLÓGICA, sempre: o custo médio móvel depende da ordem, e
+ * processar a venda antes da compra daria custo errado (saldo zero na hora da
+ * saída) — e é número que o dono usa pra formar preço.
+ *
+ * ⚠️ IDEMPOTENTE POR ORIGEM: pula compra/venda que já tem movimento. Ligar,
+ * desligar e ligar de novo não pode duplicar a prateleira.
+ */
+async function reconstruirDoHistorico({ empresaId, produtoId }) {
+  const eventos = [];
+
+  // Compras RECEBIDAS (o que foi só pedido não está na prateleira).
+  const { data: itensC } = await supabase.from('compra_itens')
+    .select('quantidade, custo_unit, compra_id, compras_negocio!inner(id, empresa_id, status, recebida_em, data)')
+    .eq('produto_id', produtoId);
+  for (const i of itensC || []) {
+    const c = i.compras_negocio;
+    if (!c || c.empresa_id !== empresaId || c.status !== 'recebida') continue;
+    eventos.push({
+      data: c.recebida_em || c.data, tipo: 'entrada', motivo: 'compra',
+      quantidade: i.quantidade, custoUnit: i.custo_unit, compraId: i.compra_id,
+    });
+  }
+
+  // Vendas não canceladas. ⚠️ Fiado (pendente) CONTA: a mercadoria saiu da
+  // prateleira mesmo sem o dinheiro ter entrado — são coisas diferentes.
+  const { data: itensV } = await supabase.from('venda_itens')
+    .select('quantidade, custo_unit, venda_id, vendas_negocio!inner(id, empresa_id, status, data)')
+    .eq('produto_id', produtoId);
+  for (const i of itensV || []) {
+    const v = i.vendas_negocio;
+    if (!v || v.empresa_id !== empresaId || v.status === 'cancelada') continue;
+    eventos.push({
+      data: v.data, tipo: 'saida', motivo: 'venda',
+      quantidade: i.quantidade, custoUnit: i.custo_unit, vendaId: i.venda_id,
+    });
+  }
+
+  if (!eventos.length) return { movimentos: 0, saldo: qtd(await saldoReal(produtoId)) };
+
+  // Já existe movimento dessa origem? Então ela já foi contada.
+  const { data: jaTem } = await supabase.from('estoque_movimentos')
+    .select('compra_id, venda_id').eq('produto_id', produtoId);
+  const compras = new Set((jaTem || []).map((m) => m.compra_id).filter(Boolean));
+  const vendas  = new Set((jaTem || []).map((m) => m.venda_id).filter(Boolean));
+
+  eventos.sort((a, b) => String(a.data || '').localeCompare(String(b.data || '')));
+
+  let feitos = 0;
+  for (const e of eventos) {
+    if (e.compraId && compras.has(e.compraId)) continue;
+    if (e.vendaId  && vendas.has(e.vendaId))   continue;
+    try {
+      const r = await movimentar({
+        empresaId, produtoId, tipo: e.tipo, motivo: e.motivo,
+        quantidade: e.quantidade, custoUnit: e.custoUnit,
+        compraId: e.compraId || null, vendaId: e.vendaId || null,
+        data: e.data, observacao: 'Importado ao ligar o controle de estoque',
+      });
+      if (r) feitos++;
+    } catch (err) {
+      // Best-effort: um item problemático não pode travar a reconstrução do
+      // resto — saldo parcial é melhor que nenhum, e o acerto manual existe.
+      console.warn('[estoque] reconstrução falhou:', produtoId, err.message);
+    }
+  }
+
+  return { movimentos: feitos, saldo: qtd(await saldoReal(produtoId)) };
+}
+
 module.exports = {
   custoMedioApos, movimentar, baixarVenda, estornarVenda, entrarCompra,
-  saldoReal, recalcular,
+  saldoReal, recalcular, reconstruirDoHistorico,
 };

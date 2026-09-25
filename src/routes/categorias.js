@@ -45,9 +45,21 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     const grupoId = req.grupoId; // grupo do usuário autenticado (exigirPermissao)
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
     const tipoNorm = ['receita', 'ambos'].includes(tipo) ? tipo : 'despesa';
-    const { data } = await supabase.from('categorias')
+    // ⚠️ O ERRO É LIDO. Era `const { data }` sem `error`: uma falha respondia
+    // **200 com null** e o painel fechava o modal dizendo que criou — a pessoa
+    // ficava sem entender por que a categoria não aparecia. Mesma família das
+    // migrations 121/147 e do PUT logo abaixo, que já foi corrigido; este
+    // ficou para trás.
+    const { data, error } = await supabase.from('categorias')
       .insert({ grupo_id: grupoId, nome, parent_id: parent_id || null, icone: icone || '📦', cor: cor || '#808080', tipo: tipoNorm })
       .select().single();
+    if (error) {
+      // Nome repetido no grupo: o texto diz o que fazer, não o jargão do banco.
+      if (/duplicate key|unique/i.test(error.message || '')) {
+        return res.status(409).json({ erro: `Já existe uma categoria chamada "${nome}".` });
+      }
+      return res.status(500).json({ erro: error.message });
+    }
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
