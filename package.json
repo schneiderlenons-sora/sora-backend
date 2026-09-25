@@ -68,7 +68,8 @@
     "eval:sync-lote": "node evals/syncLote.eval.js",
     "eval:quitacao": "node evals/quitacao.eval.js",
     "eval:ajuste-saldo": "node evals/ajusteSaldo.eval.js",
-    "eval:resolvidas-no-mes": "node evals/resolvidasNoMes.eval.js"
+    "eval:resolvidas-no-mes": "node evals/resolvidasNoMes.eval.js",
+    "eval:acesso-empresa": "node evals/acessoEmpresa.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
