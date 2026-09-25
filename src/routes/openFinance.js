@@ -248,10 +248,27 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
     // "demora pra conectar / pra abrir o link". Responde já; o painel abre o
     // modal na hora e busca a URL em GET /conexoes/:id/autorizar.
     if (id) {
-      await supabase.from('of_conexoes').upsert({
+      const linha = {
         provider: p.provider, external_id: String(id), user_id: req.userId, grupo_id: req.grupoId,
         instituicao: instituicao_nome || String(institution_id), status: (status || 'updating').toLowerCase(),
-      }, { onConflict: 'provider,external_id' });
+      };
+      // ⚠️ OS PRODUTOS FICAM GRAVADOS (migration 175). `criarConsentimento`
+      // tem fallback em cascata e a última tentativa pede SÓ `ACCOUNT` — um
+      // consentimento pode nascer legitimamente autorizado e sem cartão. Antes
+      // isso ia só pro console do Render, e sem o log daquele minuto não havia
+      // como distinguir "o banco não liberou o cartão" de "a Sora não pediu o
+      // cartão". São causas opostas: uma é do provedor, a outra é bug nosso.
+      const paraGravar = (Array.isArray(produtos) && produtos.length) ? produtos
+        : (Array.isArray(produtosPedidos) ? produtosPedidos : null);
+
+      const { error: errUp } = await supabase.from('of_conexoes')
+        .upsert(paraGravar ? { ...linha, produtos: paraGravar } : linha,
+          { onConflict: 'provider,external_id' });
+      // ⚠️ Tolerante à 175 pendente: sem a coluna, regrava sem ela. Conectar o
+      // banco não pode falhar por causa de um campo de diagnóstico.
+      if (errUp) {
+        await supabase.from('of_conexoes').upsert(linha, { onConflict: 'provider,external_id' });
+      }
     }
     res.json({
       ok: true, externalId: String(id), status, urlToAuthenticate,
@@ -328,6 +345,29 @@ router.get('/conexoes', auth, async (req, res) => {
       }
     } catch { /* tolerante: sem isto a tela só perde o aviso, não quebra */ }
 
+    // ── POR QUE o cartão não veio (migration 175) ────────────────────────────
+    //
+    // O bloco acima diz SE veio; este diz POR QUÊ NÃO. São perguntas
+    // diferentes, e era a segunda que faltava: o cliente do relato reconectou
+    // o BTG três vezes, limpou tudo pelo app do banco, e seguia sem saber se o
+    // problema era dele, nosso ou do banco.
+    //
+    // ⚠️ LEITURA SEPARADA E TOLERANTE, nunca no `select` acima: coluna nova em
+    // consulta de caminho crítico derruba a aba INTEIRA no intervalo entre o
+    // deploy e a migration rodar à mão. É a lição registrada no CLAUDE.md.
+    const diag = {};
+    try {
+      const ids = [...new Set((data || []).map((c) => c.external_id).filter(Boolean))];
+      if (ids.length) {
+        const { data: ds, error } = await supabase.from('of_conexoes')
+          .select('external_id, produtos, recursos, recursos_em').in('external_id', ids);
+        if (!error) for (const d of ds || []) diag[d.external_id] = d;
+      }
+    } catch { /* sem a 175 a tela segue igual à de hoje */ }
+
+    // Veredito sobre o cartão — regra em services/statusCartaoOF.js (testada).
+    const { statusCartao } = require('../services/statusCartaoOF');
+
     res.json({
       conexoes: (data || []).map((c) => ({
         ...c,
@@ -335,6 +375,12 @@ router.get('/conexoes', auth, async (req, res) => {
         grupo_nome: nomes[c.grupo_id] || null,
         contas_vinculadas:  vinculos[c.external_id]?.contas  || 0,
         cartoes_vinculados: vinculos[c.external_id]?.cartoes || 0,
+        cartao_status: statusCartao({
+          cartoes: vinculos[c.external_id]?.cartoes || 0,
+          produtos: diag[c.external_id]?.produtos ?? null,
+          recursos: diag[c.external_id]?.recursos ?? null,
+        }),
+        recursos_em: diag[c.external_id]?.recursos_em || null,
       })),
     });
   } catch (err) { res.status(500).json({ erro: err.message }); }

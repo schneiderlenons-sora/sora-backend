@@ -3567,6 +3567,38 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
       status: 'updated', ultima_sync: new Date().toISOString(), ultimo_erro: null,
     }).eq('id', conexao.id);
 
+    // ── O QUE O BANCO DE FATO LIBEROU (migration 175) ──────────────────────
+    //
+    // Relato de cliente (25/09/2026): o cartão do BTG não aparece, e ele já
+    // reconectou três vezes — inclusive limpando tudo pelo app do banco. A
+    // conta vem, o cartão não, e nada na tela explicava por quê. Cada volta
+    // dessas cria um consentimento novo, que a Polp cobra.
+    //
+    // `GET /consents/{id}/resources` responde exatamente essa pergunta: o
+    // status de cada recurso NA INSTITUIÇÃO, consultado em tempo real. É o
+    // que distingue "este banco não expõe esse cartão no Open Finance" de
+    // "está fora no momento" — e a doc é explícita que TEMPORARILY_UNAVAILABLE
+    // pede retry, não aviso ao usuário.
+    //
+    // ⚠️ SÓ QUANDO NENHUM CARTÃO VEIO. É uma chamada por sync, e a Celcoin
+    // dispara o webhook de hora em hora por conexão: consultar sempre seriam
+    // ~1.000 chamadas/dia pra confirmar o óbvio em quem já recebe o cartão.
+    // Aqui ela roda no único caso em que a resposta muda alguma coisa.
+    if (!relatorio.cartoes.length) {
+      try {
+        const rs = await celcoin.listarResources(consentId);
+        const enxuto = (Array.isArray(rs) ? rs : []).map((r) => ({ type: r.type, status: r.status }));
+        const { error } = await supabase.from('of_conexoes')
+          .update({ recursos: enxuto, recursos_em: new Date().toISOString() })
+          .eq('id', conexao.id);
+        if (error) relatorio.avisos.push(`recursos não gravados: ${error.message}`);
+      } catch (e) {
+        // Só funciona com o consentimento AUTHORISED (a doc avisa). Falhar
+        // aqui custa o diagnóstico, nunca o sync.
+        relatorio.avisos.push(`resources: ${e.message}`);
+      }
+    }
+
     // Limite de gasto: com o Open Finance a maior parte das despesas passa a
     // entrar por AQUI, e o alerta de teto não existia neste caminho.
     // Chamado UMA vez no fim do sync, não por transação: a dedup do serviço já
