@@ -27,28 +27,32 @@ const TEMPLATE_RESPOSTA = 'comunicado_sora';
 const CAPA_COMUNICADO = () => process.env.COMUNICADO_CAPA_URL || CAPA();
 
 /**
- * Acrescenta o ponteiro pro painel na resposta enviada por WhatsApp.
+ * O AVISO que vai pelo WhatsApp quando o suporte responde um chamado.
  *
- * ⚠️ POR QUE ISTO EXISTE. A conversa do chamado (`bug_mensagens`, migration
- * 143) já funcionava dos dois lados — e estava VAZIA depois de 56 chamados,
- * porque toda resposta saía por WhatsApp e nunca voltava pro painel. Um
- * cliente descreveu o efeito: "o sistema de chamados não permite organizar as
- * respostas em threads, o que dificulta o acompanhamento de conversas mais
- * longas". A thread existia; ele nunca teve motivo pra abri-la.
+ * ⚠️ INVERTE A DECISÃO ANTERIOR, a pedido do dono (26/09/2026). Até aqui a
+ * resposta ia INTEIRA no WhatsApp, com o argumento de que pergunta curta se
+ * resolve numa frase. Na prática deu o contrário: **o cliente respondia ali
+ * mesmo, no WhatsApp da Sora, e a mensagem nunca chegava ao dono** — aquele
+ * número atende a assistente financeira, não o suporte. A conversa morria num
+ * canal que ninguém lê como caixa de chamado.
  *
- * ⚠️ A RESPOSTA CONTINUA INDO INTEIRA no WhatsApp, de propósito. Reduzi-la a
- * um aviso ("respondemos, abra o painel") pioraria o caso comum, que é uma
- * pergunta curta resolvida numa frase. O ponteiro serve à conversa LONGA, que
- * é justamente a que ele reclamou.
+ * Agora o WhatsApp é só a CAMPAINHA: avisa que existe resposta e manda abrir o
+ * painel, onde a thread vive e onde o "responder" chega a quem deve.
+ *
+ * ⚠️ A RESPOSTA NÃO VAI MAIS NO TEXTO, e isso não é economia de caracteres:
+ * mandar o conteúdo junto é exatamente o que fazia a pessoa responder no lugar
+ * errado. Se o texto voltar pra cá, o problema volta com ele.
  *
  * ⚠️ Sem `\n`: parâmetro de template da Meta não aceita quebra de linha nem
- * tab (o envio falha). Por isso vai na mesma linha.
+ * tab (o envio falha). Por isso vai tudo na mesma linha.
  */
 const LINK_CHAMADOS = () =>
   `${(process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://www.forsora.com').replace(/\/$/, '')}/reportar-bug`;
 
-const comPonteiro = (texto) =>
-  `${String(texto || '').trim()} — a conversa completa deste chamado fica em ${LINK_CHAMADOS()}`;
+const avisoDeResposta = () =>
+  'respondemos seu chamado! A resposta está no seu painel, em '
+  + `${LINK_CHAMADOS()} — responda por lá que eu te leio (aqui no WhatsApp eu `
+  + 'cuido só das suas finanças, e sua mensagem não chega ao suporte).';
 
 // {{1}} do comunicado_sora. Fallback amigável pra nunca sair "Oi, !" — quem não
 // tem nome cadastrado recebe "Oi, tudo bem!", que continua lendo natural.
@@ -81,18 +85,21 @@ router.post('/responder-relato', async (req, res) => {
   if (req.headers['x-admin-secret'] !== secret) return res.status(403).json({ erro: 'nao_autorizado' });
 
   const phone = String(req.body?.phone || '').replace(/\D/g, '');
+  // ⚠️ `texto` NÃO é mais enviado — só serve pra recusar chamada vazia. Quem
+  // guarda a resposta é o painel (`bug_mensagens`); aqui vai só o aviso.
   const texto = String(req.body?.texto || '').trim();
   if (!phone || !texto) return res.status(400).json({ erro: 'phone e texto são obrigatórios' });
   const nome = primeiroNome(req.body?.nome);
 
   const antes = Date.now();
+  const aviso = avisoDeResposta();
   // Com WHATSAPP_PROVIDER=meta vai o TEMPLATE (entrega dentro E fora das 24h).
   await enviarProativo(phone, {
-    // Fallback (Z-API / dentro da janela de 24h). Leva o ponteiro TAMBÉM: os
-    // dois caminhos têm de dizer a mesma coisa, senão a conversa aponta pro
-    // painel só às vezes — e aí ninguém aprende que ele existe.
-    texto: comPonteiro(texto),
-    template: { name: TEMPLATE_RESPOSTA, params: [nome, oneLine(comPonteiro(texto))], opts: { headerImage: CAPA_COMUNICADO() } },
+    // Fallback (Z-API / dentro da janela de 24h). Os dois caminhos dizem a
+    // MESMA coisa: se um deles levasse a resposta inteira, o cliente voltaria
+    // a responder no WhatsApp — e é isso que esta mudança existe pra impedir.
+    texto: aviso,
+    template: { name: TEMPLATE_RESPOSTA, params: [nome, oneLine(aviso)], opts: { headerImage: CAPA_COMUNICADO() } },
   });
 
   const err = getLastSendError();
