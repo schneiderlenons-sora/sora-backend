@@ -14,6 +14,7 @@ const {
 // Moeda base do grupo (migration 168): cotação em real vira a moeda do grupo.
 const { moedaBaseDoGrupo, taxasParaBase, taxaEntre, fatorCotacaoParaBase } = require('../services/moeda');
 const { debitarConta } = require('../services/contaDebito');
+const { custoMensalDividas } = require('../services/custoMensalDividas');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -630,10 +631,32 @@ router.get('/reserva/:phone', auth, exigirPlano('kit', 'premium', 'platinum'), e
       .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
       .gte('data', seisMesesAtras.toISOString().slice(0, 10));
 
-    const totalGastos = (gastos || [])
-      .filter((g) => !ehTransferencia(g))
-      .reduce((s, g) => s + (g.valor || 0), 0);
-    const gastoMedio  = totalGastos / 6;
+    const semTransferencia = (gastos || []).filter((g) => !ehTransferencia(g));
+    const totalGastos = semTransferencia.reduce((s, g) => s + (g.valor || 0), 0);
+    const gastoTransacoes = totalGastos / 6;
+
+    // ── PARCELAS DE DÍVIDA QUE NÃO VIRARAM TRANSAÇÃO ─────────────────────────
+    //
+    // Relato de cliente (26/09/2026): "na parte de conta de reserva ele não
+    // está considerando o que tem em dívidas e parcelas". Na conta dele havia
+    // R$ 6.296,91/mês de financiamento — mais que todo o resto do custo de
+    // vida — sem um único pagamento lançado. Ver `services/custoMensalDividas`
+    // pra por que a regra é estreita (contar em dobro é pior que o bug).
+    //
+    // ⚠️ Leitura TOLERANTE: se falhar, a reserva volta a ser exatamente o que
+    // era. Uma consulta acessória não pode derrubar o card inteiro.
+    let extraDividas = { parcelaMensal: 0, consideradas: [], jaNosGastos: [] };
+    const incluirDividas = config?.incluir_dividas !== false; // default: sim
+    if (incluirDividas) {
+      try {
+        const { data: divs } = await supabase.from('dividas')
+          .select('id, titulo, credor, tipo, origem, status, valor_parcela, parcelas_pagas, parcelas_total')
+          .eq('grupo_id', grupoId);
+        extraDividas = custoMensalDividas({ dividas: divs || [], transacoes: semTransferencia });
+      } catch { /* mantém zerado */ }
+    }
+
+    const gastoMedio  = gastoTransacoes + extraDividas.parcelaMensal;
     const mesesObj    = config?.meses_objetivo || 6;
     const objetivo    = gastoMedio * mesesObj;
     const pct         = objetivo > 0 ? Math.min((valorAtual / objetivo) * 100, 100) : 0;
@@ -646,6 +669,13 @@ router.get('/reserva/:phone', auth, exigirPlano('kit', 'premium', 'platinum'), e
       valorObjetivo:    objetivo,
       percentual:       pct,
       mesesCobertos:    mesesCob,
+      // Composição — é o que permite à tela EXPLICAR o número em vez de só
+      // exibi-lo. Sem isso o cliente veria a meta subir sem saber por quê.
+      gastoTransacoes,
+      incluirDividas,
+      parcelasDividas:  extraDividas.parcelaMensal,
+      dividasNoCusto:   extraDividas.consideradas,
+      dividasJaNosGastos: extraDividas.jaNosGastos.length,
     });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -653,14 +683,30 @@ router.get('/reserva/:phone', auth, exigirPlano('kit', 'premium', 'platinum'), e
 // POST /api/investimentos/reserva/:phone
 router.post('/reserva/:phone', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { meses_objetivo } = req.body;
+    const { meses_objetivo, incluir_dividas } = req.body;
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Grupo não encontrado.' });
 
-    await supabase.from('reserva_emergencia_config').upsert(
-      { grupo_id: grupoId, meses_objetivo: parseInt(meses_objetivo, 10) || 6, updated_at: new Date().toISOString() },
-      { onConflict: 'grupo_id' }
-    );
+    // ⚠️ `meses_objetivo` só entra no patch quando VEIO no corpo. O toggle de
+    // dívidas manda só o próprio campo, e um `|| 6` cego devolveria a meta de
+    // quem escolheu 12 meses para 6 sem ninguém pedir.
+    const patch = { grupo_id: grupoId, updated_at: new Date().toISOString() };
+    if (meses_objetivo !== undefined) patch.meses_objetivo = parseInt(meses_objetivo, 10) || 6;
+    if (incluir_dividas !== undefined) patch.incluir_dividas = incluir_dividas === true;
+
+    const { error } = await supabase.from('reserva_emergencia_config')
+      .upsert(patch, { onConflict: 'grupo_id' });
+
+    // ⚠️ O ERRO É LIDO. `incluir_dividas` vem da migration 176; sem ela o
+    // upsert falha e responder `ok` deixaria a tela dizendo que salvou com o
+    // toggle voltando sozinho no próximo carregamento — a família de bug das
+    // migrations 121/147.
+    if (error) {
+      if (/incluir_dividas/.test(error.message || '')) {
+        return res.status(500).json({ erro: 'Rode a migration 176 (incluir_dividas).' });
+      }
+      return res.status(500).json({ erro: error.message });
+    }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
