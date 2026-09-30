@@ -103,6 +103,22 @@ router.get('/:phone', auth, async (req, res) => {
     const regras = await listarRegras(grupoId);
     if (!regras.length) return res.json([]);
 
+    // ── ?simples=1 — SÓ OS RENOMES, SEM A CONTAGEM ───────────────────────────
+    //
+    // ⚠️ EXISTE PRA NÃO LER AS TRANSAÇÕES DO GRUPO. O painel inteiro precisa
+    // saber de qual texto original cada descrição renomeada veio (é o que faz a
+    // logo da marca personalizada sobreviver ao rename — ver `lib/marca-custom`
+    // no frontend), e isso roda em TODA tela. A contagem abaixo varre o grupo
+    // inteiro: pagá-la a cada visita torraria a cota de egress por um número
+    // que só a tela de gestão de regras mostra.
+    //
+    // Devolve apenas `termo` + `renomear_para`, e só das regras que renomeiam.
+    if (req.query.simples) {
+      return res.json(regras
+        .filter((r) => r.renomear_para)
+        .map((r) => ({ termo: r.termo, renomear_para: r.renomear_para })));
+    }
+
     // Uma leitura só do grupo e a contagem em memória — o mesmo motivo de
     // `aplicarRegrasEmLote` não ir ao banco por linha.
     //
