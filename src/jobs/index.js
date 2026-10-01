@@ -1193,7 +1193,7 @@ cron.schedule('*/15 * * * *', async () => {
     // A pergunta agora é respondida com dado (`created_at` × instante do
     // briefing), não por suposição.
     const ehHoje = c.data === sp.dataStr;
-    if (ehHoje && await briefingCobriuCompromisso(c.user_id, c.created_at, sp.dataStr)) {
+    if (ehHoje && await briefingCobriuCompromisso(c.user_id, c.created_at, sp.dataStr, c.hora, c.lembrete_antecedencia)) {
       await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
       continue;
     }

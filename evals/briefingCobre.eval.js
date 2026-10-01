@@ -19,6 +19,61 @@ const eq = (a, b, m) => { if (a !== b) falhas.push(`${m} (esperado ${JSON.string
 
 const HOJE = '2026-09-30';
 
+console.log('── 0. ⚠️ O SEGUNDO RELATO: hora marcada NUNCA é suprimida ──');
+{
+  // Dados REAIS (01/10/2026): "Ligar para more" às 11:00, aviso 1h antes,
+  // criado às 07:15 — ANTES do briefing das 08:00. A primeira correção
+  // funcionou como projetada e mesmo assim ele não recebeu nada, porque a
+  // premissa de que o briefing substitui o lembrete continuava de pé.
+  //
+  // ⚠️ E a Sora tinha acabado de responder "🔔 Te aviso 1h antes".
+  eq(briefingCobriu({
+    briefingUltimo: '2026-10-01', briefingHorario: '08:00',
+    criadoEm: '2026-10-01T10:15:00Z', // 07:15 em SP
+    hojeStr: '2026-10-01', hora: '11:00', antecedencia: 60,
+  }), false, '⚠️ §0 compromisso COM hora e antecedência: o lembrete TEM de sair');
+
+  // Mesmo criado dias antes, e mesmo com o briefing já enviado.
+  eq(briefingCobriu({
+    briefingUltimo: '2026-10-01', briefingHorario: '08:00',
+    criadoEm: '2026-09-20T12:00:00Z', hojeStr: '2026-10-01',
+    hora: '09:00', antecedencia: 10,
+  }), false, '§0 vale para qualquer antecedência > 0');
+
+  // ⚠️ A PROTEÇÃO CONTRA DUPLICATA CONTINUA, onde ela existia de verdade:
+  // compromisso de DIA TODO (sem hora) com antecedência 0 não diz nada que o
+  // briefing já não tenha dito.
+  eq(briefingCobriu({
+    briefingUltimo: '2026-10-01', briefingHorario: '08:00',
+    criadoEm: '2026-09-30T12:00:00Z', hojeStr: '2026-10-01',
+    hora: null, antecedencia: 0,
+  }), true, '§0 dia todo + sem antecedência: segue suprimido (era a duplicata relatada)');
+
+  // Dia todo MAS com antecedência configurada → sem hora, a antecedência não
+  // tem de quê contar; o briefing segue sendo o canal certo.
+  eq(briefingCobriu({
+    briefingUltimo: '2026-10-01', briefingHorario: '08:00',
+    criadoEm: '2026-09-30T12:00:00Z', hojeStr: '2026-10-01',
+    hora: null, antecedencia: 1440,
+  }), true, '§0 sem hora, segue com o briefing');
+
+  // ⚠️ HORA MARCADA COM ANTECEDÊNCIA 0 TAMBÉM AVISA. "Me avise na hora" é um
+  // pedido tão explícito quanto "1h antes", e "são 11:00, é agora" não é a
+  // mesma informação que o briefing das 08:00 deu.
+  eq(briefingCobriu({
+    briefingUltimo: '2026-10-01', briefingHorario: '08:00',
+    criadoEm: '2026-09-30T12:00:00Z', hojeStr: '2026-10-01',
+    hora: '11:00', antecedencia: 0,
+  }), false, '⚠️ §0 hora marcada + antecedência 0: avisa na hora');
+
+  eq(briefingCobriu({
+    briefingUltimo: '2026-10-01', briefingHorario: '08:00',
+    criadoEm: '2026-09-30T12:00:00Z', hojeStr: '2026-10-01',
+    hora: '09:00', antecedencia: null,
+  }), false, '§0 antecedência ausente não devolve a supressão');
+}
+console.log('  ok');
+
 console.log('── 1. O CASO DO RELATO ──');
 {
   // Criado 08:23 em SP, briefing das 08:00 já tinha saído → NÃO cobriu.

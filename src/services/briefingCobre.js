@@ -61,10 +61,41 @@ function instanteSP(valor) {
  * @param briefingHorario `users.agenda_briefing_horario` ('HH:mm')
  * @param criadoEm        `compromissos.created_at`
  * @param hojeStr         hoje em SP ('YYYY-MM-DD')
- * @returns true só quando o briefing de HOJE já saiu E o compromisso já
- *          existia nele. `true` = pode suprimir o lembrete.
+ * @param hora            `compromissos.hora` ('HH:mm') — null = dia todo
+ * @param antecedencia    `compromissos.lembrete_antecedencia`, em minutos
+ * @returns true só quando o briefing REALMENTE substitui este lembrete.
+ *          `true` = pode suprimir.
  */
-function briefingCobriu({ briefingUltimo, briefingHorario, criadoEm, hojeStr }) {
+function briefingCobriu({ briefingUltimo, briefingHorario, criadoEm, hojeStr, hora, antecedencia }) {
+  // ⚠️ COMPROMISSO COM HORA MARCADA E ANTECEDÊNCIA NUNCA É SUPRIMIDO.
+  //
+  // Segundo relato do mesmo cliente (01/10/2026). Ele marcou "Ligar para more"
+  // às 11:00 com aviso 1h antes, às 07:15 — ou seja, ANTES do briefing das
+  // 08:00. A regra abaixo então dizia "o briefing cobriu" e engolia o lembrete
+  // das 10:00. A primeira correção (compromisso criado DEPOIS do briefing)
+  // funcionou como projetado e mesmo assim ele não recebeu nada: eu tinha
+  // corrigido a borda e deixado a premissa errada de pé.
+  //
+  // A premissa errada é tratar os dois avisos como a mesma coisa. Não são:
+  //   briefing 08:00 → "hoje você tem isto" (panorama do dia)
+  //   lembrete 10:00 → "é daqui a uma hora"  (o aviso acionável)
+  //
+  // E, acima de tudo, a Sora PROMETE o segundo na confirmação, com estas
+  // palavras: "🔔 Te aviso 1h antes". Suprimir é quebrar uma promessa escrita
+  // na tela do cliente — nenhuma economia de mensagem paga por isso.
+  //
+  // ⚠️ A proteção contra DUPLICATA que motivou este código continua de pé,
+  // onde ela de fato existia: compromisso SEM hora (dia todo) cai em 09:00 por
+  // padrão e, com antecedência 0, o lembrete não diz nada que o briefing já não
+  // tenha dito. Esse segue suprimido.
+  // ⚠️ BASTA TER HORA MARCADA. Cheguei a exigir também antecedência > 0, e a
+  // mutação mostrou que a segunda condição não se sustenta: antecedência 0 com
+  // hora quer dizer "me avise NA HORA" — é um pedido tão explícito quanto
+  // "1h antes", e "são 11:00, é agora" não é a mesma informação que o briefing
+  // das 08:00 deu. Quem tem hora marcada é avisado, ponto.
+  const temHora = /^\d{1,2}:\d{2}/.test(String(hora || ''));
+  if (temHora) return false;
+
   // O briefing de hoje ainda não saiu (ou falhou): não há cobertura nenhuma
   // para invocar, então o lembrete tem de sair.
   if (!briefingUltimo || briefingUltimo !== hojeStr) return false;

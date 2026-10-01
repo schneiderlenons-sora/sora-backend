@@ -76,7 +76,8 @@
     "eval:custo-dividas": "node evals/custoMensalDividas.eval.js",
     "eval:agenda-whatsapp": "node evals/agendaWhatsapp.eval.js",
     "eval:briefing-cobre": "node evals/briefingCobre.eval.js",
-    "eval:lembrete-tarefas": "node evals/lembreteTarefas.eval.js"
+    "eval:lembrete-tarefas": "node evals/lembreteTarefas.eval.js",
+    "eval:lembrete-compromisso": "node evals/lembreteCompromisso.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

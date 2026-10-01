@@ -58,7 +58,7 @@ async function briefingLigado(userId) {
 // ─────────────────────────────────────────────────────────────────
 const { briefingCobriu } = require('./briefingCobre');
 
-async function briefingCobriuCompromisso(userId, criadoEm, hojeStr) {
+async function briefingCobriuCompromisso(userId, criadoEm, hojeStr, hora, antecedencia) {
   if (!userId) return false;
   try {
     const { data } = await supabase.from('users')
@@ -70,6 +70,8 @@ async function briefingCobriuCompromisso(userId, criadoEm, hojeStr) {
       briefingHorario: data.agenda_briefing_horario,
       criadoEm,
       hojeStr,
+      hora,
+      antecedencia,
     });
   } catch {
     // Falha de leitura → não afirma cobertura, e o lembrete sai. Perder o
