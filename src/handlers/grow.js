@@ -1,6 +1,9 @@
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarImagem, enviarBotaoLink } = require('../services/mensageiro');
 const { growShareCfg } = require('../services/growShare');
+const {
+  periodoDaFrase, janela: janelaAgenda, montarAgenda,
+} = require('../services/agendaWhatsapp');
 const APP_URL_GROW = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_GROW = process.env.SORA_CAPA_URL || `${APP_URL_GROW}/sora-capa.png`;
 const handleSaude   = require('./saude');
@@ -907,12 +910,14 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   }
 
   // ── AGENDA: hoje / próximos dias ────────────────────────────────────
-  if (/^(minha\s+agenda|agenda(\s+(hoje|semana|da\s+semana|esta\s+semana))?|meus\s+compromissos|compromissos)$/i.test(msg)) {
-    const soHoje = /hoje/i.test(msg);
-    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-    const ate = new Date(hoje); ate.setDate(ate.getDate() + (soHoje ? 0 : 7));
-    const deStr = hoje.toISOString().slice(0, 10);
-    const ateStr = ate.toISOString().slice(0, 10);
+  //
+  // O período (30 dias por padrão, desde 30/09/2026), o fuso e o corte da
+  // mensagem vivem em `services/agendaWhatsapp.js`, com eval. Ver lá por que
+  // nenhum dos três podia ficar inline.
+  const periodo = periodoDaFrase(msg);
+  if (periodo) {
+    const soHoje = periodo.dias === 0;
+    const { de: deStr, ate: ateStr } = janelaAgenda(periodo.dias);
     const { data: comps } = await supabase.from('compromissos')
       .select('titulo, data, hora, local').eq('user_id', user.id)
       .gte('data', deStr).lte('data', ateStr)
@@ -920,25 +925,16 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     if (!comps?.length) {
       await enviarTexto(phone, soHoje
         ? '📅 Você não tem compromissos hoje. Aproveita! 😎'
-        : '📅 Nenhum compromisso nos próximos 7 dias. Pra adicionar, use o painel: *Grow → Agenda*.');
+        : `📅 Nenhum compromisso ${periodo.rotulo}. Pra adicionar, é só me dizer — ex.: *marca dentista terça 15h*.`);
       return;
     }
-    const fmtDia = (s) => {
-      const d = new Date(s + 'T12:00:00');
-      const diff = Math.round((d - hoje) / 86400000);
-      if (diff === 0) return 'Hoje';
-      if (diff === 1) return 'Amanhã';
-      return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' }).replace('.', '');
-    };
-    const grupos = {};
-    for (const c of comps) (grupos[c.data] = grupos[c.data] || []).push(c);
-    const blocos = Object.entries(grupos).map(([dia, lista]) => {
-      const linhas = lista.map(c => `🕐 ${c.hora || 'dia todo'} — ${c.titulo}${c.local ? ` 📍 ${c.local}` : ''}`);
-      return `*${fmtDia(dia)}*\n${linhas.join('\n')}`;
+    const { texto } = montarAgenda({
+      compromissos: comps,
+      hojeStr: deStr,
+      titulo: soHoje ? '📅 *Sua agenda de hoje*' : `📅 *Seus compromissos ${periodo.rotulo}*`,
     });
-    const titulo = soHoje ? '📅 *Sua agenda de hoje*' : '📅 *Próximos compromissos*';
     await enviarBotaoLink(phone, {
-      message: `${titulo}\n\n${blocos.join('\n\n')}`,
+      message: texto,
       label: 'Ver agenda',
       url: `${APP_URL_GROW}/grow/agenda`,
     });

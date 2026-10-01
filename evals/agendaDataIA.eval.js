@@ -46,17 +46,27 @@ console.log('  ok');
 // ── 2. Quando a IA ACERTA, a trava não encosta ─────────────────────────────
 //
 // ⚠️ Importante: a trava não pode "corrigir" o que já estava certo, senão ela
-// vira a nova fonte de bug. Os dois formatos abaixo são os que a IA devolve
-// quando acerta (medidos no modelo real).
+// vira a nova fonte de bug.
 console.log('── 2. IA acertou → não mexe ──');
 {
   const msg = 'Dr.Aluísio Cardiologista, 25/09 às 10:00';
-  for (const cmd of [
+  eq(preservarDataOriginal(msg, 'marca Dr.Aluísio Cardiologista 25/09 10h'),
+    'marca Dr.Aluísio Cardiologista 25/09 10h', 'intacto: a IA devolveu a data igualzinha');
+
+  // ⚠️ ESTA ASSERÇÃO ESTAVA ERRADA E FOI CORRIGIDA, NÃO AFROUXADA. Conferido
+  // em 30/09/2026 com `git stash`: ela já falhava ANTES da leva de mudanças que
+  // a encontrou, ou seja, não é regressão — é expectativa que envelheceu.
+  //
+  // Ela cobrava "dia 25" intacto, tratando-o como acerto da IA. Só que
+  // "dia 25" NÃO equivale a "25/09": falta o MÊS, e quem resolve isso depois é
+  // o parser local, que manda um dia já passado pro mês seguinte. Perguntando
+  // em 30/09, "dia 25" vira 25/OUTUBRO — um mês além do que a pessoa escreveu,
+  // que é exatamente a classe de erro que esta trava existe pra impedir.
+  //
+  // Completar com a data original é o trabalho dela, não um efeito colateral.
+  eq(preservarDataOriginal(msg, 'marca Dr.Aluísio Cardiologista dia 25 10h'),
     'marca Dr.Aluísio Cardiologista 25/09 10h',
-    'marca Dr.Aluísio Cardiologista dia 25 10h',
-  ]) {
-    eq(preservarDataOriginal(msg, cmd), cmd, `intacto: "${cmd}"`);
-  }
+    '⚠️ "dia 25" (sem mês) é COMPLETADO com a data original, não preservado');
 }
 console.log('  ok');
 
