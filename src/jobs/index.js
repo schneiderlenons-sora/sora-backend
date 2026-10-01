@@ -966,6 +966,80 @@ cron.schedule('*/15 * * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1Q — A cada 15 min: lembrete DIÁRIO de TAREFAS em aberto (opt-in)
+//
+// Pedido do cliente que relatou não receber avisos (01/10/2026): "duas
+// condições seriam interessantes: uma com lembrete diário e outra quando o
+// prazo estiver chegando" — e ele mesmo notou que a segunda já existe nos
+// compromissos. Nenhum cron tocava a tabela `tarefas` até aqui.
+//
+// Cópia fiel do JOB 1H (hábitos): mesmo opt-in, mesmo horário em SP, mesma
+// dedup persistida e o mesmo kill-switch. O que entra na lista e em que ordem
+// mora em `services/lembreteTarefas.js`, com eval.
+//
+// ⚠️ TOLERANTE À MIGRATION 177. Sem as colunas, o `select` devolve erro e o
+// job simplesmente não faz nada — nunca derruba os outros crons do mesmo
+// processo. É a lição do `getUser` do Grow.
+//
+// ⚠️ NÃO SUPRIME NADA por causa do briefing matinal. Quem liga os dois pode
+// ver uma tarefa de hoje duas vezes, em horários diferentes e com propósitos
+// diferentes ("o que acontece hoje" × "o que está em aberto"). Suprimir sem
+// conferir cobertura é exatamente o bug que acabamos de corrigir nos
+// compromissos; repetir o padrão aqui seria criar o mesmo defeito de novo.
+// ─────────────────────────────────────────────────────────────────
+const { tarefasDoLembrete, textoDoLembrete, resumoCurto } = require('../services/lembreteTarefas');
+
+cron.schedule('*/15 * * * *', async () => {
+  const sp = agoraSP();
+
+  let usuarios = null;
+  try {
+    const { data, error } = await supabase.from('users')
+      .select('id, phone, grupo_ativo, tarefa_lembrete_horario, tarefa_lembrete_ultimo')
+      .eq('tarefa_lembrete_ativo', true)
+      .not('tarefa_lembrete_horario', 'is', null);
+    if (error) return;      // migration 177 pendente — segue a vida
+    usuarios = data;
+  } catch { return; }
+
+  for (const u of usuarios || []) {
+    if (!u.phone) continue;
+    if (u.tarefa_lembrete_ultimo === sp.dataStr) continue; // já processado hoje
+
+    const [hh, mm] = String(u.tarefa_lembrete_horario).split(':').map(Number);
+    if (isNaN(hh)) continue;
+    if (sp.minutos < hh * 60 + mm) continue; // ainda não chegou o horário
+    if (!(await avisosLigados(u.id))) continue; // kill-switch de avisos
+
+    // Marca ANTES de enviar — evita duplicar se o processo reiniciar.
+    await supabase.from('users').update({ tarefa_lembrete_ultimo: sp.dataStr }).eq('id', u.id);
+
+    // ⚠️ `user_id`, nunca `grupo_id`: tarefa é privada mesmo em gestão
+    // compartilhada (ver "Privacidade do Grow em grupos" no CLAUDE.md).
+    const { data: tarefas } = await supabase.from('tarefas')
+      .select('id, titulo, concluida, data_vencimento, prioridade, created_at')
+      .eq('user_id', u.id).eq('concluida', false);
+
+    const resumo = tarefasDoLembrete({ tarefas: tarefas || [], hojeStr: sp.dataStr });
+    if (resumo.total === 0) continue; // nada em aberto — não enche o saco
+
+    // ⚠️ Literal, como o JOB 1H logo acima. `APP_URL_RESUMO` só é declarado
+    // mais adiante no arquivo: usá-lo aqui compila, carrega e só estoura
+    // (ReferenceError, zona morta do `const`) quando o cron de fato dispara —
+    // ou seja, em produção, com o aviso de alguém sumindo.
+    const url = 'https://www.forsora.com/grow/tarefas';
+    await lembrete(u.phone, textoDoLembrete(resumo, url), resumoCurto(resumo), {
+      id: 'loki', aviso: 'tarefas', seed: u.id,
+      // Sem template dedicado pra `loki.tarefas`, a cadeia cai no
+      // `lembretes_gerais` — que é o modelo que garante a entrega fora da
+      // janela de 24h. Conferido: `templateDoAviso` devolve null e nada quebra.
+      lista: { assunto: 'Suas tarefas em aberto', itens: resumo.itens.map((t) => `${t.titulo}${t.situacao ? ` — ${t.situacao}` : ''}`) },
+    });
+    console.log(`✅ Lembrete de tarefas → ${u.phone} (${resumo.total} em aberto)`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 1G-B — Versículo do dia da BÍBLIA (opt-in por WhatsApp)
 // ~07:00 (fuso SP). Só quem ativou (biblia_versiculo_ativo). Dedup por data
 // (biblia_versiculo_em). Reusa o template lembretes_gerais (sem template novo).

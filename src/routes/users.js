@@ -96,12 +96,16 @@ router.post('/resumos', auth, async (req, res) => {
 const COLS_AVISOS = [
   'avisos_ativos', 'resumo_semanal', 'resumo_mensal',
   'habito_lembrete_ativo', 'habito_lembrete_horario',
+  'tarefa_lembrete_ativo', 'tarefa_lembrete_horario',
   'agenda_briefing_ativo', 'agenda_briefing_horario',
   'lembretes_ativos', 'lembretes_dividas',
 ];
 const DEFAULTS_AVISOS = {
   avisos_ativos: true, resumo_semanal: true, resumo_mensal: true,
   habito_lembrete_ativo: false, habito_lembrete_horario: '21:00',
+  // Migration 177. Nasce desligado; 08:00 porque tarefa em aberto se resolve
+  // DURANTE o dia (o checkup de hábitos, ao contrário, é de noite).
+  tarefa_lembrete_ativo: false, tarefa_lembrete_horario: '08:00',
   agenda_briefing_ativo: false, agenda_briefing_horario: '07:00',
   lembretes_ativos: true, lembretes_dividas: true,
 };
@@ -131,15 +135,32 @@ router.post('/avisos', auth, async (req, res) => {
     const b = req.body || {};
     const patch = {};
     for (const c of ['avisos_ativos', 'resumo_semanal', 'resumo_mensal',
-                     'habito_lembrete_ativo', 'agenda_briefing_ativo',
+                     'habito_lembrete_ativo', 'tarefa_lembrete_ativo', 'agenda_briefing_ativo',
                      'lembretes_ativos', 'lembretes_dividas']) {
       if (typeof b[c] === 'boolean') patch[c] = b[c];
     }
     if (horarioOk(b.habito_lembrete_horario)) patch.habito_lembrete_horario = b.habito_lembrete_horario;
+    if (horarioOk(b.tarefa_lembrete_horario)) patch.tarefa_lembrete_horario = b.tarefa_lembrete_horario;
     if (horarioOk(b.agenda_briefing_horario)) patch.agenda_briefing_horario = b.agenda_briefing_horario;
     if (!Object.keys(patch).length) return res.json({ ok: true });
 
     let { error } = await supabase.from('users').update(patch).eq('id', user_id);
+
+    // ⚠️ UM CAMPO NOVO NÃO PODE DERRUBAR O SALVAMENTO DOS ANTIGOS. O update é
+    // atômico: se `tarefa_lembrete_*` ainda não existe (migration 177 pendente),
+    // o Postgres recusa o patch INTEIRO e as outras preferências que a pessoa
+    // mexeu no mesmo toque se perdem — com a tela dizendo que salvou.
+    // Então: tira só os campos que o banco não conhece e grava o resto.
+    if (error && /tarefa_lembrete/.test(error.message || '')) {
+      const { tarefa_lembrete_ativo, tarefa_lembrete_horario, ...resto } = patch;
+      if (Object.keys(resto).length) {
+        ({ error } = await supabase.from('users').update(resto).eq('id', user_id));
+      } else { error = null; }
+      // E DIZ que faltou — responder `ok` deixaria o toggle voltando sozinho
+      // no próximo carregamento, sem ninguém entender por quê.
+      return res.json({ ok: true, aviso: 'Rode a migration 177 (tarefa_lembrete).' });
+    }
+
     if (error && 'avisos_ativos' in patch) { // pré-migration 055: salva o resto
       const { avisos_ativos, ...resto } = patch;
       if (Object.keys(resto).length) await supabase.from('users').update(resto).eq('id', user_id);
