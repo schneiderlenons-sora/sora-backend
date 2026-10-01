@@ -5,7 +5,7 @@ const supabase  = require('../db/supabase');
 const { enviarTexto, enviarLink, enviarImagem } = require('../services/mensageiro');
 const { criarPendente } = require('../services/pendentes');
 const { garantirCarteira } = require('../services/carteiraGarantida');
-const { avisosLigados, briefingLigado } = require('../services/avisos');
+const { avisosLigados, briefingLigado, briefingCobriuCompromisso } = require('../services/avisos');
 const { resolvidasNoMes: resolvidasDoMes } = require('../services/resolvidasNoMes');
 const { enviarProativo, enviarProativoDetalhado, provedor } = require('../services/proativo');
 const { falar, templateAgente, templateDoAviso, templateLista, aberturaDe } = require('../agentes');
@@ -1076,7 +1076,9 @@ cron.schedule('*/15 * * * *', async () => {
   const ontem   = new Date(); ontem.setDate(ontem.getDate() - 1);
   const amanha2 = new Date(); amanha2.setDate(amanha2.getDate() + 2);
   const { data: comps } = await supabase.from('compromissos')
-    .select('id, grupo_id, user_id, titulo, hora, local, data, lembrete_antecedencia')
+    // `created_at` entra aqui pra responder se o briefing de hoje chegou a
+    // mencionar este compromisso — ver `services/briefingCobre.js`.
+    .select('id, grupo_id, user_id, titulo, hora, local, data, lembrete_antecedencia, created_at')
     .eq('lembrete_ativo', true).eq('lembrete_enviado', false)
     .gte('data', ontem.toISOString().slice(0, 10))
     .lte('data', amanha2.toISOString().slice(0, 10));
@@ -1105,8 +1107,19 @@ cron.schedule('*/15 * * * *', async () => {
     // outra dentro do briefing (bug real relatado). Só suprime quando é HOJE —
     // lembrete de amanhã ("1 dia antes") ou atrasado continua saindo normal,
     // porque o briefing de hoje não fala do de amanhã.
+    //
+    // ⚠️ MAS SÓ SUPRIME O QUE O BRIEFING REALMENTE MENCIONOU. Relato de
+    // cliente (30/09/2026): "não estou recebendo os avisos sobre tarefas ou
+    // lembretes agendados". Reconstruído na conta dele: o briefing saiu às
+    // 08:00, ele criou três compromissos às 08:23 para as 10h e 11h com
+    // lembrete de 1h, e às 09:00 este bloco marcou tudo como enviado sem
+    // enviar nada — em nome de um briefing que havia rodado 23 minutos ANTES
+    // de os compromissos existirem. Ele não recebeu nem um nem outro.
+    //
+    // A pergunta agora é respondida com dado (`created_at` × instante do
+    // briefing), não por suposição.
     const ehHoje = c.data === sp.dataStr;
-    if (ehHoje && await briefingLigado(c.user_id)) {
+    if (ehHoje && await briefingCobriuCompromisso(c.user_id, c.created_at, sp.dataStr)) {
       await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
       continue;
     }

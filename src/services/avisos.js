@@ -42,4 +42,40 @@ async function briefingLigado(userId) {
   return v;
 }
 
-module.exports = { avisosLigados, briefingLigado };
+// ─────────────────────────────────────────────────────────────────
+// briefingCobriuCompromisso(userId, criadoEm, hojeStr)
+//
+// ⚠️ NÃO É `briefingLigado`. "Ligado" só diz que a pessoa recebe briefing;
+// esta diz se o briefing DE HOJE chegou a mencionar ESTE item. A diferença
+// custou o relato de 30/09/2026: compromisso criado 23 minutos depois do
+// briefing teve o lembrete suprimido em nome de uma mensagem que não falava
+// dele — e nada foi avisado. A regra mora em `services/briefingCobre.js`,
+// com eval.
+//
+// Sem cache de propósito: o valor depende do `created_at` do ITEM, não só do
+// usuário, então um cache por `userId` responderia errado para o segundo
+// compromisso da mesma pessoa.
+// ─────────────────────────────────────────────────────────────────
+const { briefingCobriu } = require('./briefingCobre');
+
+async function briefingCobriuCompromisso(userId, criadoEm, hojeStr) {
+  if (!userId) return false;
+  try {
+    const { data } = await supabase.from('users')
+      .select('agenda_briefing_ativo, agenda_briefing_horario, agenda_briefing_ultimo')
+      .eq('id', userId).maybeSingle();
+    if (!data || data.agenda_briefing_ativo !== true || !data.agenda_briefing_horario) return false;
+    return briefingCobriu({
+      briefingUltimo: data.agenda_briefing_ultimo,
+      briefingHorario: data.agenda_briefing_horario,
+      criadoEm,
+      hojeStr,
+    });
+  } catch {
+    // Falha de leitura → não afirma cobertura, e o lembrete sai. Perder o
+    // aviso é justamente o defeito que esta função existe pra corrigir.
+    return false;
+  }
+}
+
+module.exports = { avisosLigados, briefingLigado, briefingCobriuCompromisso };

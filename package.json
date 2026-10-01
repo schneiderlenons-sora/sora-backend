@@ -74,7 +74,8 @@
     "eval:controle-estoque": "node evals/controleEstoque.eval.js",
     "eval:cartao-status": "node evals/cartaoStatus.eval.js",
     "eval:custo-dividas": "node evals/custoMensalDividas.eval.js",
-    "eval:agenda-whatsapp": "node evals/agendaWhatsapp.eval.js"
+    "eval:agenda-whatsapp": "node evals/agendaWhatsapp.eval.js",
+    "eval:briefing-cobre": "node evals/briefingCobre.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
