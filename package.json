@@ -79,7 +79,10 @@
     "eval:lembrete-tarefas": "node evals/lembreteTarefas.eval.js",
     "eval:lembrete-compromisso": "node evals/lembreteCompromisso.eval.js",
     "eval:desfazer-pagamento": "node evals/desfazerPagamentoFatura.eval.js && node evals/desfazerPagamentoRota.eval.js",
-    "eval:aviso-relato": "node evals/avisoRelato.eval.js"
+    "eval:aviso-relato": "node evals/avisoRelato.eval.js",
+    "eval:excedente-conexoes": "node evals/excedenteConexoes.eval.js",
+    "eval:excedente-cron": "node evals/excedenteCron.eval.js",
+    "eval:cobertura-rota": "node evals/coberturaRota.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

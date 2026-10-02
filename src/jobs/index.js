@@ -1040,6 +1040,166 @@ cron.schedule('*/15 * * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// JOB 1R — Todo dia às 10:00 (SP): CONEXÃO DE BANCO ALÉM DO DIREITO
+//
+// Medido em 02/10/2026: 9 contas usando 16 conexões de Open Finance além do que
+// o plano cobre — 5 delas VITALÍCIAS (franquia zero por decisão) e 4 `inativo`.
+// Cada conexão é mensalidade nossa no agregador, sem receita do outro lado.
+//
+// ⚠️ A CAUSA É ESTRUTURAL: a franquia só era checada ao CONECTAR. Cancelar a
+// assinatura da conexão avulsa zera `of_conexoes_pagas` e cair pra `inativo`
+// zera a franquia — e as conexões seguiam vivas. Nada reavaliava.
+//
+// A regra (decisão do dono): AVISAR E DAR 2 DIAS. Este job faz os dois passos:
+// no 1º passe grava o marco e avisa; a partir de 48h, desliga o excedente.
+//
+// ⚠️ A ARITMÉTICA NÃO MORA AQUI. Quem decide estado, prazo e QUAL conexão sai é
+// `services/excedenteConexoes` (com eval + mutação). Desligar o banco de um
+// cliente é irreversível na prática — reconectar cria consentimento novo, que a
+// Polp cobra —, então a decisão não podia ficar solta num cron.
+//
+// ⚠️ KILL SWITCH: `OF_EXCEDENTE_CORTAR=0` mantém o aviso e NÃO desliga nada.
+// Serve pra rodar uma leva de avisos e conferir a reação antes de cortar.
+//
+// ⚠️ TOLERANTE À MIGRATION 179. Sem as colunas o `select` erra e o job não faz
+// nada — nunca derruba os outros crons do mesmo processo.
+// ─────────────────────────────────────────────────────────────────
+const { estadoExcedente, PRAZO_HORAS } = require('../services/excedenteConexoes');
+const { acessoOpenFinance } = require('../config/openFinanceAccess');
+const { desconectarConexao } = require('../services/desconectarConexao');
+
+const CORTAR_EXCEDENTE = process.env.OF_EXCEDENTE_CORTAR !== '0';
+
+cron.schedule('*/15 * * * *', async () => {
+  const sp = agoraSP();
+  if (sp.minutos < 10 * 60 || sp.minutos >= 10 * 60 + 15) return;   // ~10:00 em SP
+
+  // Só quem TEM conexão. Varrer `users` inteiro custaria uma ida por usuário
+  // sem necessidade — o custo do Supabase é número de requisição (CLAUDE.md).
+  let conexoes = null;
+  try {
+    const { data, error } = await supabase.from('of_conexoes')
+      .select('id, user_id, grupo_id, provider, external_id, instituicao, status, ultima_sync, created_at');
+    if (error) return;
+    conexoes = data;
+  } catch { return; }
+  if (!conexoes || !conexoes.length) return;
+
+  // Agrupa por usuário — a franquia é do PLANO DA PESSOA, nunca do grupo (é a
+  // mesma razão pela qual `POST /conectar` conta por user_id: com dois grupos
+  // a franquia era ganha de novo em cada um).
+  const porUsuario = new Map();
+  for (const c of conexoes) {
+    if (!c.user_id) continue;      // legado sem dono: não se mexe no que não se sabe de quem é
+    if (!porUsuario.has(c.user_id)) porUsuario.set(c.user_id, []);
+    porUsuario.get(c.user_id).push(c);
+  }
+
+  for (const [userId, lista] of porUsuario) {
+    try {
+      // `acessoOpenFinance` já resolve allowlist, vitalício (franquia 0) e as
+      // conexões pagas. Reimplementar aqui criaria a 3ª cópia da franquia.
+      const acesso = await acessoOpenFinance(userId);
+      const limite = Number.isFinite(acesso?.limite) ? acesso.limite : null;
+
+      // Marco + dedup do aviso em leitura SEPARADA e tolerante (migration 179).
+      let marco = null, avisadoEm = null, perfil = null;
+      try {
+        const { data, error } = await supabase.from('users')
+          .select('phone, email, of_excedente_desde, of_excedente_avisado')
+          .eq('id', userId).maybeSingle();
+        if (error) continue;       // sem a 179 o job não age — nunca desliga às cegas
+        perfil = data;
+        marco = data?.of_excedente_desde || null;
+        avisadoEm = data?.of_excedente_avisado || null;
+      } catch { continue; }
+
+      const r = estadoExcedente({ limite, conexoes: lista, excedenteDesde: marco });
+
+      // Estado indefinido = não deu pra ler o direito. Não toca em nada.
+      if (r.estado === 'indefinido') continue;
+
+      // ── REGULARIZOU (ou nunca excedeu): limpa o marco ───────────────────────
+      if (r.estado === 'ok') {
+        if (marco) {
+          await supabase.from('users')
+            .update({ of_excedente_desde: null, of_excedente_avisado: null })
+            .eq('id', userId);
+          console.log(`✅ OF excedente regularizado: ${perfil?.email || userId} (${r.usando}/${r.limite})`);
+        }
+        continue;
+      }
+
+      // ── 1º PASSE: grava o marco ANTES de avisar ────────────────────────────
+      //
+      // ⚠️ Antes, não depois. Se o envio falhar ou o processo reiniciar, o
+      // relógio já está correndo a partir de hoje — e o prazo que a tela mostra
+      // é o mesmo que o corte vai usar. Gravando depois, uma falha de rede
+      // reiniciaria o prazo todo dia e o aviso nunca venceria.
+      if (!marco) {
+        await supabase.from('users')
+          .update({ of_excedente_desde: new Date().toISOString() })
+          .eq('id', userId);
+      }
+
+      // ── AVISO (1x por dia) ────────────────────────────────────────────────
+      const hojeAvisado = String(avisadoEm || '').slice(0, 10) === sp.dataStr;
+      if (!hojeAvisado && perfil?.phone && (await avisosLigados(userId))) {
+        await supabase.from('users')
+          .update({ of_excedente_avisado: new Date().toISOString() })
+          .eq('id', userId);
+
+        const horas = marco ? r.horasRestantes : PRAZO_HORAS;
+        const quantas = r.excedente === 1 ? '1 banco conectado' : `${r.excedente} bancos conectados`;
+        const quando = horas >= 24 ? `${Math.floor(horas / 24)} dia${horas >= 48 ? 's' : ''}` : `${horas}h`;
+        const texto = [
+          `Oi! Um aviso sobre o Open Finance da sua conta.`,
+          '',
+          `Você tem ${quantas} além do que o seu plano cobre` +
+            (r.limite === 0 ? ' (o seu plano não inclui conexão de banco).' : ` (ele inclui ${r.limite}).`),
+          '',
+          `Pra manter tudo como está, dá pra contratar a conexão extra por R$ 6/mês. Se preferir, desconecte um banco — o histórico já importado continua na Sora.`,
+          '',
+          `Se nada mudar, em ${quando} ${r.excedente === 1 ? 'a conexão excedente será desligada' : 'as conexões excedentes serão desligadas'}.`,
+          '',
+          'https://www.forsora.com/open-finance',
+        ].join('\n');
+        const core = `Open Finance: ${quantas} além do seu plano. Regularize em ${quando} ou ${r.excedente === 1 ? 'a conexão será desligada' : 'as conexões serão desligadas'}. forsora.com/open-finance`;
+        await lembrete(perfil.phone, texto, core);
+        console.log(`⚠️ OF excedente avisado: ${perfil?.email || userId} — ${r.usando}/${r.limite}, prazo ${r.prazo}`);
+      }
+
+      // ── CORTE, só depois do prazo ─────────────────────────────────────────
+      // ⚠️ `estado !== vencido` e redundante com `!aDesligar.length` (o servico so
+      // popula a lista quando vence) — a mutacao que o remove SOBREVIVE, por ser
+      // equivalente. Fica escrito porque e a afirmacao da regra, e porque quem
+      // mexer no servico depois nao fica com o corte dependendo de um detalhe
+      // interno dele.
+      if (r.estado !== 'vencido' || !r.aDesligar.length) continue;
+      if (!CORTAR_EXCEDENTE) {
+        console.log(`⏸️ OF excedente VENCIDO mas o corte está desligado (OF_EXCEDENTE_CORTAR=0): ${perfil?.email || userId}`);
+        continue;
+      }
+
+      for (const c of r.aDesligar) {
+        // `exigirRevogacao`: só apaga a linha se a Polp confirmar a revogação.
+        // Apagar sem revogar perderia o rastro e a cobrança continuaria — que é
+        // justamente o que este corte existe pra parar.
+        const res = await desconectarConexao({ conexao: c, motivo: 'excedente', exigirRevogacao: true });
+        if (res.ok) {
+          console.log(`🔌 OF excedente DESLIGADO: ${perfil?.email || userId} — ${c.instituicao || c.external_id}`);
+        } else {
+          console.warn(`[of/excedente] revogação falhou (tenta amanhã): ${c.external_id} — ${res.erro}`);
+        }
+      }
+    } catch (e) {
+      // Um usuário com problema não pode parar a varredura dos outros.
+      console.warn('[of/excedente] erro no usuário', userId, e.message);
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────
 // JOB 1G-B — Versículo do dia da BÍBLIA (opt-in por WhatsApp)
 // ~07:00 (fuso SP). Só quem ativou (biblia_versiculo_ativo). Dedup por data
 // (biblia_versiculo_em). Reusa o template lembretes_gerais (sem template novo).

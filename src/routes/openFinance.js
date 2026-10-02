@@ -39,6 +39,10 @@ function exigirConfigurado(req, res, next) {
 // Recurso de assinatura RECORRENTE (Básico 1 conexão, Premium 3). Vitalício
 // fica de fora — cada conexão tem custo mensal nosso no agregador.
 const { acessoOpenFinance } = require('../config/openFinanceAccess');
+// Desconectar é fonte única (rota + cron de excedente) — ver o serviço.
+const { desconectarConexao } = require('../services/desconectarConexao');
+// Quem decide se a conexão ainda está coberta pelo plano (eval + mutação).
+const { estadoExcedente, ordemDeCorte } = require('../services/excedenteConexoes');
 const MSG_SEM_ACESSO = {
   vitalicio: 'O Open Finance faz parte dos planos por assinatura. No plano vitalício você continua lançando pelo WhatsApp e importando extrato (OFX).',
   plano: 'O Open Finance está nos planos Básico e Premium. Assine pra conectar seu banco.',
@@ -306,7 +310,7 @@ router.get('/conexoes', auth, async (req, res) => {
     if (grupoId) filtros.push(`grupo_id.eq.${grupoId}`);
     if (userId) filtros.push(`user_id.eq.${userId}`);
     const { data } = await supabase.from('of_conexoes')
-      .select('external_id, provider, instituicao, status, ultimo_erro, ultima_sync, created_at, grupo_id')
+      .select('external_id, provider, instituicao, status, ultimo_erro, ultima_sync, created_at, grupo_id, user_id')
       .or(filtros.join(',')).order('created_at', { ascending: false });
 
     // Nome do grupo de origem, só das que estão fora daqui.
@@ -368,7 +372,52 @@ router.get('/conexoes', auth, async (req, res) => {
     // Veredito sobre o cartão — regra em services/statusCartaoOF.js (testada).
     const { statusCartao } = require('../services/statusCartaoOF');
 
+    // ── A CONEXÃO AINDA ESTÁ COBERTA PELO PLANO? (migration 179) ─────────────
+    //
+    // A franquia só era checada ao CONECTAR. Depois disso nada reavaliava:
+    // cancelar a assinatura da conexão avulsa zera `of_conexoes_pagas` e cair
+    // pra `inativo` zera a franquia, e as conexões seguiam vivas e cobradas.
+    // Medido em 02/10/2026: 9 contas, 16 conexões além do direito.
+    //
+    // A regra é AVISAR E DAR 2 DIAS (JOB 1R desliga depois do prazo). Aqui a
+    // tela recebe o estado pronto — a aritmética é do serviço, com eval.
+    //
+    // ⚠️ TOLERANTE EM TODO PASSO. Falha de leitura devolve `null` e a aba fica
+    // idêntica à de hoje: dizer "sua conexão vai ser desligada" por causa de um
+    // soluço de rede seria pior que não dizer nada.
+    let cobertura = null;
+    try {
+      const acesso = await acessoOpenFinance(userId);
+      // ⚠️ SÓ AS CONEXÕES DESTE USUÁRIO. A lista acima inclui as do GRUPO (pra
+      // mostrar banco de outro membro), e a franquia é do PLANO DA PESSOA —
+      // contar as dos outros acusaria excedente que não existe.
+      const minhas = (data || []).filter((c) => c.user_id ? c.user_id === userId : false);
+      let marco = null;
+      try {
+        const { data: u, error } = await supabase.from('users')
+          .select('of_excedente_desde').eq('id', userId).maybeSingle();
+        if (!error) marco = u?.of_excedente_desde || null;
+      } catch { /* migration 179 pendente */ }
+      const r = estadoExcedente({
+        limite: Number.isFinite(acesso?.limite) ? acesso.limite : null,
+        conexoes: minhas,
+        excedenteDesde: marco,
+      });
+      if (r.estado !== 'indefinido' && r.excede) {
+        cobertura = {
+          estado: r.estado, limite: r.limite, usando: r.usando,
+          excedente: r.excedente, prazo: r.prazo, horasRestantes: r.horasRestantes,
+          // Quais sairiam, pra tela poder nomeá-las em vez de falar por alto.
+          aDesligar: (r.estado === 'vencido'
+            ? r.aDesligar
+            : [...minhas].sort(ordemDeCorte).slice(0, r.excedente)
+          ).map((c) => c.instituicao || c.external_id),
+        };
+      }
+    } catch { cobertura = null; }
+
     res.json({
+      cobertura,
       conexoes: (data || []).map((c) => ({
         ...c,
         outro_grupo: !!(c.grupo_id && c.grupo_id !== grupoId),
@@ -1252,26 +1301,14 @@ router.delete('/conexoes/:externalId', auth, exigirPermissao('admin', 'escrita')
     const { data: c } = await supabase.from('of_conexoes').select('*')
       .eq('external_id', req.params.externalId).eq('grupo_id', req.grupoId).maybeSingle();
     if (!c) return res.status(404).json({ erro: 'Conexão não encontrada.' });
-    // ⚠️ GUARDA ANTES DE APAGAR (migration 129). A fatura da Polp cobra por
-    // consentimento ativo NO CICLO, então uma conexão que viveu 20 dias e foi
-    // desconectada continua sendo cobrada naquele mês. Sem este registro não
-    // há como conferir a conta deles — foi exatamente o que impediu de explicar
-    // os 35 do painel contra os 24 nossos.
+    // ⚠️ MESMO CAMINHO QUE O CRON DE EXCEDENTE usa (services/desconectarConexao):
+    // histórico guardado, consentimento revogado no provedor, linha apagada.
+    // Duas cópias divergentes deixariam conexão apagada aqui e VIVA na Polp —
+    // cobrada pra sempre, sem nada na tela pra ninguém ver.
     //
-    // Tolerante: se a migration não rodou, a desconexão acontece do mesmo jeito.
-    // Perder o histórico é ruim; impedir o cliente de desconectar o banco é pior.
-    try {
-      await supabase.from('of_conexoes_historico').insert({
-        grupo_id: c.grupo_id, user_id: c.user_id || null,
-        provider: c.provider, external_id: String(c.external_id),
-        instituicao: c.instituicao || null, status_final: c.status || null,
-        criada_em: c.created_at || null, motivo: 'usuario',
-      });
-    } catch { /* migration 129 pendente */ }
-
-    await supabase.from('of_conexoes').delete().eq('id', c.id);
-    // Revoga no provedor CERTO (revogar consentimento na Celcoin, item na Pluggy).
-    await providers.para(c.provider).removerConexao(req.params.externalId);
+    // O padrao (exigirRevogacao: false) preserva a ordem desta rota: apaga primeiro, pra
+    // que o banco saia da tela mesmo se o provedor estiver fora do ar.
+    await desconectarConexao({ conexao: c, motivo: 'usuario' });
     res.json({ ok: true, provider: c.provider });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
