@@ -3,7 +3,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { enviarTexto, enviarImagem } = require('../services/mensageiro');
-const { provedor } = require('../services/proativo');
+const { provedor, enviarProativoDetalhado } = require('../services/proativo');
 const whatsapp = require('../services/whatsapp');
 const { salvarAnexo, assinarLista } = require('../services/bugAnexo');
 
@@ -84,6 +84,23 @@ router.post('/', auth, async (req, res) => {
       `📝 ${mensagem}`,
     ].filter(Boolean).join('\n');
 
+    // ⚠️ CADEIA DE MODELOS, NÃO UM SÓ.
+    //
+    // Relato do dono (02/10/2026): "não recebi nenhuma mensagem dos últimos
+    // relatos de bugs". Medido: os relatos ESTAVAM sendo gravados — 8 em 48h —
+    // ou seja, o insert funciona e quem falhava era o aviso.
+    //
+    // Este bloco chamava `enviarTemplate('novo_relato')` DIRETO. Se o modelo
+    // não existe na WABA atual (ou está pausado, ou mudou de parâmetros), a
+    // Meta recusa, nada chega, e o erro virava um `console.warn` que ninguém
+    // lê. Os crons resolveram isso há tempos com uma cadeia que termina no
+    // `lembretes_gerais` — o modelo que nunca sai da lista porque é ele que
+    // garante a entrega. O canal de SUPORTE tinha ficado de fora.
+    //
+    // ⚠️ SÓ CAI PRO PRÓXIMO QUANDO A FALHA PROVA QUE NADA SAIU (família 132xxx,
+    // a Meta recusando o modelo). Em falha ambígua — timeout, 5xx — a mensagem
+    // pode ter sido entregue, e insistir mandaria o relato duplicado.
+    let avisoOk = false;
     try {
       if (provedor() === 'meta') {
         // corpo do template ({{1}}) — LINHA ÚNICA: a Meta rejeita parâmetro com
@@ -105,17 +122,59 @@ router.post('/', auth, async (req, res) => {
             if (mid) headerImage = mid;
           } catch (e) { console.warn('[/api/bug] upload do print falhou:', e.message); }
         }
-        await whatsapp.enviarTemplate(SUPORTE_PHONE, 'novo_relato', [detalhes], 'pt_BR', { headerImage });
+
+        const fila = [
+          // 1. O modelo dedicado, com o print no cabeçalho.
+          { name: 'novo_relato', params: [detalhes], opts: { headerImage } },
+          // 2. ⚠️ O MESMO MODELO SEM A IMAGEM. Header de imagem é motivo comum
+          //    de recusa (URL que deu 404 fica em cache na Meta — já aconteceu
+          //    com a capa de um agente). Vale tentar antes de desistir dele.
+          { name: 'novo_relato', params: [detalhes], opts: {} },
+          // 3. O que sempre chega. Sem ele, um modelo não aprovado derruba o
+          //    canal inteiro — que é exatamente o que vinha acontecendo.
+          { name: 'lembretes_gerais', params: [detalhes], opts: {} },
+        ];
+
+        for (const tpl of fila) {
+          const r = await enviarProativoDetalhado(SUPORTE_PHONE, { template: tpl });
+          // O `break` aqui é redundante — o da falha ambígua, logo abaixo,
+          // também pararia o laço depois de um sucesso. Fica explícito mesmo
+          // assim: "entregou, acabou" é a intenção, e depender do outro `break`
+          // faria o número de mensagens enviadas virar efeito colateral.
+          if (r?.ok) { avisoOk = true; break; }
+          console.warn(`[/api/bug] modelo "${tpl.name}" não entregou (code ${r?.code ?? '?'})`);
+          // Falha ambígua: pode ter sido entregue. Parar aqui é o que impede o
+          // relato de chegar duas vezes.
+          if (!r?.falhaDeModelo) break;
+        }
       } else if (temImagem) {
         await enviarImagem(SUPORTE_PHONE, imagem, cabecalho);
+        avisoOk = true;
       } else {
         await enviarTexto(SUPORTE_PHONE, cabecalho);
+        avisoOk = true;
       }
     } catch (e) {
       console.warn('[/api/bug] notificação WhatsApp falhou:', e.message);
     }
 
-    res.json({ ok: true, id });
+    // ⚠️ A FALHA DEIXA DE SER INVISÍVEL. Antes ela morria num `console.warn`:
+    // o relato entrava no painel, o aviso não saía, e ninguém tinha como
+    // perceber. Agora fica gravado na própria linha — o /admin pode mostrar
+    // "não avisado" e o erro para de depender de alguém ler log de servidor.
+    //
+    // Gravação TOLERANTE: a coluna vem da migration 178 e, sem ela, tudo
+    // continua funcionando igual (é telemetria, não pode derrubar o relato).
+    try {
+      if (id) {
+        await supabase.from('bug_reports')
+          .update({ avisado_em: avisoOk ? new Date().toISOString() : null })
+          .eq('id', id);
+      }
+    } catch { /* 178 pendente */ }
+    if (!avisoOk) console.error('[/api/bug] ⚠️ RELATO SEM AVISO NO WHATSAPP:', id);
+
+    res.json({ ok: true, id, avisado: avisoOk });
   } catch (err) {
     console.error('[/api/bug] erro:', err);
     res.status(500).json({ erro: 'Não consegui enviar seu relato agora. Tente de novo em instantes.' });

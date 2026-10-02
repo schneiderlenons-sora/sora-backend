@@ -78,7 +78,8 @@
     "eval:briefing-cobre": "node evals/briefingCobre.eval.js",
     "eval:lembrete-tarefas": "node evals/lembreteTarefas.eval.js",
     "eval:lembrete-compromisso": "node evals/lembreteCompromisso.eval.js",
-    "eval:desfazer-pagamento": "node evals/desfazerPagamentoFatura.eval.js && node evals/desfazerPagamentoRota.eval.js"
+    "eval:desfazer-pagamento": "node evals/desfazerPagamentoFatura.eval.js && node evals/desfazerPagamentoRota.eval.js",
+    "eval:aviso-relato": "node evals/avisoRelato.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
