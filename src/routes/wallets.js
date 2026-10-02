@@ -6,6 +6,8 @@ const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta, registrarTransferencia, registrarFaturaExterna } = require('../services/contaDebito');
 const { statusFatura, materializarRollover } = require('../services/faturaRollover');
+const { podeDesfazer, planoDeDesfazer } = require('../services/desfazerPagamentoFatura');
+const { moverSaldo } = require('../services/saldoCarteira');
 const { competenciaAtual, cicloPorCompetencia, competenciaVizinha, hojeSP } = require('../services/cicloFatura');
 const { valorExibido } = require('../services/faturaVista');
 const norm     = p => p?.replace(/\D/g, '');
@@ -418,6 +420,138 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
 
     // Retorna `debito` (1º) pra retrocompat + `debitos` (todos) pro split.
     res.json({ ok: true, debito: debitos[0], debitos });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// =====================================================================
+// GET    /api/wallets/fatura/pagamentos/:phone?cartao_id=&competencia=
+// DELETE /api/wallets/fatura/pagamento/:id
+//
+// Desfazer um pagamento de fatura lançado por engano. Até aqui não existia —
+// nem listar, nem apagar. Ver `services/desfazerPagamentoFatura.js` para por
+// que apagar só o lançamento (o caminho intuitivo) deixa a conta PIOR.
+// =====================================================================
+router.get('/fatura/pagamentos/:phone', auth, async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo;
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+    const cartaoId = req.query.cartao_id;
+    if (!cartaoId) return res.status(400).json({ erro: 'cartao_id obrigatório' });
+
+    let q = supabase.from('pagamentos_fatura')
+      .select('id, competencia, valor, data, transacao_id, created_at')
+      .eq('grupo_id', grupoId).eq('cartao_id', cartaoId)
+      .order('created_at', { ascending: false });
+    if (/^\d{4}-\d{2}$/.test(req.query.competencia || '')) {
+      q = q.eq('competencia', req.query.competencia);
+    }
+    // ⚠️ Tolerante à migration 096: sem a tabela a tela só não mostra a lista,
+    // em vez de quebrar o modal inteiro do cartão.
+    const { data, error } = await q;
+    if (error) return res.json({ pagamentos: [] });
+
+    // De qual conta saiu cada um — é o que a confirmação precisa dizer.
+    const txIds = (data || []).map((p) => p.transacao_id).filter(Boolean);
+    const porTx = {};
+    if (txIds.length) {
+      const { data: txs } = await supabase.from('transacoes')
+        .select('id, carteira_nome').in('id', txIds);
+      for (const t of (txs || [])) porTx[t.id] = t;
+    }
+
+    res.json({
+      pagamentos: (data || []).map((p) => ({
+        ...p,
+        // `null` quando a transação não existe mais (ou nunca existiu, no
+        // pagamento externo) — a tela diz isso em vez de inventar uma conta.
+        conta: p.transacao_id ? (porTx[p.transacao_id]?.carteira_nome ?? null) : null,
+        transacao_existe: p.transacao_id ? !!porTx[p.transacao_id] : false,
+      })),
+    });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.delete('/fatura/pagamento/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const grupoId = req.authUser?.grupoAtivo;
+    if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
+
+    // ⚠️ ESCOPO PELO GRUPO NA PRÓPRIA CONSULTA, nunca só pelo id da URL —
+    // senão qualquer um apaga o pagamento de qualquer conta.
+    const { data: pagamento } = await supabase.from('pagamentos_fatura')
+      .select('id, grupo_id, cartao_id, competencia, valor, transacao_id')
+      .eq('id', req.params.id).eq('grupo_id', grupoId).maybeSingle();
+    if (!pagamento) return res.status(404).json({ erro: 'Pagamento não encontrado.' });
+
+    const { data: cartao } = await supabase.from('wallets')
+      .select('id, nome, of_conta_id').eq('id', pagamento.cartao_id).maybeSingle();
+
+    // Rollover daquela competência — se a sobra já virou lançamento na fatura
+    // seguinte, desfazer aqui deixaria as duas erradas.
+    let rollover = null;
+    try {
+      const { data } = await supabase.from('fatura_rollover')
+        .select('id, status').eq('cartao_id', pagamento.cartao_id)
+        .eq('competencia', pagamento.competencia).maybeSingle();
+      rollover = data || null;
+    } catch { /* tabela pode não existir */ }
+
+    const veredito = podeDesfazer({ pagamento, cartao, rollover });
+    if (!veredito.ok) return res.status(409).json({ erro: veredito.motivo, codigo: veredito.codigo });
+
+    // A transação e a conta de onde saiu.
+    let transacao = null;
+    if (pagamento.transacao_id) {
+      const { data } = await supabase.from('transacoes')
+        .select('id, valor, valor_moeda, carteira_nome')
+        .eq('id', pagamento.transacao_id).eq('grupo_id', grupoId).maybeSingle();
+      transacao = data || null;
+    }
+    let carteira = null;
+    if (transacao?.carteira_nome) {
+      const { data } = await supabase.from('wallets')
+        .select('id, nome, saldo, of_conta_id').eq('grupo_id', grupoId)
+        .ilike('nome', transacao.carteira_nome).maybeSingle();
+      carteira = data || null;
+    }
+
+    const plano = planoDeDesfazer({ pagamento, transacao, carteira });
+
+    // ⚠️ A LINHA DE PAGAMENTO SAI PRIMEIRO, E É ELA QUE SEGURA A CORRIDA.
+    // O delete devolve as linhas afetadas: se vier VAZIO, outro toque já
+    // desfez e paramos aqui — sem isso, dois toques devolveriam o saldo DUAS
+    // vezes, criando dinheiro que nunca existiu.
+    const { data: apagados, error: erroDel } = await supabase
+      .from('pagamentos_fatura').delete()
+      .eq('id', pagamento.id).eq('grupo_id', grupoId).select('id');
+    if (erroDel) return res.status(500).json({ erro: erroDel.message });
+    if (!apagados || !apagados.length) return res.json({ ok: true, jaDesfeito: true });
+
+    // Devolve o saldo ANTES de apagar a transação: se a devolução falhar, o
+    // lançamento ainda está lá e o estado continua explicável.
+    // ⚠️ A guarda `plano.devolverSaldo` é redundante por dois caminhos — o
+    // `valorDevolvido` já vem 0 quando não se deve devolver, e `moverSaldo`
+    // recusa conta de Open Finance por conta própria. Fica assim mesmo, e a
+    // mutação que a remove sobrevive de propósito: é dinheiro, e prefiro a
+    // decisão explícita a depender de dois acidentes felizes.
+    let saldoDevolvido = false;
+    if (plano.devolverSaldo && carteira) {
+      saldoDevolvido = await moverSaldo(carteira, plano.valorDevolvido);
+    }
+    if (plano.apagarTransacao) {
+      await supabase.from('transacoes').delete()
+        .eq('id', transacao.id).eq('grupo_id', grupoId);
+    }
+
+    res.json({
+      ok: true,
+      valor: plano.valorPagamento,
+      competencia: pagamento.competencia,
+      saldoDevolvido,
+      valorDevolvido: saldoDevolvido ? plano.valorDevolvido : 0,
+      conta: carteira?.nome || null,
+      contaDoBanco: plano.contaDoBanco,
+    });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
