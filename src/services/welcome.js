@@ -152,7 +152,22 @@ async function enviarBoasVindas({ user_id, phone, nome, force = false }) {
       const primeiroNome = (nome || 'tudo bem').split(' ')[0];
       // O template 'boas_vindas' tem cabeçalho de IMAGEM (a capa) → precisa mandar
       // a imagem no header, senão a Meta rejeita por parâmetro faltando.
-      await enviarTemplate(phone, 'boas_vindas', [primeiroNome], 'pt_BR', { headerImage: CAPA });
+      //
+      // ⚠️ O RETORNO É LIDO. Ele sempre existiu (`enviarTemplate` devolve
+      // true/false) e era descartado: a marcação de `welcomed_at` logo abaixo
+      // acontecia do mesmo jeito. E como esta função é IDEMPOTENTE por esse
+      // campo, quem não recebeu nunca mais receberia.
+      //
+      // Deixou de ser teórico em 02/10/2026: a conta WhatsApp Business ficou
+      // bloqueada por pagamento pendente (erro 131042) e TODO envio passou a
+      // falhar — enquanto `welcomed_at` seguia sendo gravado. Isso chegou a me
+      // fazer afirmar, medindo a base, que as boas-vindas estavam saindo
+      // normalmente. O campo registrava a TENTATIVA, não a entrega.
+      const ok = await enviarTemplate(phone, 'boas_vindas', [primeiroNome], 'pt_BR', { headerImage: CAPA });
+      if (!ok) {
+        console.error('[welcome] ⚠️ a Meta RECUSOU as boas-vindas de', phone, '— não marco como enviada');
+        return { enviado: false, motivo: 'meta_recusou' };
+      }
     } else {
       // Z-API: capa como banner no topo + a mensagem rica (com os links) na
       // legenda. enviarImagem cai pra texto se a imagem falhar.
