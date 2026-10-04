@@ -50,11 +50,29 @@ async function acessoOpenFinance(userId) {
   // coluna ainda não existir, um select único falharia e o Open Finance sairia
   // do ar pra TODO MUNDO. É a regra do projeto sobre coluna nova em caminho
   // crítico — já derrubou o Grow uma vez.
+  //
+  // ⚠️ E A VALIDADE (`of_conexoes_pagas_ate`, migration 180) VAI NUMA TENTATIVA
+  // PRÓPRIA, COM REFAZ SEM ELA. Um `select` que erra devolve `data: null`, e o
+  // `Number(undefined) || 0` logo abaixo transformaria isso em "pagas = 0" —
+  // ou seja, entre o deploy e a migration rodar à mão, TODO cliente que paga
+  // conexão perderia o Open Finance. A segunda tentativa é o que impede isso.
   let pagas = 0;
   try {
-    const { data: extra } = await supabase.from('users')
-      .select('of_conexoes_pagas').eq('id', userId).maybeSingle();
+    let { data: extra, error } = await supabase.from('users')
+      .select('of_conexoes_pagas, of_conexoes_pagas_ate').eq('id', userId).maybeSingle();
+    if (error) {
+      // migration 180 pendente → lê só a coluna que existe desde a 111
+      ({ data: extra } = await supabase.from('users')
+        .select('of_conexoes_pagas').eq('id', userId).maybeSingle());
+    }
     pagas = Number(extra?.of_conexoes_pagas) || 0;
+
+    // ⚠️ NULL = SEM PRAZO, e é o que a base inteira tem. Só expira quem tem
+    // data gravada: é o caso do período pago cuja assinatura já foi cancelada
+    // (anual), onde não virá evento nenhum do Stripe pra encerrar sozinho.
+    // Data ilegível NÃO expira — na dúvida, mantém o que o cliente pagou.
+    const ate = extra?.of_conexoes_pagas_ate ? Date.parse(extra.of_conexoes_pagas_ate) : null;
+    if (Number.isFinite(ate) && Date.now() > ate) pagas = 0;
   } catch { pagas = 0; }
 
   const plano = data.plano || 'inativo';
