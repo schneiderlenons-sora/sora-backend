@@ -59,7 +59,19 @@ router.get('/ocorrencias/:phone', auth, async (req, res) => {
     const ate = COMPETENCIA.test(req.query.ate || '') ? req.query.ate : null;
 
     let q = supabase.from('transacoes')
-      .select('id, recorrencia_id, competencia, data, valor')
+      // ⚠️ `pago` ENTRA AQUI, e e o que separa "ja paguei" de "a previsao
+      // deste mes ja virou lancamento". Em modo `prever`/`nao_lancar` a
+      // transacao nasce PENDENTE de proposito — ela E a previsao materializada.
+      // Sem este campo o card de Previstos lia toda quitacao como pagamento e
+      // exibia "✓ pago" em conta que nem venceu (relato de out/2026, medido:
+      // Plano de Saude 2026-10 com pago=false).
+      //
+      // ⚠️ NAO FILTRAR POR `pago` AQUI. O Extrato Futuro usa esta MESMA lista
+      // pra nao desenhar a previsao por cima de um lancamento que ja existe
+      // (extrato-futuro.ts: "ja foi paga (vinculo)"). Filtrando, a previsao
+      // voltaria a ser projetada sobre a transacao pendente e o saldo contaria
+      // a conta DUAS vezes. Quem decide e cada tela.
+      .select('id, recorrencia_id, competencia, data, valor, pago')
       .eq('grupo_id', grupoId)
       .not('recorrencia_id', 'is', null);
     if (de)  q = q.gte('competencia', de);
@@ -81,7 +93,7 @@ router.get('/ocorrencias/:phone', auth, async (req, res) => {
 
     const quitacoes = (tx.data || []).map((t) => ({
       recorrenciaId: t.recorrencia_id, competencia: t.competencia,
-      transacaoId: t.id, data: t.data, valor: t.valor,
+      transacaoId: t.id, data: t.data, valor: t.valor, pago: t.pago,
     }));
     const ajustes = (aj.data || []).map((x) => ({
       recorrenciaId: x.recorrencia_id, competencia: x.competencia,
@@ -147,8 +159,14 @@ router.post('/ajuste', auth, exigirPermissao('admin', 'escrita'), async (req, re
     if (!recorrencia_id || !COMPETENCIA.test(competencia || '')) {
       return res.status(400).json({ erro: 'recorrencia_id e competencia (YYYY-MM) sao obrigatorios' });
     }
-    if (!['pulado', 'movido'].includes(status)) {
-      return res.status(400).json({ erro: 'status deve ser pulado ou movido' });
+    // 'valor' = so muda QUANTO esta previsao custa neste mes; ela continua
+    // ABERTA. Pedido de cliente: conta continua que varia (luz, plano de
+    // saude, combustivel) nao cabia em pular (some) nem adiar (muda a data).
+    if (!['pulado', 'movido', 'valor'].includes(status)) {
+      return res.status(400).json({ erro: 'status deve ser pulado, movido ou valor' });
+    }
+    if (status === 'valor' && !(Number(novo_valor) > 0)) {
+      return res.status(400).json({ erro: 'ajustar o valor exige novo_valor maior que zero' });
     }
     if (status === 'movido' && !DIA.test(nova_data || '')) {
       return res.status(400).json({ erro: 'adiar exige nova_data (YYYY-MM-DD)' });
@@ -166,7 +184,17 @@ router.post('/ajuste', auth, exigirPermissao('admin', 'escrita'), async (req, re
       nova_data:  status === 'movido' ? nova_data : null,
       novo_valor: novo_valor != null ? Number(novo_valor) : null,
     }, { onConflict: 'recorrencia_id,competencia' });
-    if (error) return res.status(500).json({ erro: error.message });
+    if (error) {
+      // ⚠️ O CHECK `previsao_ajustes_status_check` recusa `valor` enquanto a
+      // migration 181 nao rodar. Sem esta mensagem a tela fecharia dizendo que
+      // salvou e o numero voltaria sozinho — o defeito das migrations 121/147.
+      const faltaMigration = status === 'valor' && /check constraint/i.test(error.message || '');
+      return res.status(faltaMigration ? 409 : 500).json({
+        erro: faltaMigration
+          ? 'Ajustar o valor da previsao ainda nao esta liberado nesta conta (migration 181 pendente).'
+          : error.message,
+      });
+    }
 
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
