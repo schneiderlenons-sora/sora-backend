@@ -83,7 +83,8 @@
     "eval:excedente-conexoes": "node evals/excedenteConexoes.eval.js",
     "eval:excedente-cron": "node evals/excedenteCron.eval.js",
     "eval:cobertura-rota": "node evals/coberturaRota.eval.js",
-    "eval:conexao-paga-validade": "node evals/conexaoPagaValidade.eval.js"
+    "eval:conexao-paga-validade": "node evals/conexaoPagaValidade.eval.js",
+    "eval:resolver-carteira": "node evals/resolverCarteira.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -193,7 +193,12 @@ async function buscarWalletPadrao(userId) {
 
 // Normaliza texto pra match: lowercase, sem acento
 function normTxt(s) {
-  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  // ⚠️ O `replace(/\s+/g, ' ')` NÃO É COSMÉTICO. Carteira cadastrada com dois
+  // espaços no nome ("INFINITEPAY␣␣AFIAÇÃO" — caso real de cliente) nunca batia
+  // no match exato, porque o que a pessoa digita tem UM espaço. A conta existia,
+  // o nome era idêntico aos olhos, e a Sora respondia "não encontrei a conta".
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ').trim();
 }
 
 // Testa se `trecho` aparece como palavra inteira em `texto`
@@ -312,6 +317,37 @@ async function resolverCarteiraReal(grupoId, nomeInformado, contasInjetadas = nu
     const nome = normTxt(c.nome);
     if (nome && (temPalavra(alvo, nome) || (semRuido && temPalavra(semRuido, nome)))) return c.nome;
   }
+  // 3B) O INVERSO DO PASSO 3: o que a pessoa disse é parte do NOME DA CONTA.
+  //
+  //     ⚠️ ERA O BURACO. O passo 3 cobre "conta nubank" ⊃ "nubank"; faltava
+  //     "nubank" ⊂ "Nubank Crédito", que é como as pessoas falam — ninguém diz
+  //     o sufixo. Medido na conta de um cliente: "nubank", "vendas" e "afiacao"
+  //     devolviam null com as contas "Nubank Crédito", "INFINITEPAY VENDAS" e
+  //     "INFINITEPAY  AFIAÇÃO" cadastradas. É o "não encontrei a conta" do relato.
+  //
+  //     ⚠️ SÓ DECIDE SE FOR ÚNICO, e esta é a trava que torna o passo seguro.
+  //     Com "Nubank" E "Nubank Crédito" na mesma conta, dizer "nubank" casaria
+  //     com as duas — e escolher uma seria lançar no lugar errado em silêncio.
+  //     Duas ou mais candidatas devolve null de propósito: quem chama PERGUNTA
+  //     de qual conta foi, que é o comportamento seguro que já existe.
+  //
+  //     ⚠️ E o caso "Nubank" + "Nubank Crédito" com a pessoa dizendo "nubank"
+  //     nem chega aqui: o passo 1 (exato) já resolveu. Este passo só roda
+  //     quando NENHUM nome bate exatamente.
+  //
+  //     ⚠️ PALAVRA INTEIRA (`temPalavra`), nunca pedaço solto: sem isso "pay"
+  //     casaria com PagBank, PicPay e InfinitePay ao mesmo tempo. E no mínimo 2
+  //     caracteres — com 1, qualquer letra solta viraria candidata.
+  const termo = semRuido || alvo;
+  if (termo.length >= 2) {
+    const dentro = contas.filter((c) => temPalavra(normTxt(c.nome), termo));
+    if (dentro.length === 1) return dentro[0].nome;
+    // ⚠️ Ambíguo NÃO cai no fuzzy abaixo: ele escolheria a de maior
+    // similaridade entre contas que a pessoa não distinguiu, e um palpite aqui
+    // é dinheiro lançado na conta errada.
+    if (dentro.length > 1) return null;
+  }
+
   // 4) fuzzy (typos): melhor similaridade acima de um limiar ALTO. Abaixo disso
   //    NÃO chuta (retorna null) — quem chama vai perguntar de qual conta foi.
   const base = semRuido || alvo;
