@@ -27,6 +27,7 @@ async function getGrupoId(req) {
 // A aritmética do aporte e a trava de Open Finance moram no service — puras e
 // cobertas por `npm run eval:aporte`. A rota só orquestra.
 const { aplicarAporte, recusaSeDoBanco } = require('../services/aporteInvestimento');
+const { planoDeAtualizarValor } = require('../services/valorInvestimento');
 
 // ── BUSCAS PÚBLICAS DE COTAÇÃO ───────────────────────────────────
 
@@ -231,6 +232,44 @@ router.post('/', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissa
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+/**
+ * PUT /api/investimentos/:id/valor — "meu CDB rendeu, o valor hoje é X".
+ *
+ * ⚠️ EXISTE SEPARADA DO PUT GENÉRICO DE PROPÓSITO. Aqui o `valor_aportado` não
+ * é nem lido do corpo: ele é quanto a pessoa colocou do bolso, e mexer nele
+ * apagaria o lucro em vez de registrá-lo. O PUT genérico aceita os dois campos
+ * porque serve a outros usos (correção de cadastro); esta rota não dá essa
+ * chance a um payload malformado.
+ *
+ * ⚠️ Renda fixa (CDB, LCI, Tesouro) não tem cotação pública, então era o ÚNICO
+ * tipo sem caminho nenhum: ficava parado no valor de cadastro para sempre.
+ */
+router.put('/:id/valor', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { data: inv, error: erroLer } = await supabase.from('investimentos')
+      .select('id, nome, ticker, valor_aportado, valor_atual, of_id, origem')
+      .eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+    // ⚠️ Falha de LEITURA não vira "não encontrado": responder 404 faria a tela
+    // dizer que o investimento sumiu por causa de um soluço de rede.
+    if (erroLer) return res.status(500).json({ erro: `Não consegui ler o investimento: ${erroLer.message}` });
+    if (!inv) return res.status(404).json({ erro: 'Investimento não encontrado.' });
+
+    const recusa = recusaSeDoBanco(inv, 'ajuste de valor');
+    if (recusa) return res.status(409).json(recusa);
+
+    const plano = planoDeAtualizarValor(inv, req.body?.valor_atual);
+    if (plano.erro) return res.status(400).json({ erro: plano.erro, motivo: plano.motivo });
+
+    // ⚠️ O erro do update é LIDO. Descartá-lo responderia 200 com null e a tela
+    // fecharia dizendo que salvou — o defeito das migrations 121 e 147.
+    const { data, error } = await supabase.from('investimentos')
+      .update(plano.patch).eq('id', inv.id).eq('grupo_id', req.grupoId).select().single();
+    if (error) return res.status(500).json({ erro: `Não consegui atualizar: ${error.message}` });
+
+    res.json({ ok: true, investimento: data, temporario: plano.temporario });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // PUT /api/investimentos/:id
 // Mesmo problema do POST: o `error` era descartado e a edição "sumia" sem aviso.
 router.put('/:id', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermissao('admin', 'escrita'), async (req, res) => {
@@ -244,6 +283,23 @@ router.put('/:id', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPermis
     const update = {};
     campos.forEach(c => { if (req.body[c] !== undefined) update[c] = req.body[c]; });
     if (!Object.keys(update).length) return res.status(400).json({ erro: 'Nada para atualizar.' });
+
+    // ⚠️ A TRAVA DO OPEN FINANCE FALTAVA AQUI. Aporte e resgate já a tinham;
+    // o PUT não — e `upsertInvestimento` regrava quantidade, preço e valores a
+    // cada sync, então a edição sumiria sozinha no dia seguinte. Medido: 632
+    // dos 700 investimentos da base vêm do OF, ou seja, era quase todo mundo.
+    //
+    // ⚠️ `is_reserva_emergencia` e `meta_id` CONTINUAM LIBERADOS: são marcações
+    // NOSSAS, o sync não as toca, e barrá-las quebraria a aba Reserva — que só
+    // funciona porque a pessoa marca um investimento do banco como reserva
+    // (migrations 147 e seguintes).
+    const soNossas = Object.keys(update).every((c) => c === 'is_reserva_emergencia' || c === 'meta_id');
+    if (!soNossas) {
+      const { data: alvo } = await supabase.from('investimentos')
+        .select('id, of_id, origem').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+      const recusa = recusaSeDoBanco(alvo, 'ajuste');
+      if (recusa) return res.status(409).json(recusa);
+    }
 
     const { data, error } = await supabase.from('investimentos')
       .update(update).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();

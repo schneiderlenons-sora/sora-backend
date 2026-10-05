@@ -84,7 +84,8 @@
     "eval:excedente-cron": "node evals/excedenteCron.eval.js",
     "eval:cobertura-rota": "node evals/coberturaRota.eval.js",
     "eval:conexao-paga-validade": "node evals/conexaoPagaValidade.eval.js",
-    "eval:resolver-carteira": "node evals/resolverCarteira.eval.js"
+    "eval:resolver-carteira": "node evals/resolverCarteira.eval.js",
+    "eval:valor-investimento": "node evals/valorInvestimento.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
