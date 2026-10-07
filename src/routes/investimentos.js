@@ -49,6 +49,46 @@ const { planoDeAtualizarValor } = require('../services/valorInvestimento');
 router.get('/diag-cotacao', async (req, res) => {
   if (req.query.key !== process.env.API_SECRET_TOKEN) return res.sendStatus(403);
 
+  // ── SONDA DE CRIPTO: ?cripto=bitcoin,ethereum ─────────────────────────────
+  //
+  // Cripto não passa nem pelo Yahoo nem pela brapi — é CoinGecko. Medido na
+  // base: 7 posições com dinheiro de verdade e valor visivelmente errado (ETH
+  // a R$ 0,45 com R$ 452 aportados). Esta sonda diz se a CoinGecko responde
+  // DAQUI, e compara com a cripto da brapi, que já temos token.
+  if (req.query.cripto) {
+    const moedas = String(req.query.cripto).split(',').map((m) => m.trim()).filter(Boolean);
+    const saida = [];
+    for (const m of moedas) {
+      const linha = { moeda: m };
+
+      const t1 = Date.now();
+      try {
+        const c = await buscarCotacaoCripto(m.toLowerCase());
+        linha.pelaSora = { ms: Date.now() - t1, preco: c?.precoAtual ?? null };
+      } catch (e) { linha.pelaSora = { erro: e?.message || String(e) }; }
+
+      const t2 = Date.now();
+      try {
+        const r = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(m.toLowerCase())}&vs_currencies=brl`);
+        const txt = await r.text();
+        linha.coingeckoCru = { status: r.status, ms: Date.now() - t2, trecho: txt.slice(0, 160) };
+      } catch (e) { linha.coingeckoCru = { erro: e?.message || String(e) }; }
+
+      const t3 = Date.now();
+      try {
+        const h = {};
+        if (process.env.BRAPI_TOKEN) h.Authorization = `Bearer ${process.env.BRAPI_TOKEN}`;
+        const sigla = { bitcoin: 'BTC', ethereum: 'ETH', pepe: 'PEPE', solana: 'SOL' }[m.toLowerCase()] || m.toUpperCase();
+        const r = await fetch(`https://brapi.dev/api/v2/crypto/quote?coin=${sigla}&currency=BRL`, { headers: h });
+        const txt = await r.text();
+        linha.brapiCripto = { sigla, status: r.status, ms: Date.now() - t3, trecho: txt.slice(0, 200) };
+      } catch (e) { linha.brapiCripto = { erro: e?.message || String(e) }; }
+
+      saida.push(linha);
+    }
+    return res.json({ ambiente: process.env.RENDER ? 'render' : 'local', cripto: saida });
+  }
+
   // ── MODO SIMULAÇÃO: ?simular=<email> ──────────────────────────────────────
   //
   // ⚠️ POR QUE SIMULAR EM VEZ DE CLICAR NO BOTÃO. Pra provar que "Atualizar
@@ -81,7 +121,14 @@ router.get('/diag-cotacao', async (req, res) => {
         ? await buscarCotacaoCripto(inv.ticker.toLowerCase())
         : await buscarCotacaoAcao(inv.ticker);
       if (!c || c.precoAtual == null) {
-        linhas.push({ ticker: inv.ticker, tipo: inv.tipo, falhou: buscarCotacaoAcao.ultimoErro || 'sem_cotacao' });
+        // ⚠️ CRIPTO NAO PASSA PELO buscarCotacaoAcao, então o `ultimoErro` dele
+        // estaria SUJO da iteração anterior. Ler o motivo errado foi o que me
+        // fez ver "bloqueio_ip" em cripto e quase diagnosticar o Yahoo por um
+        // problema da CoinGecko.
+        linhas.push({
+          ticker: inv.ticker, tipo: inv.tipo,
+          falhou: inv.tipo === 'Cripto' ? 'cripto_sem_preco' : (buscarCotacaoAcao.ultimoErro || 'sem_cotacao'),
+        });
         continue;
       }
       const fator = fatorCotacaoParaBase(c.moeda, base, await taxasParaBase([c.moeda], base));
