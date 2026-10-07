@@ -13,8 +13,43 @@ try { yahooFinance.suppressNotices(['yahooSurvey']); } catch {}
 // os dados que vieram (que estão certos).
 const SEM_VALIDACAO = { validateResult: false };
 
+// ─── A B3 VAI PELA BRAPI ────────────────────────────────────────────────────
+//
+// ⚠️ MEDIDO DE DENTRO DO RENDER (07/10/2026), que é o único lugar que conta:
+//
+//     Yahoo  →  429 "Too Many Requests" em 20ms   (recusa de IP de nuvem)
+//     brapi  →  200 · PETR4 R$ 54,33 em 170ms
+//
+// Os 20ms provam que não é limite de volume nosso — é bloqueio de faixa. O
+// recurso estava morto em produção para TODOS os usuários (busca de ativo,
+// cadastro, botão "Atualizar cotações" e o cron das 03:00) enquanto passava em
+// qualquer teste local. Medir na máquina errada custou uma rodada inteira.
+//
+// ⚠️ O YAHOO FICA, não some: ele é a única fonte para ativo de FORA da B3
+// (AAPL e afins), que a brapi não cobre. Hoje ele responde 429 no Render, então
+// internacional segue sem cotação automática — mas quando o bloqueio passar,
+// volta sozinho, sem deploy.
+const { cotacaoBrapi, buscarTickersBrapi, ehTickerBR } = require('./cotacaoBrapi');
+
 /** Espera o tempo pedido, em ms. */
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Este erro é recusa de IP (429/403), e não um soluço de rede?
+ *
+ * ⚠️ Lido da MENSAGEM porque a lib não expõe o status de forma confiável: o
+ * erro que o Render devolve é `Failed to get crumb, status 429` — o 429 veio na
+ * etapa do crumb, dentro da lib, e `err.response` chega indefinido. Procurar só
+ * em `err.response.status` deixaria passar justamente o caso real.
+ */
+function ehBloqueio(err) {
+  const s = Number(err?.response?.status ?? err?.status);
+  if (s === 429 || s === 403) return true;
+  const msg = String(err?.message || '').toLowerCase();
+  // Numero cercado por nao-digito, pra "4290" nao passar por 429.
+  if (/(^|[^0-9])(429|403)([^0-9]|$)/.test(msg)) return true;
+  return msg.includes('too many requests') || msg.includes('forbidden');
+}
 
 /**
  * Cotação de ação/FII/ETF, com RETRY.
@@ -39,6 +74,25 @@ const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
  *   ultimoErro guarda o motivo pra quem quiser diferenciar (ver /cotacao).
  */
 async function buscarCotacaoAcao(ticker) {
+  // Papel da B3 → brapi. É o caminho de 99% da base (os tickers gravados são
+  // quase todos .SA), e é o único que responde do Render hoje.
+  if (ehTickerBR(ticker)) {
+    const c = await cotacaoBrapi(ticker);
+    if (c) {
+      buscarCotacaoAcao.ultimoErro = null;
+      return c;
+    }
+    // ⚠️ MISSING_TOKEN é problema NOSSO (falta `BRAPI_TOKEN` no Render), não do
+    // ativo — sem este log ele viraria "não achei a cotação" na cara do cliente
+    // e ninguém descobriria. Medido: sem token, PETR4 e VALE3 respondem, mas
+    // BOVA11 (ETF) e MXRF11 (FII) voltam MISSING_TOKEN.
+    const motivo = cotacaoBrapi.ultimoErro;
+    if (motivo && motivo !== 'sem_resultado') {
+      console.error(`[cotacoes] brapi ${ticker}: ${motivo}`);
+    }
+    // Cai pro Yahoo: se a brapi falhou por rede, ele ainda pode salvar.
+  }
+
   let erro = null;
   for (let tentativa = 0; tentativa < 3; tentativa++) {
     try {
@@ -59,6 +113,15 @@ async function buscarCotacaoAcao(ticker) {
     } catch (err) {
       erro = err;
       console.warn(`[cotacoes] yahoo ${ticker} (tentativa ${tentativa + 1}/3):`, err.message);
+      // ⚠️ CONTRA 429 NÃO SE INSISTE. O retry foi feito pra soluço de rede, que
+      // passa; bloqueio de IP não passa em 300ms — insistir só gasta 1,2s do
+      // usuário PARADO na tela esperando o preço, e mais três batidas na porta
+      // de quem já nos recusou. Medido no Render: o 429 volta em 20ms, sempre.
+      if (ehBloqueio(err)) {
+        buscarCotacaoAcao.ultimoErro = 'bloqueio_ip';
+        console.error(`[cotacoes] yahoo ${ticker}: IP recusado (429/403) — não insisto`);
+        return null;
+      }
       if (tentativa < 2) await dormir(300 * (tentativa + 1));
     }
   }
@@ -78,6 +141,12 @@ async function buscarDividendos(ticker, dataInicio) {
 }
 
 async function buscarTickers(query) {
+  // ⚠️ A BUSCA MORRE PELO MESMO 429 — é recusa de IP, não de endpoint. Sem a
+  // brapi aqui o cliente não consegue nem ACHAR o papel pra cadastrar, e o
+  // campo de digitar o ticker à mão (que adicionamos) é remendo de sintoma.
+  const b = await buscarTickersBrapi(query);
+  if (b.length) return b;
+
   try {
     const results = await yahooFinance.search(query, { quotesCount: 10, newsCount: 0 }, SEM_VALIDACAO);
     return (results.quotes || []).slice(0, 10).map(r => ({
@@ -236,6 +305,7 @@ async function taxaParaBRL(moeda) {
 
 module.exports = {
   buscarCotacaoAcao,
+  ehBloqueio, // exportado pro eval: e a linha que decide se insistimos ou nao
   buscarDividendos,
   buscarTickers,
   buscarCotacaoCripto,

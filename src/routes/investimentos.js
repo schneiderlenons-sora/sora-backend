@@ -97,7 +97,26 @@ router.get('/diag-cotacao', async (req, res) => {
     brapi = { status: r.status, ms: Date.now() - t0, comToken: !!process.env.BRAPI_TOKEN, preco, trecho: txt.slice(0, 180) };
   } catch (e) { brapi = { erro: e?.message || String(e) }; }
 
-  res.json({ ambiente: process.env.RENDER ? 'render' : 'local', node: process.version, tickers: saida, chamadaDireta: direto, brapi });
+  // A BUSCA de ticker vai pelo mesmo caminho e sofre do mesmo 429 — sem ela o
+  // cliente não acha o papel pra cadastrar. Medir as duas numa chamada só.
+  let busca = null;
+  try {
+    const { buscarTickers } = require('../services/cotacoes');
+    const t0 = Date.now();
+    const r = await buscarTickers(String(req.query.q || 'petr'));
+    busca = { ms: Date.now() - t0, quantos: r.length, primeiro: r[0] || null };
+  } catch (e) { busca = { erro: e?.message || String(e) }; }
+
+  // O que o fluxo REAL devolve hoje — é o número que o cliente vê na tela.
+  let fluxoReal = null;
+  try {
+    const { buscarCotacaoAcao } = require('../services/cotacoes');
+    const t0 = Date.now();
+    const c = await buscarCotacaoAcao(tickers[0] || 'PETR4.SA');
+    fluxoReal = { ticker: tickers[0] || 'PETR4.SA', ms: Date.now() - t0, preco: c?.precoAtual ?? null, nome: c?.nomeCompleto || null, motivo: buscarCotacaoAcao.ultimoErro ?? null };
+  } catch (e) { fluxoReal = { erro: e?.message || String(e) }; }
+
+  res.json({ ambiente: process.env.RENDER ? 'render' : 'local', node: process.version, fluxoReal, busca, brapi, yahooPelaLib: saida, yahooDireto: direto });
 });
 
 // GET /api/investimentos/buscar-ticker?q=PETR
@@ -148,7 +167,13 @@ router.get('/cotacao', auth, async (req, res) => {
       // relato leu a segunda como se fosse a primeira, concluindo que a Sora
       // "não consegue ler a cotação". Com o motivo, a tela pode oferecer
       // "tentar de novo" em vez de mandar preencher à mão.
-      const motivo = buscarCotacaoAcao.ultimoErro === 'falha_rede' ? 'falha_temporaria' : 'sem_cotacao';
+      // ⚠️ 'bloqueio_ip' ENTRA AQUI JUNTO COM A FALHA DE REDE. Ele não é 'este
+      // papel não tem cotação' — o papel tem; quem nos recusou foi o provedor.
+      // Dizer 'não tem cotação' seria mentir sobre o ativo e mandar o cliente
+      // preencher à mão para sempre.
+      const falhou = buscarCotacaoAcao.ultimoErro === 'falha_rede'
+                  || buscarCotacaoAcao.ultimoErro === 'bloqueio_ip';
+      const motivo = falhou ? 'falha_temporaria' : 'sem_cotacao';
       return res.json({ motivo });
     }
     const moeda = c.moeda || 'BRL';
