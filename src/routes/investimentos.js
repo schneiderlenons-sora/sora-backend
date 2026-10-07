@@ -73,7 +73,15 @@ router.get('/cotacao', auth, async (req, res) => {
     }
 
     const c = await buscarCotacaoAcao(ticker);
-    if (c?.precoAtual == null) return res.json({});
+    if (c?.precoAtual == null) {
+      // ⚠️ DIZ POR QUE NÃO VEIO. A tela mostrava a mesma frase para "este papel
+      // não tem cotação" e para "a chamada falhou agora" — e o cliente do
+      // relato leu a segunda como se fosse a primeira, concluindo que a Sora
+      // "não consegue ler a cotação". Com o motivo, a tela pode oferecer
+      // "tentar de novo" em vez de mandar preencher à mão.
+      const motivo = buscarCotacaoAcao.ultimoErro === 'falha_rede' ? 'falha_temporaria' : 'sem_cotacao';
+      return res.json({ motivo });
+    }
     const moeda = c.moeda || 'BRL';
     if (moeda === 'BRL') {
       return res.json({ precoBRL: c.precoAtual, moeda: 'BRL', variacaoDia: c.variacaoDia ?? 0, ...(await naBase(c.precoAtual)) });
@@ -90,7 +98,11 @@ router.get('/cotacao', auth, async (req, res) => {
       ...(moeda === base ? jaNaBase : await naBase(c.precoAtual * taxa, taxa)),
     });
   } catch (err) {
-    res.json({});
+    // ⚠️ ERA MUDO. Qualquer falha aqui virava `{}` e, na tela, "não achei a
+    // cotação" — sem nenhum rastro de qual foi o problema. Quando um cliente
+    // relatou exatamente isso, não havia log nenhum pra consultar.
+    console.error('[investimentos/cotacao]', req.query?.ticker, '—', err.message);
+    res.json({ motivo: 'falha_temporaria' });
   }
 });
 

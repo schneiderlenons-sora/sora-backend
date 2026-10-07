@@ -13,21 +13,58 @@ try { yahooFinance.suppressNotices(['yahooSurvey']); } catch {}
 // os dados que vieram (que estão certos).
 const SEM_VALIDACAO = { validateResult: false };
 
+/** Espera o tempo pedido, em ms. */
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Cotação de ação/FII/ETF, com RETRY.
+ *
+ * ⚠️ O RETRY EXISTE POR UM RELATO REAL (out/2026): um cliente selecionou
+ * "PETR4.SA" na busca — ou seja, o ticker FOI encontrado — e mesmo assim a tela
+ * respondeu "não achei a cotação automática". Medido depois, na mesma conta e
+ * no mesmo ticker: a cotação voltou normalmente (R$ 54,16), e 12 chamadas em
+ * paralelo deram 12 acertos. Ou seja, a falha dele foi TRANSITÓRIA — e uma
+ * única tentativa transformava um soluço de rede em "este recurso não funciona".
+ *
+ * ⚠️ DUAS TENTATIVAS EXTRAS, com espera curta. O usuário está PARADO na tela
+ * esperando o preço aparecer: um backoff longo seria pior que a falha, porque
+ * ele desiste antes. ~1,2s no pior caso.
+ *
+ * ⚠️ DISTINGUE "não existe" de "falhou". O Yahoo responder SEM preço é uma
+ * resposta ("este papel não tem cotação") e não se repete; erro de rede/429 é
+ * falha e vale tentar de novo. Tratar os dois igual é o que fazia a tela dizer
+ * a mesma frase nos dois casos.
+ *
+ * @returns {Promise<Object|null>} a cotação, ou null. Em null, a propriedade
+ *   ultimoErro guarda o motivo pra quem quiser diferenciar (ver /cotacao).
+ */
 async function buscarCotacaoAcao(ticker) {
-  try {
-    const quote = await yahooFinance.quote(ticker, {}, SEM_VALIDACAO);
-    if (!quote) return null;
-    return {
-      precoAtual:   quote.regularMarketPrice ?? null,
-      variacaoDia:  quote.regularMarketChangePercent ?? 0,
-      moeda:        quote.currency || 'BRL',
-      nomeCompleto: quote.longName || quote.shortName || ticker,
-      setor:        quote.sector || null,
-    };
-  } catch (err) {
-    console.warn(`[cotacoes] yahoo ${ticker}:`, err.message);
-    return null;
+  let erro = null;
+  for (let tentativa = 0; tentativa < 3; tentativa++) {
+    try {
+      const quote = await yahooFinance.quote(ticker, {}, SEM_VALIDACAO);
+      // Resposta sem preço é RESPOSTA, não falha: não adianta repetir.
+      if (!quote || quote.regularMarketPrice == null) {
+        buscarCotacaoAcao.ultimoErro = quote ? 'sem_preco' : 'sem_resposta';
+        return null;
+      }
+      buscarCotacaoAcao.ultimoErro = null;
+      return {
+        precoAtual:   quote.regularMarketPrice,
+        variacaoDia:  quote.regularMarketChangePercent ?? 0,
+        moeda:        quote.currency || 'BRL',
+        nomeCompleto: quote.longName || quote.shortName || ticker,
+        setor:        quote.sector || null,
+      };
+    } catch (err) {
+      erro = err;
+      console.warn(`[cotacoes] yahoo ${ticker} (tentativa ${tentativa + 1}/3):`, err.message);
+      if (tentativa < 2) await dormir(300 * (tentativa + 1));
+    }
   }
+  buscarCotacaoAcao.ultimoErro = 'falha_rede';
+  console.error(`[cotacoes] yahoo ${ticker}: desisti depois de 3 tentativas —`, erro?.message);
+  return null;
 }
 
 async function buscarDividendos(ticker, dataInicio) {
