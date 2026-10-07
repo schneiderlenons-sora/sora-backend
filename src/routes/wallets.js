@@ -208,6 +208,60 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
 // por nome, e o `upsertWallet` NÃO grava `nome` em carteira existente — ele
 // devolve `ja.nome`, então os lançamentos novos já entram com o nome escolhido
 // pelo usuário. Renomear não desliga nem duplica a conexão.
+/**
+ * POST /api/wallets/:id/soltar — devolve uma conta ÓRFÃ ao uso manual.
+ *
+ * ⚠️ O LIMBO QUE ISTO RESOLVE: terminada a conexão (a pessoa desconectou, o
+ * consentimento expirou, ou nós cortamos), a carteira CONTINUA com
+ * `of_conta_id` — e `services/saldoCarteira.js` pula toda carteira que o
+ * tenha. O sync não roda mais, o saldo congela, e o lançamento manual não o
+ * move. A única saída era criar OUTRA conta com o mesmo nome, PARTINDO o
+ * histórico: já aconteceu na base ("BTG Banking" 321 transações convivendo com
+ * "BTG Banking (OF)" 540).
+ *
+ * Medido em 07/10/2026: 16 carteiras nesse estado, R$ 18.103,97 congelados e
+ * 2.370 transações presas — e o corte por excedente criaria mais 40.
+ *
+ * ⚠️ SÓ A ÓRFÃ. Soltar uma carteira com conexão VIVA faria o sync recriar outra
+ * no passe seguinte — o mesmo estrago, pela porta oposta. E a lista de conexões
+ * tem de ser LIDA COM SUCESSO: falha de leitura recusa, nunca assume órfã.
+ */
+router.post('/:id/soltar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const grupoId = req.grupoId;
+    const { data: w, error: erroLer } = await supabase.from('wallets')
+      .select('id, nome, tipo, of_conta_id, of_consent_id')
+      .eq('id', req.params.id).eq('grupo_id', grupoId).maybeSingle();
+    if (erroLer) return res.status(500).json({ erro: `Não consegui ler a conta: ${erroLer.message}` });
+
+    // As conexões VIVAS do grupo. `null` quando a leitura falhou — e aí o
+    // serviço recusa, em vez de tratar o silêncio como "não há conexão".
+    let vivos = null;
+    try {
+      const { data: cx, error } = await supabase.from('of_conexoes')
+        .select('external_id').eq('grupo_id', grupoId);
+      if (!error) vivos = new Set((cx || []).map((c) => String(c.external_id)));
+    } catch { vivos = null; }
+
+    const { podeSoltar, planoDeSoltar } = require('../services/soltarCarteira');
+    const veredito = podeSoltar(w, vivos);
+    if (!veredito.pode) {
+      const code = veredito.motivo === 'nao_encontrada' ? 404
+        : veredito.motivo === 'conexoes_indisponiveis' ? 503 : 409;
+      return res.status(code).json({ erro: veredito.erro, motivo: veredito.motivo });
+    }
+
+    // ⚠️ O erro do update é LIDO: descartá-lo responderia 200 e a tela diria
+    // que soltou, com a conta seguindo presa (defeito das migrations 121/147).
+    const { data, error } = await supabase.from('wallets')
+      .update(planoDeSoltar()).eq('id', w.id).eq('grupo_id', grupoId).select().single();
+    if (error) return res.status(500).json({ erro: `Não consegui soltar a conta: ${error.message}` });
+
+    console.log(`🔓 carteira solta do banco: ${w.nome} (grupo ${grupoId})`);
+    res.json({ ok: true, wallet: data });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const grupoId = req.grupoId;
