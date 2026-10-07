@@ -244,8 +244,15 @@ console.log('── N+2. as camadas contra "câmbio indisponível" ──');
 
   // Camada 2: as três fontes, na ordem.
   const cot = require('fs').readFileSync(require('path').join(__dirname, '../src/services/cotacoes.js'), 'utf8');
-  const fontes = (cot.match(/nome: '(\w[\w-]*)'/g) || []).length;
-  eq(fontes, 3, 'três fontes de câmbio cadastradas');
+  // ⚠️ NOMEIA AS TRÊS, em vez de contar "nome:" no arquivo. A contagem era
+  // frouxa nas duas pontas: varria o cotacoes.js inteiro (a cascata de CRIPTO
+  // fez a asserção acusar 5 e quebrar um eval que nada tinha a ver com a
+  // mudança) e nunca dizia QUAIS fontes esperava.
+  const ESPERADAS = ["yahoo", "awesomeapi", "er-api"];
+  for (const n of ESPERADAS) {
+    ok(cot.includes("nome: " + String.fromCharCode(39) + n + String.fromCharCode(39)),
+      "fonte de cambio cadastrada: " + n);
+  }
   ok(/CAMBIO_TIMEOUT_MS/.test(cot), 'com timeout — fonte pendurada não trava a tela');
   ok(cot.indexOf("nome: 'yahoo'") < cot.indexOf("nome: 'awesomeapi'"), 'yahoo primeiro');
 

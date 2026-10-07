@@ -30,6 +30,8 @@ const SEM_VALIDACAO = { validateResult: false };
 // internacional segue sem cotação automática — mas quando o bloqueio passar,
 // volta sozinho, sem deploy.
 const { cotacaoBrapi, buscarTickersBrapi, ehTickerBR } = require('./cotacaoBrapi');
+// Cripto: a CoinGecko também recusa o IP do Render (ver FONTES_CRIPTO).
+const { cotacaoCriptoMB } = require('./cotacaoCripto');
 
 /** Espera o tempo pedido, em ms. */
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -215,23 +217,56 @@ async function buscarTickers(query) {
 }
 
 // ─── CoinGecko (cripto) ─────────────────────────────────────────────
-async function buscarCotacaoCripto(coinId) {
-  try {
+/**
+ * As fontes de cripto, em ordem. Mesmo desenho do `FONTES_CAMBIO`, que é o que
+ * mantém o câmbio de pé enquanto o Yahoo nos recusa.
+ *
+ * ⚠️ MEDIDO DE DENTRO DO RENDER (07/10/2026), sondando cinco de uma vez:
+ * CoinGecko 429 · brapi 403 (exige plano de R$ 119,99/mês) · Binance 451
+ * (região restrita) · CoinCap fora do ar · **Mercado Bitcoin 200**.
+ *
+ * ⚠️ A COINGECKO FICA PRIMEIRO, mesmo recusando o Render: ela cobre MUITO mais
+ * moeda, e volta sozinha se o bloqueio passar. Tirá-la deixaria a cobertura
+ * presa no que a corretora brasileira lista.
+ */
+const FONTES_CRIPTO = [
+  { nome: 'coingecko', async ler(coinId) {
     const resp = await axios.get(
       `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=brl&include_24hr_change=true`,
       { timeout: 7000 }
     );
     const data = resp.data?.[coinId];
-    if (!data) return null;
-    return {
-      precoAtual:  data.brl ?? null,
-      variacaoDia: data.brl_24h_change ?? 0,
-      moeda:       'BRL',
-    };
-  } catch (err) {
-    console.warn(`[cotacoes] coingecko ${coinId}:`, err.message);
-    return null;
+    if (!data || data.brl == null) return null;
+    return { precoAtual: data.brl, variacaoDia: data.brl_24h_change ?? 0, moeda: 'BRL' };
+  } },
+  // Corretora brasileira: cota em REAL nativo, sem passar por câmbio.
+  { nome: 'mercadobitcoin', ler: (coinId) => cotacaoCriptoMB(coinId) },
+];
+
+/**
+ * Cotação de cripto, em real.
+ *
+ * ⚠️ AS 8 POSIÇÕES DE CRIPTO DA BASE NUNCA ATUALIZAVAM, e três exibiam número
+ * absurdo de uma atualização parcial antiga: Ethereum a R$ 0,45 com R$ 452,20
+ * aportados, Bitcoin a R$ 2,31 com R$ 4.200. A CoinGecko devolvia null, a rota
+ * fazia `continue`, e a tela seguia com o valor velho sem dizer nada.
+ */
+async function buscarCotacaoCripto(coinId) {
+  for (const f of FONTES_CRIPTO) {
+    try {
+      const c = await f.ler(coinId);
+      // ⚠️ PREÇO TEM DE SER NÚMERO POSITIVO pra valer. Zero ou null seguem pra
+      // próxima fonte: "esta moeda não vale nada" iria direto pro patrimônio.
+      if (c && Number.isFinite(Number(c.precoAtual)) && Number(c.precoAtual) > 0) {
+        buscarCotacaoCripto.ultimaFonte = f.nome;
+        return { ...c, precoAtual: Number(c.precoAtual) };
+      }
+    } catch { /* próxima fonte */ }
   }
+  // Log com a moeda: sem ele o diagnóstico começa do zero na próxima vez.
+  console.warn('[cotacoes] nenhuma fonte cotou a cripto %s', coinId);
+  buscarCotacaoCripto.ultimaFonte = null;
+  return null;
 }
 
 // Cache 24h da lista de criptos
@@ -374,7 +409,7 @@ module.exports = {
   _zerarDisjuntor: () => { yahooBloqueadoAte = 0; },
   buscarDividendos,
   buscarTickers,
-  buscarCotacaoCripto,
+  buscarCotacaoCripto, FONTES_CRIPTO,
   buscarCriptos,
   listarCriptos,
   taxaParaBRL, taxaParaBRLDetalhe,
