@@ -1855,9 +1855,15 @@ cron.schedule('0 3 * * *', async () => {
       // ANTES de qualquer chamada de rede ("Call new YahooFinance() first").
       // Os preços de ações/FIIs dos clientes ficaram CONGELADOS o tempo
       // inteiro em que isso passou despercebido — nunca chegava no update.
-      const { buscarCotacaoAcao, buscarDividendos } = require('../services/cotacoes');
+      const { buscarCotacaoAcao, buscarDividendos, buscarCotacaoCripto } = require('../services/cotacoes');
       const { moedaBaseDoGrupo, taxasParaBase, fatorCotacaoParaBase } = require('../services/moeda');
-      const cot = await buscarCotacaoAcao(inv.ticker);
+      // ⚠️ CRIPTO TEM FONTE PRÓPRIA, e este cron não sabia disso: mandava
+      // "bitcoin" pro `buscarCotacaoAcao`, que é bolsa. As 8 posições de cripto
+      // da base só atualizavam quando alguém clicava no botão do painel (a ROTA
+      // sempre teve o desvio; o cron, não).
+      const cot = inv.tipo === 'Cripto'
+        ? await buscarCotacaoCripto(String(inv.ticker).toLowerCase())
+        : await buscarCotacaoAcao(inv.ticker);
       if (!cot || cot.precoAtual == null) throw new Error('cotação indisponível');
       // Moeda base do grupo (migration 168): a cotação, na moeda do ativo (a
       // Nasdaq cota em dólar), vira a moeda do grupo. Sem câmbio, não grava.
@@ -1869,11 +1875,17 @@ cron.schedule('0 3 * * *', async () => {
 
       // Busca dividendos desde a data de compra (por AÇÃO — multiplica pela
       // quantidade, igual o job fazia antes de quebrar).
+      // ⚠️ COMEÇA DO QUE JÁ ESTÁ GRAVADO e só sobrescreve com leitura DE
+      // VERDADE: `null` é "não consegui ler" (provedor fora), 0 é "não pagou".
+      // Antes, `(porAcao || 0)` colapsava os dois e o provedor fora do ar
+      // apagava o histórico de proventos. Cripto nem tem dividendo.
       let dividendos = inv.dividendos_acumulados || 0;
-      try {
-        const porAcao = await buscarDividendos(inv.ticker, inv.data_compra);
-        dividendos = (porAcao || 0) * fator * inv.quantidade;
-      } catch { /* sem dividendos para esse ativo */ }
+      if (inv.tipo !== 'Cripto') {
+        try {
+          const porAcao = await buscarDividendos(inv.ticker, inv.data_compra);
+          if (porAcao != null) dividendos = porAcao * fator * inv.quantidade;
+        } catch { /* mantém o que já estava */ }
+      }
 
       const rentabilidade = inv.valor_aportado > 0
         ? ((novoValor + dividendos - inv.valor_aportado) / inv.valor_aportado)

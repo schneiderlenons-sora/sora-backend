@@ -181,13 +181,20 @@ async function buscarCotacaoAcao(ticker) {
 async function buscarDividendos(ticker, dataInicio) {
   // ⚠️ ERA DAQUI QUE VINHAM OS 15,4s DESPERDIÇADOS. Dividendo só tem fonte no
   // Yahoo, e o `catch` devolvia 0 — então a espera era invisível, só lenta.
-  if (yahooRecusando()) return 0;
+  //
+  // ⚠️ E DEVOLVER 0 ERA PIOR QUE LENTO: `null` é "não consegui ler", 0 é "este
+  // papel não pagou dividendo". Quem chama GRAVA o resultado, então os dois
+  // colapsados em 0 fazem o provedor fora do ar APAGAR o histórico de proventos
+  // do cliente. Mesma regra do `patchDoSaldo`: calar não é apagar.
+  if (yahooRecusando()) return null;
   try {
     const d = dataInicio ? new Date(dataInicio) : new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
     const historico = await yahooFinance.historical(ticker, { period1: d, events: 'dividends' }, SEM_VALIDACAO);
     return (historico || []).reduce((acc, h) => acc + (h.dividends || 0), 0);
   } catch (err) {
     if (ehBloqueio(err)) marcarYahooBloqueado('dividendos');
+    // Falha de leitura também é "não sei", nunca "não pagou".
+    return null;
     return 0;
   }
 }

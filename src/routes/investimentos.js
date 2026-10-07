@@ -828,17 +828,29 @@ router.post('/atualizar-precos/:phone', auth, exigirPlano('kit', 'premium', 'pla
       if (fator === null) continue;
 
       const valorAtual = cotacao.precoAtual * fator * (inv.quantidade || 0);
-      const divs = ['Ações', 'FIIs', 'ETFs'].includes(inv.tipo)
-        ? await buscarDividendos(inv.ticker, inv.data_compra) * fator
-        : 0;
-      const valorTotal = valorAtual + (divs * (inv.quantidade || 0));
+      // ⚠️ `null` do dividendo = "não consegui ler" (o provedor está fora).
+      // MANTÉM o que já estava gravado em vez de zerar — provedor fora do ar não
+      // apaga provento que o cliente recebeu. Só 0 de verdade significa
+      // "não pagou".
+      // ⚠️ CRIPTO DEVOLVE `null` (= "não li"), NÃO 0. Cripto não paga provento,
+      // então consultar seria ida de rede jogada no lixo — mas gravar 0 é
+      // ESCREVER o que não se leu, e o cron (que pula cripto) MANTÉM o valor.
+      // Os dois caminhos discordando no mesmo campo é a classe de bug que este
+      // projeto já pagou caro; um eval da rota pegou a divergência.
+      const porAcao = ['Ações', 'FIIs', 'ETFs'].includes(inv.tipo)
+        ? await buscarDividendos(inv.ticker, inv.data_compra)
+        : null;
+      const divsTotal = porAcao == null
+        ? (inv.dividendos_acumulados || 0)
+        : porAcao * fator * (inv.quantidade || 0);
+      const valorTotal = valorAtual + divsTotal;
       const rent = inv.valor_aportado > 0 ? (valorTotal - inv.valor_aportado) / inv.valor_aportado : 0;
 
       await supabase.from('investimentos').update({
         valor_atual:           valorAtual,
         variacao_dia:          cotacao.variacaoDia ?? 0,
         rentabilidade:         rent,
-        dividendos_acumulados: divs * (inv.quantidade || 0),
+        dividendos_acumulados: divsTotal,
         ultima_atualizacao:    new Date().toISOString(),
       }).eq('id', inv.id);
 

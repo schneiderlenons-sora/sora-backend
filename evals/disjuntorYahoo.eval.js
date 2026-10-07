@@ -110,7 +110,11 @@ console.log('-- 3. a porta e COMPARTILHADA pelos quatro usos --');
   marcarYahooBloqueado('teste');
 
   // dividendo: era o maior desperdicio (44 chamadas recusadas por clique)
-  eq(await buscarDividendos('PETR4.SA'), 0, '3 dividendo devolve 0');
+  // ⚠️ `null`, NAO 0. Zero significaria "este papel nao paga provento" — e
+  // quem chama GRAVA, entao o provedor fora do ar apagaria o historico de
+  // proventos do cliente. Esta assercao cravava 0 antes e precisou ser
+  // CORRIGIDA, nao afrouxada: o contrato mudou de proposito.
+  eq(await buscarDividendos('PETR4.SA'), null, '3 dividendo devolve null (nao sei), nao 0 (nao pagou)');
   eq(yahoo.historicos.length, 0, '3 dividendo NAO chamou o Yahoo');
 
   // busca
