@@ -184,6 +184,34 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
                      'nos_previstos'];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+
+    // ── De qual CONTA sai a parcela (migration 182) ─────────────────────────
+    //
+    // Relato: no Extrato a parcela aparecia como "Sem conta", e não havia onde
+    // escolher — o filtro por conta ficava furado. Espelha a conta de pagamento
+    // da FATURA (migration 170), inclusive nas travas.
+    //
+    // ⚠️ Só aponta pra conta de DÉBITO do MESMO grupo: sem a checagem, um id
+    // qualquer ligaria a dívida à conta de outra família. `null` desfaz.
+    if ('conta_pagamento_id' in req.body) {
+      const alvo = req.body.conta_pagamento_id;
+      if (alvo === null || alvo === '') {
+        patch.conta_pagamento_id = null;
+      } else {
+        const { data: conta, error: erroConta } = await supabase.from('wallets')
+          .select('id, tipo').eq('id', alvo).eq('grupo_id', req.grupoId).maybeSingle();
+        // ⚠️ Falha de LEITURA não vira "conta inválida": recusar por causa de um
+        // soluço de rede diria à pessoa que a conta dela não serve.
+        if (erroConta) return res.status(500).json({ erro: `Não consegui conferir a conta: ${erroConta.message}` });
+        if (!conta || conta.tipo === 'Crédito') {
+          return res.status(400).json({
+            erro: 'Escolha uma conta bancária deste grupo para pagar a parcela.',
+            motivo: 'conta_invalida',
+          });
+        }
+        patch.conta_pagamento_id = conta.id;
+      }
+    }
     // Campos do consórcio (migration 125) — ver `camposConsorcio`.
     const extrasConsorcio = camposConsorcio(req.body);
     Object.assign(patch, extrasConsorcio);
