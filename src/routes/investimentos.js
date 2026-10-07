@@ -31,6 +31,61 @@ const { planoDeAtualizarValor } = require('../services/valorInvestimento');
 
 // ── BUSCAS PÚBLICAS DE COTAÇÃO ───────────────────────────────────
 
+/**
+ * GET /api/investimentos/diag-cotacao?key=<API_SECRET_TOKEN>
+ *
+ * ⚠️ EXISTE PORQUE "FUNCIONA NA MINHA MÁQUINA" NÃO É MEDIÇÃO. Um cliente
+ * relatou que a cotação não vem; aqui, local, o fluxo inteiro responde (busca →
+ * escolhe → preço, R$ 54,33). A diferença que sobra é o AMBIENTE: o Yahoo
+ * costuma limitar ou bloquear IP de nuvem, e o Render é nuvem.
+ *
+ * Esta rota roda DE DENTRO do Render e devolve o erro CRU — que é o único jeito
+ * de saber se o problema é rede, bloqueio, timeout ou outra coisa. Sem ela, o
+ * `catch` engole tudo e a tela diz sempre a mesma frase.
+ *
+ * Aberta por CHAVE (mesmo padrão do /webhook/meta/diag): o diagnóstico precisa
+ * funcionar sem sessão de usuário, que é o que se está tentando descartar.
+ */
+router.get('/diag-cotacao', async (req, res) => {
+  if (req.query.key !== process.env.API_SECRET_TOKEN) return res.sendStatus(403);
+
+  const YahooFinance = require('yahoo-finance2').default;
+  const yf = new YahooFinance();
+  try { yf.suppressNotices(['yahooSurvey']); } catch {}
+
+  const tickers = String(req.query.ticker || 'PETR4.SA,VALE3.SA').split(',').map((t) => t.trim()).filter(Boolean);
+  const saida = [];
+  for (const t of tickers) {
+    const t0 = Date.now();
+    try {
+      const q = await yf.quote(t, {}, { validateResult: false });
+      saida.push({
+        ticker: t, ok: true, ms: Date.now() - t0,
+        preco: q?.regularMarketPrice ?? null, moeda: q?.currency || null,
+      });
+    } catch (e) {
+      // O ERRO CRU, inclusive o status HTTP quando existe — é o que distingue
+      // 429 (limite), 403 (bloqueio de IP), timeout e DNS.
+      saida.push({
+        ticker: t, ok: false, ms: Date.now() - t0,
+        erro: e?.message || String(e),
+        nome: e?.name || null,
+        status: e?.response?.status ?? e?.status ?? null,
+        corpo: typeof e?.response?.body === 'string' ? e.response.body.slice(0, 300) : null,
+      });
+    }
+  }
+  // Uma chamada crua, sem a lib, pra separar "a lib" de "a rede".
+  let direto = null;
+  try {
+    const t0 = Date.now();
+    const r = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/PETR4.SA?interval=1d&range=1d');
+    direto = { status: r.status, ms: Date.now() - t0, trecho: (await r.text()).slice(0, 200) };
+  } catch (e) { direto = { erro: e?.message || String(e) }; }
+
+  res.json({ ambiente: process.env.RENDER ? 'render' : 'local', node: process.version, tickers: saida, chamadaDireta: direto });
+});
+
 // GET /api/investimentos/buscar-ticker?q=PETR
 router.get('/buscar-ticker', auth, async (req, res) => {
   const q = (req.query.q || '').toString().trim();
