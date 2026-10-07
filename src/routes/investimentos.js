@@ -49,6 +49,59 @@ const { planoDeAtualizarValor } = require('../services/valorInvestimento');
 router.get('/diag-cotacao', async (req, res) => {
   if (req.query.key !== process.env.API_SECRET_TOKEN) return res.sendStatus(403);
 
+  // ── MODO SIMULAÇÃO: ?simular=<email> ──────────────────────────────────────
+  //
+  // ⚠️ POR QUE SIMULAR EM VEZ DE CLICAR NO BOTÃO. Pra provar que "Atualizar
+  // cotações" funciona eu precisaria de um JWT de usuário — ou seja, entrar na
+  // conta de um cliente. Não se faz isso pra testar. Aqui a MESMA cadeia roda
+  // (lê os investimentos do grupo → cotação → câmbio → calcula o valor), e o
+  // resultado volta como número **sem gravar uma linha**.
+  //
+  // É o que distingue "a função responde" de "o recurso funciona": o diag
+  // anterior provava só a primeira coisa, e foi assim que o recurso ficou morto
+  // em produção passando em todo teste.
+  if (req.query.simular) {
+    const t0 = Date.now();
+    const { data: u } = await supabase.from('users')
+      .select('id, email, grupo_ativo').eq('email', String(req.query.simular)).maybeSingle();
+    if (!u) return res.status(404).json({ erro: 'email não encontrado' });
+
+    const { data: invs } = await supabase.from('investimentos')
+      .select('id, nome, ticker, tipo, quantidade, valor_aportado, valor_atual')
+      .eq('grupo_id', u.grupo_ativo);
+
+    const base = await moedaBaseDoGrupo(u.grupo_ativo);
+    const linhas = [];
+    for (const inv of invs || []) {
+      if (!inv.ticker) { linhas.push({ ticker: null, nome: inv.nome, pulado: 'sem ticker' }); continue; }
+      if (!['Ações', 'FIIs', 'ETFs', 'Cripto'].includes(inv.tipo)) {
+        linhas.push({ ticker: inv.ticker, pulado: `tipo "${inv.tipo}" fora da lista` }); continue;
+      }
+      const c = inv.tipo === 'Cripto'
+        ? await buscarCotacaoCripto(inv.ticker.toLowerCase())
+        : await buscarCotacaoAcao(inv.ticker);
+      if (!c || c.precoAtual == null) {
+        linhas.push({ ticker: inv.ticker, tipo: inv.tipo, falhou: buscarCotacaoAcao.ultimoErro || 'sem_cotacao' });
+        continue;
+      }
+      const fator = fatorCotacaoParaBase(c.moeda, base, await taxasParaBase([c.moeda], base));
+      if (fator === null) { linhas.push({ ticker: inv.ticker, falhou: `sem câmbio ${c.moeda}→${base}` }); continue; }
+      const novo = c.precoAtual * fator * (inv.quantidade || 0);
+      linhas.push({
+        ticker: inv.ticker, tipo: inv.tipo, preco: c.precoAtual, moeda: c.moeda,
+        qtd: inv.quantidade, atualHoje: inv.valor_atual, ficaria: Number(novo.toFixed(2)),
+        rent: inv.valor_aportado > 0 ? `${(((novo - inv.valor_aportado) / inv.valor_aportado) * 100).toFixed(1)}%` : null,
+      });
+    }
+    const cotou = linhas.filter((l) => l.ficaria != null).length;
+    const falhou = linhas.filter((l) => l.falhou).length;
+    return res.json({
+      email: u.email, moedaBase: base, ms: Date.now() - t0,
+      resumo: `${cotou} cotaram, ${falhou} falharam, ${linhas.length - cotou - falhou} puladas`,
+      gravaria: false, linhas,
+    });
+  }
+
   const YahooFinance = require('yahoo-finance2').default;
   const yf = new YahooFinance();
   try { yf.suppressNotices(['yahooSurvey']); } catch {}
