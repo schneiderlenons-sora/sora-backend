@@ -83,7 +83,21 @@ router.get('/diag-cotacao', async (req, res) => {
     direto = { status: r.status, ms: Date.now() - t0, trecho: (await r.text()).slice(0, 200) };
   } catch (e) { direto = { erro: e?.message || String(e) }; }
 
-  res.json({ ambiente: process.env.RENDER ? 'render' : 'local', node: process.version, tickers: saida, chamadaDireta: direto });
+  // ⚠️ A CANDIDATA, MEDIDA DO MESMO LUGAR. Nao adianta a brapi responder na
+  // minha maquina: o que derrubou o Yahoo foi bloqueio de IP de NUVEM, entao a
+  // substituta tem de ser testada de dentro do Render antes de ser escolhida.
+  let brapi = null;
+  try {
+    const t0 = Date.now();
+    const h = process.env.BRAPI_TOKEN ? { Authorization: `Bearer ${process.env.BRAPI_TOKEN}` } : {};
+    const r = await fetch('https://brapi.dev/api/v2/stocks/quote?symbols=PETR4,VALE3', { headers: h });
+    const txt = await r.text();
+    let preco = null;
+    try { preco = JSON.parse(txt)?.results?.[0]?.data?.regularMarketPrice ?? null; } catch {}
+    brapi = { status: r.status, ms: Date.now() - t0, comToken: !!process.env.BRAPI_TOKEN, preco, trecho: txt.slice(0, 180) };
+  } catch (e) { brapi = { erro: e?.message || String(e) }; }
+
+  res.json({ ambiente: process.env.RENDER ? 'render' : 'local', node: process.version, tickers: saida, chamadaDireta: direto, brapi });
 });
 
 // GET /api/investimentos/buscar-ticker?q=PETR
