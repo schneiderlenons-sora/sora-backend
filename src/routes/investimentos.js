@@ -84,6 +84,29 @@ router.get('/diag-cotacao', async (req, res) => {
         linha.brapiCripto = { sigla, status: r.status, ms: Date.now() - t3, trecho: txt.slice(0, 200) };
       } catch (e) { linha.brapiCripto = { erro: e?.message || String(e) }; }
 
+      // ── CANDIDATAS GRATUITAS, medidas DAQUI ──────────────────────────────
+      // Nao adianta escolher fonte pela reputacao: a CoinGecko e a melhor API
+      // de cripto que existe e nos recusa. O que decide e quem responde 200
+      // deste IP.
+      const SIGLA = { bitcoin: 'BTC', ethereum: 'ETH', pepe: 'PEPE', solana: 'SOL', btc: 'BTC', eth: 'ETH' };
+      const sg = SIGLA[m.toLowerCase()] || m.toUpperCase();
+      const candidatas = [
+        ['binance_brl',  `https://api.binance.com/api/v3/ticker/24hr?symbol=${sg}BRL`],
+        ['binance_usdt', `https://api.binance.com/api/v3/ticker/24hr?symbol=${sg}USDT`],
+        ['coincap',      `https://api.coincap.io/v2/assets?search=${encodeURIComponent(m)}`],
+        ['mercadobitcoin', `https://www.mercadobitcoin.net/api/${sg}/ticker/`],
+        ['cryptocompare', `https://min-api.cryptocompare.com/data/price?fsym=${sg}&tsyms=BRL`],
+      ];
+      linha.candidatas = {};
+      for (const [nome, url] of candidatas) {
+        const t4 = Date.now();
+        try {
+          const r = await fetch(url);
+          const txt = await r.text();
+          linha.candidatas[nome] = { status: r.status, ms: Date.now() - t4, trecho: txt.slice(0, 130) };
+        } catch (e) { linha.candidatas[nome] = { erro: String(e?.message || e).slice(0, 80) }; }
+      }
+
       saida.push(linha);
     }
     return res.json({ ambiente: process.env.RENDER ? 'render' : 'local', cripto: saida });
