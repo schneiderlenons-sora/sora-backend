@@ -51,6 +51,43 @@ function ehBloqueio(err) {
   return msg.includes('too many requests') || msg.includes('forbidden');
 }
 
+// ─── DISJUNTOR DO YAHOO ─────────────────────────────────────────────────────
+//
+// ⚠️ MEDIDO: com a cotação voltando pela brapi, o botão "Atualizar cotações" do
+// maior grupo da base (44 posições) faria ~7,5s de brapi MAIS ~15,4s de
+// chamadas de dividendo ao Yahoo, TODAS recusadas — 23s de espera com mais da
+// metade jogada no lixo. O Yahoo ainda é chamado em quatro lugares (cotação de
+// ativo de fora da B3, dividendos, busca e câmbio), e nenhum deles sabia do
+// bloqueio que o outro já tinha descoberto.
+//
+// Então o primeiro 429 fecha a porta por um tempo e os outros três param de
+// bater nela. Não é cache de PREÇO — é memória de RECUSA.
+//
+// ⚠️ SE CURA SOZINHO, e é por isso que é janela e não interruptor: passados os
+// 10 min, a próxima chamada tenta de verdade. Se o Yahoo voltar (bloqueio de IP
+// de nuvem muda), tudo religa sem deploy. Uma env var exigiria alguém perceber.
+//
+// ⚠️ NÃO VALE PRA BRAPI. Ela é a fonte principal da B3; um disjuntor ali
+// transformaria um soluço de 10s em 10 min de aba sem preço.
+const JANELA_BLOQUEIO_MS = 10 * 60 * 1000;
+let yahooBloqueadoAte = 0;
+
+/** O Yahoo nos recusou agora há pouco? */
+function yahooRecusando() {
+  return Date.now() < yahooBloqueadoAte;
+}
+
+/** Fecha a porta do Yahoo pela janela. Chamado por quem levou o 429. */
+function marcarYahooBloqueado(onde) {
+  const primeira = !yahooRecusando();
+  yahooBloqueadoAte = Date.now() + JANELA_BLOQUEIO_MS;
+  // ⚠️ Só a PRIMEIRA vez loga: senão 44 posições viram 44 linhas iguais e o log
+  // do Render fica inútil justamente quando se precisa dele.
+  if (primeira) {
+    console.error(`[cotacoes] Yahoo recusou o IP (em ${onde}) — pausando o Yahoo por 10min`);
+  }
+}
+
 /**
  * Cotação de ação/FII/ETF, com RETRY.
  *
@@ -93,6 +130,14 @@ async function buscarCotacaoAcao(ticker) {
     // Cai pro Yahoo: se a brapi falhou por rede, ele ainda pode salvar.
   }
 
+  // ⚠️ PORTA FECHADA DEVOLVE 'bloqueio_ip', NUNCA null mudo: é esse motivo que
+  // faz a tela dizer "falhou agora, tente de novo" em vez de "este ativo não
+  // tem cotação" — que seria mentira sobre o ativo.
+  if (yahooRecusando()) {
+    buscarCotacaoAcao.ultimoErro = 'bloqueio_ip';
+    return null;
+  }
+
   let erro = null;
   for (let tentativa = 0; tentativa < 3; tentativa++) {
     try {
@@ -118,6 +163,7 @@ async function buscarCotacaoAcao(ticker) {
       // usuário PARADO na tela esperando o preço, e mais três batidas na porta
       // de quem já nos recusou. Medido no Render: o 429 volta em 20ms, sempre.
       if (ehBloqueio(err)) {
+        marcarYahooBloqueado(`cotação de ${ticker}`);
         buscarCotacaoAcao.ultimoErro = 'bloqueio_ip';
         console.error(`[cotacoes] yahoo ${ticker}: IP recusado (429/403) — não insisto`);
         return null;
@@ -131,11 +177,15 @@ async function buscarCotacaoAcao(ticker) {
 }
 
 async function buscarDividendos(ticker, dataInicio) {
+  // ⚠️ ERA DAQUI QUE VINHAM OS 15,4s DESPERDIÇADOS. Dividendo só tem fonte no
+  // Yahoo, e o `catch` devolvia 0 — então a espera era invisível, só lenta.
+  if (yahooRecusando()) return 0;
   try {
     const d = dataInicio ? new Date(dataInicio) : new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
     const historico = await yahooFinance.historical(ticker, { period1: d, events: 'dividends' }, SEM_VALIDACAO);
     return (historico || []).reduce((acc, h) => acc + (h.dividends || 0), 0);
-  } catch {
+  } catch (err) {
+    if (ehBloqueio(err)) marcarYahooBloqueado('dividendos');
     return 0;
   }
 }
@@ -147,6 +197,8 @@ async function buscarTickers(query) {
   const b = await buscarTickersBrapi(query);
   if (b.length) return b;
 
+  if (yahooRecusando()) return [];
+
   try {
     const results = await yahooFinance.search(query, { quotesCount: 10, newsCount: 0 }, SEM_VALIDACAO);
     return (results.quotes || []).slice(0, 10).map(r => ({
@@ -156,7 +208,8 @@ async function buscarTickers(query) {
       exchange: r.exchange,
     }));
   } catch (err) {
-    console.warn('[cotacoes] yahoo search:', err.message);
+    if (ehBloqueio(err)) marcarYahooBloqueado('busca');
+    else console.warn('[cotacoes] yahoo search:', err.message);
     return [];
   }
 }
@@ -262,8 +315,17 @@ const FONTES_CAMBIO = [
   // 1. Yahoo — a de sempre. Continua primeiro: é a mesma que cota as ações,
   //    então quando ela responde tudo no app fala pela mesma régua.
   { nome: 'yahoo', async ler(m) {
-    const q = await yahooFinance.quote(`${m}BRL=X`, {}, SEM_VALIDACAO);
-    return q?.regularMarketPrice;
+    // ⚠️ O CÂMBIO NÃO QUEBRA sem o Yahoo — as duas fontes abaixo cobrem. Mas
+    // tentá-lo primeiro gastava uma recusa em CADA conversão. Pular vai direto
+    // na AwesomeAPI.
+    if (yahooRecusando()) return null;
+    try {
+      const q = await yahooFinance.quote(`${m}BRL=X`, {}, SEM_VALIDACAO);
+      return q?.regularMarketPrice;
+    } catch (err) {
+      if (ehBloqueio(err)) marcarYahooBloqueado('câmbio');
+      throw err; // o laço de fontes cuida: vai pra próxima.
+    }
   } },
   // 2. AwesomeAPI — brasileira, sem chave, cota par a par contra o real.
   { nome: 'awesomeapi', async ler(m) {
@@ -306,6 +368,10 @@ async function taxaParaBRL(moeda) {
 module.exports = {
   buscarCotacaoAcao,
   ehBloqueio, // exportado pro eval: e a linha que decide se insistimos ou nao
+  // O disjuntor é estado de MÓDULO; sem porta pra ele o eval não consegue
+  // provar que a porta fecha, que se cura, e que não contamina a brapi.
+  yahooRecusando, marcarYahooBloqueado, JANELA_BLOQUEIO_MS,
+  _zerarDisjuntor: () => { yahooBloqueadoAte = 0; },
   buscarDividendos,
   buscarTickers,
   buscarCotacaoCripto,

@@ -42,7 +42,7 @@ Module._load = function (pedido) {
   return carregarOriginal.apply(this, arguments);
 };
 
-const { buscarCotacaoAcao, buscarTickers, ehBloqueio } = require('../src/services/cotacoes');
+const { buscarCotacaoAcao, buscarTickers, ehBloqueio, _zerarDisjuntor } = require('../src/services/cotacoes');
 
 // ── brapi falsa ─────────────────────────────────────────────────────────────
 const brapi = { urls: [], resposta: null, status: 200, lancar: null };
@@ -58,7 +58,13 @@ global.fetch = async (url, opts) => {
   };
 };
 
+// ⚠️ ZERA O DISJUNTOR TAMBEM. Ele e estado de MODULO: um 429 em qualquer
+// caso fecha a porta do Yahoo por 10 min, e os casos SEGUINTES veem 0 chamadas
+// em vez das 1 ou 3 que esperam. Foi exatamente o que aconteceu ao ligar o
+// disjuntor: 4 falsos negativos de uma vez. Estado compartilhado entre casos e
+// armadilha de eval, nao bug do codigo.
 const zerar = () => {
+  _zerarDisjuntor();
   yahoo.chamadas = []; yahoo.buscas = []; yahoo.erro = null;
   yahoo.resposta = { regularMarketPrice: 99, currency: 'BRL', longName: 'do yahoo' };
   brapi.urls = []; brapi.status = 200; brapi.lancar = null;
