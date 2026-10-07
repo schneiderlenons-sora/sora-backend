@@ -74,14 +74,14 @@ console.log('-- 4. O PRAZO SO CORRE DEPOIS DO 1o AVISO --');
   eq(r.aDesligar.length, 0, '§4 nada é desligado sem aviso prévio gravado');
 }
 {
-  const r = estadoExcedente({ limite: 0, conexoes: [cx('a')], excedenteDesde: hAtras(47), agora: AGORA });
-  eq(r.estado, 'avisando', '§4 a 47h ainda está no prazo');
+  const r = estadoExcedente({ limite: 0, conexoes: [cx('a')], excedenteDesde: hAtras(71), agora: AGORA });
+  eq(r.estado, 'avisando', '§4 a 71h ainda está no prazo');
   eq(r.aDesligar.length, 0, '§4 e nada é desligado');
   eq(r.horasRestantes, 1, '§4 falta 1h');
 }
 {
-  const r = estadoExcedente({ limite: 0, conexoes: [cx('a')], excedenteDesde: hAtras(48), agora: AGORA });
-  eq(r.estado, 'vencido', '§4 em 48h vence');
+  const r = estadoExcedente({ limite: 0, conexoes: [cx('a')], excedenteDesde: hAtras(72), agora: AGORA });
+  eq(r.estado, 'vencido', '§4 em 72h (3 dias) vence');
   eq(r.aDesligar.length, 1, '§4 e aí sim desliga');
   eq(r.horasRestantes, 0, '§4 sem horas restantes');
 }

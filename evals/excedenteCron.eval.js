@@ -22,6 +22,10 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://falso';
 process.env.SUPABASE_KEY = process.env.SUPABASE_KEY || 'falso';
 process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk-falso';
 
+// ⚠️ Lido do modulo, nao cravado: o prazo ja mudou uma vez (48h -> 72h) e
+// cravar o numero faz o eval falhar por motivo errado.
+const { PRAZO_HORAS } = require('../src/services/excedenteConexoes');
+
 const falhas = [];
 const eq = (a, b, m) => { if (a !== b) falhas.push(`${m} (esperado ${JSON.stringify(b)}, veio ${JSON.stringify(a)})`); };
 
@@ -193,7 +197,11 @@ const patchDe = (updates, campo) => updates.find((u) => u.t === 'users' && campo
     eq(r.deletados.length, 0, '§2 NAO desligou nada');
     eq(r.revogados.length, 0, '§2 nem revogou');
     const t = String(r.enviados[0]?.texto || '');
-    eq(/2 dias/.test(t), true, '§2 o texto diz o prazo');
+    // ⚠️ DERIVADO de PRAZO_HORAS, nao cravado: quando o prazo mudou de 48h
+    // pra 72h este caso quebrou com "2 dias" literal — e o que importa e que o
+    // texto diga o MESMO prazo que o corte vai usar, qualquer que ele seja.
+    const diasDoPrazo = Math.floor(PRAZO_HORAS / 24);
+    eq(new RegExp(diasDoPrazo + ' dias?').test(t), true, '§2 o texto diz o prazo real (' + diasDoPrazo + ' dias)');
     eq(/R\$ 6/.test(t), true, '§2 e oferece a conexão avulsa');
     eq(/desconecte um banco/i.test(t), true, '§2 e a outra saída');
   }
@@ -211,10 +219,10 @@ const patchDe = (updates, campo) => updates.find((u) => u.t === 'users' && campo
   }
   console.log('  ok');
 
-  console.log('-- 4. ainda NO PRAZO (47h): avisa de novo, nao desliga --');
+  console.log('-- 4. ainda NO PRAZO (71h de 72): avisa de novo, nao desliga --');
   {
     const r = await rodar({
-      usuario: U({ of_excedente_desde: hAtras(47), of_excedente_avisado: hAtras(24) }),
+      usuario: U({ of_excedente_desde: hAtras(71), of_excedente_avisado: hAtras(24) }),
       conexoes: [CX('a')], limite: 0,
     });
     eq(r.enviados.length, 1, '§4 avisa de novo no dia seguinte');
@@ -226,7 +234,7 @@ const patchDe = (updates, campo) => updates.find((u) => u.t === 'users' && campo
   console.log('-- 5. PRAZO VENCIDO: desliga so o excedente, revogando antes --');
   {
     const r = await rodar({
-      usuario: U({ of_excedente_desde: hAtras(49), of_excedente_avisado: hAtras(24) }),
+      usuario: U({ of_excedente_desde: hAtras(73), of_excedente_avisado: hAtras(24) }),
       conexoes: [
         CX('velha', { created_at: '2026-01-01T00:00:00Z' }),
         CX('nova',  { created_at: '2026-09-01T00:00:00Z' }),
@@ -246,7 +254,7 @@ const patchDe = (updates, campo) => updates.find((u) => u.t === 'users' && campo
     // Apagar sem revogar perderia o rastro e a Polp seguiria cobrando — que é
     // exatamente o que este corte existe pra parar.
     const r = await rodar({
-      usuario: U({ of_excedente_desde: hAtras(49), of_excedente_avisado: hAtras(24) }),
+      usuario: U({ of_excedente_desde: hAtras(73), of_excedente_avisado: hAtras(24) }),
       conexoes: [CX('a')], limite: 0, revogacaoFalha: true,
     });
     eq(r.deletados.length, 0, '§6 NAO apagou a linha');
@@ -257,7 +265,7 @@ const patchDe = (updates, campo) => updates.find((u) => u.t === 'users' && campo
   console.log('-- 7. KILL SWITCH (OF_EXCEDENTE_CORTAR=0): avisa e nao corta --');
   {
     const r = await rodar({
-      usuario: U({ of_excedente_desde: hAtras(49), of_excedente_avisado: hAtras(24) }),
+      usuario: U({ of_excedente_desde: hAtras(73), of_excedente_avisado: hAtras(24) }),
       conexoes: [CX('a')], limite: 0, cortar: '0',
     });
     eq(r.enviados.length, 1, '§7 o aviso continua saindo');
@@ -335,6 +343,6 @@ const patchDe = (updates, campo) => updates.find((u) => u.t === 'users' && campo
     falhas.forEach((f) => console.error('  ·', f));
     process.exit(1);
   }
-  console.log('OK excedenteCron: o JOB 1R avisa, espera 48h, e so desliga o excedente');
+  console.log('OK excedenteCron: o JOB 1R avisa, espera o prazo, e so desliga o excedente');
   process.exit(0);
 })().catch((e) => { console.error('x erro no eval:', e.message); process.exit(1); });

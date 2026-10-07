@@ -1074,6 +1074,58 @@ cron.schedule('*/15 * * * *', async () => {
   const sp = agoraSP();
   if (sp.minutos < 10 * 60 || sp.minutos >= 10 * 60 + 15) return;   // ~10:00 em SP
 
+  // ── ESTÁGIO 1: AVISO PRÉVIO (migration 183) ──────────────────────────────
+  //
+  // ⚠️ É O ÚNICO AVISO QUE CHEGA A TEMPO. Quem cancelou a assinatura da conexão
+  // ainda tem o período pago correndo — e é só nesse intervalo que dá pra
+  // reativar sem perder nada. Depois que o período acaba, a pessoa já está no
+  // prazo de 72h e qualquer aviso soa como cobrança.
+  //
+  // ⚠️ TOLERANTE À 183: sem as colunas o select erra, o bloco sai, e o fluxo
+  // cai direto no estágio 2 — que é o comportamento de antes desta mudança.
+  try {
+    const { data: aVencer, error: erroVencer } = await supabase.from('users')
+      .select('id, email, phone, of_assinatura_fim, of_fim_avisado_em')
+      .not('of_assinatura_fim', 'is', null);
+    if (!erroVencer) {
+      for (const u of aVencer || []) {
+        if (!u.phone) continue;
+        const fim = Date.parse(u.of_assinatura_fim);
+        if (!Number.isFinite(fim)) continue;
+        const diasPraAcabar = Math.ceil((fim - Date.now()) / 86400000);
+        // A janela é de 1 a 3 dias: antes disso é cedo (ela pode reativar e o
+        // aviso vira ruído), e depois o período já acabou — aí quem fala é o
+        // estágio 2.
+        if (diasPraAcabar > 3 || diasPraAcabar < 1) continue;
+        if (String(u.of_fim_avisado_em || '').slice(0, 10) === sp.dataStr) continue;
+        if (!(await avisosLigados(u.id))) continue;
+
+        // Marca ANTES de enviar — à prova de restart, igual ao resto do job.
+        await supabase.from('users')
+          .update({ of_fim_avisado_em: new Date().toISOString() }).eq('id', u.id);
+
+        const quando = diasPraAcabar === 1 ? 'amanhã' : `em ${diasPraAcabar} dias`;
+        const texto = [
+          'Oi! Um aviso sobre a conexão do seu banco na Sora.',
+          '',
+          `Sua assinatura da conexão de Open Finance termina ${quando}.`,
+          '',
+          'Quando ela acabar, a Sora para de buscar seus lançamentos e saldos automaticamente — mas nada se perde: todo o histórico já importado continua aí, e você segue lançando normalmente.',
+          '',
+          'Se quiser manter a atualização automática, é só reativar por R$ 6/mês:',
+          'https://www.forsora.com/open-finance',
+        ].join('\n');
+        const core = `Sua conexão de banco na Sora termina ${quando}. Pra manter a atualização automática, reative em forsora.com/open-finance (R$ 6/mês).`;
+        await lembrete(u.phone, texto, core);
+        console.log(`📅 OF fim de assinatura avisado: ${u.email || u.id} — termina em ${diasPraAcabar}d`);
+      }
+    }
+  } catch (e) {
+    // Sem a 183 (ou falha de leitura) o aviso prévio simplesmente não acontece.
+    console.warn('[of/aviso-previo]', e.message);
+  }
+
+
   // Só quem TEM conexão. Varrer `users` inteiro custaria uma ida por usuário
   // sem necessidade — o custo do Supabase é número de requisição (CLAUDE.md).
   let conexoes = null;

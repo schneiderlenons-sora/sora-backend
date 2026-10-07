@@ -26,8 +26,16 @@
 
 const { ehConexaoViva } = require('./openFinanceProvider');
 
-/** Prazo de regularização, em horas, a partir do PRIMEIRO aviso. */
-const PRAZO_HORAS = 48;
+/**
+ * Prazo de regularização, em horas, a partir do PRIMEIRO aviso.
+ *
+ * ⚠️ 72h, NÃO 48. Subiu por decisão do dono (out/2026) junto com a mudança que
+ * tornou o corte inevitável: a Polp cobra por CONSENTIMENTO ATIVO, não por uso,
+ * então pausar o sync não para a conta — só revogar para. Como o corte passou a
+ * ser a única saída, o prazo ficou mais generoso: três dias cobrem um fim de
+ * semana inteiro, 48h não cobrem.
+ */
+const PRAZO_HORAS = 72;
 
 const hora = (v) => {
   const t = v instanceof Date ? v.getTime() : Date.parse(v || '');
