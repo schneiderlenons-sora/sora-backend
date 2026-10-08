@@ -1,6 +1,8 @@
 const { extrairTermoParcela } = require('../services/consultaParcela');
 const { categorizarDescricao } = require('../services/categorizar');
 const { detectarAPagar } = require('../services/aPagarPeriodo');
+// "altera a transacao ab12cd pra 50" — parser local-first, sem IA.
+const { detectarAlteracao } = require('../services/alterarTexto');
 
 // Detecta categoria pelo texto da mensagem
 function detectarCategoria(msg) {
@@ -822,6 +824,24 @@ function interpretarRapido(message) {
   if ((m = msg.match(/(?:ativar|reativar|ligar)\s+lembretes?\s+(?:d[ae]s?\s+)?d[ií]vidas?(?:\s+(.+))?$/i))) {
     return { acao: 'ativar_lembrete_divida', termo: m[1]?.trim() || null };
   }
+
+  // --- ALTERAR UMA TRANSACAO ---
+  //
+  // Pedido de cliente (Fabio, 05/10/2026): poder ALTERAR o lancamento, nao
+  // so excluir.
+  //
+  // ⚠️ RODA ANTES DA REGRA DE SALDO, e isso e MEDICAO, nao preferencia.
+  // A regra de "ajustar/corrigir <algo> <numero>" logo abaixo sequestrava
+  // "corrige o ultimo lancamento para 80" e devolvia alterar_saldo com
+  // nome "ultimo lancamento" — a Sora ia acertar o saldo de uma conta que
+  // nao existe. Medido antes de escrever: das 8 frases de alteracao, 7
+  // caiam na IA e morriam la, e essa 1 era sequestrada.
+  //
+  // ⚠️ O detector recebe a mensagem ORIGINAL, nao a normalizada: e dela
+  // que sai a descricao com a grafia que a pessoa escreveu ("Corrida de
+  // Uber"), que e a sugestao 003 do mesmo cliente.
+  const alteracaoTx = detectarAlteracao(message);
+  if (alteracaoTx) return alteracaoTx;
 
   // --- CONTAS BANCÁRIAS ---
   // "deletar conta nubank"

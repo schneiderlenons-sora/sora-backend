@@ -665,6 +665,17 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
         TR('handler:transacoes:done');
         break;
 
+      // "altera a transacao ab12cd pra 50" (pedido de cliente: poder ALTERAR,
+      // nao so excluir). A aritmetica do saldo e a MESMA do PUT do painel.
+      case 'alterar_tx': {
+        const { alterarTx } = require('../handlers/alterarTx');
+        const { resolverCarteiraReal } = require('../handlers/transacoes');
+        await alterarTx({
+          phone, grupoId: user.grupo_ativo, data, resolverCarteiraReal,
+        });
+        break;
+      }
+
       // "O que tenho pra pagar essa semana/hoje/esse mês?"
       case 'a_pagar':
         await require('../handlers/aPagar')(data, ctx);

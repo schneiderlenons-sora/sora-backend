@@ -12,6 +12,9 @@ const APP_URL_TX = process.env.NEXT_PUBLIC_APP_URL || 'https://forsora.com';
 const SORA_CAPA_TX = process.env.SORA_CAPA_URL || `${APP_URL_TX}/sora-capa.png`;
 const { criarPendente, buscarPendente, removerPendente } = require('../services/pendentes');
 const { categorizarDescricao } = require('../services/categorizar');
+// Sugestões 002 e 003 de cliente (Fábio, 05/10/2026): a descrição aparece na
+// confirmação, e com a grafia que a pessoa escreveu.
+const { grafiaOriginal, linhaDescricao } = require('../services/descricaoTx');
 // Conta em moeda estrangeira (migration 144) — o patrimônio soma na moeda BASE
 // do grupo (migration 168).
 const {
@@ -399,7 +402,7 @@ async function nomesPorId(ids) {
 
 // ── HANDLER PRINCIPAL ─────────────────────────────────────────────
 module.exports = async function handleTransacoes(data, ctx) {
-  const { phone, grupoId, user } = ctx;
+  const { phone, grupoId, user, mensagem } = ctx;
   // Resumo, busca e saldo saem na moeda do GRUPO (Fase 3); o lançamento novo
   // fala a moeda da CONTA (ver `valorTxt` abaixo), que é a que a pessoa disse.
   const base = await moedaBaseTx(grupoId);
@@ -554,7 +557,18 @@ module.exports = async function handleTransacoes(data, ctx) {
       tipo:         data.tipo,
       categoria:    data.categoria || 'Outros',
       valor: campoMoeda.valor,   // SEMPRE na base do grupo (congelado, ver moeda.js)
-      observacao:   data.observacao || '',
+      // ⚠️ SUGESTÃO 003 — A GRAFIA É A QUE A PESSOA ESCREVEU.
+      //
+      // `interpretarRapido` começa com `message.toLowerCase()` (dezenas de
+      // regexes dependem disso) e a descrição é uma fatia desse texto — então
+      // "Gastei 25 com Corrida de Uber" gravava `corrida de uber`. O cliente
+      // pediu "igual à forma que o usuário lançou", e capitalizar só a
+      // inicial daria "Corrida de uber": o exemplo dele tem DUAS maiúsculas.
+      //
+      // `grafiaOriginal` reencontra o trecho na mensagem original e devolve a
+      // fatia como veio; quando a descrição não saiu do texto (a IA resume
+      // "50 no zé delivery" como "bebida"), sobra a inicial maiúscula.
+      observacao:   grafiaOriginal(data.observacao, mensagem),
       carteira_nome: carteiraNome,
       pago:         true,
       data:         dataTsISO
@@ -670,9 +684,21 @@ module.exports = async function handleTransacoes(data, ctx) {
     const notaReceita = receitaRedirecionada
       ? `\n\n💡 Recebimento não entra em cartão de crédito — registrei em *${carteiraNome}*.`
       : '';
+    // ⚠️ SUGESTÃO 002 — A DESCRIÇÃO ENTRA NA CONFIRMAÇÃO.
+    //
+    // Ela só mostrava a CATEGORIA, e categoria é um balde: "Alimentação" não
+    // diz se foi o almoço ou o mercado. Sem a descrição, conferir o
+    // lançamento exigia abrir o painel — que é justamente o que a Sora existe
+    // pra evitar.
+    //
+    // `linhaDescricao` devolve `null` quando a descrição REPETE a categoria
+    // ("uber 18" → descrição "uber", categoria "Uber"): aí a linha não
+    // informaria nada e só alongaria a mensagem.
+    const linhaDesc = linhaDescricao(txCriada?.observacao, data.categoria);
     const msg =
       `✅ *Transação registrada!*\n\n` +
       `🔑 ID: \`${idCurto}\`\n` +
+      (linhaDesc ? `${linhaDesc}\n` : '') +
       `${emoji} Categoria: ${data.categoria}\n` +
       `💸 Valor: ${valorTxt}\n` +
       `🔄 Tipo: ${tipo}\n` +

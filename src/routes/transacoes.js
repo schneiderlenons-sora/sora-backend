@@ -1,8 +1,9 @@
 const express  = require('express');
 const arquivadas = require('../services/arquivadas');
-const { ehPagamentoFatura } = require('../services/categorizar');
 const router   = express.Router();
 const supabase = require('../db/supabase');
+// A conta do saldo ao editar uma transação — compartilhada com o WhatsApp.
+const { ajustesDeSaldo } = require('../services/alterarTransacao');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { calcularResumo, calcularResumoAnual } = require('../services/resumoTransacoes');
@@ -21,7 +22,6 @@ const {
   cartaoForaDaBase,
   motivoCartaoForaDaBase,
   originalDoValorNaBase,
-  valorNativo: valorNativoTx,
   formatadorDoGrupo,
 } = require('../services/moeda');
 
@@ -702,34 +702,28 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     // um "previsto" variável), mudar o valor de um pago, ou trocar de conta. Pula
     // transferências e fatura de cartão (têm débito próprio) pra não contar em dobro.
     try {
-      const especial = (t) => !t || t.transferencia === true || ehPagamentoFatura(t.categoria) || t.categoria === 'Transferências';
-      if (!especial(antes) && !especial(tx)) {
-        // ⚠️ NATIVO: `wallets.saldo` está na moeda da CONTA, e `valor` na base
-        // do grupo. Mesma regra do POST e do WhatsApp (`valor_moeda ?? valor`);
-        // linha na base não tem `valor_moeda` e o efeito é o de sempre.
-        const efeito = (t) => (t.pago ? (t.tipo === 'Gasto' ? -1 : 1) * (Number(valorNativoTx(t)) || 0) : 0);
-        const ajustar = async (nome, delta) => {
-          if (!delta || !nome) return;
-          const { data: w } = await supabase.from('wallets')
-            .select('id, saldo, of_conta_id').eq('grupo_id', req.grupoId).ilike('nome', nome).maybeSingle();
-          // ⚠️ REGRA DE OURO: em carteira de Open Finance o saldo é do BANCO.
-          //
-          // Mexer nele aqui produz um número que ninguém pediu e que o próximo
-          // sync desfaz — ou seja, um valor errado que aparece, some sozinho e
-          // não deixa rastro pra ninguém entender o que houve. Medido: 131 das
-          // 601 carteiras da base (22%) são de OF.
-          //
-          // A transação continua sendo editada normalmente; o que deixa de
-          // acontecer é a Sora discordar do extrato do banco.
-          if (w && !w.of_conta_id) {
-            await supabase.from('wallets').update({ saldo: (w.saldo || 0) + delta }).eq('id', w.id);
-          }
-        };
-        if (normNome(antes.carteira_nome) === normNome(tx.carteira_nome)) {
-          await ajustar(tx.carteira_nome, efeito(tx) - efeito(antes));
-        } else {
-          await ajustar(antes.carteira_nome, -efeito(antes)); // tira o efeito da conta antiga
-          await ajustar(tx.carteira_nome, efeito(tx));         // aplica na conta nova
+      // ⚠️ A ARITMÉTICA MORA EM `services/alterarTransacao.js`, não mais aqui.
+      // Ela nasceu nesta rota, e o WhatsApp passou a precisar da mesma conta
+      // (pedido de cliente: "poder ALTERAR o lançamento, não só excluir").
+      // Duas cópias divergentes é exatamente o erro que este projeto já pagou
+      // caro — 5 vezes no vencimento de dívida, 7 no valor da fatura.
+      // `eval:alterar-transacao` §1 compara o serviço, caso a caso, com a
+      // versão que estava escrita aqui: regressão zero.
+      const { ajustes } = ajustesDeSaldo(antes, tx);
+      for (const { nome, delta } of ajustes) {
+        const { data: w } = await supabase.from('wallets')
+          .select('id, saldo, of_conta_id').eq('grupo_id', req.grupoId).ilike('nome', nome).maybeSingle();
+        // ⚠️ REGRA DE OURO: em carteira de Open Finance o saldo é do BANCO.
+        //
+        // Mexer nele aqui produz um número que ninguém pediu e que o próximo
+        // sync desfaz — ou seja, um valor errado que aparece, some sozinho e
+        // não deixa rastro pra ninguém entender o que houve. Medido: 131 das
+        // 601 carteiras da base (22%) são de OF.
+        //
+        // A transação continua sendo editada normalmente; o que deixa de
+        // acontecer é a Sora discordar do extrato do banco.
+        if (w && !w.of_conta_id) {
+          await supabase.from('wallets').update({ saldo: (w.saldo || 0) + delta }).eq('id', w.id);
         }
       }
     } catch (e) { console.warn('[transacoes PUT] reconcilia saldo falhou:', e.message); }
