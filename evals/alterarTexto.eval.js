@@ -252,6 +252,46 @@ console.log('-- 13. campo nomeado ENGOLE o "para N" do fim --');
   eq(mudancasDaFrase('altera ab12cd para 50').valor, 50, '13 sem campo nomeado, e valor');
 }
 console.log('  ok');
+console.log('-- 14. CONFIGURAR a fatura nao e CONSULTAR a fatura --');
+{
+  // ⚠️ REGRESSAO ACHADA NUMA AUDITORIA, nao por relato. Comparando as
+  // acoes que o webhook despacha com o que a Central anuncia, apareceu que
+  // "fatura do nubank fecha dia 5" virava CONSULTA. Medido contra a versao
+  // anterior ao commit que criou a regra `fatura_cartao` (set/2026):
+  //
+  //     antes  -> null (ia pra IA, que configura o fechamento)
+  //     depois -> fatura_cartao, termo "nubank fecha dia 5"
+  //
+  // Quem tentava AJUSTAR a data recebia um relatorio, e o cartao continuava
+  // com a data errada — em silencio.
+  const CONFIG = [
+    'fatura do nubank fecha dia 5',
+    'fatura fecha dia 10',
+    'fatura do inter vence dia 15',
+    'fatura do c6 fecha no dia 8',
+    'fatura do itau vence no dia 20',
+  ];
+  for (const f of CONFIG) {
+    const r = interpretarRapido(f);
+    ok(r?.acao !== 'fatura_cartao', `14 "${f}" virou CONSULTA (era configuracao)`);
+  }
+
+  // ⚠️ E A CONSULTA TEM DE CONTINUAR INTEIRA — a guarda e de FORMA
+  // ("fecha/vence dia N"), nao de palavra. Barrar "fecha" solto quebraria a
+  // ultima frase daqui, que e consulta legitima.
+  const CONSULTA = [
+    'fatura do nubank',
+    'relatório da fatura do mercado pago de outubro',
+    'extrato do cartão c6',
+    'quanto está a fatura do inter',
+    'qual a fatura que fecha esse mês',
+  ];
+  for (const f of CONSULTA) {
+    const r = interpretarRapido(f);
+    eq(r?.acao, 'fatura_cartao', `14 "${f}" deixou de ser consulta`);
+  }
+}
+console.log('  ok');
 console.log('');
 if (falhas.length) {
   console.error(`x ${falhas.length} falha(s):`);

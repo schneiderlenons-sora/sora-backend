@@ -1032,7 +1032,30 @@ function interpretarRapido(message) {
   //
   // ⚠️ `pagar_fatura` roda MUITO antes (linha ~696) porque é AÇÃO, não
   // consulta — "paguei a fatura do nubank" nunca chega aqui.
-  if (/\bfatura\b|\bextrato\b/i.test(msg) && !/\bfaturamento\b/i.test(msg)) {
+  //
+  // ⚠️ CONFIGURAR NÃO É CONSULTAR — e esta guarda conserta uma REGRESSÃO que
+  // a regra acima introduziu em set/2026. Medido contra a versão anterior
+  // (`git show <commit>^`):
+  //
+  //     "fatura do nubank fecha dia 5"
+  //        antes  -> null  (ia pra IA, que configura o fechamento)
+  //        depois -> fatura_cartao, termo "nubank fecha dia 5"
+  //
+  // Ou seja: quem tentava AJUSTAR a data de fechamento recebia um relatório,
+  // e o cartão continuava com a data errada. Achado numa auditoria que
+  // comparou as ações do webhook com o que a Central anuncia.
+  //
+  // ⚠️ A guarda é de FORMA, não de palavra: "fecha/vence dia N". Barrar
+  // "fecha" solto quebraria "qual a fatura que fecha esse mês?", que é
+  // consulta legítima — o que distingue é o DIA explícito.
+  //
+  // ⚠️ `set_fatura_dia` continua ESTREITO (só casa "definir fatura dia N"),
+  // então a frase volta a cair na IA, que é exatamente o comportamento de
+  // antes. Restaurar, não inventar: ampliar o parser de configuração é outro
+  // trabalho, com eval próprio.
+  const configurandoData = /\b(?:fecha|fechamento|vence|vencimento|venc)\s*(?:no|em|para|pro|pra)?\s*(?:o\s+)?dia\s*\d{1,2}\b/i.test(msg);
+
+  if (/\bfatura\b|\bextrato\b/i.test(msg) && !/\bfaturamento\b/i.test(msg) && !configurandoData) {
     const termo = termoDoCartao(msg);
     if (termo) return { acao: 'fatura_cartao', termo, competencia: competenciaPedida(msg) };
   }
