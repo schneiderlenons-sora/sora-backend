@@ -24,6 +24,33 @@ let lastStatus = null;
 router.get('/diag', async (req, res) => {
   if (req.query.key !== process.env.WHATSAPP_VERIFY_TOKEN) return res.sendStatus(403);
 
+  // ── ?frase=... : O QUE A SORA ENTENDE DESTA FRASE, AQUI ────────────────
+  //
+  // ⚠️ Existe pela lição de out/2026: "a função passa no teste" e "o recurso
+  // funciona em produção" são coisas diferentes, e medir na máquina errada
+  // não é medir. A cotação ficou morta por uma semana passando em todo teste
+  // local.
+  //
+  // Aqui o interpretador roda DENTRO do Render, com o código que está no ar,
+  // e devolve a ação escolhida — sem mandar mensagem pra ninguém e sem tocar
+  // no banco. É a única forma de conferir uma regra nova do WhatsApp sem
+  // pedir a um cliente que digite a frase.
+  if (req.query.frase) {
+    const { interpretarRapido } = require("../handlers/interpretador");
+    const t0 = Date.now();
+    let saida = null, erro = null;
+    try { saida = interpretarRapido(String(req.query.frase)); }
+    catch (e) { erro = e?.message || String(e); }
+    return res.json({
+      frase: req.query.frase,
+      acao: saida?.acao ?? null,          // null = cai pra IA
+      interpretado: saida,
+      erro,
+      ms: Date.now() - t0,
+      ambiente: process.env.RENDER ? "render" : "local",
+    });
+  }
+
   // Testa conectividade Render → Supabase (isola hang de query no processamento).
   if (req.query.dbtest) {
     const supabase = require('../db/supabase');
