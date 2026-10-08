@@ -22,7 +22,18 @@ let lastStatus = null;
 //  - &subscribe=1→ INSCREVE o app na WABA (POST subscribed_apps) — fix do inbound
 //  - &to=55...   → tenta ENVIAR direto e devolve o erro cru da Meta
 router.get('/diag', async (req, res) => {
-  if (req.query.key !== process.env.WHATSAPP_VERIFY_TOKEN) return res.sendStatus(403);
+  // ⚠️ DOIS SEGREDOS SERVEM, e nenhum deles é novo. O diag sempre exigiu o
+  // `WHATSAPP_VERIFY_TOKEN`; o `API_SECRET_TOKEN` entrou junto porque é ele
+  // que abre o `/api/admin/of-debug`, que expõe o extrato bancário de um
+  // cliente inteiro. Ou seja: quem tem este segundo token já alcança MUITO
+  // mais do que "o que a Sora entendeu desta frase" — aceitar os dois não
+  // abre nada que já não estivesse aberto, e evita ter de buscar o token do
+  // WhatsApp só pra conferir uma regra nova.
+  const chave = req.query.key;
+  const vale = (seg) => !!seg && chave === seg;
+  if (!vale(process.env.WHATSAPP_VERIFY_TOKEN) && !vale(process.env.API_SECRET_TOKEN)) {
+    return res.sendStatus(403);
+  }
 
   // ── ?frase=... : O QUE A SORA ENTENDE DESTA FRASE, AQUI ────────────────
   //
