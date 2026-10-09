@@ -249,7 +249,9 @@ function explicar(grupo) {
 
 // ── Acesso ao banco ─────────────────────────────────────────────────────────
 
-const COLUNAS = 'id, id_curto, valor, valor_moeda, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia';
+// `pago` entra pro painel distinguir a PREVISÃO manual (pago=false, sem of_tx_id)
+// da cobrança do banco — é o que habilita o botão "juntar e manter meu nome".
+const COLUNAS = 'id, id_curto, valor, valor_moeda, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia, pago';
 
 /**
  * Duplicatas do grupo nos últimos `dias`.

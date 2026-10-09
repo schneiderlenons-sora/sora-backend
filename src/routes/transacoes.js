@@ -891,6 +891,65 @@ router.delete('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// POST /api/transacoes/fundir — junta uma previsão manual pendente com a
+// cobrança real do banco que o Watson marcou como a MESMA (manual × banco).
+//
+// Mantém a linha do BANCO (tem of_tx_id; o saldo já está aplicado) e, quando o
+// usuário pede ("manter meu nome"), ela herda a descrição/categoria da previsão
+// manual. A previsão manual é removida — e, por ser pago=false e sem of_tx_id,
+// isso NÃO mexe em saldo nem em of_tx_ignoradas. A regra mora em
+// services/fusaoDuplicada.js (puro, com eval); a PROVA de que são a mesma coisa
+// é o MESMO ehDuplicata que o painel usou pra mostrar o par — zero tolerância
+// nova aqui.
+router.post('/fundir', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { manter_id, descartar_id, herdar_rotulo } = req.body || {};
+    const ids = [manter_id, descartar_id].filter(Boolean);
+    if (ids.length !== 2) return res.status(400).json({ erro: 'Envie as duas transações (manter_id e descartar_id).' });
+
+    const { data: linhas } = await supabase.from('transacoes')
+      .select('*').eq('grupo_id', req.grupoId).in('id', ids);
+    if (!linhas || linhas.length !== 2) return res.status(404).json({ erro: 'Transação não encontrada neste grupo.' });
+
+    const a = linhas.find((t) => t.id === manter_id);
+    const b = linhas.find((t) => t.id === descartar_id);
+
+    const { planoFusao, rotuloHerdado } = require('../services/fusaoDuplicada');
+    const plano = planoFusao(a, b);
+    // ⚠️ O cliente diz quem quer manter, mas QUEM FICA é sempre a linha do banco
+    // (ver o cabeçalho de fusaoDuplicada.js). Se o pedido inverte isso, recusa —
+    // nunca apaga a cobrança real por engano.
+    if (!plano.seguro) return res.status(409).json({ erro: `Não dá pra fundir: ${plano.motivo}. Use excluir.` });
+    if (plano.manterId !== manter_id) {
+      return res.status(409).json({ erro: 'A linha do banco é que deve ser mantida (ela protege contra reimportação). Troque os lados.' });
+    }
+
+    // A PROVA: tem de ser a mesma duplicata que o Watson confirma. Sem isso, não
+    // funde (o painel só oferece em par confirmado, mas o backend reconfere).
+    const { ehDuplicata } = require('../services/duplicadas');
+    if (!ehDuplicata(plano.banco, plano.previsto)) {
+      return res.status(409).json({ erro: 'Estas duas não batem como a mesma cobrança.' });
+    }
+
+    // Herda o rótulo do usuário na linha do banco (só quando pedido).
+    if (herdar_rotulo) {
+      const patch = rotuloHerdado(plano.previsto);
+      if (Object.keys(patch).length) {
+        const { error } = await supabase.from('transacoes').update(patch).eq('id', plano.manterId).eq('grupo_id', req.grupoId);
+        if (error) return res.status(500).json({ erro: error.message });
+      }
+    }
+
+    // Remove a previsão manual (pago=false, sem of_tx_id → sem estorno de saldo
+    // e sem of_tx_ignoradas; é exclusão trivial, não mexe em dinheiro).
+    const { error: errDel } = await supabase.from('transacoes')
+      .delete().eq('id', plano.descartarId).eq('grupo_id', req.grupoId);
+    if (errDel) return res.status(500).json({ erro: errDel.message });
+
+    res.json({ ok: true, mantida: plano.manterId, removida: plano.descartarId });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // GET /api/transacoes/:phone/resumo?mes=2026-05&criado_por_me=true
 router.get('/:phone/resumo', auth, async (req, res) => {
   try {
