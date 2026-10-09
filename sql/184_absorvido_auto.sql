@@ -5,9 +5,10 @@
 -- virar linha nova). É o que alimenta a lista "juntados automaticamente ·
 -- desfazer" no Detetive Watson.
 --
--- ⚠️ ADITIVA e TOLERANTE: sem esta coluna a absorção AINDA acontece (o código
--- refaz o update sem o marco) — só não entra na lista de desfazer. Então rodar
--- isto é opcional pro recurso funcionar, obrigatório pro "desfazer" aparecer.
+-- ⚠️ É ESTA MIGRATION QUE LIGA O RECURSO. Sem a coluna, o update da absorção
+-- falha e a cobrança é inserida normal — ou seja, a absorção automática NÃO
+-- acontece (de propósito: não fundir sozinho sem a rede de "desfazer"). Antes
+-- de rodar isto, o comportamento é idêntico ao de hoje. Aditiva e tolerante.
 --
 -- Nada de índice: a lista lê só os últimos 7 dias do próprio grupo, volume
 -- ínfimo (medido: ~1 absorção na base inteira).
