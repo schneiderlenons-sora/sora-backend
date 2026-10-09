@@ -9,7 +9,7 @@
 //
 // Rodar:  npm run eval:fusao
 // =============================================================================
-const { planoFusao, rotuloHerdado } = require('../src/services/fusaoDuplicada');
+const { planoFusao, rotuloHerdado, escolherAbsorcoes } = require('../src/services/fusaoDuplicada');
 
 const falhas = [];
 const ok = (cond, msg) => { if (!cond) falhas.push(msg); };
@@ -68,6 +68,50 @@ console.log('── 4. herança de rótulo ──');
   // NUNCA herda valor/data/pago — isso é a verdade do banco
   const h = rotuloHerdado({ observacao: 'x', categoria: 'y', valor: 999, data: '2020-01-01', pago: false });
   ok(!('valor' in h) && !('data' in h) && !('pago' in h), 'herança é SÓ rótulo, nunca valor/data/pago');
+}
+console.log('  ok');
+
+// ── 5. absorção automática: só junta 1-pra-1 sem ambiguidade ───────────────
+console.log('── 5. escolherAbsorcoes (automático, sem ambiguidade) ──');
+{
+  // "são a mesma" = mesmo valor E mesma conta (stub simples pro teste; na prod
+  // é o ehDuplicata). Determinístico e de graça.
+  const mesma = (p, c) => p.valor === c.valor && p.conta === c.conta;
+  const P = (id, valor, conta) => ({ id, valor, conta });
+  const C = (of, valor, conta) => ({ of_tx_id: of, valor, conta });
+
+  // caso limpo: 1 previsão × 1 cobrança iguais → junta
+  {
+    const r = escolherAbsorcoes([P('p1', 405, 'BB')], [C('o1', 405, 'BB')], mesma);
+    ok(r.length === 1 && r[0].previsao.id === 'p1' && r[0].cobranca.of_tx_id === 'o1', '1×1 igual junta');
+  }
+  // nada casa → vazio
+  ok(escolherAbsorcoes([P('p1', 405, 'BB')], [C('o1', 999, 'BB')], mesma).length === 0, 'valor diferente não junta');
+  ok(escolherAbsorcoes([P('p1', 405, 'BB')], [C('o1', 405, 'Nubank')], mesma).length === 0, 'conta diferente não junta');
+
+  // ⚠️ AMBIGUIDADE lado COBRANÇA: uma cobrança casa com DUAS previsões iguais → NÃO junta nenhuma
+  {
+    const r = escolherAbsorcoes([P('p1', 405, 'BB'), P('p2', 405, 'BB')], [C('o1', 405, 'BB')], mesma);
+    ok(r.length === 0, 'cobrança que casa com 2 previsões não junta (qual delas?)');
+  }
+  // ⚠️ AMBIGUIDADE lado PREVISÃO: duas cobranças iguais disputam a mesma previsão → NÃO junta
+  {
+    const r = escolherAbsorcoes([P('p1', 405, 'BB')], [C('o1', 405, 'BB'), C('o2', 405, 'BB')], mesma);
+    ok(r.length === 0, 'duas cobranças disputando 1 previsão não juntam (qual paga?)');
+  }
+  // pares independentes: cada um 1×1 → junta os dois
+  {
+    const r = escolherAbsorcoes(
+      [P('p1', 405, 'BB'), P('p2', 90, 'Nubank')],
+      [C('o1', 405, 'BB'), C('o2', 90, 'Nubank')], mesma);
+    ok(r.length === 2, 'dois pares independentes juntam os dois');
+  }
+  // cobrança sem of_tx_id é ignorada (não é do banco)
+  ok(escolherAbsorcoes([P('p1', 405, 'BB')], [{ valor: 405, conta: 'BB' }], mesma).length === 0, 'cobrança sem of_tx_id fora');
+  // previsão sem id é ignorada
+  ok(escolherAbsorcoes([{ valor: 405, conta: 'BB' }], [C('o1', 405, 'BB')], mesma).length === 0, 'previsão sem id fora');
+  // comparador que explode não derruba (try/catch por par)
+  ok(escolherAbsorcoes([P('p1', 405, 'BB')], [C('o1', 405, 'BB')], () => { throw new Error('x'); }).length === 0, 'comparador que explode não junta nada');
 }
 console.log('  ok');
 

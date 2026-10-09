@@ -82,4 +82,68 @@ function rotuloHerdado(previsto) {
   return out;
 }
 
-module.exports = { planoFusao, rotuloHerdado };
+// =============================================================================
+// ABSORÇÃO AUTOMÁTICA no sync — escolher QUAIS pares juntar sozinho.
+//
+// Quando o banco traz uma cobrança que é, com PROVA, a mesma de uma previsão
+// manual pendente (o `ehDuplicata` do Watson dizendo 'manual-e-banco'), a
+// cobrança assume a previsão em vez de virar linha nova — o duplicado nunca
+// aparece. É o que a conta/receita FIXA já faz; aqui estende pro previsto
+// digitado à mão.
+//
+// ⚠️ SÓ JUNTA SOZINHO O QUE NÃO TEM AMBIGUIDADE NENHUMA. A regra é dos DOIS
+// lados:
+//   · a cobrança do banco pode casar com UMA só previsão (senão qual delas?);
+//   · a previsão pode ser reivindicada por UMA só cobrança (senão qual paga?).
+// Qualquer disputa → fica de FORA do automático e segue como sugestão do Watson
+// (o usuário decide). Juntar errado aqui sumiria com uma previsão que a pessoa
+// acompanhava — e o automático não pode ter o luxo da dúvida.
+// =============================================================================
+
+/**
+ * Decide os pares (previsão manual × cobrança do banco) que podem ser juntados
+ * SOZINHOS, sem ambiguidade dos dois lados.
+ *
+ * @param previsoes  previsões manuais pendentes [{ id, ... }]
+ * @param cobrancas  cobranças do banco a inserir [{ of_tx_id, ... }]
+ * @param saoMesma   (previsao, cobranca) => boolean — a PROVA (ehDuplicata)
+ * @returns [{ previsao, cobranca }]  só os pares 1-pra-1 inequívocos
+ */
+function escolherAbsorcoes(previsoes, cobrancas, saoMesma) {
+  const prevs = (previsoes || []).filter((p) => p && p.id);
+  const cobs  = (cobrancas || []).filter((c) => c && c.of_tx_id);
+  if (!prevs.length || !cobs.length) return [];
+
+  // Pra cada cobrança, quais previsões casam. E, no caminho, quantas cobranças
+  // disputam cada previsão (pra barrar o outro lado da ambiguidade).
+  const casamentosPorCobranca = new Map();     // índice da cobrança -> [previsões]
+  const cobrancasPorPrevisao  = new Map();      // id da previsão -> nº de cobranças que a querem
+
+  cobs.forEach((c, ci) => {
+    const casam = prevs.filter((p) => {
+      try { return !!saoMesma(p, c); } catch { return false; }
+    });
+    casamentosPorCobranca.set(ci, casam);
+    for (const p of casam) cobrancasPorPrevisao.set(p.id, (cobrancasPorPrevisao.get(p.id) || 0) + 1);
+  });
+
+  const pares = [];
+  const previsoesUsadas = new Set();
+  cobs.forEach((c, ci) => {
+    const casam = casamentosPorCobranca.get(ci) || [];
+    // A cobrança tem de casar com EXATAMENTE uma previsão.
+    if (casam.length !== 1) return;
+    const p = casam[0];
+    // E essa previsão não pode ser disputada por outra cobrança.
+    if ((cobrancasPorPrevisao.get(p.id) || 0) !== 1) return;
+    // ⚠️ Guarda DEFENSIVA (equivalente no eval): a disputa acima já garante que
+    // uma previsão casada por mais de uma cobrança é pulada de vez, então ela
+    // nunca chega aqui usada duas vezes. Fica como defesa em profundidade.
+    if (previsoesUsadas.has(p.id)) return;
+    previsoesUsadas.add(p.id);
+    pares.push({ previsao: p, cobranca: c });
+  });
+  return pares;
+}
+
+module.exports = { planoFusao, rotuloHerdado, escolherAbsorcoes };

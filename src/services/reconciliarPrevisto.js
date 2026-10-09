@@ -128,7 +128,86 @@ async function reconciliar(grupoId, novas) {
   return { restantes, reconciliadas };
 }
 
+// =============================================================================
+// ABSORÇÃO DO PREVISTO MANUAL — o mesmo "assume a previsão", mas pro lançamento
+// que o usuário DIGITOU à mão (pendente), não pra recorrência.
+//
+// Roda DEPOIS do `reconciliar` acima, sobre o que SOBROU — então não toca no
+// caminho da recorrência (zero regressão lá). E é mais CONSERVADOR:
+//
+//   · a PROVA é o `ehDuplicata` do Watson ('manual-e-banco') — mesmo valor,
+//     mesma conta, ≤1 dia, origem diferente. Zero tolerância nova.
+//   · só junta par 1-pra-1 SEM ambiguidade (escolherAbsorcoes). Disputa → fica
+//     de fora e vira sugestão do Watson.
+//
+// ⚠️ MUTAÇÃO MÍNIMA, de propósito: a previsão vira a real mexendo SÓ em
+// `pago`, `of_tx_id`, `of_card` e o marco `absorvido_auto_em`. Valor e data
+// NÃO são tocados (o valor é idêntico — o ehDuplicata exige igualdade — e a
+// data está a ≤1 dia), e o RÓTULO do usuário (observacao/categoria) é
+// preservado por construção. Isso é o que torna o DESFAZER trivial: basta
+// soltar pago/of_tx_id e o próximo sync reimporta a cobrança.
+//
+// ⚠️ SALDO não é tocado, e é seguro: a cobrança veio do Open Finance, logo a
+// conta é de OF, cujo saldo é do banco — igual à reconciliação de recorrência.
+//
+// ⚠️ TOLERANTE DE PONTA A PONTA: qualquer falha devolve "não absorvi nada" e o
+// sync insere tudo como antes. E há interruptor: OF_ABSORVER_MANUAL=0 desliga.
+// =============================================================================
+async function absorverManuais(grupoId, novas) {
+  const linhas = (novas || []).filter(Boolean);
+  const vazio = { restantes: linhas, absorvidas: 0 };
+  if (process.env.OF_ABSORVER_MANUAL === '0') return vazio;      // kill-switch
+  if (!grupoId || !linhas.length) return vazio;
+
+  try {
+    const { ehDuplicata } = require('./duplicadas');
+    const { escolherAbsorcoes } = require('./fusaoDuplicada');
+
+    // Previsões manuais pendentes: pago=false, sem of_tx_id, NÃO recorrência
+    // (essas já passaram pelo reconciliar). Colunas do que o ehDuplicata lê.
+    // ⚠️ `IS NOT TRUE`, não `!= true`: em Postgres `recorrente <> true` EXCLUI
+    // as linhas com `recorrente` NULL (comparação com null é "unknown"). Um
+    // previsto manual pode nascer com recorrente=null — `IS NOT TRUE` pega
+    // false E null, que é o conjunto certo de "não é recorrência".
+    const { data: prevs, error } = await supabase.from('transacoes')
+      .select('id, valor, valor_moeda, tipo, observacao, carteira_nome, data, of_tx_id, pluggy_tx_id, parcela_total, recorrente, pago')
+      .eq('grupo_id', grupoId).eq('pago', false).is('of_tx_id', null).not('recorrente', 'is', true);
+    if (error) throw error;
+    if (!prevs || !prevs.length) return vazio;
+
+    const pares = escolherAbsorcoes(prevs, linhas, (p, c) => ehDuplicata(p, c) === 'manual-e-banco');
+    if (!pares.length) return vazio;
+
+    const absorvidasIds = new Set();   // of_tx_id das cobranças que foram absorvidas
+    let n = 0;
+    for (const { previsao, cobranca } of pares) {
+      const patch = {
+        pago: true,
+        of_tx_id: cobranca.of_tx_id || null,
+        of_card: cobranca.of_card || null,
+        absorvido_auto_em: new Date().toISOString(),
+      };
+      const { error: errUp } = await supabase.from('transacoes')
+        .update(patch).eq('id', previsao.id).eq('grupo_id', grupoId);
+      // ⚠️ Se a coluna `absorvido_auto_em` não existe (migration 184 pendente),
+      // este update FALHA e a cobrança é inserida normal — ou seja, a absorção
+      // automática SÓ LIGA depois da migration. É de propósito: sem o marco não
+      // há "desfazer", e não quero fundir sozinho sem rede. Antes da 184, o
+      // comportamento é idêntico ao de hoje.
+      if (errUp) continue;              // falhou (inclui coluna ausente) → insere normal
+      absorvidasIds.add(cobranca.of_tx_id);
+      n++;
+      console.log(`[absorverManuais] previsão "${previsao.observacao}" (R$ ${previsao.valor}) assumiu a cobrança do banco "${cobranca.observacao}"`);
+    }
+
+    const restantes = linhas.filter((c) => !absorvidasIds.has(c.of_tx_id));
+    return { restantes, absorvidas: n };
+  } catch {
+    return vazio;                       // qualquer erro: insere tudo, como antes
+  }
+}
+
 module.exports = {
-  reconciliar, casarPrevisao, valorCompativel, diasEntre, previsoesEmAberto,
+  reconciliar, absorverManuais, casarPrevisao, valorCompativel, diasEntre, previsoesEmAberto,
   TOLERANCIA_PCT, TOLERANCIA_MIN, JANELA_DIAS,
 };

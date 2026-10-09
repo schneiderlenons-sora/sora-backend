@@ -2737,6 +2737,17 @@ async function inserirTransacoes(grupoId, userId, walletNome, txs, cambio = null
     if (!novas.length) return r.reconciliadas;
   } catch { /* sem reconciliação: insere tudo, como antes */ }
 
+  // E o mesmo pro PREVISTO MANUAL (digitado à mão): a cobrança do banco assume
+  // a previsão pendente quando é, COM PROVA (ehDuplicata), a mesma — em vez de
+  // virar linha nova. Roda sobre o que a reconciliação de recorrência deixou,
+  // é tolerante (nunca derruba o sync) e tem interruptor OF_ABSORVER_MANUAL=0.
+  try {
+    const { absorverManuais } = require('./reconciliarPrevisto');
+    const m = await absorverManuais(grupoId, novas);
+    if (m.absorvidas) novas = m.restantes;
+    if (!novas.length) return m.absorvidas;
+  } catch { /* sem absorção: insere tudo, como antes */ }
+
   // Colunas que podem não existir no ambiente (of_bill_id = migration 101,
   // parcela_* = migration 071). Se faltarem, reinsere sem elas em vez de
   // derrubar a sincronização inteira — são extras, não o dado principal.

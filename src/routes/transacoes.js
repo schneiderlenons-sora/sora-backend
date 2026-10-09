@@ -950,6 +950,48 @@ router.post('/fundir', auth, exigirPermissao('admin', 'escrita'), async (req, re
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// GET /api/transacoes/fusoes-auto/:phone — previsões manuais que o sync juntou
+// SOZINHO com a cobrança do banco nos últimos 7 dias. Alimenta a lista
+// "juntados automaticamente · desfazer" do Watson. Tolerante: sem a coluna
+// (migration 184 pendente) devolve vazio.
+router.get('/fusoes-auto/:phone', auth, async (req, res) => {
+  try {
+    const user = usuarioReq(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
+    const desde = new Date(Date.now() - 7 * 86400000).toISOString();
+    const { data, error } = await supabase.from('transacoes')
+      .select('id, observacao, categoria, valor, tipo, data, carteira_nome, absorvido_auto_em')
+      .eq('grupo_id', user.grupo_ativo)
+      .not('absorvido_auto_em', 'is', null)
+      .gte('absorvido_auto_em', desde)
+      .order('absorvido_auto_em', { ascending: false })
+      .limit(50);
+    if (error) return res.json({ fusoes: [] });   // coluna ausente → sem lista
+    res.json({ fusoes: data || [] });
+  } catch { res.json({ fusoes: [] }); }
+});
+
+// POST /api/transacoes/desfazer-fusao — reverte uma absorção automática: a
+// linha volta a ser a previsão pendente (solta pago/of_tx_id/marco) e o próximo
+// sync reimporta a cobrança do banco como linha separada. NÃO mexe em saldo
+// (conta de OF, saldo é do banco) nem em of_tx_ignoradas.
+router.post('/desfazer-fusao', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { id } = req.body || {};
+    if (!id) return res.status(400).json({ erro: 'Informe a transação.' });
+    const { data: tx } = await supabase.from('transacoes')
+      .select('id, absorvido_auto_em').eq('id', id).eq('grupo_id', req.grupoId).maybeSingle();
+    if (!tx) return res.status(404).json({ erro: 'Transação não encontrada.' });
+    if (!tx.absorvido_auto_em) return res.status(409).json({ erro: 'Esta transação não foi juntada automaticamente.' });
+
+    const { error } = await supabase.from('transacoes')
+      .update({ pago: false, of_tx_id: null, of_card: null, absorvido_auto_em: null })
+      .eq('id', id).eq('grupo_id', req.grupoId);
+    if (error) return res.status(500).json({ erro: error.message });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // GET /api/transacoes/:phone/resumo?mes=2026-05&criado_por_me=true
 router.get('/:phone/resumo', auth, async (req, res) => {
   try {
