@@ -527,7 +527,10 @@ router.get('/lancamentos/:phone', auth, async (req, res) => {
 
     const { data, error } = await q;
     if (error) throw error;
-    res.json(data || []);
+    // Fase 5: anexa "quem lançou" (criado_por_nome). Leitura tolerante — se a
+    // busca de nomes falhar, a lista vem sem o autor, não quebra.
+    const { anexarAutor } = require('../services/autorNegocio');
+    res.json(await anexarAutor(data || []));
   } catch (e) {
     res.status(500).json({ erro: e.message });
   }

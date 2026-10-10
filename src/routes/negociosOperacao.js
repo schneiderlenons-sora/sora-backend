@@ -344,7 +344,10 @@ router.get('/vendas/:phone', auth, async (req, res) => {
 
     const { data, error } = await q.order('data', { ascending: false }).limit(300);
     if (error) return semMigration(error, 'vendas_negocio') ? res.json([]) : res.status(500).json({ erro: error.message });
-    res.json(data || []);
+    // Fase 5: autoria da venda vem do lançamento ligado (vendas_negocio não tem
+    // user_id próprio). Tolerante — falha vira lista sem autor, não quebra.
+    const { anexarAutorVendas } = require('../services/autorNegocio');
+    res.json(await anexarAutorVendas(data || []));
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
