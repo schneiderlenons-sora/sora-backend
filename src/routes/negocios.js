@@ -8,6 +8,10 @@ const { encrypt, decrypt } = require('../services/cripto');
 const { importarHistoricoHotmart } = require('../services/hotmart-import');
 const { gerarInsights } = require('./../handlers/insights-negocio');
 const { empresasDoUsuario, podeNaEmpresa } = require('../services/acessoEmpresa');
+const { nanoid } = require('nanoid');
+const {
+  papelConviteValido, expiraEm, conviteUtilizavel, podeMexerNoMembro,
+} = require('../services/conviteEmpresa');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -100,6 +104,18 @@ router.post('/empresas', auth, async (req, res) => {
       cnpj:     cnpj  || null,
     }).select().single();
     if (error) throw error;
+
+    // ⚠️ O dono entra como membro admin — assim a empresa nasce consistente com
+    // o backfill da 173 (a lista de Acessos, o WhatsApp e o padrão olham
+    // empresa_membros). Tolerante: o ramo do dono em acessoEmpresa já cobre
+    // acesso mesmo se isto falhar, então não derruba a criação da empresa.
+    try {
+      await supabase.from('empresa_membros').upsert(
+        { empresa_id: data.id, user_id: user.id, papel: 'admin' },
+        { onConflict: 'empresa_id,user_id', ignoreDuplicates: true },
+      );
+    } catch { /* o ramo do dono cobre o acesso mesmo sem a linha */ }
+
     res.json({ ok: true, empresa: data });
   } catch (e) {
     res.status(500).json({ erro: e.message });
@@ -164,6 +180,212 @@ router.delete('/empresas/:id', auth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ erro: e.message });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// ACESSOS — a EQUIPE que opera a empresa pelo app (Fase 3, migration 173)
+//
+// ⚠️ NÃO confundir com a aba "Equipe"/folha (funcionarios_negocio): aquela é
+// quem você PAGA; esta é quem ACESSA a empresa (empresa_membros). Por isso a
+// tela chama "Acessos". Convite por EMPRESA (convites_empresa), nunca pelo
+// grupo pessoal — ver o cabeçalho da 173.
+//
+// Gerenciar acessos é SÓ do admin. O contador ('leitura') e o operador não
+// convidam nem removem ninguém. O dono (empresas.user_id) nunca sai nem é
+// rebaixado — nem pelo admin convidado (conviteEmpresa.podeMexerNoMembro).
+// ─────────────────────────────────────────────────────────────────
+
+// GET /api/negocios/empresas/:id/membros — lista quem acessa + convites abertos
+router.get('/empresas/:id/membros', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    if (!(await empresaDoUsuario(user.id, req.params.id, 'admin'))) {
+      return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    }
+
+    const { data: emp } = await supabase.from('empresas')
+      .select('id, user_id').eq('id', req.params.id).maybeSingle();
+
+    const { data: membros } = await supabase.from('empresa_membros')
+      .select('user_id, papel, padrao, created_at')
+      .eq('empresa_id', req.params.id).order('created_at', { ascending: true });
+
+    const { data: convites } = await supabase.from('convites_empresa')
+      .select('id, codigo, papel, expira_em, usado, created_at')
+      .eq('empresa_id', req.params.id).eq('usado', false)
+      .order('created_at', { ascending: false });
+
+    // ⚠️ Busca os users SEPARADO, sem embedding. `empresa_membros` tem DOIS
+    // FKs pra `users` (user_id e convidado_por), então `users(...)` embutido é
+    // AMBÍGUO e o PostgREST recusa — a lista sairia VAZIA pra toda empresa.
+    const ids = [...new Set((membros || []).map((m) => m.user_id).filter(Boolean))];
+    const { data: usrs } = ids.length
+      ? await supabase.from('users').select('id, name, phone, email').in('id', ids)
+      : { data: [] };
+    const nomePorId = Object.fromEntries((usrs || []).map((u) => [u.id, u]));
+
+    const lista = (membros || []).map((m) => ({
+      user_id: m.user_id,
+      nome:  nomePorId[m.user_id]?.name || nomePorId[m.user_id]?.email || 'Sem nome',
+      phone: nomePorId[m.user_id]?.phone || null,
+      papel: m.papel,
+      dono:  emp && emp.user_id === m.user_id,
+      desde: m.created_at,
+    }));
+
+    // ⚠️ O DONO SEMPRE APARECE, mesmo sem linha em empresa_membros. Empresa
+    // criada DEPOIS da 173 não ganha a linha do backfill (o POST passou a
+    // criá-la, mas as já existentes não têm) — e sem isto a lista de Acessos
+    // sairia SEM o dono, que é justamente quem administra. Sintetiza do
+    // `empresas.user_id`, igual ao ramo do dono em acessoEmpresa.
+    if (emp?.user_id && !lista.some((m) => m.user_id === emp.user_id)) {
+      const { data: d } = await supabase.from('users')
+        .select('name, phone, email').eq('id', emp.user_id).maybeSingle();
+      lista.unshift({
+        user_id: emp.user_id,
+        nome: d?.name || d?.email || 'Dono',
+        phone: d?.phone || null,
+        papel: 'admin', dono: true, desde: null,
+      });
+    }
+
+    const agora = Date.now();
+    res.json({
+      membros: lista,
+      // Só convites ainda no prazo — os expirados não servem pra nada na tela.
+      convites: (convites || []).filter((c) => Date.parse(c.expira_em) >= agora),
+    });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// POST /api/negocios/empresas/:id/convite — cria um link de convite { papel }
+router.post('/empresas/:id/convite', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    if (!(await empresaDoUsuario(user.id, req.params.id, 'admin'))) {
+      return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    }
+
+    const papel = String(req.body?.papel || 'operador');
+    if (!papelConviteValido(papel)) return res.status(400).json({ erro: 'Papel inválido.' });
+
+    const codigo = nanoid(8).toUpperCase();
+    const { error } = await supabase.from('convites_empresa').insert({
+      empresa_id: req.params.id, codigo, papel, criado_por: user.id, expira_em: expiraEm(),
+    });
+    if (error) return res.status(500).json({ erro: error.message });
+    res.json({ ok: true, codigo });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// PATCH /api/negocios/empresas/:id/membros/:userId — troca o papel de um membro
+router.patch('/empresas/:id/membros/:userId', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    if (!(await empresaDoUsuario(user.id, req.params.id, 'admin'))) {
+      return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    }
+    const papel = String(req.body?.papel || '');
+    if (!papelConviteValido(papel)) return res.status(400).json({ erro: 'Papel inválido.' });
+
+    const { data: emp } = await supabase.from('empresas')
+      .select('user_id').eq('id', req.params.id).maybeSingle();
+    const guard = podeMexerNoMembro(emp?.user_id, req.params.userId);
+    if (!guard.ok) return res.status(409).json({ erro: guard.erro });
+
+    const { error } = await supabase.from('empresa_membros')
+      .update({ papel }).eq('empresa_id', req.params.id).eq('user_id', req.params.userId);
+    if (error) return res.status(500).json({ erro: error.message });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// DELETE /api/negocios/empresas/:id/membros/:userId — tira alguém da empresa
+router.delete('/empresas/:id/membros/:userId', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    if (!(await empresaDoUsuario(user.id, req.params.id, 'admin'))) {
+      return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    }
+
+    const { data: emp } = await supabase.from('empresas')
+      .select('user_id').eq('id', req.params.id).maybeSingle();
+    const guard = podeMexerNoMembro(emp?.user_id, req.params.userId);
+    if (!guard.ok) return res.status(409).json({ erro: guard.erro });
+
+    const { error } = await supabase.from('empresa_membros')
+      .delete().eq('empresa_id', req.params.id).eq('user_id', req.params.userId);
+    if (error) return res.status(500).json({ erro: error.message });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// GET /api/negocios/convite-empresa/:codigo — resolve o convite pra tela de
+// aceitar (nome da empresa + papel). ⚠️ NÃO exige plano Platinum: o convidado
+// pode ainda não ter assinado, e é justamente essa tela que vai dizer que
+// precisa (plano 4.5). Só precisa estar logado.
+router.get('/convite-empresa/:codigo', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+
+    const { data: convite } = await supabase.from('convites_empresa')
+      .select('id, empresa_id, papel, expira_em, usado, empresas(nome, tipo)')
+      .eq('codigo', String(req.params.codigo || '').toUpperCase()).maybeSingle();
+
+    const v = conviteUtilizavel(convite);
+    if (!v.ok) return res.status(410).json({ erro: v.erro });
+
+    res.json({
+      ok: true,
+      empresa_id: convite.empresa_id,
+      empresa_nome: convite.empresas?.nome || 'a empresa',
+      papel: convite.papel,
+      tem_plano: exigirNegocios(user),   // a tela usa pra mostrar o aviso de Platinum
+    });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// POST /api/negocios/convite-empresa/:codigo/aceitar — vira membro da empresa.
+// ⚠️ NÃO exige Platinum: aceitar cria o VÍNCULO (acesso); OPERAR é que depende
+// do plano do próprio usuário (exigirNegocios nas rotas de operação). Assim o
+// convite fica "guardado" — quando a pessoa assinar, já entra direto, sem
+// precisar de um convite novo. É o que o plano 4.5 exige.
+router.post('/convite-empresa/:codigo/aceitar', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+
+    const codigo = String(req.params.codigo || '').toUpperCase();
+    const { data: convite } = await supabase.from('convites_empresa')
+      .select('id, empresa_id, papel, expira_em, usado').eq('codigo', codigo).maybeSingle();
+
+    const v = conviteUtilizavel(convite);
+    if (!v.ok) return res.status(410).json({ erro: v.erro });
+
+    // Vínculo idempotente: a unique(empresa_id,user_id) + ignoreDuplicates faz
+    // aceitar duas vezes não duplicar nem trocar o papel por acidente.
+    const { error: errMembro } = await supabase.from('empresa_membros')
+      .upsert({
+        empresa_id: convite.empresa_id, user_id: user.id,
+        papel: convite.papel || 'operador', convidado_por: null,
+      }, { onConflict: 'empresa_id,user_id', ignoreDuplicates: true });
+    if (errMembro) return res.status(500).json({ erro: errMembro.message });
+
+    // Queima o convite (não é link eterno). Tolerante: se falhar, o vínculo já
+    // existe; o convite usado some da lista no próximo load mesmo assim.
+    await supabase.from('convites_empresa').update({ usado: true }).eq('id', convite.id);
+
+    res.json({ ok: true, empresa_id: convite.empresa_id, tem_plano: exigirNegocios(user) });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 // ─────────────────────────────────────────────────────────────────

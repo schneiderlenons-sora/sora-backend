@@ -14,6 +14,7 @@
     "eval:regras": "node evals/regrasCategoria.eval.js",
     "eval:reconciliar": "node evals/reconciliarPrevisto.eval.js",
     "eval:fusao": "node evals/fusaoDuplicada.eval.js",
+    "eval:convite-empresa": "node evals/conviteEmpresa.eval.js",
     "eval:estoque": "node evals/estoque.eval.js",
     "eval:dre": "node evals/dre.eval.js",
     "eval:folha": "node evals/folha.eval.js",
