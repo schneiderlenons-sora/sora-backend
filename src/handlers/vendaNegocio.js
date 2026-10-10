@@ -17,7 +17,8 @@
 const supabase = require('../db/supabase');
 const { interpretarVenda } = require('../services/vendaTexto');
 const { enviarTexto } = require('../services/mensageiro');
-const { empresasDoUsuario, empresaAssumida, papelPermite } = require('../services/acessoEmpresa');
+const { empresasDoUsuario, empresaAssumida, papelPermite, definirPadrao } = require('../services/acessoEmpresa');
+const { acharLojaNaFrase } = require('../services/lojaMencionada');
 
 const hojeSP = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const fmt = (c) => new Intl.NumberFormat('pt-BR',
@@ -68,9 +69,20 @@ async function capturaVenda(mensagem, { phone, user }) {
   // Então mantém-se o comportamento de hoje (a primeira), mas o silêncio
   // acaba: a confirmação NOMEIA a loja em que caiu. Um palpite errado passa a
   // ser visível no mesmo segundo, em vez de sujar o caixa por semanas.
-  const empresa = empresaAssumida(alcancadas) || alcancadas[0];
+  //
+  // FASE 4 — a frase DECIDE: se ela cita uma das lojas alcançadas, é nela que a
+  // venda entra (não na primeira). E, se o usuário ainda não tinha loja padrão,
+  // essa escolha é LEMBRADA — as próximas vendas sem loja na frase vão pra ela.
+  const ditaNaFrase = acharLojaNaFrase(mensagem, alcancadas);
+  const tinhaPadrao = alcancadas.some((e) => e.padrao);
+  const empresa = ditaNaFrase || empresaAssumida(alcancadas) || alcancadas[0];
   if (!empresa) return false;
   const precisaDizerALoja = alcancadas.length > 1;
+  // Palpite = não foi dita, há 2+ lojas e não havia padrão: é o caso em que a
+  // Sora escolheu a primeira e a pessoa talvez quisesse outra.
+  const foiPalpite = !ditaNaFrase && precisaDizerALoja && !tinhaPadrao;
+  // Acabou de aprender a loja padrão (citou e ainda não tinha uma).
+  const aprendeuPadrao = !!ditaNaFrase && !tinhaPadrao && precisaDizerALoja;
 
   // Produto cadastrado dá preço, custo e baixa de estoque. Sem ele a venda
   // ainda vale — item avulso é melhor que venda não registrada.
@@ -174,6 +186,15 @@ async function capturaVenda(mensagem, { phone, user }) {
   // ⚠️ Com mais de uma loja alcançada, DIZER EM QUAL caiu. É o que transforma
   // um palpite errado em algo corrigível na hora (ver o bloco da empresa).
   if (precisaDizerALoja) linhas.push(`Loja: *${empresa.nome}*`);
+
+  // FASE 4: lembra a loja escolhida (tolerante — não derruba a venda) e conta
+  // pro usuário o que mudou.
+  if (aprendeuPadrao) {
+    await definirPadrao(user.id, empresa.id).catch(() => {});
+    linhas.push(`_Vou usar *${empresa.nome}* como sua loja padrão aqui. Pra outra, é só dizer "na <loja>"._`);
+  } else if (foiPalpite) {
+    linhas.push(`_Caiu em *${empresa.nome}* (sua primeira loja). Se não era essa, diga "na <loja>" que eu passo a usá-la._`);
+  }
   if (v.aPrazo) linhas.push(`_Fiado_ — entrou em contas a receber, não no caixa de hoje.`);
   if (sobrou != null) linhas.push(`Estoque de ${item.nome}: ${sobrou}`);
   if (!prod && v.produto) linhas.push(`_Item avulso: cadastre "${v.produto}" pra acompanhar margem e estoque._`);

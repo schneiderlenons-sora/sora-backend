@@ -143,6 +143,46 @@ function empresaAssumida(empresas) {
   return lista.find((e) => e.padrao) || null;
 }
 
+/**
+ * LEMBRA a loja padrão do usuário no WhatsApp (Fase 4). A partir daí
+ * `empresaAssumida` devolve essa empresa quando a frase não disser qual.
+ *
+ * ⚠️ NÃO concede acesso: só mexe no `padrao` de quem JÁ é membro. Se o usuário
+ * não tem linha (empresa antiga sem o membro do dono), cria UMA linha só
+ * quando ele é o DONO da empresa — nunca pra um não-membro, senão "lembrar uma
+ * loja" viraria porta de acesso.
+ *
+ * Tolerante: qualquer falha devolve `false` e não quebra quem chamou (é o
+ * fim-de-venda do WhatsApp).
+ */
+async function definirPadrao(userId, empresaId) {
+  if (!userId || !empresaId) return false;
+  try {
+    // Zera o padrão em todas as empresas do usuário — só uma pode ser a padrão.
+    await supabase.from('empresa_membros').update({ padrao: false }).eq('user_id', userId);
+
+    const { data, error } = await supabase.from('empresa_membros')
+      .update({ padrao: true }).eq('user_id', userId).eq('empresa_id', empresaId).select('user_id');
+    if (error) return false;
+    if (data && data.length) return true;
+
+    // Sem linha: só cria se for o DONO (acesso que ele já tem pelo ramo do
+    // dono). Pra qualquer outro, não cria — não é função de "lembrar" dar acesso.
+    const { data: emp } = await supabase.from('empresas')
+      .select('user_id').eq('id', empresaId).maybeSingle();
+    if (emp && emp.user_id === userId) {
+      await supabase.from('empresa_membros').upsert(
+        { empresa_id: empresaId, user_id: userId, papel: 'admin', padrao: true },
+        { onConflict: 'empresa_id,user_id' },
+      );
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
-  PAPEIS, papelPermite, empresasDoUsuario, papelNaEmpresa, podeNaEmpresa, empresaAssumida,
+  PAPEIS, papelPermite, empresasDoUsuario, papelNaEmpresa, podeNaEmpresa, empresaAssumida, definirPadrao,
 };
