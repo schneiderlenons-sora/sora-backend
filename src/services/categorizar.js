@@ -458,6 +458,39 @@ function ehAjusteSaldo(categoria) {
 }
 
 /**
+ * É a categoria LEGADA de pagamento de fatura "Cartão de Crédito"?
+ *
+ * ⚠️ RELATO (out/2026, cliente Vander): no relatório, as categorias de consumo
+ * (combustível, farmácia, supermercado) vinham "muito abaixo" e pareciam mostrar
+ * só o débito. Medido na base dele: o crédito APARECE certo, mas o pagamento da
+ * FATURA — 10 linhas num débito, descrições "CardBankslip", "Fatura Carão
+ * Crédito BTG", "Banco Inter S.A." — estava categorizado "Cartão de Credito" e
+ * contava como GASTO. Isso é contagem em DOBRO (as compras da fatura já são
+ * lançadas uma a uma) e virava a categoria #1 do mês (R$ 2.494,83), afogando o
+ * consumo real. Medido base inteira: a categoria só existe em 1 grupo, e as 10
+ * linhas são TODAS pagamento de fatura.
+ *
+ * A string "Cartão de Credito" NÃO é produzida por nenhum código atual (só
+ * aparece em comentário) — é categorização legada/manual. Fatura nova já nasce
+ * como `CATEGORIA_FATURA` ('Fatura') pelo mapa Celcoin / `ehPagamentoFaturaDescricao`.
+ *
+ * ⚠️ POR QUE É SEPARADO DO `ehPagamentoFatura`, E NÃO DENTRO DELE: o
+ * `ehPagamentoFatura` governa fluxos de SALDO (quitacao, contaDebito,
+ * alterarTransacao) e o cálculo da fatura (valorFatura). Essas linhas são
+ * débitos REAIS que já mexeram no saldo da conta; tratá-las como "pagamento de
+ * fatura" nesses fluxos faria um edit futuro parar de debitar a conta. Este
+ * helper é usado SÓ no cálculo de CONSUMO (`ehTransferencia` do resumo e seus
+ * espelhos), onde o único efeito é não contar a fatura como gasto — sem tocar em
+ * saldo nenhum. Espelho fiel em sora-frontend/lib/categorizar.ts.
+ */
+function ehPagamentoFaturaLegado(categoria) {
+  const c = (categoria || '').toString().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return c === 'cartao de credito';
+}
+
+/**
  * Pagamento de fatura visto pelo lado da CONTA, detectado pela descrição.
  *
  * ⚠️ FONTE ÚNICA — não copiar esta regra pra dentro de um sync. Ela já existia
@@ -571,4 +604,5 @@ module.exports = {
   categorizar, categorizarDescricao, mapearCategoriaPluggy,
   CATEGORIA_FATURA, CATEGORIA_FATURA_LEGADO, CATEGORIA_ESTORNO,
   ehPagamentoFatura, ehPagamentoFaturaDescricao, ehMovimentoInvestimento, ehAjusteSaldo,
+  ehPagamentoFaturaLegado,
 };

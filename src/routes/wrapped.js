@@ -4,7 +4,7 @@
 // Suporta período mensal (YYYY-MM) e anual (YYYY).
 // ─────────────────────────────────────────────────────────────────────────
 const express  = require('express');
-const { ehPagamentoFatura, ehAjusteSaldo } = require('../services/categorizar');
+const { ehPagamentoFatura, ehPagamentoFaturaLegado, ehAjusteSaldo } = require('../services/categorizar');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
@@ -100,7 +100,7 @@ router.get('/financas/:phone', auth, exigirPlano(...PLANOS_WRAPPED), async (req,
       // por categoria é rede de segurança pra linhas sem a flag.
       // Ajuste de saldo idem: acertar o saldo com o banco não é gasto do mês
       // (nem "vilão" nem "maior gasto" da retrospectiva).
-      if (t.transferencia || ehPagamentoFatura(t.categoria) || ehAjusteSaldo(t.categoria)) { if (t.data) diasSet.add(t.data.slice(0, 10)); continue; }
+      if (t.transferencia || ehPagamentoFatura(t.categoria) || ehPagamentoFaturaLegado(t.categoria) || ehAjusteSaldo(t.categoria)) { if (t.data) diasSet.add(t.data.slice(0, 10)); continue; }
       if (ehGasto) {
         gastos += v;
         const c = t.categoria || 'Outros';
