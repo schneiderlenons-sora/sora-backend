@@ -292,6 +292,53 @@ console.log('-- 14. CONFIGURAR a fatura nao e CONSULTAR a fatura --');
   }
 }
 console.log('  ok');
+console.log('-- 15. FORMATO CURTO sem verbo: "<ID> <campo> <valor>" (relato Fabio) --');
+{
+  // ⚠️ RELATO (Fabio, out/2026): ele corrigia pelo formato que o app ENSINA —
+  // "62DAD4 Descrição Drogasil", "9EQDP0 Valor 7,63" — e a Sora CRIAVA uma
+  // transacao nova (o "62" de "62DAD4" virou ate o valor). O app mostra o ID em
+  // destaque e ensina "excluir transacao 62DAD4", entao editar pelo mesmo
+  // caminho e natural. Agora o <ID>+<campo> no comeco dispara a alteracao.
+  const casos = [
+    ['62DAD4 Descrição Drogasil', '62DAD4', { descricao: 'Drogasil' }],
+    ['9EQDP0 Valor 7,63',         '9EQDP0', { valor: 7.63 }],
+    ['9EQDP0 valor 7,63',         '9EQDP0', { valor: 7.63 }],
+    ['J19STP conta Nubank',       'J19STP', { conta: 'Nubank' }],
+    ['NG14L6 categoria Farmácia', 'NG14L6', { categoria: 'Farmácia' }],
+    ['62DAD4: descrição Feira',   '62DAD4', { descricao: 'Feira' }],
+    ['AB12CD data 05/10',         'AB12CD', { data: '2026-10-05' }],
+  ];
+  for (const [frase, id, mud] of casos) {
+    const r = detectarAlteracao(frase);
+    ok(!!r, `15 nao detectou "${frase}"`);
+    if (!r) continue;
+    eq(r.idCurto, id, `15 id de "${frase}"`);
+    eq(JSON.stringify(r.mudancas), JSON.stringify(mud), `15 mudancas de "${frase}"`);
+  }
+
+  // ⚠️ O ID do formato curto EXIGE digito E letra — senao uma palavra comum de
+  // 6 letras no comeco (seguida de um campo) viraria alteracao.
+  eq(detectarAlteracao('padaria valor 50'), null, '15 "padaria" (7 letras) nao e id');
+  eq(detectarAlteracao('mercado categoria X'), null, '15 "mercado" (7 letras) nao e id');
+  eq(detectarAlteracao('123456 valor 50'), null, '15 so digito nao e id');
+  eq(detectarAlteracao('abcdef valor 50'), null, '15 so letra nao e id');
+
+  // ⚠️ Precisa do CAMPO logo apos o ID — ID sozinho ou com palavra solta nao
+  // conta (ai e lancamento/consulta normal, nao edicao).
+  eq(detectarAlteracao('62DAD4 Drogasil'), null, '15 ID + palavra sem campo nao e alteracao');
+  eq(detectarAlteracao('62DAD4'), null, '15 ID sozinho nao e alteracao');
+
+  // ⚠️ REGRESSAO: lancamento novo normal NAO pode ser sequestrado.
+  eq(detectarAlteracao('gastei 50 no mercado'), null, '15 gasto normal intacto');
+  eq(detectarAlteracao('50 no mercado'), null, '15 gasto curto intacto');
+
+  // Ponta a ponta: a frase do Fabio chega como alterar_tx pelo interpretador.
+  eq(interpretarRapido('62DAD4 Descrição Drogasil')?.acao, 'alterar_tx', '15 interpretador: formato curto vira alteracao');
+  eq(interpretarRapido('9EQDP0 Valor 7,63')?.acao, 'alterar_tx', '15 interpretador: idem valor');
+  eq(interpretarRapido('gastei 50 no mercado')?.acao, 'salvar', '15 interpretador: gasto segue salvar');
+}
+console.log('  ok');
+
 console.log('');
 if (falhas.length) {
   console.error(`x ${falhas.length} falha(s):`);

@@ -705,7 +705,11 @@ module.exports = async function handleTransacoes(data, ctx) {
       `🏦 Conta: ${carteiraNome}\n` +
       `📅 Data: ${dataFmt}${notaReceita}` +
       (contaDoBanco ? `\n\n${avisoContaDoBanco(carteiraNome)}` : '') + `\n\n` +
-      `❌ Para desfazer: *excluir transação ${idCurto}*`;
+      `❌ Para desfazer: *excluir transação ${idCurto}*\n` +
+      // ⚠️ Ensina a CORRIGIR no mesmo formato do "excluir" (relato Fábio,
+      // out/2026): o cliente editava por "${idCurto} descrição X" e a Sora
+      // criava transação nova. Agora funciona — e a dica evita a confusão.
+      `✏️ Para corrigir: *${idCurto} valor 50* ou *${idCurto} descrição ...*`;
 
     await enviarMenu(phone, msg);
     return;

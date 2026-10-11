@@ -150,6 +150,25 @@ function mudancasDaFrase(original) {
 function detectarAlteracao(original) {
   const t = semAcento(original);
 
+  // 0. ⚠️ FORMATO CURTO, SEM VERBO: "62DAD4 Descrição Drogasil" / "9EQDP0 valor
+  //    7,63" (relato Fábio, out/2026). O app MOSTRA o ID em destaque na
+  //    confirmação e ensina "excluir transação 62DAD4" — então é natural o
+  //    cliente EDITAR pelo mesmo caminho: <ID> <campo> <valor>. Sem este ramo,
+  //    a frase caía no fluxo de LANÇAMENTO NOVO e virava uma despesa fantasma
+  //    (o "62" de "62DAD4" chegou a virar o valor).
+  //
+  //    É ESTREITO de propósito: exige o ID no COMEÇO (6 alfanuméricos com dígito
+  //    E letra, mesmo formato do apagar) seguido IMEDIATAMENTE de um campo
+  //    conhecido. Mensagem de gasto normal ("gastei 50 no mercado", "50
+  //    mercado") não começa assim, então não há sequestro. A confirmação do
+  //    valor fica a cargo do handler (acha o ID; se não existir, explica em vez
+  //    de criar lançamento).
+  const CAMPO = 'descricao|descr|nome|titulo|valor|categoria|conta|data|tipo';
+  const curto = t.match(new RegExp(`^\\s*([a-z0-9]{6})\\s*[:,.\\-]?\\s+(?:${CAMPO})\\b`));
+  if (curto && /\d/.test(curto[1]) && /[a-z]/.test(curto[1])) {
+    return { acao: 'alterar_tx', idCurto: curto[1].toUpperCase(), ultima: false, mudancas: mudancasDaFrase(original) };
+  }
+
   // 1. Precisa de um VERBO de edição no começo da frase ou logo depois de um
   //    "quero/preciso/pode". Verbo no meio da frase quase sempre é outra coisa
   //    ("o mercado mudou de nome").
