@@ -41,6 +41,7 @@ const { valorNaFatura } = require('./valorFatura');
 const { registrarPagamentosDoOF } = require('./faturaRollover');
 const { gravarParcelasPrevistas } = require('./parcelasPrevistas');
 const { salvarFaturas } = require('./faturasBanco');
+const { planejarDedupReprocesso } = require('./dedupReprocesso');
 
 const PROVIDER = 'polp-celcoin';
 const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -2631,6 +2632,70 @@ async function reconciliarParcelas(grupoId, normalizadas) {
   return corrigidas;
 }
 
+// ── Reconciliação de REPROCESSO do agregador ────────────────────────────────
+//
+// O agregador às vezes regrava as transações do cartão/conta com `of_tx_id`
+// NOVO. Como o dedup é por id, as cópias velhas ficam e a conta DOBRA (medido:
+// 1.094 linhas, R$ 302.953, 39 usuários). Aqui, por ORIGEM (ver
+// services/dedupReprocesso): apaga a cópia cujo id o agregador NÃO manda mais
+// quando ele re-enviou a mesma transação com id novo (gêmea no batch atual).
+//
+// ⚠️ Roda sobre a JANELA do batch (as datas que o agregador mandou agora). Como
+// o batch traz os ids NOVOS (atuais), a cópia velha vira "fora do batch" → isto
+// também LIMPA duplicata já existente no próximo sync, sem migration (dentro da
+// janela de 90 dias; o que é mais antigo vem por limpeza à parte).
+//
+// ⚠️ NUNCA apaga sem gêmea no batch (origem), nunca toca linha manual, e NÃO
+// afirma nada se a leitura falhar. Interruptor: OF_DEDUP_REPROCESSO=0.
+async function reconciliarReprocesso(grupoId, walletNome, normalizadas) {
+  if (process.env.OF_DEDUP_REPROCESSO === '0') return { apagadas: 0, reclassificadas: 0 };
+  const batch = (normalizadas || []).filter((t) => t && t.externalId && t.data);
+  if (!batch.length) return { apagadas: 0, reclassificadas: 0 };
+
+  const batchIds = new Set(batch.map((t) => t.externalId));
+  const datas = batch.map((t) => String(t.data).slice(0, 10)).sort();
+  const minD = datas[0];
+  const maxExcl = (() => {
+    const d = new Date(datas[datas.length - 1] + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  let rows;
+  try {
+    const { data, error } = await supabase.from('transacoes')
+      .select('id, of_tx_id, data, valor, observacao, categoria, parcela_num, parcela_total')
+      .eq('grupo_id', grupoId).eq('carteira_nome', walletNome)
+      .not('of_tx_id', 'is', null)
+      .gte('data', minD).lt('data', maxExcl);
+    if (error) return { apagadas: 0, reclassificadas: 0 };   // leitura falhou: não apaga nada
+    rows = data || [];
+  } catch { return { apagadas: 0, reclassificadas: 0 }; }
+
+  const { aDeletar, reclassificar } = planejarDedupReprocesso({ dbRows: rows, batchIds });
+  if (!aDeletar.length && !reclassificar.length) return { apagadas: 0, reclassificadas: 0 };
+
+  let apagadas = 0, reclassificadas = 0;
+  // Reclassifica ANTES de apagar — leva a categoria corrigida à mão pro sobrevivente.
+  for (const { id, categoria } of reclassificar) {
+    try {
+      const { error } = await supabase.from('transacoes').update({ categoria }).eq('id', id);
+      if (!error) reclassificadas++;
+    } catch { /* ignora: cosmético */ }
+  }
+  for (let i = 0; i < aDeletar.length; i += 200) {
+    const lote = aDeletar.slice(i, i + 200);
+    try {
+      const { error } = await supabase.from('transacoes').delete().in('id', lote);
+      if (!error) apagadas += lote.length;
+    } catch { /* ignora: tenta no próximo sync */ }
+  }
+  if (apagadas || reclassificadas) {
+    console.log(`[of/dedup-reprocesso] ${walletNome}: ${apagadas} cópia(s) velha(s) apagada(s), ${reclassificadas} reclassificada(s)`);
+  }
+  return { apagadas, reclassificadas };
+}
+
 /** Insere transações novas (dedup por of_tx_id). Devolve quantas entraram. */
 // `cambio` (opcional): `{ moedaConta, base, tabela }` quando a conta NÃO está na
 // moeda base do grupo (migration 168) — o lançamento é gravado convertido, com o
@@ -3295,8 +3360,11 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         const moedaConta = moedaDaConta(n);
         const cambio = moedaConta === base ? null
           : { moedaConta, base, tabela: await taxasParaBase([moedaConta], base) };
-        const novas = await inserirTransacoes(grupoId, userId, walletNome, txs.map(normalizeTxConta), cambio);
+        const normalizadasConta = txs.map(normalizeTxConta);
+        const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadasConta, cambio);
         novasTx += novas;
+        // Limpa cópias velhas de reprocesso do agregador também na conta.
+        await reconciliarReprocesso(grupoId, walletNome, normalizadasConta);
         relatorio.contas.push({
           conta: walletNome, saldo: n.saldo, txs: txs.length, novas,
           pendente_sync: !n.sincronizado || undefined,
@@ -3362,6 +3430,8 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // reconciliarParcelas: sem isto a fatura do cliente nunca fecha com a
         // do banco, por mais certo que o cálculo esteja.
         const parcelasCorrigidas = await reconciliarParcelas(grupoId, normalizadas);
+        // Limpa cópias velhas de reprocesso do agregador (ver reconciliarReprocesso).
+        await reconciliarReprocesso(grupoId, walletNome, normalizadas);
         // Preenche a data de lançamento do emissor no histórico já importado
         // (migration 130). Aditivo: só onde está null.
         const bpdPreenchidas = await backfillBillPostDate(grupoId, normalizadas);

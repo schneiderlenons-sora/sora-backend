@@ -91,7 +91,8 @@
     "eval:resolver-carteira": "node evals/resolverCarteira.eval.js",
     "eval:valor-investimento": "node evals/valorInvestimento.eval.js",
     "eval:soltar-carteira": "node evals/soltarCarteira.eval.js",
-    "eval:pagamento-fatura-legado": "node evals/pagamentoFaturaLegado.eval.js"
+    "eval:pagamento-fatura-legado": "node evals/pagamentoFaturaLegado.eval.js",
+    "eval:dedup-reprocesso": "node evals/dedupReprocesso.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
