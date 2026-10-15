@@ -153,10 +153,25 @@ async function reconciliar(grupoId, novas) {
 // ⚠️ TOLERANTE DE PONTA A PONTA: qualquer falha devolve "não absorvi nada" e o
 // sync insere tudo como antes. E há interruptor: OF_ABSORVER_MANUAL=0 desliga.
 // =============================================================================
+// ⚠️ NADA AQUI PODE FALHAR CALADO. Medido em 15/10/2026: ZERO absorções na base
+// inteira desde o deploy (09/10), enquanto ESTA função, rodada à mão contra os
+// dados reais de produção (relato Vander: previsto R$ 2.911,60 × "CardBankslip"
+// R$ 2.911,60, mesma conta, mesmo dia), conciliava certo. O banco aceita o
+// UPDATE (testado) e a reconciliação de recorrência, no mesmo passo do sync, já
+// rodou 18 vezes. Ou seja: a falha estava num dos três caminhos silenciosos
+// abaixo (interruptor, UPDATE recusado, exceção) — e nenhum deixava rastro.
+let avisouDesligado = false;
+
 async function absorverManuais(grupoId, novas) {
   const linhas = (novas || []).filter(Boolean);
   const vazio = { restantes: linhas, absorvidas: 0 };
-  if (process.env.OF_ABSORVER_MANUAL === '0') return vazio;      // kill-switch
+  if (process.env.OF_ABSORVER_MANUAL === '0') {                   // kill-switch
+    if (!avisouDesligado) {
+      avisouDesligado = true;
+      console.warn('[absorverManuais] DESLIGADO por OF_ABSORVER_MANUAL=0 — previsto manual NÃO concilia com a cobrança do banco');
+    }
+    return vazio;
+  }
   if (!grupoId || !linhas.length) return vazio;
 
   try {
@@ -194,7 +209,10 @@ async function absorverManuais(grupoId, novas) {
       // automática SÓ LIGA depois da migration. É de propósito: sem o marco não
       // há "desfazer", e não quero fundir sozinho sem rede. Antes da 184, o
       // comportamento é idêntico ao de hoje.
-      if (errUp) continue;              // falhou (inclui coluna ausente) → insere normal
+      if (errUp) {                      // falhou (inclui coluna ausente) → insere normal
+        console.error(`[absorverManuais] UPDATE recusado (previsão ${previsao.id}, cobrança ${cobranca.of_tx_id}): ${errUp.message}`);
+        continue;
+      }
       absorvidasIds.add(cobranca.of_tx_id);
       n++;
       console.log(`[absorverManuais] previsão "${previsao.observacao}" (R$ ${previsao.valor}) assumiu a cobrança do banco "${cobranca.observacao}"`);
@@ -202,7 +220,8 @@ async function absorverManuais(grupoId, novas) {
 
     const restantes = linhas.filter((c) => !absorvidasIds.has(c.of_tx_id));
     return { restantes, absorvidas: n };
-  } catch {
+  } catch (e) {
+    console.error('[absorverManuais] falhou (insere tudo, sem conciliar):', e && e.message ? e.message : e);
     return vazio;                       // qualquer erro: insere tudo, como antes
   }
 }
