@@ -146,4 +146,44 @@ function escolherAbsorcoes(previsoes, cobrancas, saoMesma) {
   return pares;
 }
 
-module.exports = { planoFusao, rotuloHerdado, escolherAbsorcoes };
+// =============================================================================
+// CONCILIAR NA TELA — o par que o painel oferece ao lado do previsto.
+//
+// Relato (Vander, out/2026): previsto "Fatura Cartão BTG" R$ 2.911,60 e, no
+// mesmo dia, "CardBankslip" R$ 2.911,60 do banco — os dois na lista, e a única
+// saída era achar o Watson. O botão "Conciliar com o banco" aparece NA LINHA,
+// mas SÓ quando existe a cobrança igual — e "igual" aqui é exatamente a régua
+// do automático: a prova do Watson + par 1-pra-1 sem disputa dos dois lados.
+//
+// ⚠️ Mesma régua de propósito. Uma régua mais frouxa na tela ofereceria juntar
+// coisa que o automático recusa por ambiguidade — e o usuário tocaria
+// "conciliar" confiando que a Sora conferiu. Disputa continua com o Watson,
+// que mostra o grupo inteiro e deixa a pessoa escolher.
+//
+// Também pega o caso que o automático NUNCA alcança: previsto digitado DEPOIS
+// de a cobrança já ter chegado (medido em 15/10: 2 dos 4 pares presos da base).
+// =============================================================================
+
+/**
+ * Pares (previsto manual pendente × cobrança do banco) conciliáveis numa lista
+ * de transações já lidas do banco.
+ *
+ * @param transacoes  linhas do grupo (previstos e cobranças misturados)
+ * @param saoMesma    (previsto, cobranca) => boolean — a PROVA (ehDuplicata)
+ * @returns [{ previsto, banco }]
+ */
+function paresConciliaveis(transacoes, saoMesma) {
+  const lista = (transacoes || []).filter((t) => t && t.id);
+  // Previsto: o mesmo lado que `planoFusao` aceita descartar — sem of_tx_id E
+  // pago=false. Recorrência fica de fora: ela tem a reconciliação própria.
+  // ⚠️ `!t.recorrente` e o filtro de `of_tx_id` nas cobranças são REDUNDANTES
+  // (equivalentes na mutação): `ehDuplicata` já recusa recorrência e
+  // `escolherAbsorcoes` já descarta cobrança sem of_tx_id. Ficam pra a lista
+  // dizer por si o que é cada lado, sem depender de ler as outras duas funções.
+  const previstos = lista.filter((t) => !t.of_tx_id && t.pago === false && !t.recorrente);
+  const cobrancas = lista.filter((t) => !!t.of_tx_id);
+  return escolherAbsorcoes(previstos, cobrancas, saoMesma)
+    .map(({ previsao, cobranca }) => ({ previsto: previsao, banco: cobranca }));
+}
+
+module.exports = { planoFusao, rotuloHerdado, escolherAbsorcoes, paresConciliaveis };

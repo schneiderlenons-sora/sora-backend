@@ -115,6 +115,49 @@ console.log('── 5. escolherAbsorcoes (automático, sem ambiguidade) ──')
 }
 console.log('  ok');
 
+// ── 6. paresConciliaveis — o botão "Conciliar com o banco" da tela ─────────
+// Usa a PROVA REAL (ehDuplicata), não um comparador de mentira: o botão só pode
+// aparecer onde o Watson e o automático também diriam "é a mesma".
+console.log('── 6. paresConciliaveis (botão da tela) ──');
+{
+  const { paresConciliaveis } = require('../src/services/fusaoDuplicada');
+  const { ehDuplicata } = require('../src/services/duplicadas');
+  const prova = (p, c) => ehDuplicata(p, c) === 'manual-e-banco';
+  // O par do relato (Vander, 15/10/2026), com os campos como o banco devolve.
+  const prev = { id: 'p-vander', valor: 2911.6, tipo: 'Gasto', carteira_nome: 'BTG Banking', data: '2026-10-15T00:00:00+00:00',
+    observacao: 'Fatura Cartão Crédito BTG Pactual', pago: false, of_tx_id: null, recorrente: false, transferencia: false };
+  const cob = { id: 'b-vander', valor: 2911.6, tipo: 'Gasto', carteira_nome: 'BTG Banking', data: '2026-10-15T13:16:59.025+00:00',
+    observacao: 'CardBankslip', pago: true, of_tx_id: '01a14013', recorrente: false, transferencia: false };
+
+  const r = paresConciliaveis([prev, cob], prova);
+  ok(r.length === 1 && r[0].previsto.id === 'p-vander' && r[0].banco.id === 'b-vander', 'o par do relato é oferecido');
+
+  // ⚠️ "Apenas quando tiver cobrança igual": sem a cobrança, NADA.
+  ok(paresConciliaveis([prev], prova).length === 0, 'previsto sozinho: sem botão');
+  ok(paresConciliaveis([prev, { ...cob, valor: 2911.61 }], prova).length === 0, 'valor diferente: sem botão');
+  // outra conta → não é a mesma (protege o pagamento de fatura pelas duas pontas)
+  ok(paresConciliaveis([prev, { ...cob, carteira_nome: 'BTG Cartão' }], prova).length === 0, 'outra conta: sem botão');
+  ok(paresConciliaveis([prev, { ...cob, tipo: 'Recebimento' }], prova).length === 0, 'tipo diferente: sem botão');
+  ok(paresConciliaveis([prev, { ...cob, data: '2026-10-18T13:00:00+00:00' }], prova).length === 0, 'data longe: sem botão');
+  // previsto JÁ PAGO não é previsão (apagá-lo estornaria saldo)
+  ok(paresConciliaveis([{ ...prev, pago: true }, cob], prova).length === 0, 'manual já pago: sem botão');
+  // recorrência tem reconciliação própria
+  ok(paresConciliaveis([{ ...prev, recorrente: true }, cob], prova).length === 0, 'recorrência: sem botão');
+  ok(paresConciliaveis([prev, { ...prev, id: 'p2' }], prova).length === 0, 'dois manuais: sem botão');
+  // ⚠️ disputa: o botão NÃO escolhe por ninguém — fica pro Watson
+  ok(paresConciliaveis([prev, cob, { ...cob, id: 'b2', of_tx_id: '02' }], prova).length === 0, 'duas cobranças iguais: sem botão');
+  ok(paresConciliaveis([prev, { ...prev, id: 'p2' }, cob], prova).length === 0, 'dois previstos iguais: sem botão');
+  // Recebimento também (Salário previsto × PIX recebido do banco)
+  {
+    const pr = { ...prev, id: 'ps', tipo: 'Recebimento', valor: 11576, observacao: '[Previsto] Salário' };
+    const cr = { ...cob, id: 'bs', tipo: 'Recebimento', valor: 11576, observacao: 'PIX - RECEBIDO', of_tx_id: '03' };
+    ok(paresConciliaveis([pr, cr], prova).length === 1, 'receita prevista × PIX recebido: oferecido');
+  }
+  ok(paresConciliaveis([null, undefined, {}, prev, cob], prova).length === 1, 'linhas inválidas são ignoradas');
+  ok(paresConciliaveis(null, prova).length === 0, 'lista nula: vazio');
+}
+console.log('  ok');
+
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {
   console.log('\n── Falhas ──');

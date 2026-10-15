@@ -122,6 +122,67 @@ router.get('/duplicadas/:phone', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// GET /api/transacoes/conciliaveis/:phone — previstos manuais pendentes cuja
+// cobrança IGUAL já chegou do banco. Alimenta o botão "Conciliar com o banco"
+// na lista de transações. A régua é a do automático (paresConciliaveis): prova
+// do Watson + par 1-pra-1 sem disputa. Quem junta é o POST /fundir, que
+// reconfere a prova — esta rota só SUGERE.
+//
+// ⚠️ Duas leituras estreitas, de propósito (egress = nº de idas + bytes):
+//   1. só os previstos manuais pendentes da janela — quase sempre poucos, e
+//      quando é zero a rota sai sem a 2ª ida;
+//   2. só cobranças do banco na janela DELES e com o valor DELES.
+// ⚠️ Sempre 200 com lista: falha aqui só esconde uma sugestão, e um erro
+// derrubaria a aba de transações por causa de um extra.
+router.get('/conciliaveis/:phone', auth, async (req, res) => {
+  try {
+    const user = usuarioReq(req);
+    if (!user?.grupo_ativo) return res.json({ pares: [] });
+    const grupoId = user.grupo_ativo;
+    const { hojeSP } = require('../services/cicloFatura');
+    const somaDias = (ymd, n) => {
+      const d = new Date(`${ymd}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n);
+      return d.toISOString().slice(0, 10);
+    };
+    const hoje = hojeSP();
+    const COLS = 'id, valor, valor_moeda, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia, pago';
+
+    // Previsto no FUTURO não tem cobrança ainda; mais de 120 dias atrás já
+    // deixou de ser "previsto" na cabeça de qualquer um.
+    const { data: prevs, error: e1 } = await supabase.from('transacoes').select(COLS)
+      .eq('grupo_id', grupoId).eq('pago', false).is('of_tx_id', null)
+      .not('recorrente', 'is', true)
+      .gte('data', somaDias(hoje, -120)).lte('data', `${somaDias(hoje, 1)}T23:59:59`)
+      .limit(300);
+    if (e1 || !prevs || !prevs.length) return res.json({ pares: [] });
+
+    const datas = prevs.map((p) => String(p.data).slice(0, 10)).sort();
+    const valores = [...new Set(prevs.flatMap((p) => [p.valor, p.valor_moeda])
+      .filter((v) => Number(v) > 0).map(Number))];
+    // ⚠️ `valor_moeda` também: em conta fora da moeda do grupo a prova compara
+    // o valor ORIGINAL, e o convertido do banco pode não bater com o do previsto.
+    const lista = valores.join(',');
+    const { data: cobs, error: e2 } = await supabase.from('transacoes').select(COLS)
+      .eq('grupo_id', grupoId).not('of_tx_id', 'is', null)
+      .gte('data', somaDias(datas[0], -2)).lte('data', `${somaDias(datas[datas.length - 1], 2)}T23:59:59`)
+      .or(`valor.in.(${lista}),valor_moeda.in.(${lista})`)
+      .limit(1000);
+    if (e2 || !cobs || !cobs.length) return res.json({ pares: [] });
+
+    const { ehDuplicata } = require('../services/duplicadas');
+    const { paresConciliaveis } = require('../services/fusaoDuplicada');
+    const pares = paresConciliaveis([...prevs, ...cobs], (p, c) => ehDuplicata(p, c) === 'manual-e-banco');
+    const enxuto = (t) => ({
+      id: t.id, valor: t.valor, tipo: t.tipo, observacao: t.observacao,
+      categoria: t.categoria, carteira_nome: t.carteira_nome, data: t.data,
+    });
+    res.json({ pares: pares.map(({ previsto, banco }) => ({ previsto: enxuto(previsto), banco: enxuto(banco) })) });
+  } catch (err) {
+    console.error('[conciliaveis] falhou:', err.message);
+    res.json({ pares: [] });
+  }
+});
+
 // GET /api/transacoes/:phone?mes=2026-05&tipo=Gasto&categoria=Mercado&limit=50&offset=0&criado_por_me=true&criado_por_phone=XX
 router.get('/:phone', auth, async (req, res) => {
   try {
