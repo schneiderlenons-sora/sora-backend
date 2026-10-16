@@ -19,8 +19,11 @@ const { custoMensalDividas } = require('../services/custoMensalDividas');
 const norm = p => p?.replace(/\D/g, '');
 
 async function getGrupoId(req) {
-  const { data } = await supabase.from('users')
+  const { data, error } = await supabase.from('users')
     .select('grupo_ativo').eq('id', req.authUser?.id || '__none__').single();
+  // Falha de leitura NÃO é "usuário sem grupo": vira 500 (o catch da rota), não
+  // 404 — o 404 fazia a falha parecer conta sem investimento.
+  if (error && error.code !== 'PGRST116') throw error;   // PGRST116 = nenhuma linha
   return data?.grupo_ativo || null;
 }
 
@@ -330,8 +333,12 @@ router.get('/:phone', auth, exigirPlano('kit', 'premium', 'platinum'), exigirPer
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
-    const { data } = await supabase.from('investimentos')
+    const { data, error } = await supabase.from('investimentos')
       .select('*').eq('grupo_id', grupoId).order('created_at');
+    // ⚠️ LER O ERRO. Sem isto, falha de leitura respondia 200 com `[]` e a tela
+    // mostrava "Nenhum investimento" — pra quem tinha 77 cadastrados, "sumiram"
+    // (relato Fabricio, 15/10/2026). Erro tem de chegar como erro.
+    if (error) throw error;
     res.json(data || []);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -575,9 +582,10 @@ router.get('/:phone/aportes', auth, exigirPlano('kit', 'premium', 'platinum'), e
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
-    const { data } = await supabase.from('aportes')
+    const { data, error } = await supabase.from('aportes')
       .select('*, investimentos(nome)').eq('grupo_id', grupoId)
       .order('data', { ascending: false }).limit(50);
+    if (error) throw error;   // erro não é "nenhum aporte" (ver GET /:phone)
     res.json(data || []);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -1013,9 +1021,10 @@ router.get('/:phone/patrimonio', auth, exigirPlano('kit', 'premium', 'platinum')
   try {
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
-    const { data } = await supabase.from('patrimonio_historico')
+    const { data, error } = await supabase.from('patrimonio_historico')
       .select('*').eq('grupo_id', grupoId)
       .order('data', { ascending: true }).limit(365);
+    if (error) throw error;   // erro não é "histórico vazio" (ver GET /:phone)
     res.json(data || []);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
