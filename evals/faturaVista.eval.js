@@ -399,6 +399,86 @@ console.log('  ok');
   }
   console.log('  ok');
 
+// ── 11. Fatura PUBLICADA + pagamento que só a SORA conhece ───────────────
+// RELATO (Vander, 16/10/2026): Inter publicou outubro R$ 3.655,35 no fechamento
+// (11/10), sem pagamento. Ele pagou em 15/10; a Sora registrou (pagamentos_fatura),
+// mas o card seguia "fatura em aberto · R$ 3.655,35" porque este ramo só ouvia
+// o emissor, que só publica o pagamento na fatura SEGUINTE.
+console.log('── 11. publicada + pagamento registrado pela Sora ──');
+{
+  const { pagoDaPublicada } = require('../src/services/faturaVista');
+  const INTER = { id: 'inter', of_conta_id: 'of', dia_fechamento: 11, dia_vencimento: 18, saldo: -771.3 };
+  const publicadaOut = { competencia: '2026-10', fechamento: '2026-10-11', vencimento: '2026-10-18', total: 3655.35, pago: 0, pagamentos: null };
+  const cicloOut = { ini: '2026-09-12', fim: '2026-10-11', venc: '2026-10-18' };
+
+  // O caso do relato, com os números reais.
+  {
+    const deps = {
+      faturasBanco: async () => [publicadaOut],
+      pagamentosDaFatura: async () => [{ valor: 3655.35, data: '2026-10-15' }],
+    };
+    const v = await valorExibido(INTER, '2026-10', st(3655.35, 3655.35, cicloOut), deps);
+    eq(v.fatura, 3655.35, '§11 o total continua o do BANCO');
+    eq(v.pago, 3655.35, '§11 o pagamento registrado pela Sora CONTA');
+    eq(v.restante, 0, '§11 nada a pagar (era R$ 3.655,35 no relato)');
+    eq(v.quitada, true, '§11 quitada → a tela pula pra fatura seguinte');
+    eq(v.fonte, 'banco+sora', '§11 a fonte diz que o pago veio da Sora');
+  }
+
+  // Sem pagamento registrado: exatamente como antes.
+  {
+    const deps = { faturasBanco: async () => [publicadaOut], pagamentosDaFatura: async () => [] };
+    const v = await valorExibido(INTER, '2026-10', st(3655.35, 0, cicloOut), deps);
+    eq(v.restante, 3655.35, '§11 sem pagamento: segue em aberto');
+    eq(v.quitada, false, '§11 sem pagamento: não quitada');
+    eq(v.fonte, 'banco', '§11 sem pagamento: fonte intocada');
+  }
+
+  // Pagamento PARCIAL depois do fechamento: abate, não quita.
+  {
+    const deps = { faturasBanco: async () => [publicadaOut], pagamentosDaFatura: async () => [{ valor: 1000, data: '2026-10-14' }] };
+    const v = await valorExibido(INTER, '2026-10', st(3655.35, 1000, cicloOut), deps);
+    eq(v.restante, 2655.35, '§11 parcial abate');
+    eq(v.quitada, false, '§11 parcial não quita');
+  }
+
+  // ⚠️ A ARMADILHA: abatimento ANTES do fechamento já está no total publicado.
+  // Caso do Mercado Pago: fatura bruta R$ 2.804,28, abatida R$ 2.243,60 no dia 03
+  // (fecha 08); o banco publicou R$ 560,68. Contar o abatimento de novo daria
+  // a fatura por paga com R$ 560,68 de pé.
+  {
+    const MP = { id: 'mp', of_conta_id: 'of', dia_fechamento: 8, dia_vencimento: 13, saldo: 0 };
+    const pub = { competencia: '2026-08', fechamento: '2026-08-08', vencimento: '2026-08-13', total: 560.68, pago: 0, pagamentos: null };
+    const cicloAgo = { ini: '2026-07-09', fim: '2026-08-08', venc: '2026-08-13' };
+    const deps = { faturasBanco: async () => [pub], pagamentosDaFatura: async () => [{ valor: 2243.60, data: '2026-08-03' }] };
+    const v = await valorExibido(MP, '2026-08', st(2804.28, 2243.60, cicloAgo), deps);
+    eq(v.restante, 560.68, '§11 abatimento ANTES do fechamento não conta de novo');
+    eq(v.quitada, false, '§11 e a fatura NÃO vira paga');
+    // ...e quando ele paga o resto depois do fechamento, quita.
+    const deps2 = { faturasBanco: async () => [pub], pagamentosDaFatura: async () => [{ valor: 2243.60, data: '2026-08-03' }, { valor: 565.68, data: '2026-08-09' }] };
+    const v2 = await valorExibido(MP, '2026-08', st(2804.28, 2809.28, cicloAgo), deps2);
+    eq(v2.restante, 0, '§11 o pagamento depois do fechamento quita');
+  }
+
+  // Banco E Sora conhecem o MESMO pagamento: MAIOR, nunca soma.
+  {
+    const pub = { ...publicadaOut, pago: 3655.35, pagamentos: null };
+    const deps = { faturasBanco: async () => [pub], pagamentosDaFatura: async () => [{ valor: 3655.35, data: '2026-10-15' }] };
+    const v = await valorExibido(INTER, '2026-10', st(3655.35, 3655.35, cicloOut), deps);
+    eq(v.pago, 3655.35, '§11 o mesmo pagamento não conta em dobro');
+    eq(v.fonte, 'banco', '§11 quando o banco já sabe, a fonte é o banco');
+  }
+
+  // A função pura, nas bordas.
+  eq(pagoDaPublicada(100, [{ valor: 50, data: '2026-10-15' }], '2026-10-11'), 100, '§11 banco maior vence');
+  eq(pagoDaPublicada(0, [{ valor: 50, data: '2026-10-11' }], '2026-10-11'), 0, '§11 NO dia do fechamento não conta (é antes)');
+  eq(pagoDaPublicada(0, [{ valor: 50, data: '2026-10-12' }], '2026-10-11'), 50, '§11 dia seguinte ao fechamento conta');
+  eq(pagoDaPublicada(0, [{ valor: 50, data: '2026-10-15' }], null), 0, '§11 sem fechamento: só o banco');
+  eq(pagoDaPublicada(0, null, '2026-10-11'), 0, '§11 sem pagamentos: zero');
+  eq(pagoDaPublicada(0, [{ valor: 0.1, data: '2026-10-12' }, { valor: 0.2, data: '2026-10-13' }], '2026-10-11'), 0.3, '§11 soma em centavos');
+}
+console.log('  ok');
+
 } // fim do main
 
 // ── Resultado ────────────────────────────────────────────────────────────

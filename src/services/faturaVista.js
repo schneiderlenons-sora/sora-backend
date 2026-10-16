@@ -83,12 +83,46 @@ function simuladoEhOLimiteUsado(cartao, st) {
   return cent(st && st.fatura) > 0;
 }
 
+/**
+ * Quanto foi PAGO de uma fatura PUBLICADA pelo banco.
+ *
+ * RELATO (Vander, 16/10/2026): fatura do Inter de outubro, R$ 3.655,35, paga em
+ * 15/10 — e o card, o Extrato Futuro e o "fatura em aberto" seguiam cobrando
+ * os R$ 3.655,35. O pagamento ESTAVA registrado em `pagamentos_fatura` (veio
+ * do próprio cartão como "PAGAMENTO DE FATURA"); este ramo é que não o lia.
+ *
+ * O ramo da fatura publicada só ouvia o `payments[]` do EMISSOR — e o emissor
+ * publica a fatura no FECHAMENTO, antes de ela ser paga. O pagamento vai pra
+ * fatura SEGUINTE (contrato da Celcoin, ver CLAUDE.md), que ainda não existe.
+ * Na janela fechamento → publicação da próxima, a fatura paga aparecia em
+ * aberto (a lacuna registrada como "medido, NÃO corrigido": Itaú, R$ 28 mil).
+ *
+ * A regra: o MAIOR entre o que o banco diz e o que a Sora registrou DEPOIS do
+ * fechamento.
+ *   · MAIOR, nunca soma: são o MESMO dinheiro visto por duas fontes. Somar
+ *     contaria o pagamento duas vezes quando o banco o publicar.
+ *   · Só DEPOIS do fechamento: abatimento feito ANTES (comum no Mercado Pago)
+ *     já está descontado no TOTAL publicado. Contá-lo de novo daria fatura
+ *     "paga" com saldo de pé — o caso de R$ 2.243,60 em `faturaRollover`.
+ *
+ * Eval: npm run eval:fatura-vista §11
+ */
+function pagoDaPublicada(pagoBanco, pagamentosNossos, fechamento) {
+  const banco = cent(pagoBanco);
+  if (!fechamento) return banco;               // sem fechamento não dá pra separar o abatimento
+  const nosso = cent((pagamentosNossos || [])
+    .filter((p) => p && String(p.data || '').slice(0, 10) > String(fechamento).slice(0, 10))
+    .reduce((s, p) => s + (Number(p.valor) || 0), 0));
+  return Math.max(banco, nosso);
+}
+
 async function valorExibido(cartao, competencia, st, deps = {}) {
   const ehOF = !!cartao.of_conta_id;
   const lerFaturas = deps.faturasBanco || faturasDoCartao;
 
   let fatura = st.fatura, pago = st.pago, restante = st.restante;
   let fonte = 'ciclo';                       // de onde saiu o número (diagnóstico)
+  let pagamentosLidos = null;                // lidos no ramo 1 → reaproveitados no fim
 
   if (ehOF) {
     const faturas = await lerFaturas(cartao.id);
@@ -107,9 +141,15 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
       // que `registrarPagamentosDoOF` já usa. Devolve null enquanto o cartão não
       // tem as datas gravadas (migration 128 + um sync) — e aí fica tudo como era.
       const porData = pagoPorCompetencia(cartao, faturas, competencia);
-      pago     = porData == null ? cent(publicada.pago || 0) : porData;
+      const pagoBanco = porData == null ? cent(publicada.pago || 0) : porData;
+      // + o pagamento que a SORA registrou depois do fechamento (ver
+      // `pagoDaPublicada`): o emissor só o publica na fatura seguinte.
+      const lerPags = deps.pagamentosDaFatura || pagamentosDaFatura;
+      const nossos  = await lerPags(cartao.id, competencia);
+      pagamentosLidos = nossos;
+      pago     = pagoDaPublicada(pagoBanco, nossos, publicada.fechamento || (st.ciclo && st.ciclo.fim));
       restante = Math.max(0, cent(fatura - pago));
-      fonte    = porData == null ? 'banco' : 'banco+datas';
+      fonte    = (porData == null ? 'banco' : 'banco+datas') + (pago > pagoBanco + 0.005 ? '+sora' : '');
     } else if (
       // ── 2. Ciclo ainda não publicado: o simulado vale, mas SÓ na competência
       //      a que ele se refere (a seguinte à última publicada). Sem fatura
@@ -224,7 +264,7 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
     }
   }
 
-  const pagamentos = await pagamentosDaFatura(cartao.id, competencia);
+  const pagamentos = pagamentosLidos || await (deps.pagamentosDaFatura || pagamentosDaFatura)(cartao.id, competencia);
   // Com o valor vindo do BANCO, `restante` já reflete os pagamentos que ele
   // conhece — quitada é simplesmente "não sobrou nada". Nos outros casos vale
   // a regra do pagamento DEPOIS do fechamento (o simulado é líquido, então
@@ -245,4 +285,4 @@ async function valorExibido(cartao, competencia, st, deps = {}) {
   };
 }
 
-module.exports = { valorExibido, cent };
+module.exports = { valorExibido, pagoDaPublicada, cent };
