@@ -79,6 +79,43 @@ async function limparAjuste(recorrenciaId, competencia) {
     .then(() => {}, () => {});
 }
 
+/** Quantos dias ANTES do vencimento um pagamento ainda é "adiantado". */
+const ADIANTADO_MAX_DIAS = 20;
+
+/**
+ * O lançamento é de um mês ANTERIOR ao desta ocorrência?
+ *
+ * Relato (Vander, 16/10/2026): "nem paguei estas contas e já apareceram como
+ * pagas". A cobrança da Funerária de 16/09 (a de SETEMBRO) estava amarrada como
+ * pagamento de OUTUBRO — 29 dias antes do vencimento de 15/10. O seletor
+ * "Qual lançamento pagou isto?" mostra os meses vizinhos (de propósito: pagar
+ * atrasado ou adiantado acontece), e o servidor aceitava qualquer data.
+ *
+ * ⚠️ SÓ O LADO "CEDO DEMAIS" É RECUSADO. Pagamento ATRASADO (data depois do
+ * vencimento) continua valendo pra qualquer distância — é o "pagamento de
+ * outubro quita a previsão de setembro" que a tela de pendências existe pra
+ * fazer. E adiantado até 20 dias antes do vencimento também vale.
+ * ⚠️ Só conta mensal (a de toda a base hoje, `frequencia` vazia = mensal):
+ * semanal e anual têm outro ritmo e ficam como antes.
+ */
+function pagamentoDeOutroMes(rec, competencia, dataTx) {
+  if (!rec || !/^\d{4}-\d{2}$/.test(String(competencia || '')) || !dataTx) return false;
+  if (rec.frequencia && rec.frequencia !== 'mensal') return false;
+  const dia = Number(rec.dia_vencimento);
+  if (!(dia >= 1 && dia <= 31)) return false;
+  const [a, m] = competencia.split('-').map(Number);
+  const ultimo = new Date(Date.UTC(a, m, 0)).getUTCDate();
+  const venc = Date.UTC(a, m - 1, Math.min(dia, ultimo));
+  const d = String(dataTx).slice(0, 10);
+  const tx = Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)));
+  if (!Number.isFinite(tx)) return false;
+  // ⚠️ E num MÊS ANTERIOR ao da ocorrência. Medido na base: "Previdência" que
+  // vence dia 30, paga em 02/10 pra outubro — 28 dias antes, mas no MESMO mês,
+  // e é legítimo. O que se recusa é a cobrança do mês passado.
+  if (d.slice(0, 7) >= competencia) return false;
+  return (venc - tx) / 86400000 > ADIANTADO_MAX_DIAS;
+}
+
 /**
  * "O banco confirmou esta cobrança" → AMARRA a transação do extrato à
  * ocorrência. Mesma operação da baixa automática (`baixaPrevisao.js`).
@@ -92,8 +129,16 @@ async function limparAjuste(recorrenciaId, competencia) {
 async function vincularTransacao(p) {
   const { grupoId, rec, competencia, transacao_id } = p;
   const { data: tx } = await supabase.from('transacoes')
-    .select('id, recorrencia_id, competencia').eq('id', transacao_id).eq('grupo_id', grupoId).maybeSingle();
+    .select('id, recorrencia_id, competencia, data').eq('id', transacao_id).eq('grupo_id', grupoId).maybeSingle();
   if (!tx) return { status: 404, body: { erro: 'transacao nao encontrada' } };
+  if (pagamentoDeOutroMes(rec, competencia, tx.data)) {
+    // ⚠️ `erro` é o que a tela MOSTRA (lib/api.ts lê `erro` primeiro) — frase
+    // pro cliente; o código fica em `codigo` pra quem precisar tratar.
+    return { status: 409, body: {
+      erro: 'Este lançamento é de mais de 20 dias antes do vencimento — parece ser o pagamento do mês anterior. Escolha o lançamento deste mês.',
+      codigo: 'pagamento_de_outro_mes',
+    } };
+  }
   if (tx.recorrencia_id === rec.id && tx.competencia === competencia) {
     return { status: 200, body: { ok: true, id: tx.id, jaQuitada: true } };
   }
@@ -197,4 +242,4 @@ async function quitarOcorrencia(p) {
   return { status: 200, body: { ok: true, id: nova.id } };
 }
 
-module.exports = { quitarOcorrencia, carteiraQueDebita, mexeNoSaldo };
+module.exports = { quitarOcorrencia, carteiraQueDebita, mexeNoSaldo, pagamentoDeOutroMes, ADIANTADO_MAX_DIAS };

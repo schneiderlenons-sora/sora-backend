@@ -322,6 +322,39 @@ const linhas = (banco, rec) => banco.tabelas.transacoes.filter((t) => t.recorren
   }
   console.log('  ok');
 
+  // ── 10. Amarrar a cobrança do MÊS ANTERIOR como pagamento deste mês ──────
+  // Relato (Vander, 16/10/2026): a cobrança da Funerária de 16/09 (a de
+  // SETEMBRO) estava amarrada como pagamento de OUTUBRO (vence 15/10) — o card
+  // dizia "pago" sem ele ter pago outubro.
+  console.log('── 10. pagamento de outro mês ──');
+  {
+    const { pagamentoDeOutroMes } = require('../src/services/quitacao');
+    const fun = { dia_vencimento: 15, frequencia: null };
+    eq(pagamentoDeOutroMes(fun, '2026-10', '2026-09-16T10:32:00Z'), true, '§10 o caso real: cobrança de 16/09 pra outubro → recusa');
+    eq(pagamentoDeOutroMes(fun, '2026-10', '2026-10-16'), false, '§10 a cobrança de outubro (1 dia depois) vale');
+    eq(pagamentoDeOutroMes(fun, '2026-10', '2026-09-25'), false, '§10 adiantado 20 dias ainda vale');
+    eq(pagamentoDeOutroMes(fun, '2026-10', '2026-09-24'), true, '§10 21 dias antes já é de outro mês');
+    // ⚠️ ATRASADO vale sempre — é o "outubro quita setembro" da tela de pendências
+    eq(pagamentoDeOutroMes(fun, '2026-09', '2026-10-16'), false, '§10 atrasado (pago em outubro, setembro) vale');
+    eq(pagamentoDeOutroMes({ dia_vencimento: 24 }, '2026-09', '2026-10-05'), false, '§10 o BANCO PAN (setembro pago em 05/10) vale');
+    // ⚠️ MESMO MÊS vale, mesmo bem antes do vencimento (medido: "Previdência"
+    // que vence dia 30, paga em 02/10 pra outubro — legítimo)
+    eq(pagamentoDeOutroMes({ dia_vencimento: 30 }, '2026-10', '2026-10-02'), false, '§10 mesmo mês, 28 dias antes: vale');
+    eq(pagamentoDeOutroMes({ dia_vencimento: 31 }, '2026-02', '2026-02-01'), false, '§10 31 → 28/02, dia 01 do mesmo mês: vale');
+    // fevereiro: vencimento 31 vira 28/02 (mês anterior)
+    eq(pagamentoDeOutroMes({ dia_vencimento: 31 }, '2026-03', '2026-03-01'), false, '§10 31/03 pago em 01/03: mesmo mês, vale');
+    eq(pagamentoDeOutroMes({ dia_vencimento: 5 }, '2026-03', '2026-02-12'), true, '§10 vence 05/03, pago 12/02 (21 dias, mês anterior): recusa');
+    eq(pagamentoDeOutroMes({ dia_vencimento: 5 }, '2026-03', '2026-02-13'), false, '§10 vence 05/03, pago 13/02 (20 dias): vale');
+    // o caso medido da Internet do Vander: cobrança de 18/09 amarrada a outubro (vence 20/10)
+    eq(pagamentoDeOutroMes({ dia_vencimento: 20 }, '2026-10', '2026-09-18'), true, '§10 Internet 18/09 pra outubro: recusa');
+    // fora do escopo: semanal/anual e dados incompletos não travam nada
+    eq(pagamentoDeOutroMes({ dia_vencimento: 15, frequencia: 'semanal' }, '2026-10', '2026-09-01'), false, '§10 semanal não trava');
+    eq(pagamentoDeOutroMes({ dia_vencimento: null }, '2026-10', '2026-09-01'), false, '§10 sem dia de vencimento não trava');
+    eq(pagamentoDeOutroMes(fun, '2026/10', '2026-09-01'), false, '§10 competência inválida não trava (a rota já recusa)');
+    eq(pagamentoDeOutroMes(fun, '2026-10', null), false, '§10 sem data não trava');
+  }
+  console.log('  ok');
+
   console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
   if (falhas.length) { falhas.forEach((x) => console.log('  · ' + x)); process.exit(1); }
 })().catch((e) => { console.error(e); process.exit(1); });

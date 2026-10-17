@@ -33,12 +33,18 @@ ok(R.casarPrevisao([prev({ valor: 113.5 })], real({ valor: 113.85 })) !== null,
 console.log('  ok');
 
 // ── 2. Tolerância de VALOR ────────────────────────────────────────────────
-console.log('── 2. tolerância de valor (15% ou R$5) ──');
-ok(R.valorCompativel(100, 110), '100 × 110 casa (10%)');
-ok(R.valorCompativel(100, 115), '100 × 115 casa (limite de 15%)');
-ok(!R.valorCompativel(100, 130), '100 × 130 NÃO pode casar (30%)');
-ok(R.valorCompativel(20, 24), 'valor baixo usa o piso de R$5 (20 × 24)');
-ok(!R.valorCompativel(20, 30), '20 × 30 é longe demais até com o piso');
+// ⚠️ ERA 15% ou R$ 5 — e o eval cravava "100 × 115 casa". Foi essa folga que
+// fez a previsão da LUZ (R$ 191,77) assumir uma compra de FARMÁCIA (R$ 172,79,
+// 9,9%) no relato do Vander. As linhas abaixo travam a banda nova.
+console.log('── 2. tolerância de valor (2% ou R$1) ──');
+ok(R.valorCompativel(100, 101), '100 × 101 casa (piso de R$1)');
+ok(R.valorCompativel(100, 102), '100 × 102 casa (limite de 2%)');
+ok(!R.valorCompativel(100, 103), '100 × 103 NÃO casa sozinho (vira sugestão no Extrato)');
+ok(!R.valorCompativel(100, 110), '100 × 110 NÃO casa (antes casava — reajuste pede confirmação)');
+ok(!R.valorCompativel(191.77, 172.79), 'o caso real: Luz 191,77 × farmácia 172,79 NÃO casa');
+ok(!R.valorCompativel(96.42, 103.4), 'o caso medido: Claro 96,42 × "Pix Ebanx" 103,40 NÃO casa');
+ok(R.valorCompativel(113.5, 113.85), 'câmbio (Claude 0,3%) continua casando');
+ok(!R.valorCompativel(20, 22), 'valor baixo: R$2 de diferença já é demais');
 ok(!R.valorCompativel(0, 100), 'valor zero não casa com nada');
 console.log('  ok');
 
@@ -67,8 +73,11 @@ console.log('── 5. desempate entre previsões ──');
 {
   const a = prev({ id: 'a', valor: 100, obs: '[Previsto] Academia' });
   const b = prev({ id: 'b', valor: 113.5, obs: '[Previsto] Claude' });
-  ok(R.casarPrevisao([a, b], real({ valor: 113.85 })).id === 'b', 'pega a de valor mais próximo');
+  ok(R.casarPrevisao([a, b], real({ valor: 113.85 })).id === 'b', 'só a de valor compatível casa');
   ok(R.casarPrevisao([a, b], real({ valor: 101 })).id === 'a', 'e o inverso também');
+  // ⚠️ AMBIGUIDADE: duas previsões dentro da banda pra mesma cobrança → não casa
+  const c = prev({ id: 'c', valor: 100.5, obs: '[Previsto] Streaming' });
+  ok(R.casarPrevisao([a, c], real({ valor: 100.2 })) === null, 'duas previsões na banda: NÃO escolhe (fica pro cliente)');
 }
 console.log('  ok');
 

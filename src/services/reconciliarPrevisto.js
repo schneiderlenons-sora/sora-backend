@@ -20,11 +20,23 @@
 // =====================================================================
 const supabase = require('../db/supabase');
 
-// Tolerâncias. Valor: 15% ou R$ 5 (o que for maior) — cobre câmbio (o caso do
-// Claude variou 0,3%) e reajuste pequeno. Data: 7 dias, porque cobrança cai em
-// dia útil e cartão lança com atraso.
-const TOLERANCIA_PCT = 0.15;
-const TOLERANCIA_MIN = 5;
+// Tolerâncias. Valor: 2% ou R$ 1 (o que for maior) — cobre câmbio (o caso do
+// Claude variou 0,3%). Data: 7 dias, porque cobrança cai em dia útil e cartão
+// lança com atraso.
+//
+// ⚠️ ERA 15% OU R$ 5, E ISSO ENGOLIA COMPRA DE VERDADE. Relato (Vander,
+// 16/10/2026): "nem paguei estas contas e já apareceram como pagas". A
+// previsão "Luz R$ 191,77" foi ASSUMIDA por "RAIA DROGASIL SA R$ 172,79" —
+// uma farmácia, mesma conta, 3 dias depois, 9,9% de diferença. A conta de luz
+// virou "paga" e a compra da farmácia sumiu dentro dela.
+// Medido na base (16 conciliações automáticas): 11 ficam em ≤ R$ 1 ou ≤ 2% e
+// seguem casando; as 2 entre 5% e 10% eram a farmácia e um "Pix enviado –
+// Ebanx" no lugar da conta da Claro. Fora da banda, a previsão fica em aberto
+// e o Extrato SUGERE a cobrança ("o valor veio um pouco diferente") — o
+// cliente confirma. Reajuste de conta fixa passa a pedir esse toque: errar pra
+// esse lado custa um toque; errar pro outro some com um gasto real.
+const TOLERANCIA_PCT = 0.02;
+const TOLERANCIA_MIN = 1;
 const JANELA_DIAS = 7;
 
 const ymd = (d) => (d ? String(d).slice(0, 10) : null);
@@ -67,7 +79,12 @@ async function previsoesEmAberto(grupoId) {
 /**
  * Escolhe a previsão que a transação real veio quitar. `null` = nenhuma casa.
  * Critérios (todos obrigatórios): mesmo tipo, mesma conta, valor dentro da
- * tolerância e data dentro da janela. Empate → menor diferença de valor.
+ * tolerância e data dentro da janela.
+ * ⚠️ AMBIGUIDADE NÃO CASA SOZINHA: duas previsões dentro da banda pra mesma
+ * cobrança (duas assinaturas parecidas na mesma conta) → `null`. Escolher "a
+ * mais próxima" era palpite, e o palpite errado troca uma conta pela outra em
+ * silêncio. Mesma disciplina do casarPrevisao e do Watson; o Extrato segue
+ * sugerindo, e o cliente decide.
  */
 function casarPrevisao(previsoes, real) {
   const candidatas = (previsoes || []).filter((p) =>
@@ -75,9 +92,8 @@ function casarPrevisao(previsoes, real) {
     && norm(p.carteira_nome) === norm(real.carteira_nome)
     && valorCompativel(p.valor, real.valor)
     && diasEntre(p.data, real.data) <= JANELA_DIAS);
-  if (!candidatas.length) return null;
-  return candidatas.sort((a, b) =>
-    Math.abs(a.valor - real.valor) - Math.abs(b.valor - real.valor))[0];
+  if (candidatas.length !== 1) return null;
+  return candidatas[0];
 }
 
 /**
