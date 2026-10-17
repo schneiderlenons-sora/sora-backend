@@ -65,8 +65,77 @@
 // =============================================================================
 
 const TOLERANCIA_VALOR      = 1.00;   // R$ — igual ao parcelasPrevistas (banda apertada, elegível a automático)
-const TOLERANCIA_AMPLA_PCT  = 0.30;   // 30% do valor previsto — banda larga, NUNCA automática
+const TOLERANCIA_AMPLA_PCT  = 0.15;   // banda larga, NUNCA automática — ver "out/2026" abaixo
+const SEM_NOME_PCT          = 0.05;   // na banda larga, sem afinidade de nome só até 5%
 const JANELA_DIAS           = 5;
+
+// ── ⚠️ out/2026: A BANDA LARGA NUNCA TINHA RODADO DE VERDADE ────────────────
+//
+// `baixaPrevisao.previsoesAbertas` pedia a coluna `ativo` (a tabela tem
+// `ativa`): o select inteiro falhava e NENHUMA sugestão nem baixa automática
+// existiu desde 11/09. Corrigida a consulta, a 1ª medição (84 contas) mostrou a
+// banda larga de 30% sem nome errando feio: Lovable ← "Lumberjack Barbearia",
+// Spotify ← "MERCADOLIVRE", Academia ← "Cancelamento de liberação", Luz ←
+// "ANGELONI SUPER" (supermercado) — enquanto a conta de luz real (Fit Energia)
+// era sugerida pra Internet. E "Dentista R$ 160 ← POLP TECNOLOGIA R$ 159"
+// saía como AUTOMÁTICO por estar a R$ 1.
+//
+// Regra nova, conferida caso a caso contra essa lista:
+//   · banda larga: até 15%, e fora de 5% exige AFINIDADE DE NOME (palavra em
+//     comum: "Condomínio" × "CONDOMINIO LE PETIT", "Jeniffer" × "Pix recebido
+//     Jeniffer…"). Até 5% passa sem nome — cobre o reajuste que motivou a
+//     banda ("Internet 169,90 ← MP*MP 177,53", 4,5%).
+//   · entre candidatas, a de VALOR mais próximo primeiro (antes era a data):
+//     é o que faz a Luz achar a Fit Energia (2%) e não o supermercado.
+//   · automático exige, além do resto, valor EXATO ou afinidade de nome.
+//
+// ⚠️ "O NOME NÃO ENTRA NO CASAMENTO" continua valendo como regra de PROVA (o
+// nome do banco quase nunca é o digitado). Aqui o nome só AJUDA: alarga a
+// sugestão quando bate, nunca é exigido na banda apertada.
+
+const PALAVRAS_VAZIAS = new Set([
+  'pix', 'pagamento', 'pagto', 'pgto', 'recebido', 'recebida', 'enviado', 'enviada',
+  'transferencia', 'compra', 'debito', 'credito', 'ltda', 'conta', 'cartao', 'boleto',
+  'fatura', 'mensal', 'servicos', 'comercio', 'brasil', 'previsto', 'recorrente', 'para',
+]);
+
+function palavras(s) {
+  return String(s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+    .split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !PALAVRAS_VAZIAS.has(w));
+}
+
+// ── CATEGORIA: o outro sinal que separa os casos medidos ──────────────────
+// Nenhum limite de VALOR separa "Internet 169,90 ← RAIA DROGASIL 172,79" (1,7%,
+// errado) de "Internet 169,90 ← MP*MP 177,53" (4,5%, certo). A categoria
+// separa: a farmácia é [Farmácia], o MP*MP está como [Internet]. Categoria
+// GENÉRICA não pesa pra lado nenhum ("Luz" cadastrada em [Outros] continua
+// achando a Fit Energia [Conta de Luz]).
+const CATEGORIAS_GENERICAS = new Set([
+  '', 'outros', 'outro', 'pix', 'pix enviado', 'pix recebido', 'transferencia', 'transferencias',
+  'transferencia enviada', 'transferencia recebida', 'importado', 'sem categoria', 'financeiro',
+]);
+
+function normCategoria(c) {
+  return String(c || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+    .replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** 'igual' | 'conflito' | 'neutra' entre a categoria da conta fixa e a da cobrança. */
+function relacaoCategoria(catPrevista, catBanco) {
+  const a = normCategoria(catPrevista);
+  const b = normCategoria(catBanco);
+  if (CATEGORIAS_GENERICAS.has(a) || CATEGORIAS_GENERICAS.has(b)) return 'neutra';
+  return a === b ? 'igual' : 'conflito';
+}
+
+/** A descrição do banco tem uma palavra em comum com a da conta fixa? */
+function afinidade(descricaoPrevista, observacaoBanco) {
+  const a = palavras(descricaoPrevista);
+  const b = palavras(observacaoBanco);
+  if (!a.length || !b.length) return false;
+  return a.some((x) => b.some((y) => x === y
+    || (x.length >= 5 && y.length >= 5 && (x.startsWith(y) || y.startsWith(x)))));
+}
 
 const cent = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -108,6 +177,10 @@ function casar(previsoes, transacoes) {
       // ⚠️ Carteira é OBRIGATÓRIA. Sem ela não dá pra afirmar que a cobrança é
       // desta conta, e "quase certo" aqui vale zero.
       if (!carteiraP || normCarteira(t.carteira_nome) !== carteiraP) return false;
+      // ⚠️ Categorias ESPECÍFICAS e DIFERENTES são evidência contra, nas duas
+      // bandas (medido: "Dentista [Dentista] ← POLP TECNOLOGIA [Educação]",
+      // R$ 160 × R$ 159 — perto no valor, outra coisa).
+      if (relacaoCategoria(p.categoria, t.categoria) === 'conflito') return false;
       return Math.abs(diasEntre(p.vencimento, t.data)) <= JANELA_DIAS;
     });
 
@@ -118,7 +191,14 @@ function casar(previsoes, transacoes) {
     // cobrança mais distante e só criar ambiguidade à toa.
     if (!achadas.length) {
       const folga = Math.max(TOLERANCIA_VALOR, alvo * TOLERANCIA_AMPLA_PCT);
-      achadas = base.filter((t) => Math.abs(cent(t.valor) - alvo) <= folga);
+      const semNome = Math.max(TOLERANCIA_VALOR, alvo * SEM_NOME_PCT);
+      achadas = base.filter((t) => {
+        const dif = Math.abs(cent(t.valor) - alvo);
+        if (dif > folga) return false;
+        const cat = relacaoCategoria(p.categoria, t.categoria);
+        if (cat === 'conflito') return false;            // Farmácia × Internet: nunca
+        return dif <= semNome || cat === 'igual' || afinidade(p.descricao, t.observacao);
+      });
       aproximado = achadas.length > 0;
     }
     if (achadas.length) porPrevisao.set(`${p.recorrencia_id}:${p.competencia}`, { p, achadas, aproximado });
@@ -132,18 +212,25 @@ function casar(previsoes, transacoes) {
 
   const saida = [];
   for (const { p, achadas, aproximado } of porPrevisao.values()) {
-    // Mais perto do vencimento primeiro — o empate é resolvido pela data, que é
-    // o critério mais defensável quando os valores são idênticos.
-    const t = [...achadas].sort((x, y) =>
-      Math.abs(diasEntre(p.vencimento, x.data)) - Math.abs(diasEntre(p.vencimento, y.data)))[0];
+    // VALOR mais próximo primeiro; empate pela data mais perto do vencimento.
+    // (Era só a data: a Luz pegava o supermercado do dia seguinte em vez da
+    // conta de energia de valor quase igual — ver o cabeçalho.)
+    const dif = (x) => Math.abs(cent(x.valor) - cent(p.valor));
+    const t = [...achadas].sort((x, y) => (dif(x) - dif(y))
+      || (Math.abs(diasEntre(p.vencimento, x.data)) - Math.abs(diasEntre(p.vencimento, y.data))))[0];
 
     const variasCobrancas = achadas.length > 1;
     const variasPrevisoes = (disputasPorTx.get(t.id) || 0) > 1;
     const variavel        = !!p.valor_variavel;
+    // Automático só com valor EXATO ou nome em comum: "R$ 160 × R$ 159" é
+    // perto, mas não é prova (Dentista ← POLP TECNOLOGIA, medido).
+    const exato           = dif(t) < 0.005;
+    const nomeBate        = afinidade(p.descricao, t.observacao)
+      || relacaoCategoria(p.categoria, t.categoria) === 'igual';
 
     // ⚠️ AQUI MORA A SEGURANÇA. Qualquer sombra de dúvida derruba o automático
     // pra sugestão — a chave global governa só o caso limpo.
-    const automatico = !variasCobrancas && !variasPrevisoes && !variavel && !aproximado;
+    const automatico = !variasCobrancas && !variasPrevisoes && !variavel && !aproximado && (exato || nomeBate);
     // ⚠️ Texto voltado pro CLIENTE — `ExtratoFuturo.tsx` mostra isto cru, sem
     // dicionário de tradução ("Confira antes: {motivo}."). Frase curta, com
     // acento, que faz sentido depois de dois-pontos.
@@ -151,6 +238,9 @@ function casar(previsoes, transacoes) {
       : variasCobrancas ? 'mais de uma cobrança parecida nesses dias'
       : variavel ? 'o valor desta conta costuma variar'
       : aproximado ? 'o valor veio um pouco diferente do previsto'
+      // Perto no valor, mas sem valor exato nem nome/categoria em comum
+      // (Dentista R$ 160 × "POLP TECNOLOGIA" R$ 159): sugere, nunca afirma.
+      : !automatico ? 'o nome da cobrança não confirma que é esta conta'
       : undefined;
 
     saida.push({
@@ -166,4 +256,4 @@ function casar(previsoes, transacoes) {
   return saida;
 }
 
-module.exports = { casar, TOLERANCIA_VALOR, TOLERANCIA_AMPLA_PCT, JANELA_DIAS, normCarteira, diasEntre };
+module.exports = { casar, afinidade, TOLERANCIA_VALOR, TOLERANCIA_AMPLA_PCT, SEM_NOME_PCT, JANELA_DIAS, normCarteira, diasEntre };

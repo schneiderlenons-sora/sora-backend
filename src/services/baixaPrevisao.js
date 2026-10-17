@@ -31,10 +31,22 @@ const iso = (d) =>
  * divergência apareceria como a Sora quitando uma ocorrência que o cron nem
  * considera existir.
  */
+// ⚠️ A COLUNA É `ativa`, NÃO `ativo`. Pedia `ativo` desde 11/09/2026: o select
+// INTEIRO falhava, `recs` vinha null e esta função devolvia [] — nenhuma
+// sugestão de baixa no Extrato e nenhuma baixa automática, pra ninguém, por
+// mais de um mês, sem um erro no log. Os evals testavam só o casamento puro.
+// Hoje a lista de colunas é exportada e `eval:casar-previsao` a confere contra
+// as colunas reais da tabela; e a falha de leitura vai pro log.
+const COLUNAS_RECORRENCIA = 'id, descricao, categoria, tipo, valor, dia_vencimento, carteira, valor_variavel, frequencia, dia_semana, mes_vencimento, data_inicio, data_fim, ativa';
+
 async function previsoesAbertas(grupoId, de, ate, quitacoes = [], ajustes = []) {
-  const { data: recs } = await supabase.from('recorrencias')
-    .select('id, descricao, tipo, valor, dia_vencimento, carteira, valor_variavel, frequencia, dia_semana, mes_vencimento, data_inicio, data_fim, ativo')
+  const { data: recs, error } = await supabase.from('recorrencias')
+    .select(COLUNAS_RECORRENCIA)
     .eq('grupo_id', grupoId);
+  if (error) {
+    console.error('[baixaPrevisao] leitura das contas fixas falhou (sem sugestões):', error.message);
+    return [];
+  }
   if (!recs || !recs.length) return [];
 
   const jaResolvida = new Set([
@@ -48,7 +60,7 @@ async function previsoesAbertas(grupoId, de, ate, quitacoes = [], ajustes = []) 
 
   const out = [];
   for (const r of recs) {
-    if (r.ativo === false) continue;
+    if (r.ativa === false) continue;
     if (!(Number(r.valor) > 0)) continue;
     const cur = new Date(inicio);
     for (let i = 0; cur <= fim && i < 400; i++, cur.setDate(cur.getDate() + 1)) {
@@ -57,7 +69,7 @@ async function previsoesAbertas(grupoId, de, ate, quitacoes = [], ajustes = []) 
       const comp = dia.slice(0, 7);
       if (jaResolvida.has(`${r.id}:${comp}`)) continue;
       out.push({
-        recorrencia_id: r.id, competencia: comp, vencimento: dia,
+        recorrencia_id: r.id, competencia: comp, vencimento: dia, descricao: r.descricao, categoria: r.categoria,
         valor: r.valor, carteira: r.carteira, tipo: r.tipo,
         valor_variavel: !!r.valor_variavel,
       });
@@ -79,7 +91,7 @@ async function sugerirBaixas(grupoId, de, ate, quitacoes = [], ajustes = []) {
   const d1 = new Date(`${maior}T12:00:00`); d1.setDate(d1.getDate() + JANELA_DIAS);
 
   const { data: txs } = await supabase.from('transacoes')
-    .select('id, data, valor, tipo, carteira_nome, of_tx_id, recorrencia_id')
+    .select('id, data, valor, tipo, carteira_nome, of_tx_id, recorrencia_id, observacao, categoria')
     .eq('grupo_id', grupoId)
     .not('of_tx_id', 'is', null)
     .is('recorrencia_id', null)
@@ -152,4 +164,4 @@ async function aplicarBaixaAutomatica(grupoId, userId) {
   }
 }
 
-module.exports = { previsoesAbertas, sugerirBaixas, jaResolvidas, aplicarBaixaAutomatica };
+module.exports = { previsoesAbertas, sugerirBaixas, jaResolvidas, aplicarBaixaAutomatica, COLUNAS_RECORRENCIA };
