@@ -36,12 +36,24 @@ function normTexto(s) {
 
 const soData = (d) => String(d || '').slice(0, 10);
 
-/** A data tem HORA de verdade? Lançamento manual nasce 00:00:00 e não serve de prova. */
+/**
+ * A data tem HORA de verdade? Lançamento manual nasce 00:00:00 e não serve de prova.
+ *
+ * ⚠️ HORÁRIO CHEIO TAMBÉM NÃO É PROVA (out/2026). Medido na base: bancos que só
+ * têm a DATA da transação mandam um horário fixo — `03:00:00` (meia-noite de
+ * Brasília em UTC) ou `12:00:00`. Com eles, duas compras legítimas iguais no
+ * mesmo dia (dois pedágios de mesmo valor) tinham o "mesmo instante" e viravam
+ * duplicata COMPROVADA — inclusive no aviso proativo do WhatsApp. Agora
+ * qualquer `hh:00:00` deixa de afirmar; o par ainda pode aparecer como
+ * SUSPEITA (pergunta, não acusação). Compra real exatamente às hh:00:00 é
+ * 1 em 3.600 — perder a afirmação ali custa pouco; acusar inocente custa caro.
+ */
 function temHoraReal(d) {
   const s = String(d || '');
   if (s.length <= 10) return false;
   const hora = s.slice(11, 19);
-  return !!hora && hora !== '00:00:00';
+  if (!/^\d{2}:\d{2}:\d{2}$/.test(hora)) return false;
+  return hora.slice(3) !== '00:00';
 }
 
 /** Distância em dias entre duas transações (só a parte da data). */

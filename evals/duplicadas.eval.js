@@ -131,6 +131,18 @@ console.log('── 6. utilitários ──');
 {
   ok(temHoraReal('2026-08-01T13:45:00+00:00') === true, 'hora real é reconhecida');
   ok(temHoraReal('2026-08-01T00:00:00+00:00') === false, 'meia-noite não conta como hora');
+  // ⚠️ horário FIXO de banco que só tem a data (medido: 03:00:00 e 12:00:00)
+  ok(temHoraReal('2026-08-01T03:00:00+00:00') === false, '03:00:00 (meia-noite BRT) não é hora real');
+  ok(temHoraReal('2026-08-01T12:00:00+00:00') === false, '12:00:00 (meio-dia fixo) não é hora real');
+  ok(temHoraReal('2026-08-01T12:00:00.000Z') === false, 'horário cheio com milissegundos zerados também não');
+  ok(temHoraReal('2026-08-01T12:00:01+00:00') === true, 'um segundo depois já é hora real');
+  ok(temHoraReal('2026-08-01T16:01:10.836+00:00') === true, 'hora com milissegundos é real');
+  // e o efeito na regra: duas compras iguais do banco às 03:00 do mesmo dia NÃO são duplicata comprovada
+  {
+    const p1 = tx({ id: 'p1', valor: 5, observacao: 'PEDAGIO', data: '2026-08-01T03:00:00+00:00', of_tx_id: 'a' });
+    const p2 = tx({ id: 'p2', valor: 5, observacao: 'PEDAGIO', data: '2026-08-01T03:00:00+00:00', of_tx_id: 'b' });
+    ok(ehDuplicata(p1, p2) === null, 'dois pedágios iguais às 03:00 (só data): não afirma duplicata');
+  }
   ok(temHoraReal('2026-08-01') === false, 'data sem hora não conta');
   ok(diffDias('2026-08-01T23:00:00Z', '2026-08-02T01:00:00Z') === 1, 'diferença de dias ignora a hora');
   ok(diffDias('2026-08-01', '2026-08-01') === 0, 'mesmo dia = 0');
