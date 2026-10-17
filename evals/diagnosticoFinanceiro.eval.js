@@ -58,7 +58,20 @@ console.log('── 3. transferência entre contas próprias (sinal) ──');
   eq(D.transferenciasEntreContas([s, { ...e, carteira_nome: 'Inter Crédito' }], W, ehTransf).length, 0, '§3 cartão fica de fora');
   eq(D.transferenciasEntreContas([{ ...s, valor: 10 }, { ...e, valor: 10 }], W, ehTransf).length, 0, '§3 abaixo de R$ 50 não acusa (falso positivo medido)');
   eq(D.transferenciasEntreContas([s, { ...e, data: '2026-10-19' }], W, ehTransf).length, 0, '§3 3 dias depois não casa');
-  eq(D.transferenciasEntreContas([{ ...s, categoria: 'Transferências' }, e], W, ehTransf).length, 0, '§3 já marcada como transferência: fora');
+  // ⚠️ MEIO-PAR (Vander, R$ 5.500): saída já como 'Transferências', entrada contando como receita.
+  eq(D.transferenciasEntreContas([{ ...s, categoria: 'Transferências' }, e], W, ehTransf).length, 1, '§3 meio-par: a ponta que sobrou é achada');
+  eq(D.transferenciasEntreContas([{ ...s, categoria: 'Transferências' }, { ...e, transferencia: true }], W, ehTransf).length, 0, '§3 as duas já marcadas: fora');
+  // conta que não existe (conta-fantasma) não entra no par
+  eq(D.transferenciasEntreContas([s, { ...e, carteira_nome: 'Fantasma' }], W, ehTransf).length, 0, '§3 conta inexistente: fora');
+  // confirmação do servidor (POST marcar-transferencia): mesma régua, par isolado
+  {
+    const { confirmaPar } = require('../src/services/transferenciaPropria');
+    eq(confirmaPar(s, e, W, ehTransf), true, '§3 confirma o par válido');
+    eq(confirmaPar(e, s, W, ehTransf), false, '§3 lados trocados (entrada como saída): recusa');
+    eq(confirmaPar(s, { ...e, valor: 11899 }, W, ehTransf), false, '§3 valor diferente: recusa');
+    eq(confirmaPar(s, { ...e, grupo_id: H }, W, ehTransf), false, '§3 grupos diferentes: recusa');
+    eq(confirmaPar(s, null, W, ehTransf), false, '§3 sem a outra ponta: recusa');
+  }
   // ⚠️ disputa nos dois lados: não afirma
   eq(D.transferenciasEntreContas([s, e, { ...e, id: 'e2' }], W, ehTransf).length, 0, '§3 duas entradas iguais: não afirma');
   eq(D.transferenciasEntreContas([s, { ...s, id: 's2' }, e], W, ehTransf).length, 0, '§3 duas saídas iguais: não afirma');

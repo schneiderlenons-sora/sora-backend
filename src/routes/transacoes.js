@@ -183,6 +183,78 @@ router.get('/conciliaveis/:phone', auth, async (req, res) => {
   }
 });
 
+// GET /api/transacoes/transferencias-sugeridas/:phone — saída numa conta e
+// entrada noutra, mesmo valor e dia: provável dinheiro do cliente mudando de
+// conta, contando como gasto E receita. Régua única em
+// services/transferenciaPropria.js (a mesma do diagnóstico do /admin).
+// ⚠️ SÓ SUGERE: tem falso positivo medido; quem marca é o cliente (POST abaixo).
+// Sempre 200 com lista — falha aqui só esconde uma sugestão.
+router.get('/transferencias-sugeridas/:phone', auth, async (req, res) => {
+  try {
+    const user = usuarioReq(req);
+    if (!user?.grupo_ativo) return res.json({ pares: [] });
+    const grupoId = user.grupo_ativo;
+    const { hojeSP } = require('../services/cicloFatura');
+    const { paresTransferencia, MINIMO } = require('../services/transferenciaPropria');
+    const { ehTransferencia } = require('../services/resumoTransacoes');
+    const d = new Date(`${hojeSP()}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - 60);
+    // Leitura estreita: só o que pode virar par (R$ 50+). A ponta JÁ marcada
+    // entra (o meio-par é o caso real), e a régua pula o par com as duas marcadas.
+    const COLS = 'id, grupo_id, tipo, valor, categoria, observacao, carteira_nome, data, transferencia';
+    let { data: txs, error } = await supabase.from('transacoes').select(`${COLS}, ignorar_em`)
+      .eq('grupo_id', grupoId).gte('data', d.toISOString().slice(0, 10))
+      .gte('valor', MINIMO).limit(2000);
+    if (error && /ignorar_em/i.test(error.message || '')) {
+      ({ data: txs, error } = await supabase.from('transacoes').select(COLS)
+        .eq('grupo_id', grupoId).gte('data', d.toISOString().slice(0, 10))
+        .gte('valor', MINIMO).limit(2000));
+    }
+    if (error || !txs || !txs.length) return res.json({ pares: [] });
+    const { data: wallets } = await supabase.from('wallets').select('grupo_id, nome, tipo').eq('grupo_id', grupoId);
+    const enxuto = (t) => ({ id: t.id, valor: t.valor, tipo: t.tipo, observacao: t.observacao, categoria: t.categoria, carteira_nome: t.carteira_nome, data: t.data });
+    const pares = paresTransferencia(txs, wallets || [], ehTransferencia)
+      .map(({ saida, entrada }) => ({ saida: enxuto(saida), entrada: enxuto(entrada) }));
+    res.json({ pares });
+  } catch (err) {
+    console.error('[transferencias-sugeridas] falhou:', err.message);
+    res.json({ pares: [] });
+  }
+});
+
+// POST /api/transacoes/marcar-transferencia  { saida_id, entrada_id, desfazer? }
+// Marca as DUAS pontas como transferência (saem do gasto e da receita).
+// ⚠️ NÃO MEXE EM SALDO: o dinheiro saiu de uma conta e entrou na outra de
+// verdade — o que muda é só ele deixar de contar como consumo/ganho.
+// ⚠️ O servidor RECONFERE o par pela mesma régua da sugestão; a tela não decide.
+// `desfazer: true` volta as duas pontas (é o "Desfazer" do toast).
+router.post('/marcar-transferencia', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { saida_id, entrada_id, desfazer } = req.body || {};
+    if (!saida_id || !entrada_id || saida_id === entrada_id) {
+      return res.status(400).json({ erro: 'Envie as duas transações (saída e entrada).' });
+    }
+    const { data: linhas } = await supabase.from('transacoes')
+      .select('id, grupo_id, tipo, valor, categoria, carteira_nome, data, transferencia')
+      .eq('grupo_id', req.grupoId).in('id', [saida_id, entrada_id]);
+    if (!linhas || linhas.length !== 2) return res.status(404).json({ erro: 'Transação não encontrada neste grupo.' });
+    const saida = linhas.find((t) => t.id === saida_id);
+    const entrada = linhas.find((t) => t.id === entrada_id);
+
+    if (!desfazer) {
+      const { data: wallets } = await supabase.from('wallets').select('grupo_id, nome, tipo').eq('grupo_id', req.grupoId);
+      const { confirmaPar } = require('../services/transferenciaPropria');
+      const { ehTransferencia } = require('../services/resumoTransacoes');
+      if (!confirmaPar(saida, entrada, wallets || [], ehTransferencia)) {
+        return res.status(409).json({ erro: 'Estas duas não batem como uma transferência entre suas contas (valor, dia ou contas).' });
+      }
+    }
+    const { error } = await supabase.from('transacoes')
+      .update({ transferencia: !desfazer }).eq('grupo_id', req.grupoId).in('id', [saida_id, entrada_id]);
+    if (error) return res.status(500).json({ erro: error.message });
+    res.json({ ok: true, transferencia: !desfazer });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // GET /api/transacoes/:phone?mes=2026-05&tipo=Gasto&categoria=Mercado&limit=50&offset=0&criado_por_me=true&criado_por_phone=XX
 router.get('/:phone', auth, async (req, res) => {
   try {

@@ -75,33 +75,15 @@ function duplicatasConfirmadas(transacoes) {
 }
 
 // ── 3. Transferência entre contas PRÓPRIAS contando como gasto E receita ────
-// ⚠️ 'sinal': a régua (mesmo valor, contas diferentes, ≤1 dia, par único) tem
-// falso positivo medido. Por isso só contas (cartão fica fora), só R$ 50+ e só
-// par sem disputa dos dois lados.
-function transferenciasEntreContas(transacoes, wallets, ehTransferencia, { minimo = 50 } = {}) {
-  const tipoDe = new Map((wallets || []).map((w) => [`${w.grupo_id}|${w.nome}`, w]));
-  const elegivel = (t) => t && !ehTransferencia(t)
-    && Number(t.valor) >= minimo
-    && !ehCartao(tipoDe.get(`${t.grupo_id}|${t.carteira_nome}`));
-  const achados = [];
-  for (const [grupoId, txs] of porGrupo((transacoes || []).filter(elegivel))) {
-    const saidas = txs.filter((t) => t.tipo === 'Gasto');
-    const entradas = txs.filter((t) => t.tipo === 'Recebimento');
-    const casa = (s, e) => e.carteira_nome !== s.carteira_nome
-      && Math.abs(Number(e.valor) - Number(s.valor)) < 0.005
-      && Math.abs(diaNum(e.data) - diaNum(s.data)) <= 1;
-    for (const s of saidas) {
-      const cands = entradas.filter((e) => casa(s, e));
-      if (cands.length !== 1) continue;                       // disputa → não afirma
-      const e = cands[0];
-      if (saidas.filter((x) => casa(x, e)).length !== 1) continue; // disputa do outro lado
-      achados.push({
-        grupo_id: grupoId, valor: cent(s.valor),
-        detalhe: `${s.carteira_nome} → ${e.carteira_nome} em ${String(s.data).slice(0, 10)}: "${s.observacao || ''}" [${s.categoria}] / "${e.observacao || ''}" [${e.categoria}]`,
-      });
-    }
-  }
-  return achados;
+// ⚠️ 'sinal': a régua tem falso positivo medido. Ela mora em
+// services/transferenciaPropria.js — a MESMA que a aba Transações usa pra
+// sugerir ao cliente. Aqui só se formata o achado.
+function transferenciasEntreContas(transacoes, wallets, ehTransferencia, opts) {
+  const { paresTransferencia } = require('./transferenciaPropria');
+  return paresTransferencia(transacoes, wallets, ehTransferencia, opts).map(({ grupo_id, saida: s, entrada: e }) => ({
+    grupo_id, valor: cent(s.valor),
+    detalhe: `${s.carteira_nome} → ${e.carteira_nome} em ${String(s.data).slice(0, 10)}: "${s.observacao || ''}" [${s.categoria}] / "${e.observacao || ''}" [${e.categoria}]`,
+  }));
 }
 
 // ── 4. Previsto vencido há dias e nunca baixado ─────────────────────────────
