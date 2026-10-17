@@ -37,8 +37,18 @@ console.log('── 2. recusa pares que a fusão não trata ──');
   ok(planoFusao(banco({ id: 'a' }), banco({ id: 'b' })).seguro === false, 'dois do banco: recusa');
   // dois manuais → recusa (nenhum protege com of_tx_id)
   ok(planoFusao(manual({ id: 'a' }), manual({ id: 'b' })).seguro === false, 'dois manuais: recusa');
-  // manual JÁ PAGA × banco → recusa (não é previsão pendente; apagá-la estornaria saldo)
+  // manual JÁ PAGA × banco em conta MANUAL → recusa (apagá-la estornaria saldo)
   ok(planoFusao(banco(), manual({ pago: true })).seguro === false, 'manual já paga: recusa');
+  ok(planoFusao(banco(), manual({ pago: true }), { contaDoBanco: false }).seguro === false, 'manual já paga em conta manual: recusa');
+  // ...em conta do BANCO → aceita (o saldo vem do banco; apagar a cópia não mexe nele)
+  {
+    const p = planoFusao(banco(), manual({ pago: true }), { contaDoBanco: true });
+    ok(p.seguro === true && p.manterId === 'ofrow' && p.descartarId === 'manrow', 'manual já paga em conta do banco: funde, mantendo o BANCO');
+  }
+  // contaDoBanco não afrouxa nada além disso: dois do banco seguem recusados
+  ok(planoFusao(banco({ id: 'a' }), banco({ id: 'b' }), { contaDoBanco: true }).seguro === false, 'contaDoBanco não deixa fundir dois do banco');
+  // e pago indefinido (linha estranha) não vira "pago"
+  ok(planoFusao(banco(), { ...manual(), pago: undefined }, { contaDoBanco: true }).seguro === false, 'pago indefinido: recusa');
   // mesma transação → recusa
   ok(planoFusao(banco({ id: 'x' }), banco({ id: 'x' })).seguro === false, 'mesma id: recusa');
   // faltando um lado → recusa
@@ -68,6 +78,12 @@ console.log('── 4. herança de rótulo ──');
   // NUNCA herda valor/data/pago — isso é a verdade do banco
   const h = rotuloHerdado({ observacao: 'x', categoria: 'y', valor: 999, data: '2020-01-01', pago: false });
   ok(!('valor' in h) && !('data' in h) && !('pago' in h), 'herança é SÓ rótulo, nunca valor/data/pago');
+  // o VÍNCULO da conta fixa vai junto (senão ela "esquece" que foi paga no mês)
+  const r = rotuloHerdado({ observacao: '[Recorrente] Nespresso', categoria: 'Café', recorrencia_id: 'rec1', competencia: '2026-10' });
+  ok(r.recorrencia_id === 'rec1' && r.competencia === '2026-10', 'herda recorrencia_id + competencia');
+  const s = rotuloHerdado({ observacao: 'x', competencia: '2026-10' });
+  ok(!('competencia' in s), 'competencia sem recorrencia_id não vai (não é de conta fixa)');
+  ok(!('recorrencia_id' in rotuloHerdado({ observacao: 'x' })), 'sem vínculo, nada de vínculo');
 }
 console.log('  ok');
 
@@ -141,6 +157,17 @@ console.log('── 6. paresConciliaveis (botão da tela) ──');
   ok(paresConciliaveis([prev, { ...cob, data: '2026-10-18T13:00:00+00:00' }], prova).length === 0, 'data longe: sem botão');
   // previsto JÁ PAGO não é previsão (apagá-lo estornaria saldo)
   ok(paresConciliaveis([{ ...prev, pago: true }, cob], prova).length === 0, 'manual já pago: sem botão');
+  // ...a não ser que a conta seja do BANCO (o caso "manual pago × banco": 39 duplicatas medidas)
+  {
+    const g = { grupo_id: 'G' };
+    const doBanco = new Set(['G|BTG Banking']);
+    ok(paresConciliaveis([{ ...prev, ...g, pago: true }, { ...cob, ...g }], prova, { contasDoBanco: doBanco }).length === 1,
+      'manual já pago em conta do BANCO: com botão');
+    ok(paresConciliaveis([{ ...prev, ...g, pago: true }, { ...cob, ...g }], prova, { contasDoBanco: new Set(['G|Outra']) }).length === 0,
+      'manual já pago em conta que NÃO é do banco: sem botão');
+    ok(paresConciliaveis([{ ...prev, ...g, pago: true }, { ...cob, ...g }], prova, { contasDoBanco: new Set(['H|BTG Banking']) }).length === 0,
+      'a chave é por grupo: conta homônima de outro grupo não vale');
+  }
   // recorrência tem reconciliação própria
   ok(paresConciliaveis([{ ...prev, recorrente: true }, cob], prova).length === 0, 'recorrência: sem botão');
   ok(paresConciliaveis([prev, { ...prev, id: 'p2' }], prova).length === 0, 'dois manuais: sem botão');

@@ -42,11 +42,11 @@ function porGrupo(lista) {
 // ── 1. Previsto manual que JÁ TEM a cobrança igual do banco ─────────────────
 // Mesma régua do botão "Conciliar com o banco" (paresConciliaveis). Tem de ser
 // zero: o sync absorve sozinho e o painel oferece o botão.
-function previstosConciliaveis(transacoes, saoMesma) {
+function previstosConciliaveis(transacoes, saoMesma, opts) {
   const { paresConciliaveis } = require('./fusaoDuplicada');
   const achados = [];
   for (const [grupoId, txs] of porGrupo(transacoes)) {
-    for (const { previsto, banco } of paresConciliaveis(txs, saoMesma)) {
+    for (const { previsto, banco } of paresConciliaveis(txs, saoMesma, opts)) {
       achados.push({
         grupo_id: grupoId, valor: cent(previsto.valor),
         detalhe: `previsto "${previsto.observacao || ''}" × banco "${banco.observacao || ''}" (${previsto.carteira_nome}, ${String(banco.data).slice(0, 10)})`,

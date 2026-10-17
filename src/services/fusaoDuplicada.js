@@ -42,7 +42,16 @@
  * @param {{id,of_tx_id,pago}} a
  * @param {{id,of_tx_id,pago}} b
  */
-function planoFusao(a, b) {
+/**
+ * @param {object} opts
+ * @param {boolean} opts.contaDoBanco  a carteira do lançamento manual é de Open
+ *   Finance. ⚠️ É ISTO que autoriza fundir um manual JÁ PAGO: em conta do banco
+ *   o saldo vem do banco (regra de ouro), então apagar a cópia manual não mexe
+ *   em saldo nenhum. Em conta manual o pago já debitou — apagar estornaria, e a
+ *   fusão continua recusando. Medido em 17/10/2026: 39 duplicatas "manual pago ×
+ *   banco" em 11 contas (R$ 22,3 mil a mais), todas em conta conectada.
+ */
+function planoFusao(a, b, { contaDoBanco = false } = {}) {
   if (!a || !b || !a.id || !b.id) return { seguro: false, motivo: 'faltam as duas transações' };
   // ⚠️ Guarda DEFENSIVA (equivalente no eval, de propósito): as guardas
   // estruturais abaixo já impedem a mesma linha de ser os dois lados — uma linha
@@ -51,9 +60,10 @@ function planoFusao(a, b) {
   // defesa em profundidade, não como regra testável isolada.
   if (a.id === b.id) return { seguro: false, motivo: 'é a mesma transação' };
 
-  // O lado do banco: tem of_tx_id. O lado manual-pendente: sem of_tx_id E pago=false.
+  // O lado do banco: tem of_tx_id. O lado manual: sem of_tx_id E pendente —
+  // ou JÁ PAGO, se a conta for do banco (ver `contaDoBanco` acima).
   const doBanco  = (t) => !!t.of_tx_id;
-  const previsto = (t) => !t.of_tx_id && t.pago === false;
+  const previsto = (t) => !t.of_tx_id && (t.pago === false || (contaDoBanco && t.pago === true));
 
   const banco = [a, b].find(doBanco);
   const prev  = [a, b].find(previsto);
@@ -79,6 +89,13 @@ function rotuloHerdado(previsto) {
   const cat = (previsto.categoria || '').trim();
   if (obs) out.observacao = obs;
   if (cat) out.categoria = cat;
+  // ⚠️ O VÍNCULO COM A CONTA FIXA vai junto. Linha "[Recorrente]" carrega
+  // `recorrencia_id` + `competencia` — é por eles que `resolvidasNoMes` sabe
+  // que a conta do mês foi paga. Apagar a cópia sem passá-los pra linha do
+  // banco faria a conta fixa "esquecer" que foi paga (medido: 9 das 42
+  // duplicatas conciliáveis eram linhas "[Recorrente]").
+  if (previsto.recorrencia_id) out.recorrencia_id = previsto.recorrencia_id;
+  if (previsto.recorrencia_id && previsto.competencia) out.competencia = previsto.competencia;
   return out;
 }
 
@@ -172,15 +189,19 @@ function escolherAbsorcoes(previsoes, cobrancas, saoMesma) {
  * @param saoMesma    (previsto, cobranca) => boolean — a PROVA (ehDuplicata)
  * @returns [{ previsto, banco }]
  */
-function paresConciliaveis(transacoes, saoMesma) {
+function paresConciliaveis(transacoes, saoMesma, { contasDoBanco = new Set() } = {}) {
   const lista = (transacoes || []).filter((t) => t && t.id);
   // Previsto: o mesmo lado que `planoFusao` aceita descartar — sem of_tx_id E
-  // pago=false. Recorrência fica de fora: ela tem a reconciliação própria.
+  // pendente, OU já pago numa conta do banco (`contasDoBanco` = Set de
+  // "grupo_id|carteira_nome" de carteiras com of_conta_id; ver `planoFusao`).
+  // Recorrência fica de fora: ela tem a reconciliação própria.
+  const daContaDoBanco = (t) => contasDoBanco.has(`${t.grupo_id}|${t.carteira_nome}`);
   // ⚠️ `!t.recorrente` e o filtro de `of_tx_id` nas cobranças são REDUNDANTES
   // (equivalentes na mutação): `ehDuplicata` já recusa recorrência e
   // `escolherAbsorcoes` já descarta cobrança sem of_tx_id. Ficam pra a lista
   // dizer por si o que é cada lado, sem depender de ler as outras duas funções.
-  const previstos = lista.filter((t) => !t.of_tx_id && t.pago === false && !t.recorrente);
+  const previstos = lista.filter((t) => !t.of_tx_id && !t.recorrente
+    && (t.pago === false || (t.pago === true && daContaDoBanco(t))));
   const cobrancas = lista.filter((t) => !!t.of_tx_id);
   return escolherAbsorcoes(previstos, cobrancas, saoMesma)
     .map(({ previsao, cobranca }) => ({ previsto: previsao, banco: cobranca }));

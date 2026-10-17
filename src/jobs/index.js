@@ -529,7 +529,14 @@ cron.schedule('0 * * * *', async () => {
       const { data: wallet } = await supabase.from('wallets')
         .select('id, saldo, of_conta_id').eq('grupo_id', rec.grupo_id)
         .ilike('nome', rec.carteira || 'Dinheiro').maybeSingle();
-      const contaConectada = modo === 'prever';
+      // ⚠️ "Desconta sozinho" em conta do BANCO vira previsão. Medido em
+      // 17/10/2026: 11 contas fixas nesse modo em conta conectada (5 grupos),
+      // 13 lançamentos em dobro em 60 dias — a Sora lançava PAGO e o banco
+      // trazia a mesma cobrança. E ainda mexia no saldo, que numa conta
+      // conectada vem SÓ do banco (regra de ouro). A intenção ("lança
+      // sozinho") continua: a previsão nasce no dia e a cobrança real a assume
+      // (reconciliarPrevisto). A tela da conta fixa diz isso.
+      const contaConectada = modo === 'prever' || !!(wallet && wallet.of_conta_id);
 
       const idCurto = gerarId();
       // ⚠️ Mesma razão do bloco de previstos acima: sem garantir a carteira, o

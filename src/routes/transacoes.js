@@ -145,7 +145,15 @@ router.get('/conciliaveis/:phone', auth, async (req, res) => {
       return d.toISOString().slice(0, 10);
     };
     const hoje = hojeSP();
-    const COLS = 'id, valor, valor_moeda, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia, pago';
+    const COLS = 'id, grupo_id, valor, valor_moeda, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia, pago';
+
+    // Contas do BANCO (of_conta_id): nelas o manual JÁ PAGO também é conciliável
+    // (ver fusaoDuplicada.planoFusao — o saldo vem do banco, apagar a cópia não
+    // mexe nele). Medido: 39 duplicatas "manual pago × banco" em 11 contas.
+    const { data: wBanco } = await supabase.from('wallets').select('nome')
+      .eq('grupo_id', grupoId).not('of_conta_id', 'is', null);
+    const nomesBanco = (wBanco || []).map((w) => w.nome).filter(Boolean);
+    const contasDoBanco = new Set(nomesBanco.map((n) => `${grupoId}|${n}`));
 
     // Previsto no FUTURO não tem cobrança ainda; mais de 120 dias atrás já
     // deixou de ser "previsto" na cabeça de qualquer um.
@@ -154,10 +162,23 @@ router.get('/conciliaveis/:phone', auth, async (req, res) => {
       .not('recorrente', 'is', true)
       .gte('data', somaDias(hoje, -120)).lte('data', `${somaDias(hoje, 1)}T23:59:59`)
       .limit(300);
-    if (e1 || !prevs || !prevs.length) return res.json({ pares: [] });
+    if (e1) return res.json({ pares: [] });
+    // Manual JÁ PAGO em conta do banco (o lançado pelo zap/painel que o banco
+    // trouxe de novo). Janela menor: duplicata de lançamento pago aparece em dias.
+    let pagosBanco = [];
+    if (nomesBanco.length) {
+      const { data } = await supabase.from('transacoes').select(COLS)
+        .eq('grupo_id', grupoId).eq('pago', true).is('of_tx_id', null).is('pluggy_tx_id', null)
+        .not('recorrente', 'is', true).in('carteira_nome', nomesBanco)
+        .gte('data', somaDias(hoje, -60)).lte('data', `${somaDias(hoje, 1)}T23:59:59`)
+        .limit(500);
+      pagosBanco = data || [];
+    }
+    const manuais = [...(prevs || []), ...pagosBanco];
+    if (!manuais.length) return res.json({ pares: [] });
 
-    const datas = prevs.map((p) => String(p.data).slice(0, 10)).sort();
-    const valores = [...new Set(prevs.flatMap((p) => [p.valor, p.valor_moeda])
+    const datas = manuais.map((p) => String(p.data).slice(0, 10)).sort();
+    const valores = [...new Set(manuais.flatMap((p) => [p.valor, p.valor_moeda])
       .filter((v) => Number(v) > 0).map(Number))];
     // ⚠️ `valor_moeda` também: em conta fora da moeda do grupo a prova compara
     // o valor ORIGINAL, e o convertido do banco pode não bater com o do previsto.
@@ -171,10 +192,10 @@ router.get('/conciliaveis/:phone', auth, async (req, res) => {
 
     const { ehDuplicata } = require('../services/duplicadas');
     const { paresConciliaveis } = require('../services/fusaoDuplicada');
-    const pares = paresConciliaveis([...prevs, ...cobs], (p, c) => ehDuplicata(p, c) === 'manual-e-banco');
+    const pares = paresConciliaveis([...manuais, ...cobs], (p, c) => ehDuplicata(p, c) === 'manual-e-banco', { contasDoBanco });
     const enxuto = (t) => ({
       id: t.id, valor: t.valor, tipo: t.tipo, observacao: t.observacao,
-      categoria: t.categoria, carteira_nome: t.carteira_nome, data: t.data,
+      categoria: t.categoria, carteira_nome: t.carteira_nome, data: t.data, pago: t.pago,
     });
     res.json({ pares: pares.map(({ previsto, banco }) => ({ previsto: enxuto(previsto), banco: enxuto(banco) })) });
   } catch (err) {
@@ -1168,7 +1189,18 @@ router.post('/fundir', auth, exigirPermissao('admin', 'escrita'), async (req, re
     const b = linhas.find((t) => t.id === descartar_id);
 
     const { planoFusao, rotuloHerdado } = require('../services/fusaoDuplicada');
-    const plano = planoFusao(a, b);
+    // ⚠️ "A conta é do banco?" é decidido AQUI, pela carteira, nunca pelo
+    // pedido da tela: é o que autoriza fundir um manual JÁ PAGO (em conta do
+    // banco o saldo vem do banco; apagar a cópia não mexe nele). Na dúvida
+    // (carteira não achada), false — e o manual pago segue recusado.
+    const manual = [a, b].find((t) => t && !t.of_tx_id);
+    let contaDoBanco = false;
+    if (manual && manual.carteira_nome) {
+      const { data: w } = await supabase.from('wallets').select('of_conta_id')
+        .eq('grupo_id', req.grupoId).eq('nome', manual.carteira_nome).maybeSingle();
+      contaDoBanco = !!(w && w.of_conta_id);
+    }
+    const plano = planoFusao(a, b, { contaDoBanco });
     // ⚠️ O cliente diz quem quer manter, mas QUEM FICA é sempre a linha do banco
     // (ver o cabeçalho de fusaoDuplicada.js). Se o pedido inverte isso, recusa —
     // nunca apaga a cobrança real por engano.
@@ -1193,8 +1225,9 @@ router.post('/fundir', auth, exigirPermissao('admin', 'escrita'), async (req, re
       }
     }
 
-    // Remove a previsão manual (pago=false, sem of_tx_id → sem estorno de saldo
-    // e sem of_tx_ignoradas; é exclusão trivial, não mexe em dinheiro).
+    // Remove a cópia manual (sem of_tx_id → sem of_tx_ignoradas). Sem estorno de
+    // saldo nos dois casos que `planoFusao` aceita: pendente nunca debitou, e o
+    // pago só é aceito em conta do BANCO, cujo saldo vem do banco.
     const { error: errDel } = await supabase.from('transacoes')
       .delete().eq('id', plano.descartarId).eq('grupo_id', req.grupoId);
     if (errDel) return res.status(500).json({ erro: errDel.message });
