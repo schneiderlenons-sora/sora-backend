@@ -255,6 +255,126 @@ router.post('/marcar-transferencia', auth, exigirPermissao('admin', 'escrita'), 
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// ── Pagamento de fatura que só aparece na CONTA CORRENTE ────────────────────
+// (services/pagamentoFaturaConta.js). A fatura do cartão segue em aberto
+// porque o pagamento nunca chegou pelo cartão; a saída da conta, no valor
+// exato, está logo ali. A tela SUGERE; o cliente confirma.
+
+/** Faturas FECHADAS em aberto dos cartões do grupo, pelo valor que a tela mostra. */
+async function faturasFechadasAbertas(grupoId, wallets) {
+  const { statusFatura } = require('../services/faturaRollover');
+  const { valorExibido } = require('../services/faturaVista');
+  const { competenciaAtual, competenciaVizinha, hojeSP } = require('../services/cicloFatura');
+  const hoje = hojeSP();
+  const out = [];
+  for (const c of (wallets || []).filter((w) => /cr[eé]dito/i.test(w.tipo || '') && w.dia_vencimento)) {
+    let atual;
+    try { atual = competenciaAtual(c); } catch { continue; }
+    for (const passo of [0, -1, -2]) {
+      try {
+        const comp = passo ? competenciaVizinha(c, atual, passo) : atual;
+        const st = await statusFatura(grupoId, c, comp);
+        if (!(st.ciclo && st.ciclo.fim < hoje)) continue;      // só fatura que já FECHOU
+        const v = await valorExibido(c, comp, st, {});
+        if (!(v.restante > 0.01)) continue;
+        out.push({ cartao_id: c.id, cartao_nome: c.nome, competencia: comp, fatura: v.fatura, restante: v.restante, fim: st.ciclo.fim, venc: st.ciclo.venc });
+      } catch { /* cartão com dado ruim não derruba a sugestão */ }
+    }
+  }
+  return out;
+}
+
+// GET /api/transacoes/pagamentos-fatura-sugeridos/:phone — sempre 200 com lista.
+router.get('/pagamentos-fatura-sugeridos/:phone', auth, async (req, res) => {
+  try {
+    const user = usuarioReq(req);
+    if (!user?.grupo_ativo) return res.json({ pares: [] });
+    const grupoId = user.grupo_ativo;
+    const P = require('../services/pagamentoFaturaConta');
+    const { data: wallets } = await supabase.from('wallets')
+      .select('id, grupo_id, nome, tipo, saldo, of_conta_id, dia_fechamento, dia_vencimento, of_limite_usado, moeda')
+      .eq('grupo_id', grupoId);
+    const faturas = await faturasFechadasAbertas(grupoId, wallets);
+    if (!faturas.length) return res.json({ pares: [] });
+
+    // Leitura estreita: só saídas com o VALOR de alguma fatura, na janela delas.
+    const valores = [...new Set(faturas.flatMap((f) => [f.restante, f.fatura]))];
+    const ini = faturas.map((f) => f.fim).sort()[0];
+    const fim = P.somaDias(faturas.map((f) => f.venc).sort().slice(-1)[0], P.DIAS_APOS_VENC);
+    const { data: txs } = await supabase.from('transacoes')
+      .select('id, grupo_id, tipo, valor, categoria, observacao, carteira_nome, data')
+      .eq('grupo_id', grupoId).eq('tipo', 'Gasto')
+      .gt('data', ini).lte('data', `${fim}T23:59:59`).in('valor', valores).limit(500);
+    const saidas = P.saidasDeConta(txs || [], wallets || []);
+    if (!saidas.length) return res.json({ pares: [] });
+
+    const { data: vinc } = await supabase.from('pagamentos_fatura')
+      .select('transacao_id').eq('grupo_id', grupoId).in('transacao_id', saidas.map((t) => t.id));
+    const ja = new Set((vinc || []).map((p) => p.transacao_id).filter(Boolean));
+    const pares = P.paresPagamentoFatura(saidas, faturas, ja).map(({ saida, fatura }) => ({
+      saida: { id: saida.id, valor: saida.valor, observacao: saida.observacao, carteira_nome: saida.carteira_nome, data: saida.data },
+      fatura,
+    }));
+    res.json({ pares });
+  } catch (err) {
+    console.error('[pagamentos-fatura-sugeridos] falhou:', err.message);
+    res.json({ pares: [] });
+  }
+});
+
+// POST /api/transacoes/vincular-pagamento-fatura
+//   { transacao_id, cartao_id, competencia, desfazer? }
+// Registra a saída da conta como PAGAMENTO daquela fatura (pagamentos_fatura,
+// com transacao_id) e a marca como transferência — as compras do cartão já
+// contaram como gasto; contar a quitação também seria dobro.
+// ⚠️ NÃO MEXE EM SALDO: a saída já debitou a conta quando entrou.
+// ⚠️ O servidor RECALCULA a fatura e reconfere o par (a tela não decide).
+router.post('/vincular-pagamento-fatura', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { transacao_id, cartao_id, competencia, desfazer } = req.body || {};
+    if (!transacao_id || !cartao_id || !/^\d{4}-\d{2}$/.test(String(competencia || ''))) {
+      return res.status(400).json({ erro: 'Informe a transação, o cartão e a fatura.' });
+    }
+    const { data: tx } = await supabase.from('transacoes')
+      .select('id, grupo_id, tipo, valor, valor_moeda, carteira_nome, data, transferencia')
+      .eq('id', transacao_id).eq('grupo_id', req.grupoId).maybeSingle();
+    if (!tx) return res.status(404).json({ erro: 'Transação não encontrada neste grupo.' });
+
+    if (desfazer) {
+      const { error: e1 } = await supabase.from('pagamentos_fatura').delete()
+        .eq('grupo_id', req.grupoId).eq('cartao_id', cartao_id).eq('transacao_id', transacao_id);
+      if (e1) return res.status(500).json({ erro: e1.message });
+      await supabase.from('transacoes').update({ transferencia: false }).eq('id', transacao_id).eq('grupo_id', req.grupoId);
+      return res.json({ ok: true, vinculado: false });
+    }
+
+    const { data: wallets } = await supabase.from('wallets')
+      .select('id, grupo_id, nome, tipo, saldo, of_conta_id, dia_fechamento, dia_vencimento, of_limite_usado, moeda')
+      .eq('grupo_id', req.grupoId);
+    const P = require('../services/pagamentoFaturaConta');
+    if (!P.saidasDeConta([tx], wallets || []).length) {
+      return res.status(409).json({ erro: 'A saída precisa ser de uma conta (não de cartão).' });
+    }
+    const fatura = (await faturasFechadasAbertas(req.grupoId, (wallets || []).filter((w) => w.id === cartao_id)))
+      .find((f) => f.competencia === competencia);
+    if (!fatura || !P.saidaPagaFatura(tx, fatura)) {
+      return res.status(409).json({ erro: 'Esta saída não bate com o valor ou a data desta fatura.' });
+    }
+    const { data: ja } = await supabase.from('pagamentos_fatura')
+      .select('id').eq('cartao_id', cartao_id).eq('transacao_id', transacao_id).maybeSingle();
+    if (!ja) {
+      const { error } = await supabase.from('pagamentos_fatura').insert({
+        grupo_id: req.grupoId, cartao_id, competencia,
+        valor: Math.round(Number(tx.valor_moeda ?? tx.valor) * 100) / 100,
+        data: String(tx.data).slice(0, 10), transacao_id,
+      });
+      if (error) return res.status(500).json({ erro: error.message });
+    }
+    await supabase.from('transacoes').update({ transferencia: true }).eq('id', transacao_id).eq('grupo_id', req.grupoId);
+    res.json({ ok: true, vinculado: true });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 // GET /api/transacoes/:phone?mes=2026-05&tipo=Gasto&categoria=Mercado&limit=50&offset=0&criado_por_me=true&criado_por_phone=XX
 router.get('/:phone', auth, async (req, res) => {
   try {

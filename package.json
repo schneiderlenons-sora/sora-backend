@@ -93,7 +93,8 @@
     "eval:soltar-carteira": "node evals/soltarCarteira.eval.js",
     "eval:pagamento-fatura-legado": "node evals/pagamentoFaturaLegado.eval.js",
     "eval:dedup-reprocesso": "node evals/dedupReprocesso.eval.js",
-    "eval:diagnostico": "node evals/diagnosticoFinanceiro.eval.js"
+    "eval:diagnostico": "node evals/diagnosticoFinanceiro.eval.js",
+    "eval:pagamento-fatura-conta": "node evals/pagamentoFaturaConta.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
