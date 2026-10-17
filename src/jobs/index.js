@@ -2348,6 +2348,26 @@ cron.schedule('0 5 * * *', async () => {
 });
 console.log('   • Todo dia 05:00 — aquece as cotações de câmbio');
 
+// ─────────────────────────────────────────────────────────────────
+// JOB 1S — Todo dia às 04:30 (SP): DIAGNÓSTICO FINANCEIRO da base
+//
+// Acha o erro ANTES do cliente: fatura paga em aberto, previsto convivendo com
+// a cobrança do banco, duplicata, conta-fantasma, transferência entre contas
+// contando duas vezes… (services/diagnosticoFinanceiro.js). Só LÊ dado de
+// cliente; grava um retrato em `diagnostico_financeiro` (migration 186) que o
+// /admin mostra, com o que é NOVO desde a véspera.
+// ⚠️ Madrugada de propósito: são ~5 min e ~2.000 idas ao banco — fora do
+// horário de uso, e antes dos crons das 05:00.
+// ─────────────────────────────────────────────────────────────────
+cron.schedule('30 4 * * *', () => {
+  try {
+    require('../services/diagnosticoFinanceiroColeta').dispararDiagnostico('cron');
+  } catch (e) {
+    console.log('🩺 Diagnóstico financeiro não iniciou:', e.message);
+  }
+});
+console.log('   • Todo dia 04:30 — diagnóstico financeiro da base');
+
 // Exportado SÓ pra teste (evals/lembreteFila.eval.js e evals/moedaBase.eval.js).
 // O arquivo registra crons ao ser exigido, então o eval stuba `node-cron` antes
 // de importar.

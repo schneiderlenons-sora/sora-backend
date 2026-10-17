@@ -278,4 +278,33 @@ router.post('/broadcast', async (req, res) => {
   })().catch((e) => console.error('[admin/broadcast] erro no loop:', e && e.message));
 });
 
+// ── DIAGNÓSTICO FINANCEIRO (services/diagnosticoFinanceiro.js) ─────────────
+// GET  → último retrato salvo + se há uma varredura rodando agora.
+// POST → dispara uma varredura em SEGUNDO PLANO (leva minutos; nenhuma chamada
+//        HTTP espera isso). Uma por vez — o cron das 04:30 usa a mesma trava.
+// ?grupo=<uuid> no GET → varre SÓ aquela conta, na hora (é rápido).
+function exigirSegredo(req, res) {
+  const secret = process.env.ADMIN_SECRET;
+  if (!secret) { res.status(503).json({ erro: 'ADMIN_SECRET não configurado no servidor.' }); return false; }
+  if (req.headers['x-admin-secret'] !== secret) { res.status(403).json({ erro: 'nao_autorizado' }); return false; }
+  return true;
+}
+
+router.get('/diagnostico-financeiro', async (req, res) => {
+  if (!exigirSegredo(req, res)) return;
+  try {
+    const diag = require('../services/diagnosticoFinanceiroColeta');
+    const grupo = String(req.query.grupo || '').trim();
+    if (grupo) return res.json(await diag.rodarDiagnostico({ grupoId: grupo }));
+    res.json({ retrato: await diag.ultimoRetrato(), rodando: diag.emAndamento() });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+router.post('/diagnostico-financeiro', (req, res) => {
+  if (!exigirSegredo(req, res)) return;
+  const { dispararDiagnostico } = require('../services/diagnosticoFinanceiroColeta');
+  const r = dispararDiagnostico('painel');
+  res.status(202).json(r);
+});
+
 module.exports = router;
