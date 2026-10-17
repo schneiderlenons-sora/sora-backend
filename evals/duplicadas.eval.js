@@ -136,6 +136,7 @@ console.log('── 6. utilitários ──');
   ok(temHoraReal('2026-08-01T12:00:00+00:00') === false, '12:00:00 (meio-dia fixo) não é hora real');
   ok(temHoraReal('2026-08-01T12:00:00.000Z') === false, 'horário cheio com milissegundos zerados também não');
   ok(temHoraReal('2026-08-01T12:00:01+00:00') === true, 'um segundo depois já é hora real');
+  ok(temHoraReal('2026-08-01T10:00:00.123Z') === true, 'horário cheio COM milissegundos reais é instante de verdade');
   ok(temHoraReal('2026-08-01T16:01:10.836+00:00') === true, 'hora com milissegundos é real');
   // e o efeito na regra: duas compras iguais do banco às 03:00 do mesmo dia NÃO são duplicata comprovada
   {

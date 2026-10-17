@@ -53,7 +53,11 @@ function temHoraReal(d) {
   if (s.length <= 10) return false;
   const hora = s.slice(11, 19);
   if (!/^\d{2}:\d{2}:\d{2}$/.test(hora)) return false;
-  return hora.slice(3) !== '00:00';
+  if (hora.slice(3) !== '00:00') return true;
+  // Horário cheio só é "placeholder" se não houver fração de segundo real:
+  // `10:00:00.123` é um instante de verdade; `12:00:00` e `12:00:00.000` não.
+  const fracao = (s.slice(19).match(/^\.(\d+)/) || [])[1] || '';
+  return /[1-9]/.test(fracao);
 }
 
 /** Distância em dias entre duas transações (só a parte da data). */
