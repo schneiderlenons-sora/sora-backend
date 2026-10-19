@@ -307,4 +307,45 @@ router.post('/diagnostico-financeiro', (req, res) => {
   res.status(202).json(r);
 });
 
+// ── REVOGAR AS CONEXÕES DE BANCO DE UM USUÁRIO (exclusão de conta) ──────────
+// POST { user_id } → { total, revogadas, falhas: [{ external_id, instituicao, erro }] }
+//
+// ⚠️ EXISTE PORQUE APAGAR O USUÁRIO APAGA `of_conexoes` EM CASCATA (FK da 069)
+// SEM AVISAR A POLP. A linha some da Sora e o consentimento segue vivo lá —
+// cobrado todo mês, sem nada na base pra alguém perceber. O DELETE do painel
+// admin chama isto ANTES de apagar e desiste se sobrar alguma conexão.
+//
+// Usa `exigirRevogacao: true` (o mesmo modo do cron de excedente): só apaga a
+// linha se a Polp confirmar a revogação. A que falhar fica na base — é o único
+// estado em que a próxima tentativa ainda sabe o que revogar.
+//
+// Pega as conexões DO usuário e as dos grupos que ele é DONO: esses grupos são
+// apagados junto (e as conexões deles também, pela mesma cascata).
+router.post('/revogar-conexoes-usuario', async (req, res) => {
+  if (!exigirSegredo(req, res)) return;
+  const userId = String(req.body?.user_id || '').trim();
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) return res.status(400).json({ erro: 'user_id inválido' });
+  try {
+    const { desconectarConexao } = require('../services/desconectarConexao');
+    const { data: grupos, error: eG } = await supabase.from('grupos').select('id').eq('dono_id', userId);
+    if (eG) return res.status(500).json({ erro: eG.message });
+    const ids = (grupos || []).map(g => g.id);
+
+    const filtro = ids.length ? `user_id.eq.${userId},grupo_id.in.(${ids.join(',')})` : `user_id.eq.${userId}`;
+    const { data: conexoes, error: eC } = await supabase.from('of_conexoes').select('*').or(filtro);
+    // ⚠️ Leitura que falhou NÃO é "não tem conexão": responder total 0 aqui
+    // liberaria a exclusão e as conexões seguiriam cobradas.
+    if (eC) return res.status(500).json({ erro: eC.message });
+
+    const falhas = [];
+    let revogadas = 0;
+    for (const c of conexoes || []) {
+      const r = await desconectarConexao({ conexao: c, motivo: 'exclusao_conta', exigirRevogacao: true });
+      if (r.ok) revogadas++;
+      else falhas.push({ external_id: c.external_id, instituicao: c.instituicao || null, erro: r.erro || 'falhou' });
+    }
+    res.json({ total: (conexoes || []).length, revogadas, falhas });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
 module.exports = router;
