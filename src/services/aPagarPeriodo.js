@@ -27,7 +27,7 @@
 // travada em `eval:a-pagar`. Quem busca os dados é `coletar`, logo abaixo.
 // =============================================================================
 
-const { venceHoje } = require('./frequenciaRecorrencia');
+const { ocorrenciasDeFixas } = require('./ocorrenciasFixas');
 const { proximoVencimento, ocorrencia, hojeSP, emAtraso } = require('./vencimentoDivida');
 
 const DIA_MS = 864e5;
@@ -169,12 +169,6 @@ function janelaAPagar(periodo, hoje = hojeSP()) {
 }
 
 // ── 3. MONTAR OS ITENS ──────────────────────────────────────────────────────
-function diasEntre(de, ate) {
-  const out = [];
-  for (let d = de; d <= ate && out.length <= MAX_DIAS + 31; d = somarDias(d, 1)) out.push(d);
-  return out;
-}
-
 const CATS_FORA = /\b(fatura|transfer[eê]ncias?|ajuste)\b/i;
 
 /**
@@ -193,47 +187,25 @@ function montarItens(dados, janela, hoje = hojeSP()) {
   const dentro = (d) => d && d >= de && d <= ate;
 
   // Conta fixa: ocorrência do calendário, menos o que já foi resolvido.
-  const vinc = new Set((dados.vinculadas || []).map((v) => `${v.recorrencia_id}|${v.competencia}`));
-  const ajuste = new Map((dados.ajustes || []).map((a) => [`${a.recorrencia_id}|${a.competencia}`, a]));
-  const dias = diasEntre(de, ate);
-  for (const r of dados.recorrencias || []) {
-    if (r.tipo && r.tipo !== 'Gasto') continue;
-    const semanal = (r.frequencia || 'mensal') === 'semanal';
-    // Adiada PRA DENTRO da janela (vinda de uma competência cuja data
-    // original está fora dela) também tem de aparecer.
-    const jaListadas = new Set();
-    for (const d of dias) {
-      if (!venceHoje(r, d)) continue;
-      const comp = d.slice(0, 7);
-      // ⚠️ Semanal tem várias ocorrências no mês e a chave é mensal: uma baixa
-      // esconderia as outras semanas. Nelas, só o calendário vale.
-      if (!semanal) {
-        if (vinc.has(`${r.id}|${comp}`)) continue;
-        const aj = ajuste.get(`${r.id}|${comp}`);
-        if (aj?.status === 'pulado') continue;
-        if (aj?.status === 'movido') continue;      // tratada no laço de ajustes abaixo
-      }
-      jaListadas.add(comp);
-      itens.push({
-        data: d, descricao: r.descricao || 'Conta fixa', origem: 'fixa',
-        valor: Number(r.valor) > 0 ? Number(r.valor) : null,
-        variavel: !!r.valor_variavel,
-      });
-    }
-  }
-  // Ocorrências ADIADAS: aparecem na data nova (se ela cair na janela e a
-  // ocorrência ainda não tiver baixa).
-  const recPorId = new Map((dados.recorrencias || []).map((r) => [r.id, r]));
-  for (const a of dados.ajustes || []) {
-    if (a.status !== 'movido' || !dentro(String(a.nova_data || '').slice(0, 10))) continue;
-    const r = recPorId.get(a.recorrencia_id);
-    if (!r || (r.tipo && r.tipo !== 'Gasto')) continue;
-    if (vinc.has(`${r.id}|${a.competencia}`)) continue;
-    const v = Number(a.novo_valor) > 0 ? Number(a.novo_valor) : Number(r.valor);
-    itens.push({
-      data: String(a.nova_data).slice(0, 10), descricao: r.descricao || 'Conta fixa', origem: 'fixa',
-      valor: v > 0 ? v : null, variavel: !!r.valor_variavel, detalhe: 'adiada',
-    });
+  // ⚠️ A regra (datas, baixa, pulada, adiada) mora em services/ocorrenciasFixas.js
+  // — a MESMA da Agenda do painel. Aqui só entram os GASTOS ainda em aberto:
+  // mandar pagar de novo o que a pessoa acabou de marcar como pago é o bug que
+  // isto existe pra evitar. Travado contra a lógica antiga em
+  // `eval:ocorrencias-fixas` (era inline aqui até out/2026).
+  const gastosFixos = (dados.recorrencias || []).filter((r) => !r.tipo || r.tipo === 'Gasto');
+  const fixas = ocorrenciasDeFixas(
+    { recorrencias: gastosFixos, vinculadas: dados.vinculadas, ajustes: dados.ajustes },
+    { de, ate },
+    { maxDias: MAX_DIAS + 31 },
+  );
+  for (const o of fixas) {
+    if (o.estado === 'paga') continue;
+    const item = {
+      data: o.data, descricao: o.rec.descricao || 'Conta fixa', origem: 'fixa',
+      valor: o.valor, variavel: !!o.rec.valor_variavel,
+    };
+    if (o.adiada) item.detalhe = 'adiada';
+    itens.push(item);
   }
 
   // Gastos agendados / previstos ainda não pagos.

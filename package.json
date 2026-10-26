@@ -37,6 +37,7 @@
     "eval:divida-duplicada": "node evals/dividaDuplicada.eval.js",
     "eval:dividas-escopo": "node evals/dividasEscopo.eval.js",
     "eval:a-pagar": "node evals/aPagar.eval.js",
+    "eval:ocorrencias-fixas": "node evals/ocorrenciasFixas.eval.js",
     "eval:saldo-conta-banco": "node evals/saldoContaBanco.eval.js",
     "eval:valor-fatura": "node evals/valorFatura.eval.js",
     "eval:duplicadas": "node evals/duplicadas.eval.js",

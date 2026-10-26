@@ -74,22 +74,79 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
   //    lançadas automaticamente (JOB 1A) e já mandam a confirmação; listá-las no
   //    briefing como "agenda de hoje" duplicava a mesma info. Seguem na agenda
   //    VISUAL do painel (paraBriefing=false).
+  //
+  //    ⚠️ AS DATAS E O ESTADO SAEM DE services/ocorrenciasFixas.js — a MESMA
+  //    regra do "o que tenho pra pagar" do WhatsApp. Antes daqui saía só o dia
+  //    do vencimento, mês a mês: conta já paga seguia "a pagar" (relato do
+  //    Fábio, out/2026), a pulada aparecia, a adiada ficava na data velha, a
+  //    semanal aparecia uma vez por mês e a encerrada aparecia pra sempre.
+  //    Paga não some: vem com `pago: true` e a tela mostra "Paga"/"Recebida".
+  //
+  //    ⚠️ BAIXA E AJUSTE SÃO LIDOS DE FORMA TOLERANTE: se a leitura falhar, a
+  //    conta aparece como antes (em aberto). Esconder ou marcar "paga" por
+  //    falta de dado é o erro que não se perdoa.
   if (!paraBriefing) {
     try {
-      const { data } = await supabase.from('recorrencias')
-        .select('id, tipo, descricao, valor, dia_vencimento, ativa').eq('grupo_id', grupoId).eq('ativa', true);
-      for (const r of data || []) {
+      const { ocorrenciasDeFixas } = require('./ocorrenciasFixas');
+      let { data: recs, error } = await supabase.from('recorrencias')
+        .select('id, tipo, descricao, valor, dia_vencimento, frequencia, dia_semana, mes_vencimento, data_inicio, data_fim, ativa')
+        .eq('grupo_id', grupoId).eq('ativa', true);
+      // Coluna de frequência faltando (migration antiga) → lê como sempre leu;
+      // sem `frequencia` o `venceHoje` trata tudo como mensal.
+      if (error) {
+        ({ data: recs } = await supabase.from('recorrencias')
+          .select('id, tipo, descricao, valor, dia_vencimento, ativa').eq('grupo_id', grupoId).eq('ativa', true));
+      }
+      recs = recs || [];
+
+      let ajustes = [];
+      let vinculadas = [];
+      if (recs.length) {
+        try {
+          const { data, error: e } = await supabase.from('previsao_ajustes')
+            .select('recorrencia_id, competencia, status, nova_data, novo_valor').eq('grupo_id', grupoId);
+          if (!e) ajustes = data || [];
+        } catch {}
+        // Competências do período + as das ADIADAS que caem nele (uma conta de
+        // setembro adiada pra outubro precisa da baixa de SETEMBRO).
+        const comps = new Set();
+        let [y, m] = deStr.slice(0, 7).split('-').map(Number);
+        for (let c = deStr.slice(0, 7); c <= ateStr.slice(0, 7); ) {
+          comps.add(c);
+          m += 1; if (m > 12) { m = 1; y += 1; }
+          c = `${y}-${String(m).padStart(2, '0')}`;
+        }
+        for (const a of ajustes) {
+          const nd = String(a.nova_data || '').slice(0, 10);
+          if (a.status === 'movido' && nd >= deStr && nd <= ateStr && a.competencia) comps.add(a.competencia);
+        }
+        try {
+          const { data, error: e } = await supabase.from('transacoes').select('recorrencia_id, competencia')
+            .eq('grupo_id', grupoId).not('recorrencia_id', 'is', null)
+            .in('competencia', [...comps]);
+          if (!e) vinculadas = data || [];
+        } catch {}
+      }
+
+      // Teto de dias: a janela padrão da rota é ~7 meses; 400 cobre com folga.
+      const ocorr = ocorrenciasDeFixas({ recorrencias: recs, vinculadas, ajustes },
+        { de: deStr, ate: ateStr }, { maxDias: 400 });
+      for (const o of ocorr) {
+        const r = o.rec;
         // ⚠️ `recorrencias.tipo` é 'Gasto' ou 'Recebimento' — NUNCA 'receita'.
         // Comparando com 'receita', `desp` dava sempre true e as 95 receitas
         // fixas da base apareciam VERMELHAS na agenda, rotuladas "Conta fixa"
         // quando não tinham descrição. Achado ao construir o Oráculo, que lê
         // essa mesma coluna.
         const desp = r.tipo !== 'Recebimento';
-        for (const d of ocorrenciasMensais(r.dia_vencimento, deStr, ateStr)) {
-          eventos.push({ id: `rec-${r.id}-${d}`, source: 'recorrencia',
-            titulo: r.descricao || (desp ? 'Conta fixa' : 'Receita fixa'), data: d, hora: null,
-            cor: desp ? '#dc2626' : '#16a34a', valor: r.valor || null, deeplink: '/transacoes', editavel: false });
-        }
+        // A adiada pode cair no MESMO dia da ocorrência do mês seguinte (adiar a
+        // de setembro pro dia 25 de outubro) — sem o sufixo, duas chaves iguais.
+        const id = o.adiada ? `rec-${r.id}-${o.data}-de-${o.competencia}` : `rec-${r.id}-${o.data}`;
+        eventos.push({ id, source: 'recorrencia',
+          titulo: r.descricao || (desp ? 'Conta fixa' : 'Receita fixa'), data: o.data, hora: null,
+          cor: desp ? '#dc2626' : '#16a34a', valor: o.valorAjustado ?? o.valor ?? null,
+          deeplink: '/transacoes', editavel: false,
+          pago: o.estado === 'paga', adiada: o.adiada, receita: !desp });
       }
     } catch {}
   }
@@ -337,7 +394,11 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   const unicos = [];
   for (const e of eventos) {
-    const chave = `${e.source}|${norm(e.titulo)}|${e.data}|${e.valor ?? ''}|${e.hora ?? ''}`;
+    // ⚠️ Conta fixa ADIADA pro mesmo dia da do mês seguinte (mesmo título e
+    // valor) é OUTRA conta — sem `pago`/id na chave, a de setembro ainda em
+    // aberto sumia atrás da de outubro já paga. Nas outras fontes os dois
+    // campos não existem e a chave fica igual à de sempre.
+    const chave = `${e.source}|${norm(e.titulo)}|${e.data}|${e.valor ?? ''}|${e.hora ?? ''}|${e.pago ? 'pago' : ''}|${e.adiada ? e.id : ''}`;
     if (vistos.has(chave)) continue;
     vistos.add(chave);
     unicos.push(e);
