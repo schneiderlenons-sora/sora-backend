@@ -6,6 +6,9 @@ const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta } = require('../services/contaDebito');
 const { proximoVencimento, ultimoPagamentoPorDivida, hojeSP, emAtraso, statusDeAtraso, statusPorParcelas } = require('../services/vencimentoDivida');
 
+const { sugestoesBaixa, ehDebitoDeEmprestimo } = require('../services/baixaDivida');
+const { diaSP } = require('../services/consultaParcela');
+
 const norm = p => p?.replace(/\D/g, '');
 
 async function getUser(req) {
@@ -76,6 +79,73 @@ router.get('/:phone', auth, async (req, res) => {
         lembretes_dividas: user.lembretes_dividas !== false,
       },
     });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// GET /api/dividas/conciliacao/:phone — débitos do extrato que parecem
+// parcelas (régua em services/baixaDivida.js) + os débitos recentes com cara
+// de empréstimo, pra ligar à mão no "Pagar parcela".
+// Só LÊ. Quem grava é o POST /:id/pagar com `transacao_id`.
+// ─────────────────────────────────────────────────────────────────
+router.get('/conciliacao/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    const g = user.grupo_ativo;
+    const hoje = hojeSP();
+    const d0 = new Date(`${hoje}T12:00:00Z`);
+    d0.setUTCDate(d0.getUTCDate() - 60);
+    const desde = d0.toISOString().slice(0, 10);
+
+    const [{ data: todas, error: eD }, { data: wallets }, { data: txs, error: eT }] = await Promise.all([
+      supabase.from('dividas').select('*').eq('grupo_id', g),
+      supabase.from('wallets').select('nome, tipo').eq('grupo_id', g),
+      supabase.from('transacoes')
+        .select('id, data, valor, tipo, categoria, observacao, carteira_nome, pago, transferencia')
+        .eq('grupo_id', g).eq('tipo', 'Gasto').gte('data', desde)
+        .order('data', { ascending: false }).limit(1000),
+    ]);
+    if (eD || eT) return res.status(500).json({ erro: (eD || eT).message });
+
+    const dividas = todas || [];
+    const ultimo = await ultimoPagamentoPorDivida(dividas.map((d) => d.id));
+    for (const d of dividas) d.ultimo_pagamento = ultimo[d.id] || null;
+
+    // Débitos já usados num pagamento de dívida (migration 190). Tolerante:
+    // sem a coluna, a lista fica vazia e a régua segue funcionando.
+    const ligadas = new Set();
+    const ligadoA = {};      // transacao_id → títulos (pra tela)
+    const ligadoIds = {};    // transacao_id → ids (títulos se repetem)
+    try {
+      const { data: pgs, error } = await supabase.from('divida_pagamentos')
+        .select('divida_id, transacao_id').in('divida_id', dividas.map((d) => d.id))
+        .not('transacao_id', 'is', null);
+      if (!error) {
+        const titulo = Object.fromEntries(dividas.map((d) => [d.id, d.titulo]));
+        for (const p of pgs || []) {
+          ligadas.add(p.transacao_id);
+          (ligadoA[p.transacao_id] = ligadoA[p.transacao_id] || []).push(titulo[p.divida_id]);
+          (ligadoIds[p.transacao_id] = ligadoIds[p.transacao_id] || []).push(p.divida_id);
+        }
+      }
+    } catch { /* 190 pendente */ }
+
+    const carteirasCredito = new Set((wallets || [])
+      .filter((w) => /cr[eé]dito/i.test(w.tipo || '')).map((w) => String(w.nome || '').toLowerCase()));
+
+    const sugestoes = sugestoesBaixa({ dividas, transacoes: txs || [], carteirasCredito, ligadas, hoje });
+
+    const debitos = (txs || [])
+      .filter((t) => ehDebitoDeEmprestimo(t) && t.pago !== false
+        && !carteirasCredito.has(String(t.carteira_nome || '').toLowerCase()))
+      .slice(0, 40)
+      .map((t) => ({
+        id: t.id, data: diaSP(t.data), valor: Number(t.valor), descricao: t.observacao || null,
+        conta: t.carteira_nome || null, ligado_a: ligadoA[t.id] || [], ligado_ids: ligadoIds[t.id] || [],
+      }));
+
+    res.json({ sugestoes, debitos });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -315,12 +385,34 @@ router.post('/:id/pagar', auth, exigirPermissao('admin', 'escrita'), async (req,
     const v = parseFloat(valor);
     if (!v || v <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
 
+    // ⚠️ Escopado ao GRUPO: sem isto, qualquer id de dívida de outra conta
+    // aceitava pagamento.
     const { data: divida } = await supabase.from('dividas')
-      .select('*').eq('id', req.params.id).maybeSingle();
+      .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
     if (!divida) return res.status(404).json({ erro: 'Dívida não encontrada.' });
 
-    // Insere pagamento
-    await supabase.from('divida_pagamentos').insert({
+    // ── PAGO COM UM DÉBITO QUE JÁ ESTÁ NO EXTRATO (migration 190) ──────────
+    // Relato (Robert): o débito do empréstimo vinha do banco e a parcela
+    // seguia "não paga". Ligar o débito registra a parcela SEM debitar a
+    // conta: o dinheiro já saiu, é aquele lançamento. Por isso o `wallet_id`
+    // é ignorado quando há `transacao_id` — debitar seria tirar duas vezes.
+    let transacao = null;
+    if (req.body.transacao_id) {
+      const { data: t } = await supabase.from('transacoes')
+        .select('id, tipo, valor, data, observacao, carteira_nome')
+        .eq('id', req.body.transacao_id).eq('grupo_id', req.grupoId).maybeSingle();
+      if (!t || t.tipo !== 'Gasto') return res.status(404).json({ erro: 'Não achei esse lançamento.' });
+      // O mesmo débito na MESMA dívida duas vezes é engano (em outra dívida
+      // pode: um débito único às vezes paga vários empréstimos).
+      const { data: dup, error: eDup } = await supabase.from('divida_pagamentos')
+        .select('id').eq('divida_id', divida.id).eq('transacao_id', t.id).limit(1);
+      if (!eDup && dup && dup.length) {
+        return res.status(409).json({ erro: 'Esse débito já foi usado pra pagar esta dívida.' });
+      }
+      transacao = t;
+    }
+
+    const linha = {
       divida_id:      req.params.id,
       user_id:        req.userId,
       numero_parcela: numero_parcela || (divida.parcelas_pagas + 1),
@@ -328,7 +420,25 @@ router.post('/:id/pagar', auth, exigirPermissao('admin', 'escrita'), async (req,
       tipo:           tipo || 'parcela',
       data_pagamento: data_pagamento || new Date().toISOString().slice(0, 10),
       observacao:     observacao || null,
-    });
+    };
+    // ⚠️ O erro do insert passou a ser LIDO. Antes a rota seguia em frente,
+    // contava a parcela como paga e respondia 200 com o pagamento não gravado.
+    let { error: eIns } = await supabase.from('divida_pagamentos')
+      .insert(transacao ? { ...linha, transacao_id: transacao.id } : linha);
+    let semVinculo = false;
+    if (eIns && transacao && /transacao_id/i.test(eIns.message || '')) {
+      // Migration 190 pendente: registra sem o vínculo (a parcela fica paga do
+      // mesmo jeito; só não dá pra travar o débito já usado).
+      ({ error: eIns } = await supabase.from('divida_pagamentos').insert(linha));
+      semVinculo = true;
+    }
+    if (eIns) return res.status(500).json({ erro: eIns.message });
+
+    // ⚠️ DÍVIDA DO OPEN FINANCE: a contagem e o status são do BANCO — o sync
+    // os reescreve a cada passada. Somar uma parcela aqui faria o "53/120"
+    // pular pra 54 e voltar sozinho. O pagamento registrado acima basta: é ele
+    // (`ultimo_pagamento`) que diz ao card que a parcela do mês foi paga.
+    const doBanco = !!divida.of_id;
 
     // Atualiza contadores
     const novasPagas = (divida.parcelas_pagas || 0) + (tipo === 'antecipacao' ? 1 : (tipo === 'juros_atraso' ? 0 : 1));
@@ -364,16 +474,19 @@ router.post('/:id/pagar', auth, exigirPermissao('admin', 'escrita'), async (req,
     }
     const dataQuitacao = novoStatus === 'quitada' ? new Date().toISOString().slice(0, 10) : null;
 
-    const { data: atualizada } = await supabase.from('dividas').update({
-      parcelas_pagas: novasPagas,
-      status:         novoStatus,
-      data_quitacao:  dataQuitacao,
-      updated_at:     new Date().toISOString(),
-    }).eq('id', req.params.id).select().single();
+    const atualizada = doBanco
+      ? divida
+      : (await supabase.from('dividas').update({
+          parcelas_pagas: novasPagas,
+          status:         novoStatus,
+          data_quitacao:  dataQuitacao,
+          updated_at:     new Date().toISOString(),
+        }).eq('id', req.params.id).select().single()).data;
 
     // Opcional: desconta de uma conta e registra a saída nas transações.
+    // Nunca quando o pagamento já é um débito do extrato (ver acima).
     let debito = null;
-    if (req.body.wallet_id) {
+    if (req.body.wallet_id && !transacao) {
       try {
         debito = await debitarConta({
           grupoId: req.grupoId, walletId: req.body.wallet_id, valor: v,
@@ -383,7 +496,7 @@ router.post('/:id/pagar', auth, exigirPermissao('admin', 'escrita'), async (req,
       } catch (e) { debito = { erro: e.message }; }
     }
 
-    res.json({ divida: atualizada, quitada: novoStatus === 'quitada', debito });
+    res.json({ divida: atualizada, quitada: !doBanco && novoStatus === 'quitada', debito, semVinculo });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

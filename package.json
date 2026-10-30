@@ -97,7 +97,9 @@
     "eval:pagamento-fatura-legado": "node evals/pagamentoFaturaLegado.eval.js",
     "eval:dedup-reprocesso": "node evals/dedupReprocesso.eval.js",
     "eval:diagnostico": "node evals/diagnosticoFinanceiro.eval.js",
-    "eval:pagamento-fatura-conta": "node evals/pagamentoFaturaConta.eval.js"
+    "eval:pagamento-fatura-conta": "node evals/pagamentoFaturaConta.eval.js",
+    "eval:baixa-divida": "node evals/baixaDivida.eval.js",
+    "eval:pagar-divida-rota": "node evals/pagarDividaRota.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
