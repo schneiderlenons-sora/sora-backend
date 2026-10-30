@@ -464,6 +464,16 @@ async function linhaAlcancada(userId, tabela, id, minimo = 'operador') {
   return data.user_id === userId ? data : null;
 }
 
+/** O centro de custo, se for da empresa (senão null). Tolerante à 105. */
+async function centroDaEmpresa(empresaId, centroId) {
+  if (!centroId) return null;
+  try {
+    const { data } = await supabase.from('centros_custo').select('id')
+      .eq('id', centroId).eq('empresa_id', empresaId).maybeSingle();
+    return data ? data.id : null;
+  } catch { return null; }
+}
+
 function validarLancamento({ tipo, descricao, valor, data, status }) {
   if (!['entrada', 'saida'].includes(tipo)) return 'Tipo inválido.';
   if (!descricao || !String(descricao).trim()) return 'Descreva o lançamento.';
@@ -552,7 +562,27 @@ router.post('/lancamentos', auth, async (req, res) => {
     if (erro) return res.status(400).json({ erro });
 
     const status = b.status || 'pago';
+
+    // ── CONTA QUE SE REPETE (migration 192) ─────────────────────────────────
+    // Esta é a 1ª ocorrência; as próximas são geradas logo abaixo, até o
+    // horizonte (services/serieNegocio.js). Os campos de série só vão no insert
+    // quando pedidos: sem a 192, quem não usa repetição não sente nada.
+    const { RECORRENCIAS, gerarSerie } = require('../services/serieNegocio');
+    const repete = RECORRENCIAS.includes(b.recorrencia);
+    if (b.recorrencia && !repete) return res.status(400).json({ erro: 'Repetição inválida.' });
+    const primeiraData = String(status === 'pago' ? b.data : (b.vencimento || b.data)).slice(0, 10);
+    if (repete && b.serie_ate && String(b.serie_ate).slice(0, 10) < primeiraData) {
+      return res.status(400).json({ erro: 'A data final da repetição é antes da primeira.' });
+    }
+    const serie = repete
+      ? { serie_id: require('crypto').randomUUID(), serie_ate: b.serie_ate ? String(b.serie_ate).slice(0, 10) : null }
+      : {};
+    // ⚠️ O formulário sempre mandou o centro de custo e a rota o DESCARTAVA em
+    // silêncio (out/2026). Só vale centro da PRÓPRIA empresa.
+    const centro = await centroDaEmpresa(empresa.id, b.centro_custo_id);
+
     const { data, error } = await supabase.from('lancamentos_negocio').insert({
+      ...serie,
       empresa_id:      empresa.id,
       user_id:         user.id,
       tipo:            b.tipo,
@@ -566,10 +596,22 @@ router.post('/lancamentos', auth, async (req, res) => {
       forma_pagamento: b.forma_pagamento || null,
       contraparte:     b.contraparte || null,
       conta_id:        b.conta_id || null,
-      recorrente:      !!b.recorrente,
-      recorrencia:     b.recorrencia || null,
+      ...(centro ? { centro_custo_id: centro } : {}),
+      recorrente:      repete || !!b.recorrente,
+      recorrencia:     repete ? b.recorrencia : (b.recorrencia || null),
       observacao:      b.observacao || null,
     }).select().single();
+    if (error && repete && /serie_/i.test(error.message || '')) {
+      return res.status(503).json({ erro: 'Falta rodar a migration 192 no Supabase pra usar contas que se repetem.' });
+    }
+    if (!error && repete) {
+      // A 1ª já está gravada: falhar aqui não pode virar "não salvou". O job
+      // diário completa a série se esta passada não conseguir.
+      let gerados = 0;
+      try { gerados = await gerarSerie(serie.serie_id); }
+      catch (e) { console.warn('[negócios/série] gerar:', e.message); }
+      return res.json({ ok: true, lancamento: data, gerados });
+    }
     // Tolerante à migration 095: se a coluna conta_id ainda não existe, reinsere sem ela.
     if (error && /conta_id/i.test(error.message || '')) {
       const row = {
@@ -615,6 +657,9 @@ router.put('/lancamentos/:id', auth, async (req, res) => {
     if (!atual) {
       return res.status(404).json({ erro: 'Lançamento não encontrado.' });
     }
+    if (b.centro_custo_id !== undefined) {
+      patch.centro_custo_id = b.centro_custo_id ? await centroDaEmpresa(atual.empresa_id, b.centro_custo_id) : null;
+    }
     // ⚠️ VEIO DO BANCO (conta vinculada, migration 189): valor, data, sentido,
     // situação e conta são do BANCO — o espelho os reescreveria no próximo
     // sync, e a edição "sumiria" sem explicação. A pessoa ajusta o que é dela:
@@ -629,10 +674,56 @@ router.put('/lancamentos/:id', auth, async (req, res) => {
       .select().maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ erro: 'Lançamento não encontrado.' });
-    res.json({ ok: true, lancamento: data });
+
+    // ── "Aplicar também às próximas" (conta que se repete, migration 192) ──
+    // Só nas PRÓXIMAS em aberto e digitadas: as já pagas são história, e as
+    // que vieram do banco têm valor/conta do banco. O reajuste do contrato
+    // passa a valer daqui pra frente — inclusive nas que o job ainda vai gerar,
+    // que copiam a ocorrência mais recente.
+    let aplicadas = 0;
+    if (b.aplicar_serie && atual.serie_id) {
+      const prop = {};
+      for (const k of ['categoria', 'descricao', 'valor', 'contraparte', 'conta_id', 'forma_pagamento', 'observacao', 'centro_custo_id']) {
+        if (patch[k] !== undefined) prop[k] = patch[k];
+      }
+      if (Object.keys(prop).length) {
+        const desde = String(atual.vencimento || atual.data).slice(0, 10);
+        const { data: ups, error: eS } = await supabase.from('lancamentos_negocio').update(prop)
+          .eq('serie_id', atual.serie_id).eq('status', 'pendente').is('transacao_id', null)
+          .gt('vencimento', desde).select('id');
+        if (eS) console.warn('[negócios/série] aplicar:', eS.message);
+        else aplicadas = (ups || []).length;
+      }
+    }
+    res.json({ ok: true, lancamento: data, aplicadas });
   } catch (e) {
     res.status(500).json({ erro: e.message });
   }
+});
+
+// POST /api/negocios/lancamentos/:id/parar-serie — "parar de repetir"
+// A partir desta ocorrência: ela e as já pagas FICAM; as próximas em aberto
+// (digitadas, sem vínculo com o banco) saem, e o job deixa de gerar.
+router.post('/lancamentos/:id/parar-serie', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const atual = await linhaAlcancada(user.id, 'lancamentos_negocio', req.params.id);
+    if (!atual) return res.status(404).json({ erro: 'Lançamento não encontrado.' });
+    if (!atual.serie_id) return res.status(400).json({ erro: 'Este lançamento não se repete.' });
+    const desde = String(atual.vencimento || atual.data).slice(0, 10);
+    // ⚠️ PARA PRIMEIRO, apaga depois: com a ordem inversa, o job diário rodando
+    // no meio regeraria o que acabou de sair.
+    const { error: eP } = await supabase.from('lancamentos_negocio')
+      .update({ recorrente: false, serie_ate: desde }).eq('serie_id', atual.serie_id);
+    if (eP) throw eP;
+    const { data: apagadas, error: eD } = await supabase.from('lancamentos_negocio').delete()
+      .eq('serie_id', atual.serie_id).eq('status', 'pendente').is('transacao_id', null)
+      .gt('vencimento', desde).select('id');
+    if (eD) throw eD;
+    res.json({ ok: true, removidas: (apagadas || []).length });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 // DELETE /api/negocios/lancamentos/:id

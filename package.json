@@ -100,7 +100,9 @@
     "eval:pagamento-fatura-conta": "node evals/pagamentoFaturaConta.eval.js",
     "eval:baixa-divida": "node evals/baixaDivida.eval.js",
     "eval:pagar-divida-rota": "node evals/pagarDividaRota.eval.js",
-    "eval:chamado-duvida": "node evals/chamadoDuvida.eval.js"
+    "eval:chamado-duvida": "node evals/chamadoDuvida.eval.js",
+    "eval:serie-negocio": "node evals/serieNegocio.eval.js",
+    "eval:serie-negocio-rota": "node evals/serieNegocioRota.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

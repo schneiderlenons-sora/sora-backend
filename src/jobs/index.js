@@ -2375,6 +2375,26 @@ cron.schedule('30 4 * * *', () => {
 });
 console.log('   • Todo dia 04:30 — diagnóstico financeiro da base');
 
+// ─────────────────────────────────────────────────────────────────
+// JOB 1T — Todo dia às 05:15 (SP): CONTAS QUE SE REPETEM (Sora Negócios)
+//
+// Mantém o horizonte das séries andando (semanal ~13 semanas, mensal ~6 meses,
+// anual ~13 meses à frente): é a projeção de caixa que o dono usa. Gera só
+// DEPOIS da última ocorrência existente — a semana apagada à mão não volta.
+// Regra em services/serieNegocio.js (eval:serie-negocio). Sem a migration 192
+// a consulta falha e o job não faz nada.
+// ─────────────────────────────────────────────────────────────────
+cron.schedule('15 5 * * *', async () => {
+  try {
+    const r = await require('../services/serieNegocio').estenderSeries();
+    if (r.erro) console.log('🔁 Séries do Negócios: não rodou —', r.erro);
+    else if (r.criadas) console.log(`🔁 Séries do Negócios: ${r.criadas} ocorrência(s) em ${r.series} série(s)`);
+  } catch (e) {
+    console.log('🔁 Séries do Negócios falharam:', e.message);
+  }
+});
+console.log('   • Todo dia 05:15 — contas que se repetem (Negócios)');
+
 // Exportado SÓ pra teste (evals/lembreteFila.eval.js e evals/moedaBase.eval.js).
 // O arquivo registra crons ao ser exigido, então o eval stuba `node-cron` antes
 // de importar.
