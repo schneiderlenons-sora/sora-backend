@@ -81,16 +81,23 @@ const tipoDe = (t) => (t.tipo === 'Recebimento' ? 'entrada' : 'saida');
 const diasEntre = (a, b) => Math.abs((Date.parse(a + 'T12:00:00Z') - Date.parse(b + 'T12:00:00Z')) / 864e5);
 
 /** O lançamento que a transação vira (sem id). */
-function lancamentoDaTransacao(t, { empresaId, contaId, userId }) {
+function lancamentoDaTransacao(t, { empresaId, contaId, userId, regras = [] }) {
+  const tipo = tipoDe(t);
+  const descricao = String(t.observacao || t.categoria || 'Movimentação do banco').trim().slice(0, 200) || 'Movimentação do banco';
+  // Movimentação entre contas vence a regra; senão, o que a empresa já ensinou
+  // ("aprende", migration 192); senão, neutra pra pessoa classificar.
+  const categoria = transacaoEhMovimento(t)
+    ? CAT_MOVIMENTACAO
+    : (require('./regrasNegocio').categoriaPorRegra(regras, { descricao, tipo }) || CAT_A_CLASSIFICAR);
   return {
     empresa_id: empresaId,
     user_id: userId,
     conta_id: contaId,
     transacao_id: t.id,
     origem: 'banco',
-    tipo: tipoDe(t),
-    categoria: transacaoEhMovimento(t) ? CAT_MOVIMENTACAO : CAT_A_CLASSIFICAR,
-    descricao: String(t.observacao || t.categoria || 'Movimentação do banco').trim().slice(0, 200) || 'Movimentação do banco',
+    tipo,
+    categoria,
+    descricao,
     valor: Math.abs(centavos(t.valor)),
     data: diaSP(t.data),
     status: t.pago === false ? 'pendente' : 'pago',
@@ -112,9 +119,9 @@ function lancamentoDaTransacao(t, { empresaId, contaId, userId }) {
  * @returns {{ inserir: object[], juntar: {lancamentoId:string, transacaoId:string, patch:object}[],
  *             atualizar: {lancamentoId:string, patch:object}[] }}
  */
-function planejarEspelho({ transacoes = [], lancamentos = [], desde, contaId, empresaId, userId }) {
+function planejarEspelho({ transacoes = [], lancamentos = [], desde, contaId, empresaId, userId, regras = [] }) {
   const inserir = [], juntar = [], atualizar = [];
-  const ctx = { empresaId, contaId, userId };
+  const ctx = { empresaId, contaId, userId, regras };
 
   // Só transação real do período, em real, com valor.
   const txs = transacoes
@@ -270,8 +277,9 @@ async function espelharConta(contaNegocioId, { supabase = require('../db/supabas
   const vistos = new Set(recentes.map((l) => l.id));
   const lancamentos = [...recentes, ...emAberto.filter((l) => !vistos.has(l.id))];
 
+  const regras = await require('./regrasNegocio').carregarRegras(conta.empresa_id, { supabase });
   const plano = planejarEspelho({
-    transacoes, lancamentos, desde, contaId: conta.id, empresaId: conta.empresa_id, userId: conta.user_id,
+    transacoes, lancamentos, desde, contaId: conta.id, empresaId: conta.empresa_id, userId: conta.user_id, regras,
   });
 
   let inseridos = 0;

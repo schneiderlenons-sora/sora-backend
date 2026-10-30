@@ -103,7 +103,8 @@
     "eval:chamado-duvida": "node evals/chamadoDuvida.eval.js",
     "eval:serie-negocio": "node evals/serieNegocio.eval.js",
     "eval:serie-negocio-rota": "node evals/serieNegocioRota.eval.js",
-    "eval:baixa-banco-negocio": "node evals/baixaBancoNegocio.eval.js"
+    "eval:baixa-banco-negocio": "node evals/baixaBancoNegocio.eval.js",
+    "eval:regras-negocio": "node evals/regrasNegocio.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

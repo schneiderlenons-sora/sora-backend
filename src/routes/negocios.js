@@ -695,7 +695,21 @@ router.put('/lancamentos/:id', auth, async (req, res) => {
         else aplicadas = (ups || []).length;
       }
     }
-    res.json({ ok: true, lancamento: data, aplicadas });
+
+    // ── "Classificar assim os próximos parecidos" (migration 192) ──────────
+    // Grava a regra da empresa e acerta o que ainda está "a classificar" (nunca
+    // a escolha da pessoa). Descrição genérica ("PIX RECEBIDO") não vira regra:
+    // a resposta diz isso em vez de fingir que aprendeu.
+    let aprendeu = null;
+    if (b.aprender && data.categoria) {
+      try {
+        aprendeu = await require('../services/regrasNegocio').aprender({
+          empresaId: data.empresa_id, userId: user.id,
+          descricao: data.descricao, tipo: data.tipo, categoria: data.categoria,
+        });
+      } catch (e) { console.warn('[negócios/aprende]', e.message); }
+    }
+    res.json({ ok: true, lancamento: data, aplicadas, aprendeu });
   } catch (e) {
     res.status(500).json({ erro: e.message });
   }
