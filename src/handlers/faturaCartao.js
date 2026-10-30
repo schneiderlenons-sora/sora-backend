@@ -54,7 +54,7 @@ module.exports = async function handleFaturaCartao(data, ctx) {
   const { phone, grupoId } = ctx;
 
   const { data: cartoes } = await supabase.from('wallets')
-    .select('id, nome, tipo, moeda, limite, dia_fechamento, dia_vencimento, saldo, of_conta_id')
+    .select('id, nome, tipo, moeda, limite, dia_fechamento, dia_vencimento, saldo, of_conta_id, of_limite_usado')
     .eq('grupo_id', grupoId).eq('tipo', 'Crédito').order('nome');
 
   if (!cartoes?.length) {

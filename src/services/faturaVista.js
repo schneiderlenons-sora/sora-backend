@@ -116,7 +116,41 @@ function pagoDaPublicada(pagoBanco, pagamentosNossos, fechamento) {
   return Math.max(banco, nosso);
 }
 
-async function valorExibido(cartao, competencia, st, deps = {}) {
+/**
+ * Garante que o cartão traz `of_limite_usado` — a coluna de que a trava
+ * `simuladoEhOLimiteUsado` depende.
+ *
+ * RELATO (Robert, out/2026): o card do Mercado Pago mostrava a fatura e o botão
+ * "Pagar fatura" abria com R$ 1.982,33 — o LIMITE USADO. A trava existia, mas
+ * `/fatura/status` (a rota do modal) lia o cartão com uma lista de colunas SEM
+ * `of_limite_usado`: o campo chegava `undefined` e a trava respondia "não é o
+ * limite" sem nem comparar. Medido: 5 chamadores neste estado (modal, fatura
+ * pelo WhatsApp, Agenda, Oráculo, "o que tenho pra pagar"), e em vários cartões
+ * da base o saldo É o limite usado — um deles R$ 212.871.
+ *
+ * Por isso a trava não depende mais de cada chamador lembrar da coluna: se ela
+ * não veio, é lida aqui (UMA ida, só no cartão de banco e só quando faltou).
+ * ⚠️ `undefined` ≠ `null`: null é "o banco não informou" e vale como está;
+ * undefined é "ninguém pediu a coluna".
+ */
+async function comLimiteUsado(cartao, deps = {}) {
+  if (!cartao || !cartao.of_conta_id || cartao.of_limite_usado !== undefined) return cartao;
+  try {
+    const ler = deps.lerLimiteUsado || (async (id) => {
+      const supabase = require('../db/supabase');
+      const { data, error } = await supabase.from('wallets')
+        .select('of_limite_usado').eq('id', id).maybeSingle();
+      if (error) throw error;
+      return data ? data.of_limite_usado : null;
+    });
+    return { ...cartao, of_limite_usado: await ler(cartao.id) };
+  } catch {
+    return cartao;                           // sem a leitura, fica como era
+  }
+}
+
+async function valorExibido(cartaoIn, competencia, st, deps = {}) {
+  const cartao = await comLimiteUsado(cartaoIn, deps);
   const ehOF = !!cartao.of_conta_id;
   const lerFaturas = deps.faturasBanco || faturasDoCartao;
 

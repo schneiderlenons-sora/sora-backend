@@ -184,7 +184,7 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
     const { valorExibido } = require('./faturaVista');
     const { competenciaAtual, cicloPorCompetencia } = require('./cicloFatura');
     const { data } = await supabase.from('wallets')
-      .select('id, nome, saldo, of_conta_id, dia_fechamento, dia_vencimento, moeda')
+      .select('id, nome, saldo, of_conta_id, dia_fechamento, dia_vencimento, moeda, of_limite_usado')
       .eq('grupo_id', grupoId).eq('tipo', 'Crédito');
 
     // ⚠️ O valor do evento vai NA MOEDA DO GRUPO (migration 168): a agenda

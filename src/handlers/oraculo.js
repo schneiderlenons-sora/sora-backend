@@ -63,7 +63,7 @@ async function lerFoto(grupoId) {
       // ⚠️ `moeda` NO SELECT. Sem ela `normalizarMoeda(undefined)` dá 'BRL' pra
       // toda carteira: a conversão abaixo nunca rodava pra conta estrangeira
       // num grupo em real, e num grupo em dólar trataria TODA conta como real.
-      .select('id, nome, tipo, saldo, limite, dia_fechamento, dia_vencimento, of_conta_id, arquivada, moeda')
+      .select('id, nome, tipo, saldo, limite, dia_fechamento, dia_vencimento, of_conta_id, arquivada, moeda, of_limite_usado')
       .eq('grupo_id', grupoId),
     supabase.from('recorrencias')
       .select('tipo, valor, carteira, modo_lancamento, valor_variavel')

@@ -340,7 +340,7 @@ async function coletar(grupoId, janela) {
     supabase.from('previsao_ajustes').select('recorrencia_id, competencia, status, nova_data, novo_valor')
       .eq('grupo_id', grupoId)
       .then((r) => r, () => ({ data: [] })),
-    supabase.from('wallets').select('id, nome, tipo, saldo, of_conta_id, dia_fechamento, dia_vencimento, moeda, datas_manuais')
+    supabase.from('wallets').select('id, nome, tipo, saldo, of_conta_id, dia_fechamento, dia_vencimento, moeda, datas_manuais, of_limite_usado')
       .eq('grupo_id', grupoId)
       .then((r) => r, () => ({ data: [] })),
   ]);

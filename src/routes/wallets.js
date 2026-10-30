@@ -621,7 +621,7 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
     if (!cartaoId) return res.status(400).json({ erro: 'cartao_id obrigatório' });
 
     const { data: cartao } = await supabase.from('wallets')
-      .select('id, nome, of_conta_id, saldo, dia_fechamento, dia_vencimento, moeda')
+      .select('id, nome, of_conta_id, saldo, dia_fechamento, dia_vencimento, moeda, of_limite_usado')
       .eq('id', cartaoId).eq('grupo_id', grupoId).maybeSingle();
     if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
     const baseGrupo = await moedaBaseDoGrupo(grupoId);

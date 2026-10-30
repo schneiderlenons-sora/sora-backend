@@ -18,6 +18,26 @@
 //
 // Rodar:  npm run eval:fatura-vista
 // =============================================================================
+// ⚠️ O BANCO É FALSO, e isto não é enfeite: `valorExibido` passou a LER
+// `of_limite_usado` quando o cartão chega sem a coluna (§12), e quase todo
+// cartão deste eval chega sem ela. Com o cliente real, cada caso viraria uma ida
+// ao Supabase de produção. O falso responde vazio a tudo — o mesmo que o real
+// responderia pra ids inventados como 'c1' — e registra quem perguntou.
+const leiturasWallets = [];
+{
+  const caminho = require.resolve('../src/db/supabase');
+  const vazio = { data: null, error: null };
+  const cadeia = (tabela) => new Proxy({}, {
+    get(_, prop) {
+      if (prop === 'then') return (res) => res(vazio);
+      if (prop === 'maybeSingle' || prop === 'single') {
+        return () => { if (tabela === 'wallets') leiturasWallets.push(tabela); return Promise.resolve(vazio); };
+      }
+      return () => cadeia(tabela);
+    },
+  });
+  require.cache[caminho] = { id: caminho, filename: caminho, loaded: true, exports: { from: (t) => cadeia(t) } };
+}
 const { valorExibido } = require('../src/services/faturaVista');
 
 const falhas = [];
@@ -476,6 +496,45 @@ console.log('── 11. publicada + pagamento registrado pela Sora ──');
   eq(pagoDaPublicada(0, [{ valor: 50, data: '2026-10-15' }], null), 0, '§11 sem fechamento: só o banco');
   eq(pagoDaPublicada(0, null, '2026-10-11'), 0, '§11 sem pagamentos: zero');
   eq(pagoDaPublicada(0, [{ valor: 0.1, data: '2026-10-12' }, { valor: 0.2, data: '2026-10-13' }], '2026-10-11'), 0.3, '§11 soma em centavos');
+}
+console.log('  ok');
+
+// ── §12. A trava do limite usado não depende do chamador lembrar da coluna ──
+// Relato (Robert): o botão "Pagar fatura" abria com R$ 1.982,33 = o limite
+// usado. `/fatura/status` lia o cartão SEM `of_limite_usado` e a trava nem
+// comparava. Aqui o cartão chega exatamente assim — sem a chave.
+console.log('§12 cartão sem a coluna of_limite_usado');
+{
+  const { competenciaAtual } = require('../src/services/cicloFatura');
+  const SEM_COLUNA = { id: 'robert', of_conta_id: 'of-mp', dia_fechamento: 2, dia_vencimento: 7, saldo: -1982.33 };
+  const COMP = competenciaAtual(SEM_COLUNA);
+
+  // A coluna é lida, a trava age, e o limite usado NÃO vira fatura.
+  let pedidos = 0;
+  const lendo = { ...semDeps, lerLimiteUsado: async (id) => { pedidos++; eq(id, 'robert', '§12 lê o cartão certo'); return 1982.33; } };
+  const v = await valorExibido(SEM_COLUNA, COMP, st(603.12), lendo);
+  ok(v.fatura !== 1982.33, `§12 NÃO exibe o limite usado como fatura (veio ${v.fatura})`);
+  eq(v.fonte, 'ciclo+previstas', '§12 cai no caminho auditável');
+  eq(pedidos, 1, '§12 uma leitura só');
+
+  // Leitura que falha → fica como era antes (nunca derruba a tela).
+  const falha = { ...semDeps, lerLimiteUsado: async () => { throw new Error('rede'); } };
+  const vf = await valorExibido(SEM_COLUNA, COMP, st(603.12), falha);
+  eq(vf.fatura, 1982.33, '§12 leitura falhou: comportamento antigo');
+
+  // `null` é "o banco não informou" — já é resposta, não se relê.
+  let relidas = 0;
+  const conta = { ...semDeps, lerLimiteUsado: async () => { relidas++; return 1982.33; } };
+  await valorExibido({ ...SEM_COLUNA, of_limite_usado: null }, COMP, st(603.12), conta);
+  await valorExibido({ ...SEM_COLUNA, of_limite_usado: 1982.33 }, COMP, st(603.12), conta);
+  await valorExibido({ ...CARTAO_MANUAL }, '2026-08', st(100), conta);
+  eq(relidas, 0, '§12 coluna presente (até null) ou cartão manual: nenhuma leitura');
+
+  // Sem injeção, a leitura vai ao banco (falso aqui) e não quebra nada.
+  const antes = leiturasWallets.length;
+  const vd = await valorExibido(SEM_COLUNA, COMP, st(603.12), semDeps);
+  eq(leiturasWallets.length - antes, 1, '§12 caminho padrão lê wallets');
+  eq(vd.fatura, 1982.33, '§12 banco sem a linha: comportamento antigo');
 }
 console.log('  ok');
 
