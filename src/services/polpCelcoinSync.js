@@ -42,6 +42,7 @@ const { registrarPagamentosDoOF } = require('./faturaRollover');
 const { gravarParcelasPrevistas } = require('./parcelasPrevistas');
 const { salvarFaturas } = require('./faturasBanco');
 const { planejarDedupReprocesso } = require('./dedupReprocesso');
+const { nomeDaContaOf, conexaoEmpresarial } = require('./nomeContaOf');
 
 const PROVIDER = 'polp-celcoin';
 const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -2280,8 +2281,16 @@ function patchDoSaldo(saldo, limiteRespondeu) {
   if (saldo != null) return { saldo };
   return limiteRespondeu === true ? { saldo: null } : {};
 }
-async function upsertWallet(grupoId, userId, n, saldo, consentId) {
-  const nome = (n.nome || 'Conta').toString().trim().slice(0, 60);
+async function upsertWallet(grupoId, userId, n, saldo, consentId, opcoes = {}) {
+  const nomeBase = (n.nome || 'Conta').toString().trim().slice(0, 60);
+  // Conexão de EMPRESA (migration 188): a carteira NOVA nasce "Mercado Pago PJ"
+  // em vez de virar "Mercado Pago (OF)" no meio das pessoais. Vale também pra
+  // ADOÇÃO logo abaixo: a conta PJ só adota uma manual "… PJ", nunca a
+  // pessoal de mesmo nome do banco. Carteira já vinculada (`ja`) não muda de
+  // nome — o sync nunca renomeia. Sem a flag, o nome é EXATAMENTE o de antes.
+  const nome = opcoes.empresarial === true
+    ? nomeDaContaOf(nomeBase, { empresarial: true })
+    : nomeBase;
 
   // Campos em que `null` é RESPOSTA, não ausência de dado — precisam ser
   // GRAVADOS como null em vez de ignorados.
@@ -3294,6 +3303,9 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
   if (!conexao) return { erro: 'conexão desconhecida' };
 
   const { grupo_id: grupoId, user_id: userId } = conexao;
+  // Conexão de empresa (migration 188): conta/cartão novo nasce "… PJ". Sem a
+  // coluna, `select('*')` não a traz e isto é false — o sync segue igual.
+  const empresarial = conexaoEmpresarial(conexao);
   const hoje = hojeSP();
   const fromDate = new Date(Date.now() - dias * 864e5).toISOString().slice(0, 10);
   const relatorio = { contas: [], caixinhas: [], cartoes: [], dividas: [], investimentos: [], avisos: [] };
@@ -3354,7 +3366,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     for (const raw of await celcoin.listarContas(consentId)) {
       try {
         const n = normalizeConta(raw, conexao.instituicao);
-        const walletNome = await upsertWallet(grupoId, userId, n, n.saldo, consentId);
+        const walletNome = await upsertWallet(grupoId, userId, n, n.saldo, consentId, { empresarial });
         const txs = await celcoin.listarTransacoesConta(n.externalId, { fromDate });
         // Conta fora da moeda base: lançamentos convertidos (ver inserirTransacoes).
         const moedaConta = moedaDaConta(n);
@@ -3407,7 +3419,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
       try {
         const bills = await celcoin.listarFaturas(raw.id);
         const n = normalizeCartao(raw, bills, hoje, conexao.instituicao);
-        const walletNome = await upsertWallet(grupoId, userId, n, n.saldoFatura, consentId);
+        const walletNome = await upsertWallet(grupoId, userId, n, n.saldoFatura, consentId, { empresarial });
 
         const txs = await celcoin.listarTransacoesCartao(n.externalId, { fromDate });
         const normalizadas = txs.map((t) => normalizeTxCartao(t, hoje));
@@ -3496,7 +3508,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           if (estimada != null) {
             const pago = n.faturaAberta ? n.faturaAberta.pago : 0;
             const restante = Math.max(0, cent(estimada - pago));
-            await upsertWallet(grupoId, userId, n, -restante, consentId);
+            await upsertWallet(grupoId, userId, n, -restante, consentId, { empresarial });
             relatorio.avisos.push(
               // Números do CARTÃO, na moeda dele (migration 168).
               `${walletNome}: banco não publicou o total da fatura em aberto — somada por ${fonte} = ${formatar(restante, moedaCartao)}` +
@@ -3744,4 +3756,6 @@ module.exports = {
   // Supabase falso do eval.
   algoMudou, mesmoValor, upsertInvestimento, sincronizarMovimentos,
   comDinheiroNaBase,
+  // Conta PJ do Open Finance (migration 188) — `npm run eval:conta-pj` (banco falso).
+  upsertWallet,
 };

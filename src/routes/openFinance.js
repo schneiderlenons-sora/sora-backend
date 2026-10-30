@@ -43,6 +43,7 @@ const { acessoOpenFinance } = require('../config/openFinanceAccess');
 const { desconectarConexao } = require('../services/desconectarConexao');
 // Quem decide se a conexão ainda está coberta pelo plano (eval + mutação).
 const { estadoExcedente, ordemDeCorte } = require('../services/excedenteConexoes');
+const { informouCnpj } = require('../services/nomeContaOf');
 const MSG_SEM_ACESSO = {
   vitalicio: 'O Open Finance faz parte dos planos por assinatura. No plano vitalício você continua lançando pelo WhatsApp e importando extrato (OFX).',
   plano: 'O Open Finance está nos planos Básico e Premium. Assine pra conectar seu banco.',
@@ -265,13 +266,20 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
       const paraGravar = (Array.isArray(produtos) && produtos.length) ? produtos
         : (Array.isArray(produtosPedidos) ? produtosPedidos : null);
 
-      const { error: errUp } = await supabase.from('of_conexoes')
-        .upsert(paraGravar ? { ...linha, produtos: paraGravar } : linha,
-          { onConflict: 'provider,external_id' });
-      // ⚠️ Tolerante à 175 pendente: sem a coluna, regrava sem ela. Conectar o
-      // banco não pode falhar por causa de um campo de diagnóstico.
-      if (errUp) {
-        await supabase.from('of_conexoes').upsert(linha, { onConflict: 'provider,external_id' });
+      // ⚠️ CONEXÃO DE EMPRESA (migration 188): só o FATO de ter vindo com CNPJ,
+      // nunca o número. A Celcoin não devolve isso depois — é agora ou nunca.
+      // É o que faz a conta nascer "Mercado Pago PJ" (services/nomeContaOf.js).
+      //
+      // ⚠️ Tolerante às migrations 175/188 pendentes, em DEGRAUS: sem a 188,
+      // regrava com os produtos (a 175 já rodou e não pode perder o campo por
+      // causa da coluna nova); sem nenhuma, só a linha. Conectar o banco não
+      // pode falhar por causa de um campo extra.
+      const comProdutos = paraGravar ? { ...linha, produtos: paraGravar } : linha;
+      const tentativas = [{ ...comProdutos, empresarial: informouCnpj(cnpj) }, comProdutos, linha];
+      for (const t of tentativas) {
+        const { error: errUp } = await supabase.from('of_conexoes')
+          .upsert(t, { onConflict: 'provider,external_id' });
+        if (!errUp) break;
       }
     }
     res.json({
