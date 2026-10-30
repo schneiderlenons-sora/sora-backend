@@ -94,17 +94,23 @@ async function aprender({ empresaId, userId, descricao, tipo, categoria }, { sup
     : await supabase.from('regras_negocio').insert({ empresa_id: empresaId, user_id: userId || null, termo, tipo: sentido, categoria });
   if (eGrava) return { termo: null, aplicadas: 0, motivo: 'sem_migration' };
 
-  // Os que ainda estão "a classificar" e casam — nunca a escolha da pessoa.
-  const { data: pendentes } = await supabase.from('lancamentos_negocio')
-    .select('id, descricao, tipo').eq('empresa_id', empresaId).eq('categoria', CAT_A_CLASSIFICAR);
-  const regra = [{ termo, tipo: sentido, categoria }];
-  const ids = (pendentes || []).filter((l) => categoriaPorRegra(regra, l)).map((l) => l.id);
-  if (ids.length) {
-    const { error } = await supabase.from('lancamentos_negocio').update({ categoria })
-      .in('id', ids).eq('categoria', CAT_A_CLASSIFICAR);
-    if (error) return { termo, aplicadas: 0 };
-  }
-  return { termo, aplicadas: ids.length };
+  const aplicadas = await aplicarNosPendentes(empresaId, { termo, tipo: sentido, categoria }, { supabase });
+  return { termo, aplicadas };
 }
 
-module.exports = { termoAprendivel, categoriaPorRegra, carregarRegras, aprender, CAT_A_CLASSIFICAR };
+/**
+ * Acerta com a regra o que ainda está "a classificar" na empresa — nunca a
+ * escolha da pessoa. Usado ao aprender e ao trocar a categoria de uma regra.
+ * @returns {Promise<number>} quantos lançamentos mudaram
+ */
+async function aplicarNosPendentes(empresaId, regra, { supabase = require('../db/supabase') } = {}) {
+  const { data: pendentes } = await supabase.from('lancamentos_negocio')
+    .select('id, descricao, tipo').eq('empresa_id', empresaId).eq('categoria', CAT_A_CLASSIFICAR);
+  const ids = (pendentes || []).filter((l) => categoriaPorRegra([regra], l)).map((l) => l.id);
+  if (!ids.length) return 0;
+  const { error } = await supabase.from('lancamentos_negocio').update({ categoria: regra.categoria })
+    .in('id', ids).eq('categoria', CAT_A_CLASSIFICAR);
+  return error ? 0 : ids.length;
+}
+
+module.exports = { termoAprendivel, categoriaPorRegra, carregarRegras, aprender, aplicarNosPendentes, CAT_A_CLASSIFICAR };

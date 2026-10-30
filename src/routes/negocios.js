@@ -715,6 +715,62 @@ router.put('/lancamentos/:id', auth, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────
+// REGRAS APRENDIDAS (o "aprende" do caixa, migration 192)
+// Ver, trocar a categoria e apagar. Apagar NÃO desfaz o que a regra já
+// classificou — só para de classificar os próximos.
+// ─────────────────────────────────────────────────────────────────
+
+// GET /api/negocios/regras/:phone?empresa_id=
+router.get('/regras/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const empresaId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empresaId) return res.json({ regras: [] });
+    const { data, error } = await supabase.from('regras_negocio')
+      .select('id, termo, tipo, categoria, created_at, updated_at')
+      .eq('empresa_id', empresaId).order('created_at', { ascending: false });
+    // Sem a migration 192 a tabela não existe: lista vazia, e a tela diz por quê.
+    if (error) return res.json({ regras: [], semMigration: true });
+    res.json({ regras: data || [] });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// PUT /api/negocios/regras/:id { categoria }
+router.put('/regras/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const regra = await linhaAlcancada(user.id, 'regras_negocio', req.params.id);
+    if (!regra) return res.status(404).json({ erro: 'Regra não encontrada.' });
+    const categoria = String((req.body || {}).categoria || '').trim().slice(0, 40);
+    if (!categoria || categoria === 'a_classificar') return res.status(400).json({ erro: 'Escolha uma categoria.' });
+    const { data, error } = await supabase.from('regras_negocio')
+      .update({ categoria, updated_at: new Date().toISOString() }).eq('id', regra.id).select().maybeSingle();
+    if (error) throw error;
+    const { aplicarNosPendentes } = require('../services/regrasNegocio');
+    const aplicadas = await aplicarNosPendentes(regra.empresa_id, { termo: regra.termo, tipo: regra.tipo, categoria });
+    res.json({ ok: true, regra: data, aplicadas });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// DELETE /api/negocios/regras/:id
+router.delete('/regras/:id', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const regra = await linhaAlcancada(user.id, 'regras_negocio', req.params.id);
+    if (!regra) return res.status(404).json({ erro: 'Regra não encontrada.' });
+    const { error } = await supabase.from('regras_negocio').delete().eq('id', regra.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 // POST /api/negocios/lancamentos/:id/parar-serie — "parar de repetir"
 // A partir desta ocorrência: ela e as já pagas FICAM; as próximas em aberto
 // (digitadas, sem vínculo com o banco) saem, e o job deixa de gerar.
