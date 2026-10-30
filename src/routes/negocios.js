@@ -4,6 +4,7 @@ const supabase = require('../db/supabase');
 const { temNegocios } = require('../config/planos');
 const auth     = require('../middlewares/auth');
 const { gerarDre, sugerirConciliacao } = require('../handlers/negocios');
+const { espelharConta, motivoInelegivel, inicioDoMesSP, ehMovimentacao } = require('../services/espelhoContaEmpresa');
 const { encrypt, decrypt } = require('../services/cripto');
 const { importarHistoricoHotmart } = require('../services/hotmart-import');
 const { gerarInsights } = require('./../handlers/insights-negocio');
@@ -610,8 +611,16 @@ router.put('/lancamentos/:id', auth, async (req, res) => {
     if (b.status === 'pago') patch.pago_em = b.pago_em || new Date().toISOString().slice(0, 10);
     if (b.status === 'pendente') patch.pago_em = null;
 
-    if (!(await linhaAlcancada(user.id, 'lancamentos_negocio', req.params.id))) {
+    const atual = await linhaAlcancada(user.id, 'lancamentos_negocio', req.params.id);
+    if (!atual) {
       return res.status(404).json({ erro: 'Lançamento não encontrado.' });
+    }
+    // ⚠️ VEIO DO BANCO (conta vinculada, migration 189): valor, data, sentido,
+    // situação e conta são do BANCO — o espelho os reescreveria no próximo
+    // sync, e a edição "sumiria" sem explicação. A pessoa ajusta o que é dela:
+    // categoria, descrição, contraparte, observação.
+    if (atual.transacao_id) {
+      for (const k of ['tipo', 'valor', 'data', 'status', 'pago_em', 'vencimento', 'conta_id']) delete patch[k];
     }
 
     const { data, error } = await supabase.from('lancamentos_negocio')
@@ -633,8 +642,18 @@ router.delete('/lancamentos/:id', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
 
-    if (!(await linhaAlcancada(user.id, 'lancamentos_negocio', req.params.id))) {
+    const atual = await linhaAlcancada(user.id, 'lancamentos_negocio', req.params.id);
+    if (!atual) {
       return res.status(404).json({ erro: 'Lançamento não encontrado.' });
+    }
+    // ⚠️ Apagar o que veio do banco não adianta: o próximo sync traria de novo.
+    // O caminho é classificar — "Movimentação" tira do DRE e mantém no saldo.
+    if (atual.transacao_id) {
+      return res.status(409).json({
+        erro: 'veio_do_banco',
+        mensagem: 'Este lançamento veio do banco e voltaria no próximo sincronismo. '
+          + 'Se ele não é da empresa, classifique como "Movimentação": sai do resultado e continua no saldo da conta.',
+      });
     }
 
     const { error } = await supabase.from('lancamentos_negocio')
@@ -1646,7 +1665,10 @@ router.get('/indicadores/:phone', auth, async (req, res) => {
         .eq('empresa_id', empresa.id).eq('status', 'pendente'),
     ]);
 
-    const linhas = doPeriodo || [];
+    // ⚠️ Movimentação (transferência/aplicação vinda da conta do banco
+    // vinculada, migration 189) fica fora de receita/despesa/gráficos — ela só
+    // mexe no SALDO das contas, que é calculado mais abaixo com tudo.
+    const linhas = (doPeriodo || []).filter((r) => !ehMovimentacao(r));
     const ym   = (d) => String(d || '').slice(0, 7);
     const soma = (arr) => arr.reduce((s, r) => s + (Number(r.valor) || 0), 0);
     // Só o que foi PAGO é realizado — pendente é promessa, não caixa.
@@ -1709,19 +1731,33 @@ router.get('/indicadores/:phone', auth, async (req, res) => {
     // Saldo por conta = saldo inicial + entradas pagas − saídas pagas.
     let contas = [];
     try {
+      // `select('*')`: `wallet_id` é da 189 — pedi-la por nome derrubaria o
+      // card de contas inteiro enquanto a migration não roda.
       const [{ data: cs }, { data: todos }] = await Promise.all([
-        supabase.from('contas_negocio').select('id, nome, tipo, saldo_inicial')
+        supabase.from('contas_negocio').select('*')
           .eq('empresa_id', empresa.id).eq('ativa', true),
         supabase.from('lancamentos_negocio').select('conta_id, tipo, valor')
           .eq('empresa_id', empresa.id).eq('status', 'pago'),
       ]);
+      // ⚠️ Conta VINCULADA ao banco mostra o saldo DO BANCO: o caixa só traz as
+      // movimentações a partir do vínculo, então a soma local não chega no
+      // saldo de verdade (a mesma regra de ouro da conta conectada no pessoal).
+      const ids = (cs || []).map((c) => c.wallet_id).filter(Boolean);
+      const saldoBanco = new Map();
+      if (ids.length) {
+        const { data: ws } = await supabase.from('wallets').select('id, saldo').in('id', ids);
+        for (const w of ws || []) saldoBanco.set(w.id, Math.round((Number(w.saldo) || 0) * 100));
+      }
       contas = (cs || []).map((c) => {
         const mov = (todos || []).filter((r) => r.conta_id === c.id);
+        const doBanco = c.wallet_id && saldoBanco.has(c.wallet_id);
         return {
           id: c.id, nome: c.nome, tipo: c.tipo,
-          saldo: (Number(c.saldo_inicial) || 0)
-            + soma(mov.filter((r) => r.tipo === 'entrada'))
-            - soma(mov.filter((r) => r.tipo === 'saida')),
+          vinculada_banco: !!c.wallet_id,
+          saldo: doBanco ? saldoBanco.get(c.wallet_id)
+            : (Number(c.saldo_inicial) || 0)
+              + soma(mov.filter((r) => r.tipo === 'entrada'))
+              - soma(mov.filter((r) => r.tipo === 'saida')),
         };
       });
     } catch { contas = []; } // migration 095 pendente → painel sem o card de contas
@@ -1771,7 +1807,20 @@ router.get('/contas/:phone', auth, async (req, res) => {
       if (/contas_negocio/i.test(error.message || '')) return res.json([]);
       throw error;
     }
-    res.json(data || []);
+    // Conta ligada ao banco (189): nome e saldo DO BANCO (em centavos, como o
+    // resto do Negócios) — é o saldo de verdade; a soma do caixa só cobre o
+    // período desde o vínculo.
+    const contas = data || [];
+    const ids = contas.map((c) => c.wallet_id).filter(Boolean);
+    if (ids.length) {
+      const { data: ws } = await supabase.from('wallets').select('id, nome, saldo').in('id', ids);
+      const porId = new Map((ws || []).map((w) => [w.id, w]));
+      for (const c of contas) {
+        const w = c.wallet_id && porId.get(c.wallet_id);
+        if (w) { c.wallet_nome = w.nome; c.saldo_banco = Math.round((Number(w.saldo) || 0) * 100); }
+      }
+    }
+    res.json(contas);
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
@@ -1835,6 +1884,118 @@ router.delete('/contas/:id', auth, async (req, res) => {
       .update({ ativa: false }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// CONTA DA EMPRESA ↔ CONTA DO BANCO (Open Finance) — migration 189
+// As movimentações da conta do banco entram no caixa da empresa
+// (services/espelhoContaEmpresa.js). Pedido do Robert, out/2026.
+//
+// ⚠️ SÓ O DONO DA EMPRESA VINCULA, e só carteira do GRUPO DA EMPRESA. O
+// Negócios aceita membros convidados de outros grupos (migration 173): um
+// admin convidado puxar a conta bancária do dono pro caixa exporia o extrato
+// dele a todos os membros. Ler o caixa continua valendo pros membros.
+// ─────────────────────────────────────────────────────────────────
+
+async function empresaDoDono(userId, empresaId) {
+  if (!empresaId) return null;
+  const { data } = await supabase.from('empresas')
+    .select('id, user_id, grupo_id').eq('id', empresaId).maybeSingle();
+  return data && data.user_id === userId ? data : null;
+}
+
+// Contas do banco que podem alimentar esta empresa.
+router.get('/contas-banco/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const empresa = await empresaDoDono(user.id, req.query.empresa_id);
+    if (!empresa) return res.json({ contas: [], dono: false });
+
+    const { data: ws, error } = await supabase.from('wallets')
+      .select('id, nome, tipo, moeda, of_conta_id, saldo')
+      .eq('grupo_id', empresa.grupo_id).not('of_conta_id', 'is', null).order('nome');
+    if (error) throw error;
+    // Quais já alimentam alguma conta (de qualquer empresa). Sem a 189 a coluna
+    // não existe: devolve a lista sem marcação e o vínculo responde o motivo.
+    let ocupadas = new Map();
+    const { data: vs } = await supabase.from('contas_negocio')
+      .select('id, wallet_id, empresa_id').in('wallet_id', (ws || []).map((w) => w.id)).eq('ativa', true);
+    for (const v of vs || []) ocupadas.set(v.wallet_id, v);
+
+    res.json({
+      dono: true,
+      contas: (ws || []).map((w) => ({
+        id: w.id, nome: w.nome, tipo: w.tipo, saldo: Number(w.saldo) || 0,
+        motivo: motivoInelegivel(w),
+        vinculada_a: ocupadas.get(w.id)?.id || null,
+      })),
+    });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+router.post('/contas/:id/vincular-banco', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const conta = await linhaAlcancada(user.id, 'contas_negocio', req.params.id, 'admin');
+    if (!conta || !conta.ativa) return res.status(404).json({ erro: 'Conta não encontrada.' });
+    const empresa = await empresaDoDono(user.id, conta.empresa_id);
+    if (!empresa) return res.status(403).json({ erro: 'Só o dono da empresa pode vincular uma conta do banco.' });
+
+    const walletId = (req.body || {}).wallet_id;
+    const { data: wallet } = await supabase.from('wallets')
+      .select('id, grupo_id, nome, tipo, moeda, of_conta_id').eq('id', walletId || '').maybeSingle();
+    if (!wallet || wallet.grupo_id !== empresa.grupo_id) return res.status(404).json({ erro: 'Conta do banco não encontrada.' });
+    const motivo = motivoInelegivel(wallet);
+    if (motivo) return res.status(400).json({ erro: motivo });
+
+    const { error } = await supabase.from('contas_negocio')
+      .update({ wallet_id: wallet.id, importar_desde: inicioDoMesSP(), tipo: 'banco' })
+      .eq('id', conta.id);
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ erro: 'Esta conta do banco já alimenta outra conta da empresa.' });
+      }
+      if (/wallet_id|importar_desde/i.test(error.message || '')) {
+        return res.status(503).json({ erro: 'Falta rodar a migration 189 no Supabase.' });
+      }
+      throw error;
+    }
+    // Traz já o que existe desde o 1º do mês — sem esperar o próximo sync.
+    const r = await espelharConta(conta.id);
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Desvincular: para de trazer. O que já entrou no caixa FICA (é histórico da
+// empresa, e pode ter sido classificado à mão).
+router.delete('/contas/:id/vincular-banco', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    const conta = await linhaAlcancada(user.id, 'contas_negocio', req.params.id, 'admin');
+    if (!conta) return res.status(404).json({ erro: 'Conta não encontrada.' });
+    if (!(await empresaDoDono(user.id, conta.empresa_id))) {
+      return res.status(403).json({ erro: 'Só o dono da empresa pode desvincular.' });
+    }
+    const { error } = await supabase.from('contas_negocio').update({ wallet_id: null }).eq('id', conta.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Trazer agora (botão "Atualizar" da conta vinculada).
+router.post('/contas/:id/espelhar', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    const conta = await linhaAlcancada(user.id, 'contas_negocio', req.params.id, 'operador');
+    if (!conta) return res.status(404).json({ erro: 'Conta não encontrada.' });
+    res.json({ ok: true, ...(await espelharConta(conta.id)) });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 

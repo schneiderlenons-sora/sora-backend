@@ -4,6 +4,7 @@
  */
 const supabase = require('../db/supabase');
 const { montarDre } = require('../services/dre');
+const { ehMovimentacao } = require('../services/espelhoContaEmpresa');
 const { empresasDoUsuario } = require('../services/acessoEmpresa');
 
 // Centavos util
@@ -380,6 +381,10 @@ async function gerarDre(userId, grupoId, periodo, empresaId) {
       .gte('data', inicio).lt('data', fim);
     lancamentos = data || [];
   }
+  // ⚠️ MOVIMENTAÇÃO (transferência entre contas, aplicação) mexe no SALDO da
+  // conta mas não é receita nem despesa — vem da conta do banco vinculada
+  // (migration 189). Sem este filtro, aplicar R$ 10 mil viraria "despesa".
+  lancamentos = lancamentos.filter((l) => !ehMovimentacao(l));
 
   // 2c. CMV — custo das mercadorias VENDIDAS no período, pelo custo congelado
   //     no item da venda. É o que transforma a compra de estoque em resultado.

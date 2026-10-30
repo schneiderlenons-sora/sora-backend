@@ -43,6 +43,7 @@ const { gravarParcelasPrevistas } = require('./parcelasPrevistas');
 const { salvarFaturas } = require('./faturasBanco');
 const { planejarDedupReprocesso } = require('./dedupReprocesso');
 const { nomeDaContaOf, conexaoEmpresarial } = require('./nomeContaOf');
+const { espelharDoConsentimento } = require('./espelhoContaEmpresa');
 
 const PROVIDER = 'polp-celcoin';
 const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -3655,6 +3656,19 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     // numa tarde criaria cinco pontos no mesmo dia e a linha viraria serrote
     // sobre um valor que mal mudou.
     try { await fotografarPatrimonio(grupoId); } catch { /* nunca derruba o sync */ }
+
+    // 5D. CONTA DA EMPRESA (migration 189). Conta do banco vinculada a uma
+    // conta do Sora Negócios: as transações que acabaram de chegar entram no
+    // caixa da empresa. Tolerante por dentro — nunca derruba o sync, e sem a
+    // 189 não acha vínculo nenhum e não faz nada.
+    {
+      const espelho = await espelharDoConsentimento(consentId);
+      for (const e of espelho) {
+        if (e.inseridos || e.juntados || e.atualizados) {
+          relatorio.avisos.push(`empresa: +${e.inseridos} no caixa, ${e.juntados} juntados, ${e.atualizados} atualizados`);
+        }
+      }
+    }
 
     await supabase.from('of_conexoes').update({
       status: 'updated', ultima_sync: new Date().toISOString(), ultimo_erro: null,

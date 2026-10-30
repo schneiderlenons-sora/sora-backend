@@ -11,6 +11,7 @@
     "eval:ciclo": "node evals/cicloFatura.eval.js",
     "eval:celcoin": "node evals/celcoinSync.eval.js",
     "eval:conta-pj": "node evals/contaPj.eval.js",
+    "eval:espelho-empresa": "node evals/espelhoContaEmpresa.eval.js",
     "test": "echo \"Sem testes por enquanto\" && exit 0",
     "eval:regras": "node evals/regrasCategoria.eval.js",
     "eval:reconciliar": "node evals/reconciliarPrevisto.eval.js",
