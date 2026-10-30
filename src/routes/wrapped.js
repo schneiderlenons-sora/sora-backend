@@ -81,10 +81,12 @@ router.get('/financas/:phone', auth, exigirPlano(...PLANOS_WRAPPED), async (req,
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
     const P = resolverPeriodo(req.query.periodo);
-    const { data: txs } = await supabase.from('transacoes')
-      .select('tipo, valor, categoria, data, transferencia')
-      .eq('grupo_id', user.grupo_ativo)
-      .gte('data', P.inicio).lt('data', P.fim);
+    // `ignorar_em` ("não considerar" e a conta da empresa) fica fora como em
+    // todo total pessoal. Tolerante: sem a coluna, repete sem ela.
+    const consulta = (cols) => supabase.from('transacoes').select(cols)
+      .eq('grupo_id', user.grupo_ativo).gte('data', P.inicio).lt('data', P.fim);
+    let { data: txs, error: eTx } = await consulta('tipo, valor, categoria, data, transferencia, ignorar_em');
+    if (eTx && /ignorar_em/i.test(eTx.message || '')) ({ data: txs } = await consulta('tipo, valor, categoria, data, transferencia'));
 
     const lista = txs || [];
     let receitas = 0, gastos = 0;
@@ -100,6 +102,7 @@ router.get('/financas/:phone', auth, exigirPlano(...PLANOS_WRAPPED), async (req,
       // por categoria é rede de segurança pra linhas sem a flag.
       // Ajuste de saldo idem: acertar o saldo com o banco não é gasto do mês
       // (nem "vilão" nem "maior gasto" da retrospectiva).
+      if (t.ignorar_em) continue;
       if (t.transferencia || ehPagamentoFatura(t.categoria) || ehPagamentoFaturaLegado(t.categoria) || ehAjusteSaldo(t.categoria)) { if (t.data) diasSet.add(t.data.slice(0, 10)); continue; }
       if (ehGasto) {
         gastos += v;

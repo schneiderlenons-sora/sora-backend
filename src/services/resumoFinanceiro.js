@@ -26,10 +26,13 @@ const limpaCat = (s) => (s || '').replace(/\p{Emoji}/gu, '').trim() || 'Outros';
 
 /** Soma gastos/receitas/categorias de um grupo no intervalo [inicio, fim). Datas YYYY-MM-DD. */
 async function resumoPeriodo(grupoId, inicio, fim) {
-  const { data: rows } = await supabase
-    .from('transacoes').select('tipo, categoria, valor, transferencia')
-    .eq('grupo_id', grupoId)
-    .gte('data', inicio).lt('data', fim);
+  // `ignorar_em` ("não considerar" e a conta da empresa, 146/192) fica fora
+  // como em todo total pessoal — antes o resumo do WhatsApp contava o que a
+  // pessoa mandou não considerar. Tolerante: sem a coluna, repete sem ela.
+  const consulta = (cols) => supabase.from('transacoes').select(cols)
+    .eq('grupo_id', grupoId).gte('data', inicio).lt('data', fim);
+  let { data: rows, error: eRows } = await consulta('tipo, categoria, valor, transferencia, ignorar_em');
+  if (eRows && /ignorar_em/i.test(eRows.message || '')) ({ data: rows } = await consulta('tipo, categoria, valor, transferencia'));
 
   let gastos = 0, receitas = 0, count = 0;
   const cats = {};
@@ -38,6 +41,7 @@ async function resumoPeriodo(grupoId, inicio, fim) {
     // Transferência (ex: pagamento de fatura = quitação de dívida) não é
     // consumo. Match por categoria é rede de segurança pra linhas sem a flag.
     // Ajuste de saldo idem (acertar o saldo não é ganhar nem gastar).
+    if (r.ignorar_em) continue;
     if (r.transferencia || ehPagamentoFatura(r.categoria) || ehPagamentoFaturaLegado(r.categoria) || ehAjusteSaldo(r.categoria)) continue;
     if (r.tipo === 'Gasto') {
       gastos += r.valor || 0;

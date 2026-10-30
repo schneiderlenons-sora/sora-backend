@@ -166,14 +166,16 @@ async function lerFoto(grupoId) {
   // (renda e gasto) pra baixo sem significar nada.
   const desde = `${ymAtras(3)}-01`;
   const ate   = `${ymAtras(0)}-01`;
-  const { data: txs } = await supabase.from('transacoes')
-    .select('tipo, valor, data, transferencia, categoria')
+  const consulta = (cols) => supabase.from('transacoes').select(cols)
     .eq('grupo_id', grupoId).gte('data', desde).lt('data', ate);
+  let { data: txs, error: eTx } = await consulta('tipo, valor, data, transferencia, categoria, ignorar_em');
+  if (eTx && /ignorar_em/i.test(eTx.message || '')) ({ data: txs } = await consulta('tipo, valor, data, transferencia, categoria'));
 
   const { ehAjusteSaldo } = require('../services/categorizar');
   const porMes = {};
   for (const t of txs || []) {
     if (t.transferencia) continue;             // transferência não é renda nem gasto
+    if (t.ignorar_em) continue;                // "não considerar" e a conta da empresa
     if (ehAjusteSaldo(t.categoria)) continue;  // acertar o saldo também não
     const ym = String(t.data).slice(0, 7);
     porMes[ym] = porMes[ym] || { receita: 0, gasto: 0 };

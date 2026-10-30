@@ -4,7 +4,7 @@ const supabase = require('../db/supabase');
 const { temNegocios } = require('../config/planos');
 const auth     = require('../middlewares/auth');
 const { gerarDre, sugerirConciliacao } = require('../handlers/negocios');
-const { espelharConta, motivoInelegivel, inicioDoMesSP, ehMovimentacao } = require('../services/espelhoContaEmpresa');
+const { espelharConta, motivoInelegivel, inicioDoMesSP, ehMovimentacao, aplicarForaDoPessoal } = require('../services/espelhoContaEmpresa');
 const { encrypt, decrypt } = require('../services/cripto');
 const { importarHistoricoHotmart } = require('../services/hotmart-import');
 const { gerarInsights } = require('./../handlers/insights-negocio');
@@ -2125,9 +2125,16 @@ router.post('/contas/:id/vincular-banco', auth, async (req, res) => {
     const motivo = motivoInelegivel(wallet);
     if (motivo) return res.status(400).json({ erro: motivo });
 
-    const { error } = await supabase.from('contas_negocio')
-      .update({ wallet_id: wallet.id, importar_desde: inicioDoMesSP(), tipo: 'banco' })
-      .eq('id', conta.id);
+    // Passo B (migration 192): "esta conta é só da empresa" — padrão SIM. Quem
+    // usa uma conta mista (pessoal e empresa) desmarca, e ela continua contando
+    // nas finanças pessoais.
+    const foraDoPessoal = (req.body || {}).fora_do_pessoal !== false;
+    const vinculo = { wallet_id: wallet.id, importar_desde: inicioDoMesSP(), tipo: 'banco' };
+    let { error } = await supabase.from('contas_negocio')
+      .update({ ...vinculo, fora_do_pessoal: foraDoPessoal }).eq('id', conta.id);
+    if (error && /fora_do_pessoal/i.test(error.message || '')) {
+      ({ error } = await supabase.from('contas_negocio').update(vinculo).eq('id', conta.id));
+    }
     if (error) {
       if (error.code === '23505') {
         return res.status(409).json({ erro: 'Esta conta do banco já alimenta outra conta da empresa.' });
@@ -2154,9 +2161,34 @@ router.delete('/contas/:id/vincular-banco', auth, async (req, res) => {
     if (!(await empresaDoDono(user.id, conta.empresa_id))) {
       return res.status(403).json({ erro: 'Só o dono da empresa pode desvincular.' });
     }
+    // Passo B: o que a conta trouxe volta a contar nas finanças pessoais —
+    // ANTES de soltar o vínculo, enquanto ainda dá pra saber quais são.
+    const devolvidas = await aplicarForaDoPessoal(conta.id, false);
     const { error } = await supabase.from('contas_negocio').update({ wallet_id: null }).eq('id', conta.id);
     if (error) throw error;
-    res.json({ ok: true });
+    res.json({ ok: true, devolvidas });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// POST /api/negocios/contas/:id/fora-do-pessoal { ativo } — muda "esta conta é
+// só da empresa" e aplica a tudo que a conta já trouxe (passo B, migration 192).
+router.post('/contas/:id/fora-do-pessoal', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    const conta = await linhaAlcancada(user.id, 'contas_negocio', req.params.id, 'admin');
+    if (!conta) return res.status(404).json({ erro: 'Conta não encontrada.' });
+    if (!(await empresaDoDono(user.id, conta.empresa_id))) {
+      return res.status(403).json({ erro: 'Só o dono da empresa muda isso.' });
+    }
+    const ativo = (req.body || {}).ativo !== false;
+    const { error } = await supabase.from('contas_negocio').update({ fora_do_pessoal: ativo }).eq('id', conta.id);
+    if (error) {
+      if (/fora_do_pessoal/i.test(error.message || '')) return res.status(503).json({ erro: 'Falta rodar a migration 192 no Supabase.' });
+      throw error;
+    }
+    const mudaram = conta.wallet_id ? await aplicarForaDoPessoal(conta.id, ativo) : 0;
+    res.json({ ok: true, fora_do_pessoal: ativo, mudaram });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 

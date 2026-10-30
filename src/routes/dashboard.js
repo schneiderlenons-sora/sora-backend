@@ -44,7 +44,10 @@ const calcResumo = (grupoId, mes) => calcularResumo({ grupoId, mes });
 // carteira_nome) e ResumoCards (carteira_nome). Sem o embed do criador — o
 // gráfico não mostra avatar, e o join puxava 6 campos de `users` POR LINHA.
 // Medido: 57,8 KB → 14,0 KB por visita.
-const COLUNAS_GRAFICO = 'id, data, valor, categoria, tipo, transferencia, carteira_nome';
+// ⚠️ `ignorar_em` ("não considerar", migration 146; e a conta da empresa, 192)
+// FALTAVA aqui e já estava no espelho do front: o SSR escondia a linha e a
+// revalidação por este endpoint a trazia de volta pro gráfico.
+const COLUNAS_GRAFICO = 'id, data, valor, categoria, tipo, transferencia, carteira_nome, ignorar_em';
 
 async function listarTransacoes(grupoId, { mes, tipo, limit, ate, colunas }) {
   // Caminho enxuto: quem pede colunas específicas não usa o embed do criador,

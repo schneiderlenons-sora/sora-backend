@@ -208,6 +208,58 @@ function planejarEspelho({ transacoes = [], lancamentos = [], desde, contaId, em
   return { inserir, juntar, atualizar };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PASSO B — A CONTA DA EMPRESA SAI DAS FINANÇAS PESSOAIS (migration 192).
+//
+// Antes, o mesmo Pix era receita da empresa (no caixa) E receita da pessoa
+// (no dashboard, relatórios, limites, resumos do WhatsApp). Cada transação que
+// entra no caixa da empresa ganha `transacoes.ignorar_em = 'empresa'`.
+//
+// ⚠️ É O "NÃO CONSIDERAR" QUE TODO TOTAL PESSOAL JÁ RESPEITA (ehTransferencia
+// no backend e em lib/ssr-data.ts, gráficos, categorias, limites — todos tratam
+// qualquer valor em `ignorar_em` como fora). Uma alavanca só, em vez de ensinar
+// cada tela a pular a carteira da empresa.
+// ⚠️ VALOR PRÓPRIO ('empresa'), nunca 'tudo': desvincular tira EXATAMENTE o que
+// foi posto aqui, sem desfazer o "não considerar" que a própria pessoa escolheu.
+// ⚠️ SÓ MARCA O QUE ESTÁ SEM MARCA: a escolha da pessoa vence.
+// ⚠️ SÓ NA HORA EM QUE A TRANSAÇÃO ENTRA NO CAIXA. Se a pessoa depois mandar
+// "voltar a considerar" uma delas, o próximo sync não a marca de novo.
+// ─────────────────────────────────────────────────────────────────────────────
+const MARCA_EMPRESA = 'empresa';
+
+/** Transações que esta passada ligou ao caixa (as que ganham a marca). */
+function idsLigadosNaPassada(plano) {
+  const ids = new Set();
+  for (const l of (plano && plano.inserir) || []) if (l.transacao_id) ids.add(l.transacao_id);
+  for (const j of (plano && plano.juntar) || []) if (j.transacaoId) ids.add(j.transacaoId);
+  return [...ids];
+}
+
+/** Marca (ou desmarca) transações como "da empresa". Tolerante: falha é log. */
+async function marcarEmpresa(ids, marcar, { supabase }) {
+  let n = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const lote = ids.slice(i, i + 200);
+    const q = supabase.from('transacoes').update({ ignorar_em: marcar ? MARCA_EMPRESA : null }).in('id', lote);
+    const { data, error } = await (marcar ? q.is('ignorar_em', null) : q.eq('ignorar_em', MARCA_EMPRESA)).select('id');
+    if (error) { console.warn('[espelho/pessoal]', error.message); return n; }
+    n += (data || []).length;
+  }
+  return n;
+}
+
+/**
+ * Liga/desliga "esta conta é só da empresa" pra TUDO que a conta já trouxe.
+ * Usado ao desvincular (desliga) e quando a pessoa muda a opção.
+ * @returns {Promise<number>} quantas transações mudaram
+ */
+async function aplicarForaDoPessoal(contaNegocioId, ativo, { supabase = require('../db/supabase') } = {}) {
+  const { data, error } = await supabase.from('lancamentos_negocio')
+    .select('transacao_id').eq('conta_id', contaNegocioId).not('transacao_id', 'is', null);
+  if (error || !data || !data.length) return 0;
+  return marcarEmpresa([...new Set(data.map((l) => l.transacao_id))], !!ativo, { supabase });
+}
+
 /** 1º dia do mês corrente em SP — onde a importação começa ao vincular. */
 function inicioDoMesSP(agora = new Date()) {
   return agora.toLocaleDateString('en-CA', { timeZone: TZ }).slice(0, 8) + '01';
@@ -246,8 +298,16 @@ async function lerTudo(montar) {
  * @returns {{ inseridos:number, juntados:number, atualizados:number, motivo?:string }}
  */
 async function espelharConta(contaNegocioId, { supabase = require('../db/supabase') } = {}) {
-  const { data: conta, error: eConta } = await supabase.from('contas_negocio')
-    .select('id, empresa_id, user_id, wallet_id, importar_desde, ativa').eq('id', contaNegocioId).maybeSingle();
+  const COLS_CONTA = 'id, empresa_id, user_id, wallet_id, importar_desde, ativa';
+  let { data: conta, error: eConta } = await supabase.from('contas_negocio')
+    .select(COLS_CONTA + ', fora_do_pessoal').eq('id', contaNegocioId).maybeSingle();
+  // Sem a migration 192: a coluna não existe e a conta NÃO sai do pessoal
+  // (comportamento de antes) — nunca derrubar o espelho por isso.
+  if (eConta && /fora_do_pessoal/i.test(eConta.message || '')) {
+    ({ data: conta, error: eConta } = await supabase.from('contas_negocio')
+      .select(COLS_CONTA).eq('id', contaNegocioId).maybeSingle());
+    if (conta) conta.fora_do_pessoal = false;
+  }
   if (eConta) throw eConta;
   if (!conta || !conta.ativa || !conta.wallet_id) return { inseridos: 0, juntados: 0, atualizados: 0, motivo: 'sem vínculo' };
 
@@ -310,7 +370,12 @@ async function espelharConta(contaNegocioId, { supabase = require('../db/supabas
     if (error) throw error;
     atualizados++;
   }
-  return { inseridos, juntados, atualizados };
+  // Passo B: o que acabou de entrar no caixa sai das finanças pessoais.
+  let foraDoPessoal = 0;
+  if (conta.fora_do_pessoal !== false) {
+    foraDoPessoal = await marcarEmpresa(idsLigadosNaPassada(plano), true, { supabase });
+  }
+  return { inseridos, juntados, atualizados, foraDoPessoal };
 }
 
 /**
@@ -340,4 +405,5 @@ module.exports = {
   motivoInelegivel, espelharConta, espelharDoConsentimento,
   CAT_A_CLASSIFICAR, CAT_MOVIMENTACAO,
   ehMovimentacao, transacaoEhMovimento, diaSP, planejarEspelho, lancamentoDaTransacao, inicioDoMesSP,
+  MARCA_EMPRESA, idsLigadosNaPassada, aplicarForaDoPessoal,
 };
