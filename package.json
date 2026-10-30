@@ -99,7 +99,8 @@
     "eval:diagnostico": "node evals/diagnosticoFinanceiro.eval.js",
     "eval:pagamento-fatura-conta": "node evals/pagamentoFaturaConta.eval.js",
     "eval:baixa-divida": "node evals/baixaDivida.eval.js",
-    "eval:pagar-divida-rota": "node evals/pagarDividaRota.eval.js"
+    "eval:pagar-divida-rota": "node evals/pagarDividaRota.eval.js",
+    "eval:chamado-duvida": "node evals/chamadoDuvida.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

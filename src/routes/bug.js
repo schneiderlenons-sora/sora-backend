@@ -22,11 +22,14 @@ router.post('/', auth, async (req, res) => {
     const user_id = req.authUser?.id;
     const mensagem = (req.body?.mensagem || '').trim();
     const imagem   = req.body?.imagem;
-    const tipo     = req.body?.tipo === 'melhoria' ? 'melhoria' : 'problema';
+    // 'duvida' entrou com a mudança do suporte pra aba Ajuda (migration 191).
+    const tipo     = ['melhoria', 'duvida'].includes(req.body?.tipo) ? req.body.tipo : 'problema';
     const ehMelhoria = tipo === 'melhoria';
+    const ehDuvida   = tipo === 'duvida';
 
     if (!mensagem) {
-      return res.status(400).json({ erro: ehMelhoria ? 'Escreva sua sugestão antes de enviar.' : 'Descreva o problema antes de enviar.' });
+      return res.status(400).json({ erro: ehMelhoria ? 'Escreva sua sugestão antes de enviar.'
+        : ehDuvida ? 'Escreva sua dúvida antes de enviar.' : 'Descreva o problema antes de enviar.' });
     }
     if (mensagem.length > 4000) {
       return res.status(400).json({ erro: 'Mensagem muito longa (máx. 4000 caracteres).' });
@@ -49,6 +52,12 @@ router.post('/', auth, async (req, res) => {
     try {
       const base = { user_id, nome, phone, email, mensagem, tem_imagem: temImagem };
       let { data: row, error } = await supabase.from('bug_reports').insert({ ...base, tipo }).select('id').single();
+      // Dúvida sem a migration 191: o CHECK recusa o tipo. Grava como problema
+      // com o texto marcado — o suporte ainda vê que é dúvida, e nada se perde.
+      if (error && ehDuvida) {
+        ({ data: row, error } = await supabase.from('bug_reports')
+          .insert({ ...base, mensagem: `❓ Dúvida: ${mensagem}`, tipo: 'problema' }).select('id').single());
+      }
       if (error) ({ data: row } = await supabase.from('bug_reports').insert(base).select('id').single());
       id = row?.id || null;
 
@@ -74,7 +83,7 @@ router.post('/', auth, async (req, res) => {
     // Meta → template `novo_relato` (header de IMAGEM = print; sem print, a capa;
     //        corpo {{1}} = detalhes). Z-API não tem janela → manda rico direto.
     const cabecalho = [
-      ehMelhoria ? '💡 *Nova sugestão de melhoria*' : '🐞 *Novo relato de bug*',
+      ehMelhoria ? '💡 *Nova sugestão de melhoria*' : ehDuvida ? '❓ *Nova dúvida*' : '🐞 *Novo relato de bug*',
       '',
       `👤 ${nome || '—'}${phone ? ` · ${phone}` : ''}`,
       email ? `✉️ ${email}` : null,
@@ -106,7 +115,7 @@ router.post('/', auth, async (req, res) => {
         // corpo do template ({{1}}) — LINHA ÚNICA: a Meta rejeita parâmetro com
         // quebra de linha/tab. Junta com " • " e remove \n do texto do usuário.
         const detalhes = [
-          ehMelhoria ? '💡 Sugestão de melhoria' : '🐞 Relato de bug',
+          ehMelhoria ? '💡 Sugestão de melhoria' : ehDuvida ? '❓ Dúvida' : '🐞 Relato de bug',
           `👤 ${nome || '—'}${phone ? ` · ${phone}` : ''}`,
           email ? `✉️ ${email}` : null,
           `💳 ${plano || '—'}${id ? ` · 🆔 ${id.slice(0, 8)}` : ''}`,
