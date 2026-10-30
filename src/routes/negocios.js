@@ -726,6 +726,73 @@ router.post('/lancamentos/:id/parar-serie', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// ─────────────────────────────────────────────────────────────────
+// "CHEGOU DO BANCO, PARECIDO COM ESTA CONTA — DAR BAIXA?"
+// Régua em services/baixaBancoNegocio.js. O espelho já junta sozinho o valor
+// EXATO até 6 dias do vencimento; aqui ficam desconto, juros e atraso maior.
+// ─────────────────────────────────────────────────────────────────
+
+// GET /api/negocios/conciliacao-banco/:phone?empresa_id=  (só LÊ)
+router.get('/conciliacao-banco/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const empresaId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empresaId) return res.json({ sugestoes: [] });
+    const { sugestoesBaixaBanco } = require('../services/baixaBancoNegocio');
+    const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const desde = new Date(Date.parse(hoje + 'T12:00:00Z') - 60 * 864e5).toISOString().slice(0, 10);
+    const ate = new Date(Date.parse(hoje + 'T12:00:00Z') + 15 * 864e5).toISOString().slice(0, 10);
+    const COLS = 'id, tipo, valor, data, vencimento, status, categoria, descricao, contraparte, transacao_id, origem, conta_id';
+    const [abertos, banco] = await Promise.all([
+      supabase.from('lancamentos_negocio').select(COLS).eq('empresa_id', empresaId)
+        .eq('status', 'pendente').is('transacao_id', null).gte('vencimento', desde).lte('vencimento', ate),
+      supabase.from('lancamentos_negocio').select(COLS).eq('empresa_id', empresaId)
+        .eq('origem', 'banco').gte('data', desde),
+    ]);
+    // Sem a 189 (coluna origem) não há banco a conciliar.
+    if (abertos.error || banco.error) return res.json({ sugestoes: [] });
+    const sugestoes = sugestoesBaixaBanco({ lancamentos: [...(abertos.data || []), ...(banco.data || [])] });
+    res.json({ sugestoes });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// POST /api/negocios/lancamentos/:id/baixa-banco { banco_id }
+// A conta em aberto (:id) é quitada pelo lançamento do banco (banco_id): ela
+// herda o vínculo, o valor e a data do pagamento; o lançamento solto do banco
+// sai (era a mesma coisa contada duas vezes).
+router.post('/lancamentos/:id/baixa-banco', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const { ehAberta, ehDoBanco, patchDaBaixa } = require('../services/baixaBancoNegocio');
+    const aberto = await linhaAlcancada(user.id, 'lancamentos_negocio', req.params.id);
+    const banco = await linhaAlcancada(user.id, 'lancamentos_negocio', (req.body || {}).banco_id);
+    if (!aberto || !banco) return res.status(404).json({ erro: 'Lançamento não encontrado.' });
+    // O servidor RECONFERE: a tela pode estar velha (outra pessoa da equipe deu
+    // baixa, o espelho juntou sozinho no meio-tempo).
+    if (!ehAberta(aberto)) return res.status(409).json({ erro: 'Esta conta já não está em aberto.' });
+    if (!ehDoBanco(banco)) return res.status(409).json({ erro: 'Esse lançamento do banco já foi usado.' });
+    if (banco.empresa_id !== aberto.empresa_id || banco.tipo !== aberto.tipo) {
+      return res.status(400).json({ erro: 'Os dois lançamentos não combinam.' });
+    }
+    // ⚠️ APAGA O DO BANCO PRIMEIRO: o vínculo com a transação é único (índice da
+    // 189), então a conta só pode recebê-lo depois. Se o passo seguinte falhar,
+    // nada se perde — o espelho traz o lançamento do banco de volta no próximo sync.
+    const { error: eDel } = await supabase.from('lancamentos_negocio').delete()
+      .eq('id', banco.id).eq('origem', 'banco');
+    if (eDel) throw eDel;
+    const { data, error } = await supabase.from('lancamentos_negocio')
+      .update(patchDaBaixa(aberto, banco)).eq('id', aberto.id).is('transacao_id', null)
+      .select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(409).json({ erro: 'Esta conta já não está em aberto.' });
+    res.json({ ok: true, lancamento: data });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 // DELETE /api/negocios/lancamentos/:id
 router.delete('/lancamentos/:id', auth, async (req, res) => {
   try {

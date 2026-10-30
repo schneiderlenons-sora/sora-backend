@@ -102,7 +102,8 @@
     "eval:pagar-divida-rota": "node evals/pagarDividaRota.eval.js",
     "eval:chamado-duvida": "node evals/chamadoDuvida.eval.js",
     "eval:serie-negocio": "node evals/serieNegocio.eval.js",
-    "eval:serie-negocio-rota": "node evals/serieNegocioRota.eval.js"
+    "eval:serie-negocio-rota": "node evals/serieNegocioRota.eval.js",
+    "eval:baixa-banco-negocio": "node evals/baixaBancoNegocio.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
