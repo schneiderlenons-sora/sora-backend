@@ -129,6 +129,62 @@ console.log('── 4. ⚠️ digitado à mão é juntado, nunca duplicado ─�
 }
 console.log('  ok');
 
+// ── 4B. baixa de conta em aberto pelo vencimento ─────────────────────────
+console.log('── 4B. ⚠️ conta a receber/pagar: baixa pelo VENCIMENTO ──');
+{
+  // Caso Robert: contrato fixo recebido toda semana, lançado como conta a receber.
+  const aReceber = (id, venc, o = {}) => ({ id, transacao_id: null, origem: 'manual', conta_id: null, tipo: 'entrada',
+    valor: 250000, data: '2026-10-01', vencimento: venc, status: 'pendente', categoria: 'servicos',
+    forma_pagamento: 'pix', ...o });
+  const pix = (id, dia) => tx(id, { tipo: 'Recebimento', valor: 2500, data: `${dia}T14:00:00+00:00` });
+
+  const p1 = plano([pix('a', '2026-10-09')], [aReceber('s1', '2026-10-07'), aReceber('s2', '2026-10-14')]);
+  eq(p1.inserir.length, 0, 'o Pix NÃO entra como receita nova');
+  eq(p1.juntar[0].lancamentoId, 's1', 'quita a conta a receber da semana');
+  eq(p1.juntar[0].patch.status, 'pago', 'que vira paga');
+  eq(p1.juntar[0].patch.pago_em, '2026-10-09', 'na data do Pix');
+  eq('data' in p1.juntar[0].patch, false, '⚠️ a competência (data) da mensalidade fica');
+
+  // Dia 11: mais perto da parcela do dia 14 — mas quita a MAIS ANTIGA (dia 7).
+  const p2 = plano([pix('a', '2026-10-11')], [aReceber('s1', '2026-10-07'), aReceber('s2', '2026-10-14')]);
+  eq(p2.juntar[0].lancamentoId, 's1', '⚠️ quita a mais antiga em aberto, não a mais próxima');
+
+  // Duas semanas pagas: cada Pix quita uma parcela, sem repetir.
+  const p3 = plano([pix('a', '2026-10-07'), pix('b', '2026-10-14')], [aReceber('s1', '2026-10-07'), aReceber('s2', '2026-10-14')]);
+  eq(p3.juntar.length, 2, 'as duas semanas quitadas');
+  eq(new Set(p3.juntar.map((j) => j.lancamentoId)).size, 2, 'uma parcela por Pix');
+  eq(p3.inserir.length, 0, 'nada duplicado');
+
+  // Fora da janela (7 dias): não arrisca — entra como receita a classificar.
+  const p4 = plano([pix('a', '2026-10-14')], [aReceber('s1', '2026-10-07')]);
+  eq(p4.juntar.length, 0, '7 dias depois do vencimento não quita sozinho');
+  eq(p4.inserir.length, 1, 'entra como lançamento novo');
+  eq(plano([pix('a', '2026-10-09')], [aReceber('s1', '2026-10-07', { valor: 249999 })]).juntar.length, 0, 'valor diferente no centavo não quita');
+  eq(plano([tx('a', { valor: 2500, data: '2026-10-09T14:00:00+00:00' })], [aReceber('s1', '2026-10-07')]).juntar.length, 0, 'saída não quita conta a RECEBER');
+
+  // Conta a pagar já projetada.
+  const aPagar = { ...aReceber('p1', '2026-10-10'), tipo: 'saida', categoria: 'aluguel' };
+  eq(plano([tx('a', { valor: 2500, data: '2026-10-10T14:00:00+00:00' })], [aPagar]).juntar[0]?.lancamentoId, 'p1', 'conta a pagar baixada pelo débito');
+
+  // Já quitada pelo banco: na passada seguinte só a SITUAÇÃO acompanha.
+  const quitada = { ...aReceber('s1', '2026-10-07'), transacao_id: 'a', status: 'pago', pago_em: '2026-10-09' };
+  const p5 = plano([pix('a', '2026-10-09')], [quitada]);
+  eq(p5.atualizar.length, 0, '⚠️ a competência da mensalidade não é trocada pela data do Pix');
+
+  // ⚠️ As 4 semanas cadastradas NO MESMO DIA (data 01/10): a data de criação
+  // não diz nada — quem decide é o vencimento. Ids escolhidos pra que a
+  // ordem alfabética apontasse a parcela ERRADA (a da última semana).
+  const mesmoDia = [aReceber('z1', '2026-10-07'), aReceber('a4', '2026-10-28')];
+  const p7 = plano([pix('a', '2026-10-03')], mesmoDia);
+  eq(p7.juntar[0]?.lancamentoId, 'z1', '⚠️ conta em aberto casa pelo VENCIMENTO, nunca pela data de cadastro');
+
+  // Já digitado como pago tem prioridade sobre a conta em aberto.
+  const p6 = plano([pix('a', '2026-10-07')], [aReceber('s1', '2026-10-07'),
+    { ...aReceber('m1', null), status: 'pago', data: '2026-10-07' }]);
+  eq(p6.juntar[0].lancamentoId, 'm1', 'o recebimento já digitado casa antes da conta em aberto');
+}
+console.log('  ok');
+
 // ── 5. órfão de reprocesso ───────────────────────────────────────────────
 console.log('── 5. ⚠️ órfão do reprocesso é religado ──');
 {
@@ -213,6 +269,24 @@ function bancoFalso({ conta, wallet, transacoes, lancamentos, conflitoNaPrimeira
     lancamentos: [{ id: 'm1', empresa_id: 'emp-1', transacao_id: null, origem: 'manual', conta_id: null,
       tipo: 'saida', valor: 5500, data: '2026-10-10', categoria: 'fornecedor', forma_pagamento: 'pix' }],
   });
+  {
+    // ⚠️ Conta a receber CADASTRADA EM AGOSTO que vence nesta semana: a busca
+    // por data do lançamento não a traria; a busca por vencimento traz.
+    const cenario = base();
+    cenario.transacoes.push({ ...tx('r', { tipo: 'Recebimento', valor: 2500, data: '2026-10-09T14:00:00+00:00' }),
+      grupo_id: 'g1', carteira_nome: 'Mercado Pago PJ' });
+    cenario.lancamentos.push({ id: 'ago', empresa_id: 'emp-1', transacao_id: null, origem: 'manual', conta_id: null,
+      tipo: 'entrada', valor: 250000, data: '2026-08-01', vencimento: '2026-10-07', status: 'pendente',
+      categoria: 'servicos', forma_pagamento: 'pix' });
+    const b = bancoFalso(cenario);
+    const r = await espelharConta('conta-pj', { supabase: b.client });
+    const ago = b.t.lancamentos_negocio.find((l) => l.id === 'ago');
+    eq(ago.transacao_id, 'r', 'a conta de agosto que vence agora foi quitada pelo Pix');
+    eq(ago.status, 'pago', 'e está paga');
+    eq(ago.data, '2026-08-01', 'com a competência de agosto preservada');
+    eq(b.t.lancamentos_negocio.some((l) => l.transacao_id === 'r' && l.id !== 'ago'), false, 'o Pix não entrou duplicado');
+    eq(r.juntados, 2, 'juntou o digitado e a conta a receber');
+  }
   {
     const b = bancoFalso(base());
     const r1 = await espelharConta('conta-pj', { supabase: b.client });

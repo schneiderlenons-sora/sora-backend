@@ -73,6 +73,10 @@ function diaSP(v) {
 }
 
 const centavos = (v) => Math.round(Number(v || 0) * 100);
+/** Até quantos dias do VENCIMENTO o banco dá baixa numa conta em aberto.
+ *  Menos de uma semana: com parcelas semanais de mesmo valor, mais que isso
+ *  deixaria um pagamento atrasado quitar a parcela da semana seguinte. */
+const DIAS_VENCIMENTO = 6;
 const tipoDe = (t) => (t.tipo === 'Recebimento' ? 'entrada' : 'saida');
 const diasEntre = (a, b) => Math.abs((Date.parse(a + 'T12:00:00Z') - Date.parse(b + 'T12:00:00Z')) / 864e5);
 
@@ -143,26 +147,51 @@ function planejarEspelho({ transacoes = [], lancamentos = [], desde, contaId, em
 
     if (ja) {
       // Já espelhada. O banco manda no valor/data/sentido/status; a categoria
-      // e a descrição que a pessoa ajustou ficam. Manual juntado também segue.
+      // e a descrição que a pessoa ajustou ficam.
+      // ⚠️ No lançamento DIGITADO e juntado, só a situação acompanha o banco:
+      // a `data` dele é a COMPETÊNCIA (o mês da mensalidade, no DRE) e não pode
+      // virar a data do Pix — e o valor já casou no centavo.
+      const chaves = ja.origem === 'banco'
+        ? ['tipo', 'valor', 'data', 'status', 'pago_em']
+        : ['status', 'pago_em'];
       const patch = {};
-      for (const k of ['tipo', 'valor', 'data', 'status', 'pago_em']) {
+      for (const k of chaves) {
         if (String(ja[k] ?? '') !== String(alvo[k] ?? '')) patch[k] = alvo[k];
       }
       if (Object.keys(patch).length) atualizar.push({ lancamentoId: ja.id, patch });
       continue;
     }
 
-    // Já digitado à mão? Mesmo sentido, mesmo valor no centavo, até 3 dias —
-    // o mais próximo em data. Pareamento 1:1: duas vendas de R$ 50 digitadas
-    // casam com as DUAS do banco, nunca as duas com a mesma.
-    const cands = manuais
-      .filter((l) => !usados.has(l.id) && l.tipo === alvo.tipo && Number(l.valor) === alvo.valor)
-      .map((l) => ({ l, d: diasEntre(String(l.data).slice(0, 10), alvo.data) }))
-      .filter((c) => c.d <= 3)
-      .sort((a, b) => a.d - b.d || String(a.l.id).localeCompare(String(b.l.id)));
-    if (cands.length) {
-      usados.add(cands[0].l.id);
-      juntar.push({ lancamentoId: cands[0].l.id, transacaoId: t.id, patch: { conta_id: contaId, status: alvo.status, pago_em: alvo.pago_em } });
+    const casar = (l) => !usados.has(l.id) && l.tipo === alvo.tipo && Number(l.valor) === alvo.valor;
+    const maisProximo = (lista, dataDe, max) => lista
+      .map((l) => ({ l, d: diasEntre(String(dataDe(l)).slice(0, 10), alvo.data) }))
+      .filter((c) => c.d <= max)
+      .sort((a, b) => a.d - b.d || String(a.l.id).localeCompare(String(b.l.id)))[0];
+
+    // 1) Já digitado como PAGO? Mesmo sentido, mesmo valor no centavo, até 3
+    //    dias da data — o mais próximo. Pareamento 1:1: duas vendas de R$ 50
+    //    digitadas casam com as DUAS do banco, nunca as duas com a mesma.
+    // 2) CONTA EM ABERTO (a receber / a pagar)? Mesmo sentido e valor, até
+    //    DIAS_VENCIMENTO do VENCIMENTO — é a baixa automática. Caso de origem
+    //    (Robert): contrato fixo recebido toda semana, lançado como conta a
+    //    receber; o Pix da semana tem de quitar AQUELA conta, não entrar ao
+    //    lado dela como receita nova (a projeção ficaria dobrada). Com parcelas
+    //    semanais de mesmo valor, o vencimento mais próximo decide qual — e a
+    //    janela fica abaixo de uma semana pra não pular pra parcela seguinte.
+    const pagos = manuais.filter((l) => l.status !== 'pendente' && casar(l));
+    const abertos = manuais.filter((l) => l.status === 'pendente' && casar(l));
+    // ⚠️ Em aberto, entre as de MESMO valor dentro da janela, quita a de
+    // vencimento MAIS ANTIGO (a dívida mais velha primeiro). "A mais próxima"
+    // erraria: Pix no dia 11 com parcelas vencendo 7 e 14 está mais perto da
+    // do dia 14 — e deixaria a do dia 7 em aberto como se não tivesse sido paga.
+    const vencDe = (l) => String(l.vencimento || l.data).slice(0, 10);
+    const maisAntiga = abertos
+      .filter((l) => diasEntre(vencDe(l), alvo.data) <= DIAS_VENCIMENTO)
+      .sort((a, b) => vencDe(a).localeCompare(vencDe(b)) || String(a.id).localeCompare(String(b.id)))[0];
+    const achado = maisProximo(pagos, (l) => l.data, 3) || (maisAntiga && { l: maisAntiga });
+    if (achado) {
+      usados.add(achado.l.id);
+      juntar.push({ lancamentoId: achado.l.id, transacaoId: t.id, patch: { conta_id: contaId, status: alvo.status, pago_em: alvo.pago_em } });
       continue;
     }
 
@@ -229,9 +258,17 @@ async function espelharConta(contaNegocioId, { supabase = require('../db/supabas
     .select('id, tipo, valor, data, categoria, observacao, transferencia, pago')
     .eq('grupo_id', wallet.grupo_id).eq('carteira_nome', wallet.nome)
     .gte('data', desdeLanc).order('id'));
-  const lancamentos = await lerTudo(() => supabase.from('lancamentos_negocio')
-    .select('id, tipo, valor, data, categoria, transacao_id, origem, conta_id, forma_pagamento, status, pago_em')
-    .eq('empresa_id', conta.empresa_id).gte('data', desdeLanc).order('id'));
+  const COLS = 'id, tipo, valor, data, vencimento, categoria, transacao_id, origem, conta_id, forma_pagamento, status, pago_em';
+  const recentes = await lerTudo(() => supabase.from('lancamentos_negocio')
+    .select(COLS).eq('empresa_id', conta.empresa_id).gte('data', desdeLanc).order('id'));
+  // ⚠️ CONTAS EM ABERTO entram pela data de VENCIMENTO, não pela do lançamento:
+  // a mensalidade cadastrada em agosto que vence nesta semana tem `data` de
+  // agosto e ficaria de fora — e o Pix dela entraria como receita nova.
+  const emAberto = await lerTudo(() => supabase.from('lancamentos_negocio')
+    .select(COLS).eq('empresa_id', conta.empresa_id).eq('status', 'pendente')
+    .is('transacao_id', null).gte('vencimento', desdeLanc).order('id'));
+  const vistos = new Set(recentes.map((l) => l.id));
+  const lancamentos = [...recentes, ...emAberto.filter((l) => !vistos.has(l.id))];
 
   const plano = planejarEspelho({
     transacoes, lancamentos, desde, contaId: conta.id, empresaId: conta.empresa_id, userId: conta.user_id,
