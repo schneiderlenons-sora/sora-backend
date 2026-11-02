@@ -4,7 +4,7 @@ const supabase = require('../db/supabase');
 const { temNegocios } = require('../config/planos');
 const auth     = require('../middlewares/auth');
 const { gerarDre, sugerirConciliacao } = require('../handlers/negocios');
-const { espelharConta, motivoInelegivel, inicioDoMesSP, ehMovimentacao, aplicarForaDoPessoal } = require('../services/espelhoContaEmpresa');
+const { espelharConta, motivoInelegivel, inicioDoMesSP, ehMovimentacao, aplicarForaDoPessoal, validarTrazerDesde } = require('../services/espelhoContaEmpresa');
 const { encrypt, decrypt } = require('../services/cripto');
 const { importarHistoricoHotmart } = require('../services/hotmart-import');
 const { gerarInsights } = require('./../handlers/insights-negocio');
@@ -602,7 +602,11 @@ router.post('/lancamentos', auth, async (req, res) => {
       observacao:      b.observacao || null,
     }).select().single();
     if (error && repete && /serie_/i.test(error.message || '')) {
-      return res.status(503).json({ erro: 'Falta rodar a migration 192 no Supabase pra usar contas que se repetem.' });
+      // ⚠️ O texto vai pro CLIENTE (relato do Robert, 01/11/2026: o modal
+      // mostrou "falta rodar a migration 192 no Supabase"). O detalhe técnico
+      // fica só no log.
+      console.warn('[negócios] migration 192 pendente: contas que se repetem indisponíveis');
+      return res.status(503).json({ erro: 'Contas que se repetem ainda estão sendo liberadas. Tente de novo em alguns minutos — ou salve sem repetir por enquanto.' });
     }
     if (!error && repete) {
       // A 1ª já está gravada: falhar aqui não pode virar "não salvou". O job
@@ -1804,7 +1808,8 @@ router.post('/centros-custo', auth, async (req, res) => {
         return res.status(409).json({ erro: `Você já tem um centro de custo chamado "${nome}".` });
       }
       if (/centros_custo/.test(error.message || '')) {
-        return res.status(503).json({ erro: 'Recurso ainda não liberado no banco (migration 105).' });
+        console.warn('[negócios] migration 105 pendente');
+        return res.status(503).json({ erro: 'Este recurso ainda está sendo liberado. Tente de novo em alguns minutos.' });
       }
       throw error;
     }
@@ -2196,7 +2201,8 @@ router.post('/contas/:id/vincular-banco', auth, async (req, res) => {
         return res.status(409).json({ erro: 'Esta conta do banco já alimenta outra conta da empresa.' });
       }
       if (/wallet_id|importar_desde/i.test(error.message || '')) {
-        return res.status(503).json({ erro: 'Falta rodar a migration 189 no Supabase.' });
+        console.warn('[negócios] migration 189 pendente');
+        return res.status(503).json({ erro: 'Este recurso ainda está sendo liberado. Tente de novo em alguns minutos.' });
       }
       throw error;
     }
@@ -2228,6 +2234,38 @@ router.delete('/contas/:id/vincular-banco', auth, async (req, res) => {
 
 // POST /api/negocios/contas/:id/fora-do-pessoal { ativo } — muda "esta conta é
 // só da empresa" e aplica a tudo que a conta já trouxe (passo B, migration 192).
+// POST /api/negocios/contas/:id/trazer-desde { mes: 'YYYY-MM' } — traz pro
+// caixa os meses ANTERIORES ao vínculo (o histórico que o banco já mandou).
+// Só o dono; só recua; até 12 meses. Os meses afetados têm o DRE recalculado
+// (o snapshot de mês fechado não enxergaria os lançamentos novos).
+router.post('/contas/:id/trazer-desde', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const conta = await linhaAlcancada(user.id, 'contas_negocio', req.params.id, 'admin');
+    if (!conta || !conta.ativa) return res.status(404).json({ erro: 'Conta não encontrada.' });
+    if (!conta.wallet_id) return res.status(400).json({ erro: 'Esta conta não está ligada a uma conta do banco.' });
+    if (!(await empresaDoDono(user.id, conta.empresa_id))) {
+      return res.status(403).json({ erro: 'Só o dono da empresa pode trazer meses anteriores.' });
+    }
+    const v = validarTrazerDesde((req.body || {}).mes, conta.importar_desde);
+    if (v.erro) return res.status(400).json({ erro: v.erro });
+
+    const { error } = await supabase.from('contas_negocio').update({ importar_desde: v.desde }).eq('id', conta.id);
+    if (error) throw error;
+    const r = await espelharConta(conta.id);
+    // DRE: só os meses FECHADOS que ganharam movimento (o mês em curso é
+    // sempre recalculado). Falhar aqui não desfaz a cópia — o "Atualizar" do
+    // DRE recalcula do mesmo jeito.
+    try {
+      await supabase.from('dre_snapshots').delete()
+        .eq('empresa_id', conta.empresa_id).gte('periodo', v.desde).lt('periodo', inicioDoMesSP());
+    } catch (e) { console.warn('[negócios] trazer-desde: snapshot', e.message); }
+    res.json({ ok: true, desde: v.desde, ...r });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 router.post('/contas/:id/fora-do-pessoal', auth, async (req, res) => {
   try {
     const user = await getUser(req);
@@ -2240,7 +2278,10 @@ router.post('/contas/:id/fora-do-pessoal', auth, async (req, res) => {
     const ativo = (req.body || {}).ativo !== false;
     const { error } = await supabase.from('contas_negocio').update({ fora_do_pessoal: ativo }).eq('id', conta.id);
     if (error) {
-      if (/fora_do_pessoal/i.test(error.message || '')) return res.status(503).json({ erro: 'Falta rodar a migration 192 no Supabase.' });
+      if (/fora_do_pessoal/i.test(error.message || '')) {
+        console.warn('[negócios] migration 192 pendente: fora_do_pessoal');
+        return res.status(503).json({ erro: 'Este recurso ainda está sendo liberado. Tente de novo em alguns minutos.' });
+      }
       throw error;
     }
     const mudaram = conta.wallet_id ? await aplicarForaDoPessoal(conta.id, ativo) : 0;

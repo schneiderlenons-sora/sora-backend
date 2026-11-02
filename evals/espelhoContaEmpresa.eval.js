@@ -320,6 +320,22 @@ function bancoFalso({ conta, wallet, transacoes, lancamentos, conflitoNaPrimeira
   }
   console.log('  ok');
 
+  // ── "Trazer meses anteriores" (pedido do Robert, 01/11/2026) ────────────
+  console.log('── trazer meses anteriores ──');
+  {
+    const { validarTrazerDesde: v } = require('../src/services/espelhoContaEmpresa');
+    const HOJE = '2026-11-01';
+    eq(v('2026-09', '2026-11-01', HOJE).desde, '2026-09-01', 'recua pra setembro');
+    eq(v('2026-11', '2026-11-01', HOJE).erro, 'A conta já traz desde esse mês.', 'o mesmo mês não muda nada');
+    eq(typeof v('2026-12', '2026-11-01', HOJE).erro, 'string', '⚠️ pra frente não: desfaria o que já entrou');
+    eq(v('2025-11', '2026-11-01', HOJE).desde, '2025-11-01', 'até 12 meses vale');
+    eq(typeof v('2025-10', '2026-11-01', HOJE).erro, 'string', '⚠️ mais de 12 meses é recusado');
+    eq(typeof v('2026-13', '2026-11-01', HOJE).erro, 'string', 'mês inválido');
+    eq(typeof v('setembro', '2026-11-01', HOJE).erro, 'string', 'texto livre é recusado');
+    eq(v('2026-09', null, HOJE).desde, '2026-09-01', 'sem data atual (legado) aceita');
+  }
+  console.log('  ok');
+
   console.log('');
   if (falhas.length) {
     console.error(`✗ ${falhas.length} falha(s):`);

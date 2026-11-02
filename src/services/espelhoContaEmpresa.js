@@ -401,7 +401,28 @@ async function espelharDoConsentimento(consentId, { supabase = require('../db/su
   }
 }
 
+/**
+ * "Trazer meses anteriores" (pedido do Robert, 01/11/2026): recuar o início da
+ * cópia pro caixa. O histórico JÁ ESTÁ na Sora — o Open Finance trouxe a conta
+ * com meses de movimento —, só não entrava no caixa porque a cópia começa no
+ * mês do vínculo (de propósito: meses fechados não são reescritos sozinhos).
+ * Aqui é a pessoa que pede, e escolhe até onde.
+ *
+ * ⚠️ Só RECUA (pra frente não desfaz o que já entrou) e no máximo 12 meses.
+ * @returns {{ desde: string } | { erro: string }}
+ */
+function validarTrazerDesde(mes, atual, hoje = inicioDoMesSP()) {
+  if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(String(mes || ''))) return { erro: 'Mês inválido.' };
+  const desde = `${mes}-01`;
+  const [y, m] = String(hoje).slice(0, 7).split('-').map(Number);
+  const limite = new Date(Date.UTC(y, m - 1 - 12, 1)).toISOString().slice(0, 10);
+  if (desde < limite) return { erro: 'Dá pra trazer até 12 meses pra trás.' };
+  if (atual && desde >= String(atual).slice(0, 10)) return { erro: 'A conta já traz desde esse mês.' };
+  return { desde };
+}
+
 module.exports = {
+  validarTrazerDesde,
   motivoInelegivel, espelharConta, espelharDoConsentimento,
   CAT_A_CLASSIFICAR, CAT_MOVIMENTACAO,
   ehMovimentacao, transacaoEhMovimento, diaSP, planejarEspelho, lancamentoDaTransacao, inicioDoMesSP,
