@@ -178,6 +178,29 @@ async function quitarOcorrencia(p) {
   const { data: wallets } = await supabase.from('wallets').select('*').eq('grupo_id', grupoId);
   const base = await moedaBaseDoGrupo(grupoId);
 
+  // ── DE ONDE SAIU O DINHEIRO (pedido do dono, nov/2026) ───────────────────
+  //
+  // Quem não tem Open Finance não conseguia dizer "paguei" sem que a Sora
+  // descontasse da conta cadastrada na conta fixa — e às vezes o dinheiro
+  // saiu de outro lugar (dinheiro vivo, conta que não está na Sora) ou a
+  // pessoa só controla o saldo pelo extrato do banco.
+  //
+  //   · `sem_conta: true` → o pagamento é REGISTRADO (conta como despesa do
+  //     mês, sai da previsão, o cron não lança de novo) mas NÃO mexe em saldo
+  //     nenhum: `carteira_nome` fica nulo.
+  //   · `carteira_nome` diferente da conta fixa → a pessoa escolheu outra
+  //     conta. ⚠️ Ela TEM de existir no grupo: gravar um nome que não é
+  //     carteira de ninguém cria a conta-fantasma (o lançamento some de todo
+  //     filtro por conta). A conta da PRÓPRIA conta fixa segue sem conferência,
+  //     exatamente como antes.
+  const semConta = p.sem_conta === true;
+  const escolhida = !semConta && p.carteira_nome && !mesmoNome(p.carteira_nome, rec.carteira || '')
+    ? p.carteira_nome : null;
+  if (escolhida && !(wallets || []).some((w) => mesmoNome(w.nome, escolhida))) {
+    return { status: 400, body: { erro: 'conta_inexistente', mensagem: 'Essa conta não existe mais. Escolha outra.' } };
+  }
+  const carteiraFinal = semConta ? null : (p.carteira_nome || rec.carteira || null);
+
   // ⚠️ IDEMPOTENTE. Dois toques no botão (ou o retry de uma rede ruim) não
   // podem gerar dois pagamentos nem dois débitos.
   const { data: existentes } = await supabase.from('transacoes')
@@ -195,8 +218,13 @@ async function quitarOcorrencia(p) {
     // Sem valor na chamada vale o da PRÓPRIA linha, não o da conta fixa: o
     // pendente de uma conta variável pode ter sido confirmado com outro valor.
     const valorReaberta = Number(p.valor) > 0 ? Number(p.valor) : Number(t.valor);
+    // Sem conta (ou outra conta escolhida) vale também pra linha REABERTA: o
+    // débito logo abaixo lê a conta da própria linha.
+    const patch = { pago: true, data: dataFinal, valor: valorReaberta };
+    if (semConta) patch.carteira_nome = null;
+    else if (escolhida) patch.carteira_nome = escolhida;
     const { data: viradas, error } = await supabase.from('transacoes')
-      .update({ pago: true, data: dataFinal, valor: valorReaberta })
+      .update(patch)
       .eq('id', t.id).eq('pago', false)
       .select('id, tipo, valor, categoria, transferencia, carteira_nome');
     if (error) return { status: 500, body: { erro: error.message } };
@@ -213,7 +241,7 @@ async function quitarOcorrencia(p) {
     valor:          valorFinal,
     categoria:      rec.categoria || null,
     observacao:     rec.descricao || 'Conta fixa',
-    carteira_nome:  p.carteira_nome || rec.carteira || null,
+    carteira_nome:  carteiraFinal,
     // hojeSP(), nunca toISOString(): o segundo é UTC, e depois das 21h no Brasil
     // devolve o dia SEGUINTE — a quitação cairia na competência errada.
     data:           dataFinal,

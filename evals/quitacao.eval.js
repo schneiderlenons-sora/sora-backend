@@ -355,6 +355,53 @@ const linhas = (banco, rec) => banco.tabelas.transacoes.filter((t) => t.recorren
   }
   console.log('  ok');
 
+  // ── 11. "Marcar pago" SEM descontar de conta, e de OUTRA conta ───────────
+  // Pedido do dono (nov/2026): quem não tem Open Finance não conseguia dizer
+  // "paguei" sem a Sora descontar da conta cadastrada na conta fixa.
+  console.log('── 11. pago sem conta / em outra conta ──');
+  {
+    const b = criarBanco(cenario()); const r = carregarRotas(b);
+    const q = await r.quitar({ recorrencia_id: 'r-saude', competencia: COMP, data: HOJE, valor: 1700, sem_conta: true });
+    eq(q.statusCode, 200, '§11 sem conta responde 200');
+    eq(saldo(b, 'w-inter'), 5217.71, '⚠️ §11 sem conta NÃO mexe no saldo da conta da conta fixa');
+    eq(linhas(b, 'r-saude').length, 1, '§11 o pagamento é registrado (uma linha)');
+    eq(linhas(b, 'r-saude')[0].carteira_nome, null, '§11 a linha fica sem conta');
+    eq(linhas(b, 'r-saude')[0].pago, true, '§11 a linha nasce paga');
+    await r.editar(linhas(b, 'r-saude')[0].id, { pago: false });
+    eq(saldo(b, 'w-inter'), 5217.71, '§11 "ainda não paguei" sem conta também não mexe no saldo');
+    await r.quitar({ recorrencia_id: 'r-saude', competencia: COMP, data: HOJE, sem_conta: true });
+    eq(saldo(b, 'w-inter'), 5217.71, '⚠️ §11 reabrir sem conta não desconta');
+    eq(linhas(b, 'r-saude').length, 1, '§11 continua uma linha');
+    await r.apagar(linhas(b, 'r-saude')[0].id);
+    eq(saldo(b, 'w-inter'), 5217.71, '§11 apagar a baixa sem conta não mexe no saldo');
+  }
+  {
+    // pendente (cron em "só prever") criado NA conta da conta fixa, pago "sem conta"
+    const c = cenario();
+    c.transacoes = [{ id: 'tx-p', grupo_id: 'g1', tipo: 'Gasto', valor: 1700, recorrencia_id: 'r-saude', competencia: COMP, pago: false, carteira_nome: 'Inter PJ', data: HOJE, created_at: '000001' }];
+    const b = criarBanco(c); const r = carregarRotas(b);
+    await r.quitar({ recorrencia_id: 'r-saude', competencia: COMP, data: HOJE, sem_conta: true });
+    eq(b.tabelas.transacoes[0].pago, true, '§11 o pendente vira pago');
+    eq(b.tabelas.transacoes[0].carteira_nome, null, '⚠️ §11 e sai da conta (senão o débito leria a conta da linha)');
+    eq(saldo(b, 'w-inter'), 5217.71, '⚠️ §11 pendente pago sem conta não desconta');
+  }
+  {
+    const b = criarBanco(cenario()); const r = carregarRotas(b);
+    const q = await r.quitar({ recorrencia_id: 'r-saude', competencia: COMP, data: HOJE, valor: 30, carteira_nome: 'carteira' });
+    eq(q.statusCode, 200, '§11 outra conta responde 200');
+    eq(saldo(b, 'w-velha'), 70, '§11 desconta da conta ESCOLHIDA (caixa diferente vale)');
+    eq(saldo(b, 'w-inter'), 5217.71, '§11 e não da conta da conta fixa');
+    const inexistente = criarBanco(cenario()); const r2 = carregarRotas(inexistente);
+    const q2 = await r2.quitar({ recorrencia_id: 'r-saude', competencia: COMP, data: HOJE, carteira_nome: 'Conta Que Nao Existe' });
+    eq(q2.statusCode, 400, '⚠️ §11 conta escolhida que não existe → 400 (nada de conta-fantasma)');
+    eq(q2.body.erro, 'conta_inexistente', '§11 erro nomeado');
+    eq(linhas(inexistente, 'r-saude').length, 0, '§11 nada gravado');
+    const f = criarBanco(cenario()); const r3 = carregarRotas(f);
+    const q3 = await r3.quitar({ recorrencia_id: 'r-fantasma', competencia: COMP, data: HOJE, carteira_nome: 'Conta Apagada' });
+    eq(q3.statusCode, 200, '§11 a conta da própria conta fixa não é barrada (comportamento antigo)');
+  }
+  console.log('  ok');
+
   console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
   if (falhas.length) { falhas.forEach((x) => console.log('  · ' + x)); process.exit(1); }
 })().catch((e) => { console.error(e); process.exit(1); });

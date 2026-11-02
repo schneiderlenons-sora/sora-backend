@@ -126,7 +126,7 @@ router.post('/quitar', auth, exigirPermissao('admin', 'escrita'), async (req, re
     const { grupoId, userId } = await contexto(req);
     if (!grupoId) return res.status(400).json({ erro: 'sem grupo ativo' });
 
-    const { recorrencia_id, competencia, data, valor, carteira_nome, transacao_id } = req.body || {};
+    const { recorrencia_id, competencia, data, valor, carteira_nome, transacao_id, sem_conta } = req.body || {};
     if (!recorrencia_id || !COMPETENCIA.test(competencia || '')) {
       return res.status(400).json({ erro: 'recorrencia_id e competencia (YYYY-MM) sao obrigatorios' });
     }
@@ -138,7 +138,9 @@ router.post('/quitar', auth, exigirPermissao('admin', 'escrita'), async (req, re
 
     // Idempotência, débito do saldo, data futura e reabertura de pendente:
     // tudo em services/quitacao.js (travado em eval:quitacao).
-    const r = await quitarOcorrencia({ grupoId, userId, rec, competencia, data, valor, carteira_nome, transacao_id });
+    // `sem_conta`: registra o pagamento sem descontar de conta nenhuma (quem
+    // não tem Open Finance e pagou por fora). Ver services/quitacao.js.
+    const r = await quitarOcorrencia({ grupoId, userId, rec, competencia, data, valor, carteira_nome, transacao_id, sem_conta: sem_conta === true });
     res.status(r.status).json(r.body);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
