@@ -9,6 +9,7 @@ const { moverSaldo, avisoContaDoBanco } = require('../services/saldoCarteira');
 // com real seria mentira.
 const { normalizarMoeda, taxasParaBase, moedaBaseDoGrupo, somarSaldos, formatar: fmtMoeda } = require('../services/moeda');
 const { aPagarCartoes, avisoParcial: avisoParcialCartoes } = require('../services/aPagarCartoes');
+const { marcarDaEmpresa, doPessoal, ehDaEmpresa } = require('../services/contaDaEmpresa');
 
 // Soma os gastos de uma carteira (conta/cartão) num intervalo [ini, fimExcl).
 // excluirTransfer = ignora transferências (elas não são gasto de verdade).
@@ -313,10 +314,20 @@ module.exports = async function handleWallets(data, ctx) {
 
   // ── VER SALDOS ──────────────────────────────────────────────────
   if (data.acao === 'ver_saldos') {
-    const { data: wallets } = await supabase.from('wallets')
+    const { data: todas } = await supabase.from('wallets')
       .select('*').eq('grupo_id', grupoId).order('nome');
+    // ⚠️ Conta "só da empresa" (Sora Negócios) NÃO entra nos saldos da pessoa
+    // — nem na lista, nem no total. Ela é citada no fim, pra não parecer que
+    // sumiu (services/contaDaEmpresa.js; leitura que falha devolve a conta).
+    const marcadas = await marcarDaEmpresa(todas || []);
+    const wallets = doPessoal(marcadas);
+    const daEmpresa = marcadas.filter(ehDaEmpresa);
+    const notaEmpresa = daEmpresa.length
+      ? `\n\n🏢 _${daEmpresa.map(w => w.nome).join(', ')} ${daEmpresa.length === 1 ? 'é conta' : 'são contas'} da empresa e ${daEmpresa.length === 1 ? 'fica' : 'ficam'} no Sora Negócios._`
+      : '';
 
     if (!wallets?.length) {
+      if (daEmpresa.length) { await enviarTexto(phone, `🏦 Nenhuma conta pessoal cadastrada.${notaEmpresa}`); return; }
       await enviarTexto(phone, '🏦 Nenhuma conta cadastrada.\nCrie com: "nubank 1000"');
       return;
     }
@@ -375,7 +386,7 @@ module.exports = async function handleWallets(data, ctx) {
         `💰 *Saldo líquido: ${fmt(emContas - aPagar)}*`
       : `💵 *Total: ${fmt(emContas)}*`) + avisoCambio;
 
-    await enviarTexto(phone, `💰 *SEUS SALDOS:*\n\n${linhas}\n\n${rodape}`);
+    await enviarTexto(phone, `💰 *SEUS SALDOS:*\n\n${linhas}\n\n${rodape}${notaEmpresa}`);
     return;
   }
 

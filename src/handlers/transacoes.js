@@ -1007,7 +1007,7 @@ module.exports = async function handleTransacoes(data, ctx) {
     // saldo real (patrimônio). Só busca quando vai usar.
     let ws = [];
     if (ehMes || Object.keys(porCarteira).length >= 2) {
-      const { data } = await supabase.from('wallets').select('nome, tipo, saldo').eq('grupo_id', grupoId);
+      const { data } = await supabase.from('wallets').select('id, nome, tipo, saldo').eq('grupo_id', grupoId);
       ws = data || [];
     }
     const tipoDe = new Map(ws.map(w => [w.nome.toLowerCase(), w.tipo]));
@@ -1036,7 +1036,10 @@ module.exports = async function handleTransacoes(data, ctx) {
       const basePat = await moedaBaseTx(grupoId);
       const temEstrangeira = ws.some(w => normalizarMoedaTx(w.moeda) !== basePat);
       const tabela = temEstrangeira ? await taxasParaBaseTx(ws.map(w => w.moeda), basePat) : {};
-      const rc = somarSaldosTx(ws.filter(w => w.tipo !== 'Crédito'), tabela, basePat);
+      // Conta "só da empresa" (Sora Negócios) não é dinheiro da pessoa.
+      const { marcarDaEmpresa, doPessoal } = require('../services/contaDaEmpresa');
+      const contasPessoais = doPessoal(await marcarDaEmpresa(ws)).filter(w => w.tipo !== 'Crédito');
+      const rc = somarSaldosTx(contasPessoais, tabela, basePat);
       const emContas = rc.total;
 
       // ⚠️ O CARTÃO NÃO SAI DE `−saldo`. Isso somava a fatura BRUTA, sem

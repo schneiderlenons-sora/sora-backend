@@ -2108,13 +2108,21 @@ router.delete('/contas/:id', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    if (!(await linhaAlcancada(user.id, 'contas_negocio', req.params.id))) {
-      return res.status(404).json({ erro: 'Conta não encontrada.' });
-    }
+    const conta = await linhaAlcancada(user.id, 'contas_negocio', req.params.id);
+    if (!conta) return res.status(404).json({ erro: 'Conta não encontrada.' });
 
+    // ⚠️ Conta ligada ao banco: apagar = DESVINCULAR antes. Sem isto as
+    // transações da carteira ficavam marcadas "da empresa" pra sempre — fora
+    // do pessoal e sem caixa nenhum mostrando — e a carteira seguia presa ao
+    // índice único do vínculo. O que já entrou no caixa fica (é histórico).
+    const patch = { ativa: false };
+    if (conta.wallet_id) {
+      await aplicarForaDoPessoal(conta.id, false);
+      patch.wallet_id = null;
+    }
     // Soft delete (ativa=false) — não perde o vínculo dos lançamentos históricos.
     const { error } = await supabase.from('contas_negocio')
-      .update({ ativa: false }).eq('id', req.params.id);
+      .update(patch).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ erro: e.message }); }
@@ -2232,8 +2240,6 @@ router.delete('/contas/:id/vincular-banco', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
-// POST /api/negocios/contas/:id/fora-do-pessoal { ativo } — muda "esta conta é
-// só da empresa" e aplica a tudo que a conta já trouxe (passo B, migration 192).
 // POST /api/negocios/contas/:id/trazer-desde { mes: 'YYYY-MM' } — traz pro
 // caixa os meses ANTERIORES ao vínculo (o histórico que o banco já mandou).
 // Só o dono; só recua; até 12 meses. Os meses afetados têm o DRE recalculado
@@ -2266,6 +2272,9 @@ router.post('/contas/:id/trazer-desde', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// POST /api/negocios/contas/:id/fora-do-pessoal { ativo } — muda "esta conta é
+// só da empresa" e aplica à CONTA INTEIRA (passo B, migration 192): todas as
+// transações da carteira saem (ou voltam) das finanças pessoais.
 router.post('/contas/:id/fora-do-pessoal', auth, async (req, res) => {
   try {
     const user = await getUser(req);

@@ -221,9 +221,18 @@ function planejarEspelho({ transacoes = [], lancamentos = [], desde, contaId, em
 // cada tela a pular a carteira da empresa.
 // ⚠️ VALOR PRÓPRIO ('empresa'), nunca 'tudo': desvincular tira EXATAMENTE o que
 // foi posto aqui, sem desfazer o "não considerar" que a própria pessoa escolheu.
-// ⚠️ SÓ MARCA O QUE ESTÁ SEM MARCA: a escolha da pessoa vence.
-// ⚠️ SÓ NA HORA EM QUE A TRANSAÇÃO ENTRA NO CAIXA. Se a pessoa depois mandar
-// "voltar a considerar" uma delas, o próximo sync não a marca de novo.
+// ⚠️ SÓ MARCA O QUE ESTÁ SEM MARCA: um "não considerar" que a pessoa já tinha
+// posto (outro valor em `ignorar_em`) fica intacto.
+//
+// ⚠️ A CONTA INTEIRA, NÃO SÓ O QUE ENTROU NO CAIXA (nov/2026, decisão do dono
+// depois do relato do Robert). Antes a marca só ia na transação que entrava no
+// caixa — e o caixa começa no mês do vínculo, então os meses anteriores (188
+// lançamentos na conta dele) seguiam como pessoais numa conta que "não é minha".
+// Hoje, com "só da empresa" ligado, TODA transação da carteira sai do pessoal,
+// a cada passada. Isso também cura sozinho a transação que o agregador
+// reprocessa com id novo (a cópia nova nasce sem a marca). Pra uma transação
+// dessa conta voltar a contar no pessoal, o caminho é desligar "só da empresa"
+// na conta do Sora Negócios — a tela da transação diz isso.
 // ─────────────────────────────────────────────────────────────────────────────
 const MARCA_EMPRESA = 'empresa';
 
@@ -249,15 +258,42 @@ async function marcarEmpresa(ids, marcar, { supabase }) {
 }
 
 /**
- * Liga/desliga "esta conta é só da empresa" pra TUDO que a conta já trouxe.
- * Usado ao desvincular (desliga) e quando a pessoa muda a opção.
+ * Marca (ou desmarca) TODAS as transações da carteira — uma ida ao banco, com
+ * o filtro no próprio UPDATE. Tolerante: falha é log.
+ * ⚠️ Mesma chave do espelho (`grupo_id` + `carteira_nome` exato): é como a
+ * transação aponta pra carteira, e renomear a carteira já cascateia o nome.
+ */
+async function marcarCarteira(wallet, marcar, { supabase }) {
+  if (!wallet || !wallet.grupo_id || !wallet.nome) return 0;
+  const q = supabase.from('transacoes').update({ ignorar_em: marcar ? MARCA_EMPRESA : null })
+    .eq('grupo_id', wallet.grupo_id).eq('carteira_nome', wallet.nome);
+  const { data, error } = await (marcar ? q.is('ignorar_em', null) : q.eq('ignorar_em', MARCA_EMPRESA)).select('id');
+  if (error) { console.warn('[espelho/pessoal] carteira', error.message); return 0; }
+  return (data || []).length;
+}
+
+/**
+ * Liga/desliga "esta conta é só da empresa" pra TUDO que a conta tem: a
+ * carteira inteira E o que entrou no caixa (cobre a transação cujo nome de
+ * carteira mudou depois). Usado ao desvincular/apagar (desliga) e quando a
+ * pessoa muda a opção.
  * @returns {Promise<number>} quantas transações mudaram
  */
 async function aplicarForaDoPessoal(contaNegocioId, ativo, { supabase = require('../db/supabase') } = {}) {
+  let n = 0;
+  const { data: conta } = await supabase.from('contas_negocio')
+    .select('id, wallet_id').eq('id', contaNegocioId).maybeSingle();
+  if (conta && conta.wallet_id) {
+    const { data: wallet } = await supabase.from('wallets')
+      .select('id, grupo_id, nome').eq('id', conta.wallet_id).maybeSingle();
+    n += await marcarCarteira(wallet, !!ativo, { supabase });
+  }
   const { data, error } = await supabase.from('lancamentos_negocio')
     .select('transacao_id').eq('conta_id', contaNegocioId).not('transacao_id', 'is', null);
-  if (error || !data || !data.length) return 0;
-  return marcarEmpresa([...new Set(data.map((l) => l.transacao_id))], !!ativo, { supabase });
+  if (!error && data && data.length) {
+    n += await marcarEmpresa([...new Set(data.map((l) => l.transacao_id))], !!ativo, { supabase });
+  }
+  return n;
 }
 
 /** 1º dia do mês corrente em SP — onde a importação começa ao vincular. */
@@ -370,10 +406,12 @@ async function espelharConta(contaNegocioId, { supabase = require('../db/supabas
     if (error) throw error;
     atualizados++;
   }
-  // Passo B: o que acabou de entrar no caixa sai das finanças pessoais.
+  // Passo B: a conta INTEIRA sai das finanças pessoais — o que acabou de entrar
+  // no caixa e todo o resto da carteira (meses antes do vínculo inclusive).
   let foraDoPessoal = 0;
   if (conta.fora_do_pessoal !== false) {
-    foraDoPessoal = await marcarEmpresa(idsLigadosNaPassada(plano), true, { supabase });
+    foraDoPessoal = await marcarEmpresa(idsLigadosNaPassada(plano), true, { supabase })
+      + await marcarCarteira(wallet, true, { supabase });
   }
   return { inseridos, juntados, atualizados, foraDoPessoal };
 }
@@ -426,5 +464,5 @@ module.exports = {
   motivoInelegivel, espelharConta, espelharDoConsentimento,
   CAT_A_CLASSIFICAR, CAT_MOVIMENTACAO,
   ehMovimentacao, transacaoEhMovimento, diaSP, planejarEspelho, lancamentoDaTransacao, inicioDoMesSP,
-  MARCA_EMPRESA, idsLigadosNaPassada, aplicarForaDoPessoal,
+  MARCA_EMPRESA, idsLigadosNaPassada, aplicarForaDoPessoal, marcarCarteira,
 };

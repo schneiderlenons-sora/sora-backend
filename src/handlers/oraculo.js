@@ -90,7 +90,10 @@ async function lerFoto(grupoId) {
   // simplesmente não é somada). Errar pra MENOS é o lado seguro: o Oráculo é
   // conservador por desenho, e caixa subestimado no máximo segura uma compra
   // que caberia; o inverso aprovaria uma que não cabe.
-  const contasOraculo = wallets.filter((w) => w.tipo !== 'Crédito');
+  // ⚠️ Conta "só da empresa" (Sora Negócios) também fica FORA: é caixa da
+  // empresa, e a pergunta aqui é se a compra PESSOAL cabe.
+  const { marcarDaEmpresa, doPessoal } = require('../services/contaDaEmpresa');
+  const contasOraculo = doPessoal(await marcarDaEmpresa(wallets)).filter((w) => w.tipo !== 'Crédito');
   const baseOraculo = await moedaBaseDoGrupo(grupoId);
   // A tabela cobre as contas E os cartões (os cartões convertem mais abaixo).
   const temEstrangeira = wallets.some((w) => normalizarMoeda(w.moeda) !== baseOraculo);

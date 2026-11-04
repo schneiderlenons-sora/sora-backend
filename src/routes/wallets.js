@@ -10,6 +10,7 @@ const { podeDesfazer, planoDeDesfazer } = require('../services/desfazerPagamento
 const { moverSaldo } = require('../services/saldoCarteira');
 const { competenciaAtual, cicloPorCompetencia, competenciaVizinha, hojeSP } = require('../services/cicloFatura');
 const { valorExibido } = require('../services/faturaVista');
+const { marcarDaEmpresa } = require('../services/contaDaEmpresa');
 const norm     = p => p?.replace(/\D/g, '');
 
 /** Aritmética do valor exibido — fonte única em services/faturaVista.js. */
@@ -91,7 +92,9 @@ router.get('/:phone', auth, async (req, res) => {
       data = r.data;
     }
     // Saldos também na moeda BASE do grupo (migration 168): `saldo_base`.
-    res.json(await comSaldoNaBase(data, await moedaBaseDoGrupo(grupoId)));
+    // `da_empresa`: carteira ligada a uma conta do Sora Negócios com "só da
+    // empresa" — o painel a tira do saldo pessoal (services/contaDaEmpresa.js).
+    res.json(await comSaldoNaBase(await marcarDaEmpresa(data), await moedaBaseDoGrupo(grupoId)));
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
