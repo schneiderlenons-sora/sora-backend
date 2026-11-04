@@ -110,7 +110,15 @@ async function aplicarNosPendentes(empresaId, regra, { supabase = require('../db
   if (!ids.length) return 0;
   const { error } = await supabase.from('lancamentos_negocio').update({ categoria: regra.categoria })
     .in('id', ids).eq('categoria', CAT_A_CLASSIFICAR);
-  return error ? 0 : ids.length;
+  if (error) return 0;
+  // Regra de "uso pessoal / retirada do sócio": o que ela acabou de classificar
+  // volta pras finanças pessoais (require tardio: o espelho também usa este
+  // módulo, e o ciclo de require devolveria um objeto vazio).
+  if (regra.categoria === 'uso_pessoal') {
+    try { await require('./espelhoContaEmpresa').ajustarPessoalDaEmpresa(empresaId, { supabase }); }
+    catch (e) { console.warn('[regras/uso-pessoal]', e.message); }
+  }
+  return ids.length;
 }
 
 module.exports = { termoAprendivel, categoriaPorRegra, carregarRegras, aprender, aplicarNosPendentes, CAT_A_CLASSIFICAR };

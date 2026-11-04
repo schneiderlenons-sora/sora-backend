@@ -4,7 +4,7 @@ const supabase = require('../db/supabase');
 const { temNegocios } = require('../config/planos');
 const auth     = require('../middlewares/auth');
 const { gerarDre, sugerirConciliacao } = require('../handlers/negocios');
-const { espelharConta, motivoInelegivel, inicioDoMesSP, ehMovimentacao, aplicarForaDoPessoal, validarTrazerDesde } = require('../services/espelhoContaEmpresa');
+const { espelharConta, motivoInelegivel, inicioDoMesSP, ehMovimentacao, aplicarForaDoPessoal, validarTrazerDesde, ajustarPessoalDaConta, CAT_USO_PESSOAL } = require('../services/espelhoContaEmpresa');
 const { reservasDasCarteiras } = require('../services/contaDaEmpresa');
 const { encrypt, decrypt } = require('../services/cripto');
 const { importarHistoricoHotmart } = require('../services/hotmart-import');
@@ -679,6 +679,16 @@ router.put('/lancamentos/:id', auth, async (req, res) => {
       .select().maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ erro: 'Lançamento não encontrado.' });
+
+    // ── Uso pessoal / retirada do sócio ──────────────────────────────────
+    // Lançamento DO BANCO que entrou ou saiu dessa categoria: a transação volta
+    // pras finanças pessoais (ou sai de novo). O estado é recalculado pra conta
+    // inteira — idempotente, e nunca derruba a edição.
+    if (data.transacao_id && data.conta_id && atual.categoria !== data.categoria
+        && (atual.categoria === CAT_USO_PESSOAL || data.categoria === CAT_USO_PESSOAL)) {
+      try { await ajustarPessoalDaConta(data.conta_id); }
+      catch (e) { console.warn('[negócios/uso-pessoal]', e.message); }
+    }
 
     // ── "Aplicar também às próximas" (conta que se repete, migration 192) ──
     // Só nas PRÓXIMAS em aberto e digitadas: as já pagas são história, e as

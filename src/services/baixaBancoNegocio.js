@@ -35,7 +35,8 @@ const diffDias = (de, ate) => Math.round((Date.parse(`${ate}T12:00:00Z`) - Date.
 const ehAberta = (l) => l && l.status === 'pendente' && !l.transacao_id && l.origem !== 'banco' && Number(l.valor) > 0;
 /** O lançamento que veio do banco e ainda está solto (não juntado a nada). */
 const ehDoBanco = (l) => l && l.origem === 'banco' && !!l.transacao_id && l.status !== 'pendente'
-  && l.categoria !== 'movimentacao' && Number(l.valor) > 0;
+  // Movimentação e uso pessoal do sócio não quitam conta da empresa.
+  && l.categoria !== 'movimentacao' && l.categoria !== 'uso_pessoal' && Number(l.valor) > 0;
 
 /**
  * @param {object} p

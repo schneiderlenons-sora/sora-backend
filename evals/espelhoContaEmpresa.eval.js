@@ -232,6 +232,12 @@ function bancoFalso({ conta, wallet, transacoes, lancamentos, conflitoNaPrimeira
       gte(k, v) { filtros.push((r) => String(r[k]) >= v); return api; },
       in(k, vs) { filtros.push((r) => vs.includes(r[k])); return api; },
       is(k, v) { filtros.push((r) => (r[k] ?? null) === v); return api; },
+      // .not('col', 'is', null) e .not('col', 'in', '(a,b)') — os dois que o espelho usa.
+      not(k, op, v) {
+        if (op === 'in') { const l = String(v).replace(/^\(|\)$/g, '').split(',').filter(Boolean); filtros.push((r) => !l.includes(String(r[k]))); }
+        else filtros.push((r) => (r[k] ?? null) !== v);
+        return api;
+      },
       order() { return api; },
       update(p) { modo = 'update'; patch = p; return api; },
       insert(r) { modo = 'insert'; rows = Array.isArray(r) ? r : [r]; return api; },

@@ -14,7 +14,8 @@
 //
 // Rodar: npm run eval:conta-empresa-fora-pessoal
 // =============================================================================
-const { espelharConta, aplicarForaDoPessoal, idsLigadosNaPassada, MARCA_EMPRESA } = require('../src/services/espelhoContaEmpresa');
+const { espelharConta, aplicarForaDoPessoal, idsLigadosNaPassada, MARCA_EMPRESA, ajustarPessoalDaConta, ehMovimentacao } = require('../src/services/espelhoContaEmpresa');
+const { aplicarNosPendentes } = require('../src/services/regrasNegocio');
 const { carteirasDaEmpresa, marcarDaEmpresa, doPessoal, ehDaEmpresa, separarCaixinhas, separarCaixinhasDoGrupo, reservasDasCarteiras } = require('../src/services/contaDaEmpresa');
 
 const falhas = [];
@@ -33,7 +34,11 @@ function criarBanco(inicial, { semColuna = false, falhar = null, sem193 = false 
       update(p) { modo = 'update'; payload = p; return api; },
       eq(c, v) { filtros.push((r) => r[c] === v); return api; },
       is(c, v) { filtros.push((r) => (r[c] ?? null) === v); return api; },
-      not(c, op, v) { filtros.push((r) => (r[c] ?? null) !== v); return api; },
+      not(c, op, v) {
+        if (op === 'in') { const l = String(v).replace(/^\(|\)$/g, '').split(',').filter(Boolean); filtros.push((r) => !l.includes(String(r[c]))); }
+        else filtros.push((r) => (r[c] ?? null) !== v);
+        return api;
+      },
       in(c, vs) { filtros.push((r) => vs.includes(r[c])); return api; },
       gte(c, v) { filtros.push((r) => r[c] != null && String(r[c]) >= String(v)); return api; },
       order() { return api; },
@@ -251,6 +256,78 @@ const marca = (b, id) => b.tabelas.transacoes.find((t) => t.id === id).ignorar_e
     eq(mapa.has('wMan'), false, '§7 carteira sem of_conta_id não tem reserva');
     const fr = criarBanco(base(), { falhar: 'of_caixinhas' });
     eq((await reservasDasCarteiras(fr.tabelas.wallets, { supabase: fr.client })).size, 0, '§7 caixinhas que falham: nenhuma reserva (o saldo segue certo)');
+  }
+  console.log('  ok');
+
+  console.log('§8 USO PESSOAL / RETIRADA DO SÓCIO volta pro pessoal');
+  {
+    const comMercado = (extra = {}) => {
+      const c = cenario(extra);
+      c.transacoes.push(
+        { id: 't5', grupo_id: 'g1', carteira_nome: 'Mercado Pago PJ', tipo: 'Gasto', valor: 45, data: '2026-10-23', categoria: 'Supermercado', observacao: 'SUPERMERCADO BOM PRECO', pago: true, ignorar_em: null },
+        { id: 't6', grupo_id: 'g1', carteira_nome: 'Mercado Pago PJ', tipo: 'Recebimento', valor: 200, data: '2026-10-24', categoria: 'Pix', observacao: 'PIX DO SOCIO', pago: true, ignorar_em: null },
+      );
+      return c;
+    };
+    const lanc = (b, txId) => b.tabelas.lancamentos_negocio.find((l) => l.transacao_id === txId);
+    const b = criarBanco(comMercado());
+    await espelharConta('cn1', { supabase: b.client });
+    eq(marca(b, 't5'), MARCA_EMPRESA, '§8 antes: o mercado pago pela PJ está fora do pessoal');
+
+    // A pessoa classifica como uso pessoal → volta pro pessoal.
+    lanc(b, 't5').categoria = 'uso_pessoal';
+    let r = await ajustarPessoalDaConta('cn1', { supabase: b.client });
+    eq(marca(b, 't5'), null, '§8 classificado: volta pras finanças pessoais (gasto)');
+    eq(r.devolvidas, 1, '§8 conta 1 devolvida');
+    eq([marca(b, 't1'), marca(b, 't2'), marca(b, 't0')], [MARCA_EMPRESA, MARCA_EMPRESA, MARCA_EMPRESA], '§8 o resto da conta segue da empresa');
+    eq(ehMovimentacao(lanc(b, 't5')), true, '§8 fora do resultado da empresa (DRE/Painel/totais)');
+
+    // A próxima sincronização NÃO o tira de novo do pessoal.
+    await espelharConta('cn1', { supabase: b.client });
+    eq(marca(b, 't5'), null, '§8 a sincronização respeita o uso pessoal');
+    await aplicarForaDoPessoal('cn1', true, { supabase: b.client });
+    eq(marca(b, 't5'), null, '§8 religar "só da empresa" também respeita');
+
+    // Mudou de ideia: volta a ser da empresa.
+    lanc(b, 't5').categoria = 'outros';
+    await ajustarPessoalDaConta('cn1', { supabase: b.client });
+    eq(marca(b, 't5'), MARCA_EMPRESA, '§8 desclassificou: sai do pessoal de novo');
+
+    // ENTRADA com essa categoria não vira gasto pessoal.
+    lanc(b, 't6').categoria = 'uso_pessoal';
+    await ajustarPessoalDaConta('cn1', { supabase: b.client });
+    eq(marca(b, 't6'), MARCA_EMPRESA, '§8 entrada nunca volta como gasto pessoal');
+
+    // "Não considerar" que a própria pessoa pôs fica como ela escolheu.
+    lanc(b, 't3').categoria = 'uso_pessoal';
+    await ajustarPessoalDaConta('cn1', { supabase: b.client });
+    eq(marca(b, 't3'), 'tudo', '§8 não desfaz o "não considerar" da pessoa');
+
+    // Conta MISTA (já conta no pessoal): nada a fazer.
+    const mista = criarBanco(comMercado({ fora_do_pessoal: false }));
+    await espelharConta('cn1', { supabase: mista.client });
+    lanc(mista, 't5').categoria = 'uso_pessoal';
+    r = await ajustarPessoalDaConta('cn1', { supabase: mista.client });
+    eq([r.marcadas, r.devolvidas, marca(mista, 't2')], [0, 0, null], '§8 conta mista não é tocada');
+
+    // Falha ao ler os lançamentos: não REMARCA nada às cegas.
+    const ff = criarBanco(comMercado());
+    await espelharConta('cn1', { supabase: ff.client });
+    lanc(ff, 't5').categoria = 'uso_pessoal';
+    await ajustarPessoalDaConta('cn1', { supabase: ff.client });
+    eq(marca(ff, 't5'), null, '§8 (preparo) devolvido');
+    ff.tabelas.transacoes.find((t) => t.id === 't1').ignorar_em = null;   // ex.: marca sumida
+    const quebrado = criarBanco({ ...ff.tabelas }, { falhar: 'lancamentos_negocio' });
+    await ajustarPessoalDaConta('cn1', { supabase: quebrado.client });
+    eq([marca(quebrado, 't5'), marca(quebrado, 't1')], [null, null], '§8 leitura que falha: não remarca nada');
+
+    // Regra aprendida "uso pessoal" classifica o que está a classificar → volta pro pessoal.
+    const rg = criarBanco(comMercado());
+    rg.tabelas.empresas = [{ id: 'e1', nome: 'Vida Mais' }];
+    await espelharConta('cn1', { supabase: rg.client });
+    eq(lanc(rg, 't5').categoria, 'a_classificar', '§8 (preparo) o mercado entrou a classificar');
+    const n = await aplicarNosPendentes('e1', { termo: 'supermercado bom preco', tipo: 'saida', categoria: 'uso_pessoal' }, { supabase: rg.client });
+    eq([n, lanc(rg, 't5').categoria, marca(rg, 't5')], [1, 'uso_pessoal', null], '§8 regra aprendida devolve ao pessoal');
   }
   console.log('  ok');
 

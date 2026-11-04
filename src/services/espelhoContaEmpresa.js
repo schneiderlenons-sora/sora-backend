@@ -33,10 +33,20 @@ const TZ = 'America/Sao_Paulo';
 /** Categorias especiais do caixa que vêm do banco. */
 const CAT_A_CLASSIFICAR = 'a_classificar';
 const CAT_MOVIMENTACAO = 'movimentacao';
+// "Uso pessoal / retirada do sócio" (nov/2026, decisão do dono): dinheiro da
+// empresa que a PESSOA usou. Sai do resultado da empresa (não é despesa dela)
+// e, quando veio do banco, a transação VOLTA pras finanças pessoais como gasto
+// — ver `ajustarPessoalDaConta`. Só faz sentido em SAÍDA.
+const CAT_USO_PESSOAL = 'uso_pessoal';
 
-/** Lançamento que só move dinheiro entre contas: fora de receita/despesa/DRE. */
+/**
+ * Lançamento FORA do resultado (receita/despesa/DRE), mas que mexe no saldo:
+ * movimentação entre contas e uso pessoal do sócio. ⚠️ É a regra única que o
+ * DRE (handlers/negocios.js), o Painel e os totais do caixa (espelho em
+ * lib/lancamentos.ts) usam — categoria nova "fora do resultado" entra AQUI.
+ */
 function ehMovimentacao(l) {
-  return !!l && l.categoria === CAT_MOVIMENTACAO;
+  return !!l && (l.categoria === CAT_MOVIMENTACAO || l.categoria === CAT_USO_PESSOAL);
 }
 
 const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -263,13 +273,82 @@ async function marcarEmpresa(ids, marcar, { supabase }) {
  * ⚠️ Mesma chave do espelho (`grupo_id` + `carteira_nome` exato): é como a
  * transação aponta pra carteira, e renomear a carteira já cascateia o nome.
  */
-async function marcarCarteira(wallet, marcar, { supabase }) {
+async function marcarCarteira(wallet, marcar, { supabase, exceto = [] }) {
   if (!wallet || !wallet.grupo_id || !wallet.nome) return 0;
-  const q = supabase.from('transacoes').update({ ignorar_em: marcar ? MARCA_EMPRESA : null })
+  let q = supabase.from('transacoes').update({ ignorar_em: marcar ? MARCA_EMPRESA : null })
     .eq('grupo_id', wallet.grupo_id).eq('carteira_nome', wallet.nome);
+  // Uso pessoal do sócio fica FORA da marca: ela volta pras finanças pessoais.
+  if (marcar && exceto.length) q = q.not('id', 'in', `(${exceto.join(',')})`);
   const { data, error } = await (marcar ? q.is('ignorar_em', null) : q.eq('ignorar_em', MARCA_EMPRESA)).select('id');
   if (error) { console.warn('[espelho/pessoal] carteira', error.message); return 0; }
   return (data || []).length;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USO PESSOAL / RETIRADA DO SÓCIO — a ÚNICA exceção à "conta inteira fora do
+// pessoal" (nov/2026). Gasto da pessoa pago pela conta da empresa: não é
+// despesa da empresa (fica fora do DRE por `ehMovimentacao`) e VOLTA pras
+// finanças pessoais como gasto, com a categoria que o banco deu.
+//
+// ⚠️ Só lançamento DO BANCO (com `transacao_id`) e só SAÍDA: o digitado à mão
+// não tem transação pessoal pra devolver, e entrada de dinheiro do sócio não
+// é gasto dele.
+// ⚠️ Só tira a marca 'empresa': um "não considerar" que a própria pessoa pôs
+// (outro valor) fica como ela escolheu.
+// ⚠️ É um ESTADO, recalculado inteiro a cada chamada (idempotente): trocar a
+// categoria de volta pra uma da empresa faz a próxima passada remarcar.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Transações (ids) dos lançamentos de uso pessoal desta conta. */
+async function idsUsoPessoal(contaNegocioId, { supabase }) {
+  try {
+    const { data, error } = await supabase.from('lancamentos_negocio')
+      .select('transacao_id').eq('conta_id', contaNegocioId)
+      .eq('categoria', CAT_USO_PESSOAL).eq('tipo', 'saida').not('transacao_id', 'is', null);
+    if (error || !data) return null;   // null = não sei (≠ lista vazia)
+    return [...new Set(data.map((l) => l.transacao_id))];
+  } catch { return null; }             // nunca derruba o espelho
+}
+
+/** Devolve ao pessoal: tira SÓ a marca 'empresa' dessas transações. */
+async function devolverAoPessoal(ids, { supabase }) {
+  if (!ids || !ids.length) return 0;
+  const { data, error } = await supabase.from('transacoes').update({ ignorar_em: null })
+    .in('id', ids).eq('ignorar_em', MARCA_EMPRESA).select('id');
+  if (error) { console.warn('[espelho/uso-pessoal]', error.message); return 0; }
+  return (data || []).length;
+}
+
+/**
+ * Deixa o pessoal desta conta no estado certo: tudo da carteira marcado como
+ * da empresa, MENOS o uso pessoal do sócio (devolvido). Só com "só da empresa"
+ * ligado; conta mista não é tocada.
+ * ⚠️ Se não der pra ler o uso pessoal, NÃO remarca nada: remarcar às cegas
+ * tiraria do pessoal um gasto que a pessoa acabou de devolver.
+ * @returns {Promise<{marcadas:number, devolvidas:number}>}
+ */
+async function ajustarPessoalDaConta(contaNegocioId, { supabase = require('../db/supabase') } = {}) {
+  const zero = { marcadas: 0, devolvidas: 0 };
+  const { data: conta, error } = await supabase.from('contas_negocio')
+    .select('id, wallet_id, ativa, fora_do_pessoal').eq('id', contaNegocioId).maybeSingle();
+  if (error || !conta || !conta.wallet_id || conta.ativa === false || conta.fora_do_pessoal === false) return zero;
+  const { data: wallet } = await supabase.from('wallets')
+    .select('id, grupo_id, nome').eq('id', conta.wallet_id).maybeSingle();
+  if (!wallet) return zero;
+  const uso = await idsUsoPessoal(conta.id, { supabase });
+  if (uso === null) return zero;
+  const devolvidas = await devolverAoPessoal(uso, { supabase });
+  const marcadas = await marcarCarteira(wallet, true, { supabase, exceto: uso });
+  return { marcadas, devolvidas };
+}
+
+/** Mesmo ajuste pra todas as contas ligadas ao banco de uma empresa. */
+async function ajustarPessoalDaEmpresa(empresaId, { supabase = require('../db/supabase') } = {}) {
+  try {
+    const { data } = await supabase.from('contas_negocio')
+      .select('id').eq('empresa_id', empresaId).not('wallet_id', 'is', null);
+    for (const c of data || []) await ajustarPessoalDaConta(c.id, { supabase });
+  } catch (e) { console.warn('[espelho/uso-pessoal] empresa', e.message); }
 }
 
 /**
@@ -281,17 +360,21 @@ async function marcarCarteira(wallet, marcar, { supabase }) {
  */
 async function aplicarForaDoPessoal(contaNegocioId, ativo, { supabase = require('../db/supabase') } = {}) {
   let n = 0;
+  // Ligando: o uso pessoal do sócio fica de fora (volta pro pessoal). Sem
+  // conseguir ler qual é, liga sem exceção — o próximo ajuste da conta corrige.
+  const uso = ativo ? ((await idsUsoPessoal(contaNegocioId, { supabase })) || []) : [];
   const { data: conta } = await supabase.from('contas_negocio')
     .select('id, wallet_id').eq('id', contaNegocioId).maybeSingle();
   if (conta && conta.wallet_id) {
     const { data: wallet } = await supabase.from('wallets')
       .select('id, grupo_id, nome').eq('id', conta.wallet_id).maybeSingle();
-    n += await marcarCarteira(wallet, !!ativo, { supabase });
+    n += await marcarCarteira(wallet, !!ativo, { supabase, exceto: uso });
   }
   const { data, error } = await supabase.from('lancamentos_negocio')
     .select('transacao_id').eq('conta_id', contaNegocioId).not('transacao_id', 'is', null);
   if (!error && data && data.length) {
-    n += await marcarEmpresa([...new Set(data.map((l) => l.transacao_id))], !!ativo, { supabase });
+    const fora = new Set(uso);
+    n += await marcarEmpresa([...new Set(data.map((l) => l.transacao_id))].filter((id) => !fora.has(id)), !!ativo, { supabase });
   }
   return n;
 }
@@ -408,10 +491,18 @@ async function espelharConta(contaNegocioId, { supabase = require('../db/supabas
   }
   // Passo B: a conta INTEIRA sai das finanças pessoais — o que acabou de entrar
   // no caixa e todo o resto da carteira (meses antes do vínculo inclusive).
+  // ⚠️ MENOS o uso pessoal do sócio, que volta pro pessoal (lido DEPOIS de
+  // inserir: uma regra aprendida pode ter classificado o que acabou de entrar).
+  // Sem conseguir lê-lo, não marca nada nesta passada — a próxima acerta.
   let foraDoPessoal = 0;
   if (conta.fora_do_pessoal !== false) {
-    foraDoPessoal = await marcarEmpresa(idsLigadosNaPassada(plano), true, { supabase })
-      + await marcarCarteira(wallet, true, { supabase });
+    const uso = await idsUsoPessoal(conta.id, { supabase });
+    if (uso !== null) {
+      const fora = new Set(uso);
+      await devolverAoPessoal(uso, { supabase });
+      foraDoPessoal = await marcarEmpresa(idsLigadosNaPassada(plano).filter((id) => !fora.has(id)), true, { supabase })
+        + await marcarCarteira(wallet, true, { supabase, exceto: uso });
+    }
   }
   return { inseridos, juntados, atualizados, foraDoPessoal };
 }
@@ -465,4 +556,5 @@ module.exports = {
   CAT_A_CLASSIFICAR, CAT_MOVIMENTACAO,
   ehMovimentacao, transacaoEhMovimento, diaSP, planejarEspelho, lancamentoDaTransacao, inicioDoMesSP,
   MARCA_EMPRESA, idsLigadosNaPassada, aplicarForaDoPessoal, marcarCarteira,
+  CAT_USO_PESSOAL, ajustarPessoalDaConta, ajustarPessoalDaEmpresa, idsUsoPessoal,
 };
