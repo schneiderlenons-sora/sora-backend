@@ -886,7 +886,7 @@ router.get('/caixinhas/:phone', auth, exigirPlano('kit', 'premium', 'platinum'),
     const grupoId = await getGrupoId(req);
     if (!grupoId) return res.status(404).json({ erro: 'Grupo não encontrado.' });
 
-    const COMPLETO = 'id,nome,tipo,saldo,moeda,atualizado_em,indexador,indexador_pct,taxa_pre,periodicidade';
+    const COMPLETO = 'id,nome,tipo,saldo,moeda,atualizado_em,indexador,indexador_pct,taxa_pre,periodicidade,of_conta_id';
     let { data, error } = await supabase.from('of_caixinhas')
       .select(COMPLETO).eq('grupo_id', grupoId).order('saldo', { ascending: false });
 
@@ -895,13 +895,19 @@ router.get('/caixinhas/:phone', auth, exigirPlano('kit', 'premium', 'platinum'),
         .select('id,nome,tipo,saldo,moeda,atualizado_em').eq('grupo_id', grupoId)
         .order('saldo', { ascending: false });
       // Tabela ausente (069 pendente) → lista vazia, a aba só não mostra a seção.
-      if (r2.error) return res.json({ caixinhas: [], total: 0 });
+      if (r2.error) return res.json({ caixinhas: [], total: 0, empresa: [] });
       data = r2.data;
     }
 
-    const caixinhas = data || [];
-    const total = caixinhas.reduce((s, c) => s + (Number(c.saldo) || 0), 0);
-    res.json({ caixinhas, total: Math.round(total * 100) / 100 });
+    // ⚠️ Reserva de conta "só da empresa" NÃO é da pessoa: sai da lista e do
+    // total pessoal e vai em `empresa`, com `reservas_no_pessoal` dizendo se o
+    // dono pediu pra vê-la aqui também (services/contaDaEmpresa.js). Sem
+    // `of_conta_id` (fallback acima) ou com leitura que falha, tudo segue
+    // pessoal, como antes.
+    const { separarCaixinhasDoGrupo } = require('../services/contaDaEmpresa');
+    const { pessoais, daEmpresa } = await separarCaixinhasDoGrupo(data || [], grupoId);
+    const soma = (l) => Math.round(l.reduce((s, c) => s + (Number(c.saldo) || 0), 0) * 100) / 100;
+    res.json({ caixinhas: pessoais, total: soma(pessoais), empresa: daEmpresa });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

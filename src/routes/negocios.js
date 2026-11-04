@@ -5,6 +5,7 @@ const { temNegocios } = require('../config/planos');
 const auth     = require('../middlewares/auth');
 const { gerarDre, sugerirConciliacao } = require('../handlers/negocios');
 const { espelharConta, motivoInelegivel, inicioDoMesSP, ehMovimentacao, aplicarForaDoPessoal, validarTrazerDesde } = require('../services/espelhoContaEmpresa');
+const { reservasDasCarteiras } = require('../services/contaDaEmpresa');
 const { encrypt, decrypt } = require('../services/cripto');
 const { importarHistoricoHotmart } = require('../services/hotmart-import');
 const { gerarInsights } = require('./../handlers/insights-negocio');
@@ -1977,16 +1978,22 @@ router.get('/indicadores/:phone', auth, async (req, res) => {
       // saldo de verdade (a mesma regra de ouro da conta conectada no pessoal).
       const ids = (cs || []).map((c) => c.wallet_id).filter(Boolean);
       const saldoBanco = new Map();
+      let reservas = new Map();
       if (ids.length) {
-        const { data: ws } = await supabase.from('wallets').select('id, saldo').in('id', ids);
+        const { data: ws } = await supabase.from('wallets').select('id, saldo, grupo_id, of_conta_id').in('id', ids);
         for (const w of ws || []) saldoBanco.set(w.id, Math.round((Number(w.saldo) || 0) * 100));
+        reservas = await reservasDasCarteiras(ws || []);
       }
       contas = (cs || []).map((c) => {
         const mov = (todos || []).filter((r) => r.conta_id === c.id);
         const doBanco = c.wallet_id && saldoBanco.has(c.wallet_id);
+        const r = c.wallet_id ? reservas.get(String(c.wallet_id)) : null;
         return {
           id: c.id, nome: c.nome, tipo: c.tipo,
           vinculada_banco: !!c.wallet_id,
+          // ⚠️ À PARTE do saldo: a reserva não está no saldo da conta (o banco a
+          // separa). Somá-la em `saldo` mudaria o "saldo em contas" de sempre.
+          reservas: r ? r.total : 0,
           saldo: doBanco ? saldoBanco.get(c.wallet_id)
             : (Number(c.saldo_inicial) || 0)
               + soma(mov.filter((r) => r.tipo === 'entrada'))
@@ -2010,6 +2017,7 @@ router.get('/indicadores/:phone', auth, async (req, res) => {
       a_receber: bucket('entrada'),
       a_pagar:   bucket('saida'),
       saldo_contas: contas.reduce((s, c) => s + c.saldo, 0),
+      reservas_contas: contas.reduce((s, c) => s + (c.reservas || 0), 0),
       contas,
       evolucao,
       por_dia: [...porDiaMap.values()].sort((a, b) => a.dia.localeCompare(b.dia)),
@@ -2046,11 +2054,18 @@ router.get('/contas/:phone', auth, async (req, res) => {
     const contas = data || [];
     const ids = contas.map((c) => c.wallet_id).filter(Boolean);
     if (ids.length) {
-      const { data: ws } = await supabase.from('wallets').select('id, nome, saldo').in('id', ids);
+      const { data: ws } = await supabase.from('wallets').select('id, nome, saldo, grupo_id, of_conta_id').in('id', ids);
       const porId = new Map((ws || []).map((w) => [w.id, w]));
+      // Reservas (caixinhas) da conta do banco — o dinheiro que o banco separa
+      // e que NÃO está no saldo dela. Centavos, como o resto.
+      const reservas = await reservasDasCarteiras(ws || []);
       for (const c of contas) {
         const w = c.wallet_id && porId.get(c.wallet_id);
-        if (w) { c.wallet_nome = w.nome; c.saldo_banco = Math.round((Number(w.saldo) || 0) * 100); }
+        if (w) {
+          c.wallet_nome = w.nome; c.saldo_banco = Math.round((Number(w.saldo) || 0) * 100);
+          const r = reservas.get(String(w.id));
+          if (r) c.reservas = r;
+        }
       }
     }
     res.json(contas);
@@ -2295,6 +2310,32 @@ router.post('/contas/:id/fora-do-pessoal', auth, async (req, res) => {
     }
     const mudaram = conta.wallet_id ? await aplicarForaDoPessoal(conta.id, ativo) : 0;
     res.json({ ok: true, fora_do_pessoal: ativo, mudaram });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// POST /api/negocios/contas/:id/reservas-no-pessoal { ativo } — mostrar as
+// reservas (caixinhas) desta conta TAMBÉM na aba Investimentos pessoal
+// (migration 193). Padrão: não — elas ficam só no Negócios. É só VISUAL: o
+// total pessoal de caixinhas nunca as soma, a tela as mostra num bloco à parte.
+router.post('/contas/:id/reservas-no-pessoal', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    const conta = await linhaAlcancada(user.id, 'contas_negocio', req.params.id, 'admin');
+    if (!conta) return res.status(404).json({ erro: 'Conta não encontrada.' });
+    if (!(await empresaDoDono(user.id, conta.empresa_id))) {
+      return res.status(403).json({ erro: 'Só o dono da empresa muda isso.' });
+    }
+    const ativo = (req.body || {}).ativo === true;
+    const { error } = await supabase.from('contas_negocio').update({ reservas_no_pessoal: ativo }).eq('id', conta.id);
+    if (error) {
+      if (/reservas_no_pessoal/i.test(error.message || '')) {
+        console.warn('[negócios] migration 193 pendente: reservas_no_pessoal');
+        return res.status(503).json({ erro: 'Este recurso ainda está sendo liberado. Tente de novo em alguns minutos.' });
+      }
+      throw error;
+    }
+    res.json({ ok: true, reservas_no_pessoal: ativo });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 

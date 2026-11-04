@@ -15,13 +15,13 @@
 // Rodar: npm run eval:conta-empresa-fora-pessoal
 // =============================================================================
 const { espelharConta, aplicarForaDoPessoal, idsLigadosNaPassada, MARCA_EMPRESA } = require('../src/services/espelhoContaEmpresa');
-const { carteirasDaEmpresa, marcarDaEmpresa, doPessoal, ehDaEmpresa } = require('../src/services/contaDaEmpresa');
+const { carteirasDaEmpresa, marcarDaEmpresa, doPessoal, ehDaEmpresa, separarCaixinhas, separarCaixinhasDoGrupo, reservasDasCarteiras } = require('../src/services/contaDaEmpresa');
 
 const falhas = [];
 const ok = (c, m) => { if (!c) falhas.push(m); };
 const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m} (esperado ${JSON.stringify(b)}, veio ${JSON.stringify(a)})`);
 
-function criarBanco(inicial, { semColuna = false, falhar = null } = {}) {
+function criarBanco(inicial, { semColuna = false, falhar = null, sem193 = false } = {}) {
   const tabelas = JSON.parse(JSON.stringify(inicial));
   let seq = 0;
   function from(nome) {
@@ -43,6 +43,9 @@ function criarBanco(inicial, { semColuna = false, falhar = null } = {}) {
     };
     function exec() {
       if (falhar === nome) return { data: null, error: { message: 'falha simulada' } };
+      if (sem193 && nome === 'contas_negocio' && /reservas_no_pessoal/.test(cols)) {
+        return { data: null, error: { message: 'column contas_negocio.reservas_no_pessoal does not exist' } };
+      }
       if (semColuna && nome === 'contas_negocio' && /fora_do_pessoal/.test(cols)) {
         return { data: null, error: { message: 'column contas_negocio.fora_do_pessoal does not exist' } };
       }
@@ -170,7 +173,7 @@ const marca = (b, id) => b.tabelas.transacoes.find((t) => t.id === id).ignorar_e
     const b = criarBanco(base());
     const m = await carteirasDaEmpresa(ws.map((w) => w.id), { supabase: b.client });
     eq([...m.keys()], ['w1'], '§6 só a conta ligada, ativa e "só da empresa"');
-    eq(m.get('w1'), { conta_id: 'cn1', empresa_id: 'e1', empresa_nome: 'Vida Mais' }, '§6 diz de qual empresa');
+    eq(m.get('w1'), { conta_id: 'cn1', empresa_id: 'e1', empresa_nome: 'Vida Mais', reservas_no_pessoal: false }, '§6 diz de qual empresa');
     const marcadas = await marcarDaEmpresa(ws, { supabase: b.client });
     eq(marcadas.map((w) => ehDaEmpresa(w)), [true, false, false, false], '§6 marca só a da empresa');
     eq(doPessoal(marcadas).map((w) => w.id), ['w2', 'w3', 'w9'], '§6 o saldo pessoal fica com as outras');
@@ -185,6 +188,69 @@ const marca = (b, id) => b.tabelas.transacoes.find((t) => t.id === id).ignorar_e
     const semNome = criarBanco(base(), { falhar: 'empresas' });
     eq((await carteirasDaEmpresa(['w1'], { supabase: semNome.client })).get('w1')?.conta_id, 'cn1', '§6 sem o nome da empresa a marca fica');
     eq((await carteirasDaEmpresa([], { supabase: b.client })).size, 0, '§6 lista vazia não consulta nada');
+  }
+  console.log('  ok');
+
+  console.log('§7 RESERVAS (caixinhas) seguem a conta');
+  {
+    const base = (extra = {}) => ({
+      contas_negocio: [{ id: 'cn1', empresa_id: 'e1', wallet_id: 'wPJ', ativa: true, fora_do_pessoal: true, ...extra }],
+      empresas: [{ id: 'e1', nome: 'Vida Mais' }],
+      wallets: [
+        { id: 'wPJ', grupo_id: 'g1', of_conta_id: 'ofPJ', nome: 'MP PJ' },
+        { id: 'wPF', grupo_id: 'g1', of_conta_id: 'ofPF', nome: 'MP' },
+        { id: 'wCart', grupo_id: 'g1', of_conta_id: 'ofPF', nome: 'MP Crédito' },   // cartão com o MESMO of_conta_id da pessoal
+        { id: 'wMan', grupo_id: 'g1', of_conta_id: null, nome: 'Dinheiro' },
+      ],
+      of_caixinhas: [
+        { id: 'c1', grupo_id: 'g1', of_conta_id: 'ofPJ', nome: 'Caixinha', saldo: 12262.19 },
+        { id: 'c2', grupo_id: 'g1', of_conta_id: 'ofPF', nome: 'Reserva de PAZ', saldo: 3991.72 },
+        { id: 'c3', grupo_id: 'g1', of_conta_id: null, nome: 'Cofrinho antigo', saldo: 10 },
+        { id: 'c4', grupo_id: 'g2', of_conta_id: 'ofPJ', nome: 'Outro grupo', saldo: 999 },   // mesmo of_conta_id, OUTRO grupo
+      ],
+    });
+    const cx = (b) => b.tabelas.of_caixinhas.filter((c) => c.grupo_id === 'g1');
+
+    const b = criarBanco(base());
+    let r = await separarCaixinhasDoGrupo(cx(b), 'g1', { supabase: b.client });
+    eq(r.pessoais.map((c) => c.id), ['c2', 'c3'], '§7 a da conta pessoal e a sem conta seguem pessoais');
+    eq(r.daEmpresa.map((c) => c.id), ['c1'], '§7 a da conta PJ vai pra empresa');
+    eq(r.daEmpresa[0].da_empresa.empresa_nome, 'Vida Mais', '§7 diz de qual empresa');
+    eq(r.daEmpresa[0].da_empresa.reservas_no_pessoal, false, '§7 padrão: NÃO mostrar no pessoal');
+
+    const lig = criarBanco(base({ reservas_no_pessoal: true }));
+    r = await separarCaixinhasDoGrupo(cx(lig), 'g1', { supabase: lig.client });
+    eq(r.daEmpresa[0].da_empresa.reservas_no_pessoal, true, '§7 opção ligada chega à tela');
+    eq(r.pessoais.map((c) => c.id), ['c2', 'c3'], '§7 ligada, a da empresa NÃO entra na lista pessoal (bloco à parte)');
+
+    const s193 = criarBanco(base(), { sem193: true });   // sem a 193 a coluna NÃO existe
+    r = await separarCaixinhasDoGrupo(cx(s193), 'g1', { supabase: s193.client });
+    eq([r.daEmpresa.map((c) => c.id), r.daEmpresa[0]?.da_empresa.reservas_no_pessoal], [['c1'], false], '§7 sem a 193: separa igual, opção desligada');
+
+    const mista = criarBanco(base({ fora_do_pessoal: false }));
+    r = await separarCaixinhasDoGrupo(cx(mista), 'g1', { supabase: mista.client });
+    eq(r.daEmpresa.length, 0, '§7 conta MISTA: a caixinha segue pessoal');
+
+    for (const t of ['wallets', 'contas_negocio']) {
+      const ff = criarBanco(base(), { falhar: t });
+      r = await separarCaixinhasDoGrupo(cx(ff), 'g1', { supabase: ff.client });
+      eq([r.pessoais.length, r.daEmpresa.length], [3, 0], '§7 leitura de ' + t + ' que falha: tudo pessoal (nunca esconde)');
+    }
+    const semConta = [{ id: 'x', grupo_id: 'g1', nome: 'sem conta', saldo: 5 }];
+    eq((await separarCaixinhasDoGrupo(semConta, 'g1', { supabase: b.client })).pessoais.length, 1, '§7 sem of_conta_id (fallback da rota): pessoal');
+
+    // pura: carteira pessoal com o mesmo of_conta_id não puxa nada pra empresa
+    eq(separarCaixinhas([{ id: 'k', of_conta_id: 'ofPF' }], [{ of_conta_id: 'ofPF', da_empresa: null }]).daEmpresa.length, 0, '§7 pura: conta pessoal fica pessoal');
+    // ⚠️ Cartão da conta PJ com o MESMO of_conta_id (o banco usa o mesmo id na conta e no cartão)
+    // vem DEPOIS da conta e não é da empresa: não pode apagar a marca da caixinha.
+    eq(separarCaixinhas([{ id: 'k', of_conta_id: 'ofPJ' }], [{ of_conta_id: 'ofPJ', da_empresa: { conta_id: 'cn1' } }, { of_conta_id: 'ofPJ', da_empresa: null }]).daEmpresa.length, 1, '§7 cartão da conta PJ não devolve a caixinha ao pessoal');
+
+    // Negócios: reservas por carteira, em CENTAVOS, só do mesmo grupo
+    const mapa = await reservasDasCarteiras(b.tabelas.wallets, { supabase: b.client });
+    eq(mapa.get('wPJ'), { total: 1226219, itens: [{ id: 'c1', grupo_id: 'g1', of_conta_id: 'ofPJ', nome: 'Caixinha', saldo: 1226219 }] }, '§7 Negócios: a reserva da PJ em centavos, sem a do outro grupo');
+    eq(mapa.has('wMan'), false, '§7 carteira sem of_conta_id não tem reserva');
+    const fr = criarBanco(base(), { falhar: 'of_caixinhas' });
+    eq((await reservasDasCarteiras(fr.tabelas.wallets, { supabase: fr.client })).size, 0, '§7 caixinhas que falham: nenhuma reserva (o saldo segue certo)');
   }
   console.log('  ok');
 
