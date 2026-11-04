@@ -50,7 +50,13 @@ const calcResumo = (grupoId, mes) => calcularResumo({ grupoId, mes });
 // revalidação por este endpoint a trazia de volta pro gráfico.
 const COLUNAS_GRAFICO = 'id, data, valor, categoria, tipo, transferencia, carteira_nome, ignorar_em';
 
-async function listarTransacoes(grupoId, { mes, tipo, limit, ate, colunas }) {
+// Conta "só da empresa" (Sora Negócios): seus lançamentos ficam fora das
+// RECENTES pessoais — o resto do painel já os tira dos totais por `ignorar_em`.
+// Filtrado NA CONSULTA, senão a lista sairia com menos de `limit` itens.
+// ⚠️ `neq` sozinho excluiria o NULL (lançamento comum): por isso o `is.null`.
+const semEmpresa = (q) => q.or('ignorar_em.is.null,ignorar_em.neq.empresa');
+
+async function listarTransacoes(grupoId, { mes, tipo, limit, ate, colunas, soPessoal }) {
   // Caminho enxuto: quem pede colunas específicas não usa o embed do criador,
   // logo não precisa da escada de fallback de embed que vem depois.
   if (colunas) {
@@ -74,6 +80,7 @@ async function listarTransacoes(grupoId, { mes, tipo, limit, ate, colunas }) {
   if (mes)  query = query.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
   if (ate)  query = query.lte('data', ate); // exclui lançamentos futuros (parcelas)
   if (tipo) query = query.eq('tipo', tipo);
+  if (soPessoal) query = semEmpresa(query);
   // Arquivadas (migration 131) ficam de fora — igual à lista da aba Transações.
   query = await arquivadas.filtrar(query, {});
 
@@ -89,6 +96,7 @@ async function listarTransacoes(grupoId, { mes, tipo, limit, ate, colunas }) {
     if (mes)  q2 = q2.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
     if (ate)  q2 = q2.lte('data', ate);
     if (tipo) q2 = q2.eq('tipo', tipo);
+    if (soPessoal) q2 = semEmpresa(q2);
     q2 = await arquivadas.filtrar(q2, {});
     let r = await q2;
     if (r.error) { // último recurso: sem embed nenhum
@@ -97,6 +105,7 @@ async function listarTransacoes(grupoId, { mes, tipo, limit, ate, colunas }) {
       if (mes)  q3 = q3.gte('data', `${mes}-01`).lt('data', proximoMesPrimeiroDia(mes));
       if (ate)  q3 = q3.lte('data', ate);
       if (tipo) q3 = q3.eq('tipo', tipo);
+      if (soPessoal) q3 = semEmpresa(q3);
       q3 = await arquivadas.filtrar(q3, {});
       r = await q3;
     }
@@ -125,7 +134,7 @@ router.get('/:phone', auth, async (req, res) => {
       calcResumo(grupoId, mes),
       calcResumo(grupoId, mesAnt),
       supabase.from('wallets').select('*').eq('grupo_id', grupoId).order('nome'),
-      listarTransacoes(grupoId, { limit: 8, ate: new Date().toISOString() }), // recentes: nada de futuro (parcelas)
+      listarTransacoes(grupoId, { limit: 8, ate: new Date().toISOString(), soPessoal: true }), // recentes: nada de futuro (parcelas)
       // ⚠️ Só o GRÁFICO vai enxuto. A lista de RECENTES (acima) continua com
       // `select('*')` + embed do criador porque ela mostra observação, avatar de
       // quem lançou e o resto — estreitar ali apagaria conteúdo da tela.
