@@ -1006,17 +1006,32 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     // (migration 104) e é aplicada nas transações que já existem. Assim ele
     // corrige "FernandoPeixoto" uma vez, não todo mês. Best-effort: falhar aqui
     // não pode desfazer a edição que já foi salva.
+    // "Aplicar nas outras parcelas desta compra": nome e categoria da parcela
+    // editada vão pras irmãs (mesmo `parcela_grupo`). Roda ANTES da regra: as
+    // irmãs já ficam na categoria certa e a regra não as conta de novo.
+    let parcelas = null;
+    if (req.body?.aplicar_parcelas && antes && tx) {
+      try {
+        parcelas = await require('../services/parcelasIrmas')
+          .aplicarNasParcelas({ grupoId: req.grupoId, antes, depois: tx });
+      } catch (e) { console.warn('[transacoes PUT] parcelas da compra falharam:', e.message); }
+    }
+
+    // ⚠️ A REGRA USA A DESCRIÇÃO DE ANTES DA EDIÇÃO. Ela casa as OUTRAS
+    // transações da loja, que continuam com o nome do banco; com o nome novo
+    // (relato do Bruno: "Mlp*Kabum-Fast Shop" renomeado pra "Boombox 4") a
+    // regra nascia como "boombox" e não alcançava linha nenhuma.
     let regra = null;
     if (req.body?.aplicar_todas && categoria !== undefined && tx) {
       try {
         regra = await aplicarCategoriaNoEstabelecimento({
           grupoId: req.grupoId, userId: req.userId,
-          descricao: tx.observacao, categoria, ignorarId: tx.id,
+          descricao: (antes && antes.observacao) || tx.observacao, categoria, ignorarId: tx.id,
         });
       } catch (e) { console.warn('[transacoes PUT] regra de categoria falhou:', e.message); }
     }
 
-    res.json({ ...tx, regra });
+    res.json({ ...tx, regra, parcelas });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

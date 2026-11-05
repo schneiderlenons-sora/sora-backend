@@ -106,7 +106,8 @@
     "eval:baixa-banco-negocio": "node evals/baixaBancoNegocio.eval.js",
     "eval:regras-negocio": "node evals/regrasNegocio.eval.js",
     "eval:conta-empresa-fora-pessoal": "node evals/contaEmpresaForaPessoal.eval.js",
-    "eval:regras-negocio-rota": "node evals/regrasNegocioRota.eval.js"
+    "eval:regras-negocio-rota": "node evals/regrasNegocioRota.eval.js",
+    "eval:parcelas-irmas": "node evals/parcelasIrmas.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
