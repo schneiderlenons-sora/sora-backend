@@ -185,6 +185,40 @@ console.log('── 6. paresConciliaveis (botão da tela) ──');
 }
 console.log('  ok');
 
+// ── lote: mais rígido que o par, e nunca apaga o banco ─────────────────────
+console.log('── lote ──');
+{
+  const { cabeNoLote, planoLote } = require('../src/services/fusaoDuplicada');
+  const G = 'g1';
+  const H = '2026-09-01T21:21:34+00:00';
+  const bco = (o = {}) => ({ id: 'b', grupo_id: G, of_tx_id: 'of1', pago: true, observacao: 'PIX ENVIADO MARIA', categoria: 'Outros', carteira_nome: 'C6', data: H, ...o });
+  const cop = (o = {}) => ({ id: 'c', grupo_id: G, of_tx_id: null, pago: true, observacao: 'Pix enviado  Maria', categoria: 'Mercado', carteira_nome: 'C6', data: H, ...o });
+  const contas = new Set([G + '|C6']);
+  ok(cabeNoLote({ previsto: cop({ data: '2026-09-02' }), banco: bco() }), 'descrição igual (sem caixa/espaço) cabe no lote');
+  ok(cabeNoLote({ previsto: cop({ observacao: 'mercado da esquina' }), banco: bco() }), 'mesmo instante real cabe no lote');
+  ok(!cabeNoLote({ previsto: cop({ observacao: 'mercadinho', data: '2026-09-02' }), banco: bco() }), 'nome diferente e outro dia NÃO cabe');
+  ok(!cabeNoLote({ previsto: cop({ observacao: 'x', data: '2026-09-01T12:00:00+00:00' }), banco: bco({ data: '2026-09-01T12:00:00+00:00' }) }), 'horário cheio não é prova de instante');
+  ok(!cabeNoLote({ previsto: cop({ observacao: '', data: '2026-09-02' }), banco: bco({ observacao: '' }) }), 'descrição vazia não prova nada');
+  ok(!cabeNoLote({}), 'sem par: não');
+
+  const p = planoLote([{ previsto: cop(), banco: bco() }], { contasDoBanco: contas });
+  ok(p.total === 1 && p.itens[0].manterId === 'b' && p.itens[0].descartarId === 'c', 'fica o BANCO, sai a cópia');
+  ok(p.itens[0].patch.categoria === 'Mercado', 'a categoria da pessoa passa pra linha do banco');
+  ok(!('valor' in p.itens[0].patch) && !('data' in p.itens[0].patch) && !('pago' in p.itens[0].patch), 'valor/data/pago nunca andam');
+  const igual = planoLote([{ previsto: cop({ observacao: 'A', categoria: 'X' }), banco: bco({ observacao: 'A', categoria: 'X' }) }], { contasDoBanco: contas });
+  ok(Object.keys(igual.itens[0].patch).length === 0, 'rótulo igual: nenhum update à toa');
+  const manualConta = planoLote([{ previsto: cop(), banco: bco() }], { contasDoBanco: new Set() });
+  ok(manualConta.total === 0, 'pago em conta MANUAL não entra (apagar estornaria o saldo)');
+  const disp = planoLote([{ previsto: cop(), banco: bco() }], { contasDoBanco: contas, dispensados: new Set(['c:b']) });
+  ok(disp.total === 0, '"não é a mesma" é respeitado');
+  const muitos = Array.from({ length: 200 }, (_, i) => ({ previsto: cop({ id: 'c' + i }), banco: bco({ id: 'b' + i }) }));
+  const parte = planoLote(muitos, { contasDoBanco: contas, limite: 150 });
+  ok(parte.itens.length === 150 && parte.total === 200, 'passada limitada, total verdadeiro');
+  const doisBanco = planoLote([{ previsto: bco({ id: 'x', of_tx_id: 'of2' }), banco: bco() }], { contasDoBanco: contas });
+  ok(doisBanco.total === 0, 'duas linhas do banco nunca entram');
+}
+console.log('  ok');
+
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {
   console.log('\n── Falhas ──');

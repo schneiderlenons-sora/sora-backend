@@ -207,4 +207,55 @@ function paresConciliaveis(transacoes, saoMesma, { contasDoBanco = new Set() } =
     .map(({ previsao, cobranca }) => ({ previsto: previsao, banco: cobranca }));
 }
 
-module.exports = { planoFusao, rotuloHerdado, escolherAbsorcoes, paresConciliaveis };
+// =============================================================================
+// JUNTAR EM LOTE — centenas de pares, sem ninguém olhar um por um.
+//
+// O caso (Caio, nov/2026): criar um grupo "trazendo os dados" copia as contas e
+// as transações SEM o vínculo com o banco. Reconectar faz o banco trazer de
+// novo os últimos 90 dias, e cada lançamento fica em dobro: ~500 linhas.
+// Conciliar uma a uma não é uma opção real.
+//
+// ⚠️ O LOTE É MAIS RÍGIDO QUE O BOTÃO DE UM PAR. No par a pessoa vê as duas
+// pontas antes de tocar; aqui ninguém vê. Além da prova do Watson exige também
+// a MESMA DESCRIÇÃO ou o MESMO INSTANTE. Medido na base (30 pares): só 5 passam,
+// e os 25 que ficam são exatamente os que pedem olho humano ("mercadinho" ×
+// "DEBITO VISA…", "película e capa" × um nome de pessoa). Continuam na lista,
+// um a um.
+// =============================================================================
+
+/** Este par é seguro pra juntar sem a pessoa olhar? */
+function cabeNoLote({ previsto, banco } = {}) {
+  if (!previsto || !banco) return false;
+  const { normTexto, temHoraReal } = require('./duplicadas');
+  const desc = normTexto(previsto.observacao);
+  if (desc && desc === normTexto(banco.observacao)) return true;
+  return temHoraReal(previsto.data) && String(previsto.data) === String(banco.data);
+}
+
+/**
+ * O que juntar nesta passada.
+ * @returns {{ itens: Array<{manterId,descartarId,patch}>, total: number }}
+ *   `total` = quantos cabem no lote ao todo; `itens` no máximo `limite`.
+ */
+function planoLote(pares, { contasDoBanco = new Set(), dispensados = new Set(), limite = 150 } = {}) {
+  const itens = [];
+  let total = 0;
+  for (const par of pares || []) {
+    const { previsto, banco } = par;
+    if (!cabeNoLote(par)) continue;
+    if (dispensados.has(`${previsto.id}:${banco.id}`)) continue; // "não é a mesma"
+    const contaDoBanco = contasDoBanco.has(`${previsto.grupo_id}|${previsto.carteira_nome}`);
+    const plano = planoFusao(banco, previsto, { contaDoBanco });
+    if (!plano.seguro) continue;
+    total++;
+    if (itens.length >= limite) continue;
+    // Só grava o que difere: rótulo igual seria uma ida ao banco à toa.
+    const herdado = rotuloHerdado(plano.previsto);
+    const patch = {};
+    for (const [k, v] of Object.entries(herdado)) if (banco[k] !== v) patch[k] = v;
+    itens.push({ manterId: plano.manterId, descartarId: plano.descartarId, patch });
+  }
+  return { itens, total };
+}
+
+module.exports = { planoFusao, rotuloHerdado, escolherAbsorcoes, paresConciliaveis, cabeNoLote, planoLote };

@@ -134,74 +134,116 @@ router.get('/duplicadas/:phone', auth, async (req, res) => {
 //   2. só cobranças do banco na janela DELES e com o valor DELES.
 // ⚠️ Sempre 200 com lista: falha aqui só esconde uma sugestão, e um erro
 // derrubaria a aba de transações por causa de um extra.
+async function paresConciliaveisDoGrupo(grupoId) {
+  const VAZIO = { pares: [], contasDoBanco: new Set() };
+  const { hojeSP } = require('../services/cicloFatura');
+  const somaDias = (ymd, n) => {
+    const d = new Date(`${ymd}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  const hoje = hojeSP();
+  const COLS = 'id, grupo_id, valor, valor_moeda, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia, pago';
+
+  // Contas do BANCO (of_conta_id): nelas o manual JÁ PAGO também é conciliável
+  // (ver fusaoDuplicada.planoFusao — o saldo vem do banco, apagar a cópia não
+  // mexe nele). Medido: 39 duplicatas "manual pago × banco" em 11 contas.
+  const { data: wBanco } = await supabase.from('wallets').select('nome')
+    .eq('grupo_id', grupoId).not('of_conta_id', 'is', null);
+  const nomesBanco = (wBanco || []).map((w) => w.nome).filter(Boolean);
+  const contasDoBanco = new Set(nomesBanco.map((n) => `${grupoId}|${n}`));
+
+  // Previsto no FUTURO não tem cobrança ainda; mais de 120 dias atrás já
+  // deixou de ser "previsto" na cabeça de qualquer um.
+  const { data: prevs, error: e1 } = await supabase.from('transacoes').select(COLS)
+    .eq('grupo_id', grupoId).eq('pago', false).is('of_tx_id', null)
+    .not('recorrente', 'is', true)
+    .gte('data', somaDias(hoje, -120)).lte('data', `${somaDias(hoje, 1)}T23:59:59`)
+    .limit(300);
+  if (e1) return VAZIO;
+  // Manual JÁ PAGO em conta do banco (o lançado pelo zap/painel que o banco
+  // trouxe de novo). 92 dias: o sync relê 90, e reconectar repete tudo isso.
+  let pagosBanco = [];
+  if (nomesBanco.length) {
+    const { data } = await supabase.from('transacoes').select(COLS)
+      .eq('grupo_id', grupoId).eq('pago', true).is('of_tx_id', null).is('pluggy_tx_id', null)
+      .not('recorrente', 'is', true).in('carteira_nome', nomesBanco)
+      .gte('data', somaDias(hoje, -92)).lte('data', `${somaDias(hoje, 1)}T23:59:59`)
+      .limit(500);
+    pagosBanco = data || [];
+  }
+  const manuais = [...(prevs || []), ...pagosBanco];
+  if (!manuais.length) return VAZIO;
+
+  const datas = manuais.map((p) => String(p.data).slice(0, 10)).sort();
+  const valores = [...new Set(manuais.flatMap((p) => [p.valor, p.valor_moeda])
+    .filter((v) => Number(v) > 0).map(Number))];
+  // ⚠️ `valor_moeda` também: em conta fora da moeda do grupo a prova compara
+  // o valor ORIGINAL, e o convertido do banco pode não bater com o do previsto.
+  const lista = valores.join(',');
+  const { data: cobs, error: e2 } = await supabase.from('transacoes').select(COLS)
+    .eq('grupo_id', grupoId).not('of_tx_id', 'is', null)
+    .gte('data', somaDias(datas[0], -2)).lte('data', `${somaDias(datas[datas.length - 1], 2)}T23:59:59`)
+    .or(`valor.in.(${lista}),valor_moeda.in.(${lista})`)
+    .limit(1000);
+  if (e2 || !cobs || !cobs.length) return VAZIO;
+
+  const { ehDuplicata } = require('../services/duplicadas');
+  const { paresConciliaveis } = require('../services/fusaoDuplicada');
+  const pares = paresConciliaveis([...manuais, ...cobs], (p, c) => ehDuplicata(p, c) === 'manual-e-banco', { contasDoBanco });
+  return { pares, contasDoBanco };
+}
+
 router.get('/conciliaveis/:phone', auth, async (req, res) => {
   try {
     const user = usuarioReq(req);
     if (!user?.grupo_ativo) return res.json({ pares: [] });
-    const grupoId = user.grupo_ativo;
-    const { hojeSP } = require('../services/cicloFatura');
-    const somaDias = (ymd, n) => {
-      const d = new Date(`${ymd}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n);
-      return d.toISOString().slice(0, 10);
-    };
-    const hoje = hojeSP();
-    const COLS = 'id, grupo_id, valor, valor_moeda, tipo, observacao, categoria, carteira_nome, data, created_at, of_tx_id, pluggy_tx_id, parcela_total, recorrente, transferencia, pago';
-
-    // Contas do BANCO (of_conta_id): nelas o manual JÁ PAGO também é conciliável
-    // (ver fusaoDuplicada.planoFusao — o saldo vem do banco, apagar a cópia não
-    // mexe nele). Medido: 39 duplicatas "manual pago × banco" em 11 contas.
-    const { data: wBanco } = await supabase.from('wallets').select('nome')
-      .eq('grupo_id', grupoId).not('of_conta_id', 'is', null);
-    const nomesBanco = (wBanco || []).map((w) => w.nome).filter(Boolean);
-    const contasDoBanco = new Set(nomesBanco.map((n) => `${grupoId}|${n}`));
-
-    // Previsto no FUTURO não tem cobrança ainda; mais de 120 dias atrás já
-    // deixou de ser "previsto" na cabeça de qualquer um.
-    const { data: prevs, error: e1 } = await supabase.from('transacoes').select(COLS)
-      .eq('grupo_id', grupoId).eq('pago', false).is('of_tx_id', null)
-      .not('recorrente', 'is', true)
-      .gte('data', somaDias(hoje, -120)).lte('data', `${somaDias(hoje, 1)}T23:59:59`)
-      .limit(300);
-    if (e1) return res.json({ pares: [] });
-    // Manual JÁ PAGO em conta do banco (o lançado pelo zap/painel que o banco
-    // trouxe de novo). Janela menor: duplicata de lançamento pago aparece em dias.
-    let pagosBanco = [];
-    if (nomesBanco.length) {
-      const { data } = await supabase.from('transacoes').select(COLS)
-        .eq('grupo_id', grupoId).eq('pago', true).is('of_tx_id', null).is('pluggy_tx_id', null)
-        .not('recorrente', 'is', true).in('carteira_nome', nomesBanco)
-        .gte('data', somaDias(hoje, -60)).lte('data', `${somaDias(hoje, 1)}T23:59:59`)
-        .limit(500);
-      pagosBanco = data || [];
-    }
-    const manuais = [...(prevs || []), ...pagosBanco];
-    if (!manuais.length) return res.json({ pares: [] });
-
-    const datas = manuais.map((p) => String(p.data).slice(0, 10)).sort();
-    const valores = [...new Set(manuais.flatMap((p) => [p.valor, p.valor_moeda])
-      .filter((v) => Number(v) > 0).map(Number))];
-    // ⚠️ `valor_moeda` também: em conta fora da moeda do grupo a prova compara
-    // o valor ORIGINAL, e o convertido do banco pode não bater com o do previsto.
-    const lista = valores.join(',');
-    const { data: cobs, error: e2 } = await supabase.from('transacoes').select(COLS)
-      .eq('grupo_id', grupoId).not('of_tx_id', 'is', null)
-      .gte('data', somaDias(datas[0], -2)).lte('data', `${somaDias(datas[datas.length - 1], 2)}T23:59:59`)
-      .or(`valor.in.(${lista}),valor_moeda.in.(${lista})`)
-      .limit(1000);
-    if (e2 || !cobs || !cobs.length) return res.json({ pares: [] });
-
-    const { ehDuplicata } = require('../services/duplicadas');
-    const { paresConciliaveis } = require('../services/fusaoDuplicada');
-    const pares = paresConciliaveis([...manuais, ...cobs], (p, c) => ehDuplicata(p, c) === 'manual-e-banco', { contasDoBanco });
+    const { pares } = await paresConciliaveisDoGrupo(user.grupo_ativo);
+    const { cabeNoLote } = require('../services/fusaoDuplicada');
     const enxuto = (t) => ({
       id: t.id, valor: t.valor, tipo: t.tipo, observacao: t.observacao,
       categoria: t.categoria, carteira_nome: t.carteira_nome, data: t.data, pago: t.pago,
     });
-    res.json({ pares: pares.map(({ previsto, banco }) => ({ previsto: enxuto(previsto), banco: enxuto(banco) })) });
+    res.json({ pares: pares.map((p) => ({ previsto: enxuto(p.previsto), banco: enxuto(p.banco), lote: cabeNoLote(p) })) });
   } catch (err) {
     console.error('[conciliaveis] falhou:', err.message);
     res.json({ pares: [] });
   }
+});
+
+// POST /api/transacoes/conciliar-todos — junta de uma vez os pares que cabem no
+// lote (ver fusaoDuplicada.cabeNoLote). ⚠️ O SERVIDOR RECALCULA OS PARES: a tela
+// só diz quais a pessoa dispensou. Trabalha em passadas de 150 e devolve quantos
+// restam; a tela repete até zerar (centenas de idas ao banco numa requisição só
+// estourariam o tempo no Render free).
+router.post('/conciliar-todos', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { planoLote } = require('../services/fusaoDuplicada');
+    const lista = Array.isArray(req.body?.dispensados) ? req.body.dispensados.map(String).slice(0, 500) : [];
+    const { pares, contasDoBanco } = await paresConciliaveisDoGrupo(req.grupoId);
+    const { itens, total } = planoLote(pares, { contasDoBanco, dispensados: new Set(lista) });
+
+    // Rótulo PRIMEIRO: se falhar, a cópia fica e nada se perde.
+    const prontos = [];
+    for (let i = 0; i < itens.length; i += 5) {
+      await Promise.all(itens.slice(i, i + 5).map(async (it) => {
+        if (Object.keys(it.patch).length) {
+          const { error } = await supabase.from('transacoes').update(it.patch).eq('id', it.manterId).eq('grupo_id', req.grupoId);
+          if (error) { console.warn('[conciliar-todos] rotulo:', error.message); return; }
+        }
+        prontos.push(it.descartarId);
+      }));
+    }
+    // ⚠️ `of_tx_id is null` é a última trava: nem um bug aqui apaga linha do
+    // banco (que iria pra of_tx_ignoradas e nunca mais voltaria).
+    let juntadas = 0;
+    if (prontos.length) {
+      const { data, error } = await supabase.from('transacoes').delete()
+        .in('id', prontos).eq('grupo_id', req.grupoId).is('of_tx_id', null).select('id');
+      if (error) return res.status(500).json({ erro: error.message });
+      juntadas = (data || []).length;
+    }
+    res.json({ ok: true, juntadas, restantes: Math.max(0, total - juntadas) });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 // GET /api/transacoes/transferencias-sugeridas/:phone — saída numa conta e
