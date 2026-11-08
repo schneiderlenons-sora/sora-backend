@@ -311,8 +311,15 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
 
     // ── 2. Garante que o usuário tem grupo ativo ──────────────────
     if (!user.grupo_ativo) {
-      await enviarTexto(phone, '⚠️ Erro ao carregar seu perfil. Tente novamente.');
-      return;
+      // "Tente novamente" nunca resolvia: sem grupo, a próxima mensagem falha igual.
+      const { garantirGrupoAtivo } = require('../services/grupoDoUsuario');
+      const { grupoId: recuperado, criado } = await garantirGrupoAtivo(user).catch(() => ({ grupoId: null }));
+      if (!recuperado) {
+        await enviarTexto(phone, '⚠️ Erro ao carregar seu perfil. Tente novamente em alguns minutos.');
+        return;
+      }
+      user.grupo_ativo = recuperado;
+      if (criado) user.wallet_padrao_id = null;
     }
     const grupoId = user.grupo_ativo;
 

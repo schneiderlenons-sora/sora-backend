@@ -5,6 +5,7 @@ const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { nanoid } = require('nanoid');
 const norm     = p => p?.replace(/\D/g, '');
+const { ehGrupoOriginal, podeSairDoGrupo } = require('../services/grupoDoUsuario');
 
 async function getUser(req) {
   const { data } = await supabase.from('users').select('*').eq('id', req.authUser?.id || '__none__').single();
@@ -72,12 +73,12 @@ router.get('/:phone', auth, async (req, res) => {
 
     // Grupos via membership.
     const { data: viaMembros } = await supabase.from('grupo_membros')
-      .select('grupo_id, papel, grupos(id, nome, dono_id, emoji)').eq('user_id', user.id);
+      .select('grupo_id, papel, grupos(id, nome, dono_id, emoji, created_at)').eq('user_id', user.id);
     // Grupos que o usuário é DONO — inclui o "Pessoal" (criado pelo trigger
     // sem linha em grupo_membros). Sem isso, o Pessoal não aparecia na lista e
     // não dava pra trocar de volta pra ele.
     const { data: viaDono } = await supabase.from('grupos')
-      .select('id, nome, dono_id, emoji').eq('dono_id', user.id);
+      .select('id, nome, dono_id, emoji, created_at').eq('dono_id', user.id);
 
     const mapa = new Map();
     for (const m of viaMembros || []) {
@@ -86,7 +87,9 @@ router.get('/:phone', auth, async (req, res) => {
     for (const g of viaDono || []) {
       if (!mapa.has(g.id)) mapa.set(g.id, { grupo_id: g.id, papel: 'admin', grupos: g });
     }
-    res.json([...mapa.values()]);
+    // `original`: nasceu com a conta. A tela usa pra não oferecer "Sair" nele,
+    // mesmo renomeado (o nome não prova nada).
+    res.json([...mapa.values()].map((g) => ({ ...g, original: ehGrupoOriginal(g.grupos, user) })));
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -221,12 +224,13 @@ router.delete('/sair/:grupo_id', auth, async (req, res) => {
     const grupoId = req.params.grupo_id;
 
     const { data: grupo } = await supabase.from('grupos')
-      .select('id, nome, dono_id').eq('id', grupoId).single();
+      .select('id, nome, dono_id, created_at').eq('id', grupoId).single();
     if (!grupo) return res.status(404).json({ erro: 'Grupo não encontrado.' });
 
-    // Bloqueia sair do grupo Pessoal (o primeiro grupo criado para o user é o pessoal)
-    if (grupo.dono_id === user.id && /pessoal/i.test(grupo.nome || '')) {
-      return res.status(400).json({ erro: 'Não é possível sair do grupo Pessoal.' });
+    // O grupo que nasceu com a conta não se abandona, mesmo renomeado. Sair dele
+    // passava a posse (e o histórico) pro convidado e deixava a conta sem grupo.
+    if (!podeSairDoGrupo(grupo, user)) {
+      return res.status(400).json({ erro: 'Este é o grupo principal da sua conta, então não dá pra sair dele. Você pode remover os outros membros ou criar um novo grupo.' });
     }
 
     // Se for dono e há outros membros: transfere admin pro mais antigo

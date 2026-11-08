@@ -87,6 +87,16 @@ async function auth(req, res, next) {
       .eq('id', user.id)
       .maybeSingle();
 
+    // Conta sem grupo não tem saída sozinha (toda rota responde "sem grupo"):
+    // devolve um grupo a ela aqui. Só custa alguma coisa nesse caso raro.
+    if (row && !row.grupo_ativo) {
+      try {
+        const { garantirGrupoAtivo } = require('../services/grupoDoUsuario');
+        const { grupoId } = await garantirGrupoAtivo({ id: user.id, name: user.user_metadata?.name });
+        if (grupoId) row.grupo_ativo = grupoId;
+      } catch (e) { console.warn('[auth] garantir grupo:', e.message); }
+    }
+
     req.authUser = {
       id:         user.id,
       phone:      row?.phone || null,
