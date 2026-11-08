@@ -189,7 +189,12 @@ async function paresConciliaveisDoGrupo(grupoId) {
 
   const { ehDuplicata } = require('../services/duplicadas');
   const { paresConciliaveis } = require('../services/fusaoDuplicada');
-  const pares = paresConciliaveis([...manuais, ...cobs], (p, c) => ehDuplicata(p, c) === 'manual-e-banco', { contasDoBanco });
+  // ⚠️ QUALQUER prova do Watson, não só 'manual-e-banco'. Cópia e banco com a
+  // mesma descrição e o mesmo instante saem como 'mesmo-instante' (a regra vem
+  // antes), e era justamente o caso mais certo que ficava de fora. A origem
+  // diferente já está garantida: um lado não tem of_tx_id e o outro tem.
+  const saoMesma = (p, c) => !p.pluggy_tx_id && !!ehDuplicata(p, c);
+  const pares = paresConciliaveis([...manuais, ...cobs], saoMesma, { contasDoBanco });
   return { pares, contasDoBanco };
 }
 

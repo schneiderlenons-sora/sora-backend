@@ -200,6 +200,7 @@ console.log('── lote ──');
   ok(!cabeNoLote({ previsto: cop({ observacao: 'x', data: '2026-09-01T12:00:00+00:00' }), banco: bco({ data: '2026-09-01T12:00:00+00:00' }) }), 'horário cheio não é prova de instante');
   ok(!cabeNoLote({ previsto: cop({ observacao: '', data: '2026-09-02' }), banco: bco({ observacao: '' }) }), 'descrição vazia não prova nada');
   ok(!cabeNoLote({}), 'sem par: não');
+  ok(!cabeNoLote({ previsto: cop({ observacao: 'outro nome', data: '2026-09-01T21:40:10+00:00' }), banco: bco() }), 'hora real, mas instantes DIFERENTES e nome diferente: não');
 
   const p = planoLote([{ previsto: cop(), banco: bco() }], { contasDoBanco: contas });
   ok(p.total === 1 && p.itens[0].manterId === 'b' && p.itens[0].descartarId === 'c', 'fica o BANCO, sai a cópia');
@@ -214,6 +215,8 @@ console.log('── lote ──');
   const muitos = Array.from({ length: 200 }, (_, i) => ({ previsto: cop({ id: 'c' + i }), banco: bco({ id: 'b' + i }) }));
   const parte = planoLote(muitos, { contasDoBanco: contas, limite: 150 });
   ok(parte.itens.length === 150 && parte.total === 200, 'passada limitada, total verdadeiro');
+  const foraDoLote = planoLote([{ previsto: cop({ observacao: 'mercadinho', data: '2026-09-02' }), banco: bco() }], { contasDoBanco: contas });
+  ok(foraDoLote.total === 0 && foraDoLote.itens.length === 0, 'par sem a prova extra não entra na passada');
   const doisBanco = planoLote([{ previsto: bco({ id: 'x', of_tx_id: 'of2' }), banco: bco() }], { contasDoBanco: contas });
   ok(doisBanco.total === 0, 'duas linhas do banco nunca entram');
 }
