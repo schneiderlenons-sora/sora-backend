@@ -165,7 +165,12 @@ router.post('/aceitar', auth, async (req, res) => {
     await supabase.from('grupo_membros')
       .upsert({ grupo_id: convite.grupo_id, user_id: user.id, papel:'escrita' }, { onConflict:'grupo_id,user_id' });
     await supabase.from('convites').update({ usado: true }).eq('id', convite.id);
-    await supabase.from('users').update({ grupo_ativo: convite.grupo_id }).eq('id', user.id);
+    // Quem entra por convite cai num grupo JÁ configurado: o assistente inicial
+    // (contas, categorias, gastos fixos) gravaria tudo de novo DENTRO do grupo de
+    // quem convidou. Conta nova que entra por aqui vai direto pro painel.
+    const patchUser = { grupo_ativo: convite.grupo_id };
+    if (user.onboarding_completed === false) patchUser.onboarding_completed = true;
+    await supabase.from('users').update(patchUser).eq('id', user.id);
     res.json({ ok: true, grupo_id: convite.grupo_id });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
