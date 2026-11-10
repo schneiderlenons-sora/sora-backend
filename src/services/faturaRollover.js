@@ -305,6 +305,17 @@ function competenciaDoPagamento(cartao, dataPg) {
   return dist(anterior) < dist(proxima) ? anterior : proxima;
 }
 
+/** TODOS os pagamentos do cartão desde `desde` (YYYY-MM-DD), do mais antigo. */
+async function pagamentosDoCartao(cartaoId, desde) {
+  try {
+    const { data, error } = await supabase.from('pagamentos_fatura')
+      .select('valor, data').eq('cartao_id', cartaoId).gte('data', desde)
+      .order('data', { ascending: true });
+    return error ? null : (data || []);
+  } catch { return null; }
+}
+module.exports.pagamentosDoCartao = pagamentosDoCartao;
+
 /** Pagamentos registrados numa competência (valor + data), do mais novo. */
 async function pagamentosDaFatura(cartaoId, competencia) {
   try {
@@ -373,12 +384,17 @@ async function registrarPagamentosDoOF(grupoId, cartao) {
     const novos = [];
     for (const t of candidatos) {
       if (registrados.has(t.id)) continue;
-      const competencia = competenciaDoPagamento(cartao, t.data);
+      // ⚠️ DIA EM SÃO PAULO, nunca `slice(0, 10)` do instante: pagamento às 21h06
+      // de 08/11 virava 09/11 (UTC) — DEPOIS do fechamento — e a fatura do dono
+      // saía sem esse abatimento (nov/2026). Mesma regra de lib/data-br.ts.
+      const { diaSP } = require('./consultaParcela');
+      const dia = diaSP(t.data);
+      const competencia = competenciaDoPagamento(cartao, dia);
       if (!competencia) continue;
       novos.push({
         grupo_id: grupoId, cartao_id: cartao.id, competencia,
         // Na moeda do CARTÃO (o original), igual à fatura que ele abate.
-        valor: cent(t.valor_moeda ?? t.valor), data: String(t.data).slice(0, 10), transacao_id: t.id,
+        valor: cent(t.valor_moeda ?? t.valor), data: dia, transacao_id: t.id,
       });
     }
     if (!novos.length) return 0;

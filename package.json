@@ -109,7 +109,8 @@
     "eval:regras-negocio-rota": "node evals/regrasNegocioRota.eval.js",
     "eval:parcelas-irmas": "node evals/parcelasIrmas.eval.js",
     "eval:grupo-do-usuario": "node evals/grupoDoUsuario.eval.js",
-    "eval:revogar-consentimento": "node evals/revogarConsentimento.eval.js"
+    "eval:revogar-consentimento": "node evals/revogarConsentimento.eval.js",
+    "eval:abatimento-ciclo": "node evals/abatimentoCiclo.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

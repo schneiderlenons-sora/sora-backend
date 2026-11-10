@@ -36,11 +36,83 @@
 // `quitada` é sinal de NAVEGAÇÃO (a tela pula pra fatura seguinte) e segue a
 // regra literal: só encerra a fatura o pagamento feito DEPOIS do fechamento.
 // =============================================================================
-const { competenciaAtual, hojeSP } = require('./cicloFatura');
-const { pagamentosDaFatura, quitadaDepoisDoFechamento } = require('./faturaRollover');
+const { competenciaAtual, competenciaVizinha, hojeSP } = require('./cicloFatura');
+const competenciaVizinhaDe = (c, comp) => competenciaVizinha(c, comp, 1);
+const { pagamentosDaFatura, quitadaDepoisDoFechamento, pagamentosDoCartao } = require('./faturaRollover');
 const { faturasDoCartao, competenciaDoSimulado, pagoPorCompetencia } = require('./faturasBanco');
 
 const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+/**
+ * Pagamentos depois da última fatura PUBLICADA, na ordem em que o banco os
+ * aplica: primeiro quitam a publicada; o que SOBRA abate o ciclo seguinte
+ * (se foi pago até o fechamento dele) ou paga esse ciclo (se foi depois).
+ *
+ * RELATO (dono, nov/2026): fatura do Mercado Pago fechada em R$ 1.872,06 no
+ * banco e R$ 5.771,63 na Sora. O MP deixa abater a fatura em curso, e o banco
+ * fecha a fatura LÍQUIDA desses abatimentos. Ao centavo:
+ *   5.771,63 (compras do ciclo) − 2.899,57 (25/10) − 500 (07/11) − 500 (08/11)
+ *   = 1.872,06
+ * A Sora atribuía cada pagamento pela "fatura de vencimento mais próximo"
+ * (`competenciaDoPagamento`) — o de 25/10 caía em OUTUBRO, já quitada pelo de
+ * 09/10, e novembro ficava sem abatimento nenhum.
+ *
+ * ⚠️ Só vale quando a ANTERIOR está publicada: é o total dela que diz quanto
+ * de cada pagamento ia pra ela. Sem esse total não há como separar.
+ *
+ * ⚠️ E SÓ NO MERCADO PAGO (`ehMercadoPago`). A versão pra todo emissor foi
+ * MEDIDA antes de subir (324 faturas, 5 mudavam) e errava nas outras 4: o
+ * CAIXA manda o mesmo boleto DUAS vezes ("PGTO.BOLETO" + "AUT. PGTO. BOLETO")
+ * e crédito de RENEGOCIAÇÃO como pagamento; no Bradesco convivem o "paga"
+ * manual e o PIX do banco da mesma fatura. Somados em sequência, esses
+ * duplicados viravam "abatimento" e ZERAVAM faturas em aberto (R$ 75,50 do
+ * CAIXA Platinum, R$ 906,93 do Bradesco). Abater a fatura em curso é recurso
+ * do MP, e lá a conta fecha ao centavo. Com o recorte: 1 de 324 muda.
+ * Conferido também em outubro (publicada): 4.846,53 − 2.100 = 2.746,53 contra
+ * 2.792,67 publicados — a diferença (46,14) é a mesma que setembro tem no
+ * sentido oposto, uma compra que nós e o banco pomos em ciclos vizinhos.
+ *
+ * @param {{ totalAnterior:number, fechAnterior:string, fimCiclo:string,
+ *           pagamentos: {valor:number, data:string}[] }} p   datas 'YYYY-MM-DD'
+ * @returns {{ abatido:number, pagoDepois:number }}
+ */
+/**
+ * O cartão é do Mercado Pago? Pela INSTITUIÇÃO da conexão (`of_conexoes`),
+ * nunca pelo nome da carteira — o cliente pode renomeá-la. Na dúvida, false
+ * (fica o cálculo de sempre).
+ */
+// ⚠️ Sem barra invertida de propósito: um `s` já se perdeu em escape aqui
+// (virou `s*` e deixava "Mercado Pago" de fora). Travado no eval.
+const instituicaoEhMercadoPago = (nome) => /mercado[ _-]*pago/i.test(String(nome || ''));
+
+async function ehMercadoPago(cartao) {
+  if (!cartao || !cartao.of_consent_id) return false;
+  try {
+    const supabase = require('../db/supabase');
+    const { data } = await supabase.from('of_conexoes').select('instituicao')
+      .eq('external_id', String(cartao.of_consent_id)).maybeSingle();
+    return instituicaoEhMercadoPago(data && data.instituicao);
+  } catch { return false; }
+}
+
+function abatimentosDoCiclo({ totalAnterior, fechAnterior, fimCiclo, pagamentos }) {
+  let falta = Math.max(0, cent(totalAnterior));
+  let abatido = 0, pagoDepois = 0;
+  const ordem = [...(pagamentos || [])]
+    .filter((p) => p && p.data && String(p.data).slice(0, 10) > fechAnterior)
+    .sort((a, b) => String(a.data).localeCompare(String(b.data)));
+  for (const p of ordem) {
+    let v = cent(p.valor);
+    if (v <= 0) continue;
+    const usa = Math.min(falta, v);
+    falta = cent(falta - usa);
+    v = cent(v - usa);
+    if (v <= 0) continue;
+    if (String(p.data).slice(0, 10) <= fimCiclo) abatido = cent(abatido + v);
+    else pagoDepois = cent(pagoDepois + v);
+  }
+  return { abatido, pagoDepois };
+}
 
 /**
  * @param {object} cartao  wallet ({ id, saldo, of_conta_id, dia_fechamento, dia_vencimento })
@@ -295,6 +367,32 @@ async function valorExibido(cartaoIn, competencia, st, deps = {}) {
       fatura   = cent(st.fatura + (prev?.total || 0));
       restante = Math.max(0, cent(fatura - pago));
       fonte    = 'ciclo+previstas';
+
+      // ⚠️ A ANTERIOR ESTÁ PUBLICADA: os pagamentos seguem a ordem do banco
+      // (ver `abatimentosDoCiclo`). Abatimento no ciclo SAI DA FATURA (é como
+      // o banco a fecha); pagamento depois do fechamento é `pago`. Leitura que
+      // falha devolve null → fica o cálculo de cima, como sempre foi.
+      const anterior = (faturas || [])
+        .filter((f) => f && f.competencia < competencia && f.total != null && f.fechamento)
+        .sort((a, b) => b.competencia.localeCompare(a.competencia))[0];
+      const ehAVizinha = anterior && st.ciclo && st.ciclo.ini && anterior.fechamento < st.ciclo.ini;
+      if (ehAVizinha && competenciaVizinhaDe(cartao, anterior.competencia) === competencia
+          && await (deps.ehMercadoPago || ehMercadoPago)(cartao)) {
+        const lerTodos = deps.pagamentosDoCartao || pagamentosDoCartao;
+        const pgs = await lerTodos(cartao.id, String(anterior.fechamento).slice(0, 10));
+        if (Array.isArray(pgs)) {
+          const { abatido, pagoDepois } = abatimentosDoCiclo({
+            totalAnterior: anterior.total,
+            fechAnterior: String(anterior.fechamento).slice(0, 10),
+            fimCiclo: st.ciclo.fim,
+            pagamentos: pgs,
+          });
+          fatura   = Math.max(0, cent(fatura - abatido));
+          pago     = pagoDepois;
+          restante = Math.max(0, cent(fatura - pago));
+          fonte    = 'ciclo+previstas+ordem';
+        }
+      }
     }
   }
 
@@ -319,4 +417,4 @@ async function valorExibido(cartaoIn, competencia, st, deps = {}) {
   };
 }
 
-module.exports = { valorExibido, pagoDaPublicada, cent };
+module.exports = { valorExibido, pagoDaPublicada, abatimentosDoCiclo, instituicaoEhMercadoPago, cent };
