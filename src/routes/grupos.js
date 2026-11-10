@@ -128,6 +128,18 @@ router.post('/aceitar', auth, async (req, res) => {
       .eq('usado', false).gte('expira_em', new Date().toISOString()).single();
     if (!convite) return res.status(400).json({ erro: 'Código inválido ou expirado' });
 
+    // ⚠️ O DONO ABRINDO O PRÓPRIO LINK NÃO PODE GASTAR O CÓDIGO (relato da
+    // Pollyana, nov/2026): ela testou o link no próprio celular, logada; o
+    // código virou "usado", ela entrou como membro "escrita" do PRÓPRIO grupo
+    // (o papel de membro vence o de dono na checagem de permissão) e o marido
+    // recebia "código inválido". Três convites gastos assim.
+    if (convite.grupos?.dono_id === user.id) {
+      return res.status(409).json({
+        erro: 'Este convite é do seu próprio grupo, então ele não vale pra você. Envie o link pra pessoa que você quer convidar: ela abre no celular dela e cria a conta dela.',
+        codigo: 'convite_proprio',
+      });
+    }
+
     // Limite de membros pelo plano do DONO do grupo (não deixa estourar o
     // limite do plano — antes não era checado e o grupo crescia sem limite).
     const { data: jaMembro } = await supabase.from('grupo_membros')
@@ -141,6 +153,13 @@ router.post('/aceitar', auth, async (req, res) => {
       if ((count || 0) >= limite) {
         return res.status(403).json({ erro: `Este grupo já atingiu o limite de ${limite} membro(s) do plano.` });
       }
+    }
+
+    // Quem JÁ participa só troca pro grupo: o código continua valendo pra
+    // quem ele foi feito (e o papel que a pessoa tem não é rebaixado).
+    if (jaMembro) {
+      await supabase.from('users').update({ grupo_ativo: convite.grupo_id }).eq('id', user.id);
+      return res.json({ ok: true, grupo_id: convite.grupo_id, ja_participava: true });
     }
 
     await supabase.from('grupo_membros')
