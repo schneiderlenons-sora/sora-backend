@@ -56,7 +56,7 @@ async function desconectarConexao({ conexao: c, motivo = 'usuario', exigirRevoga
 
   if (exigirRevogacao) {
     try {
-      await prov.removerConexao(String(c.external_id));
+      await prov.removerConexao(String(c.external_id), { estrito: true });
     } catch (e) {
       // Não apaga nada: o consentimento segue vivo lá e a linha segue aqui, que
       // é o único estado em que a próxima tentativa ainda sabe o que fazer.

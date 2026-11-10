@@ -245,9 +245,26 @@ async function getConsentimento(id) {
   return dados(await api(`/consents/${encodeURIComponent(id)}`));
 }
 
-async function revogarConsentimento(id) {
+// Revoga o consentimento na Polp — é o que PARA a cobrança dele.
+//
+// ⚠️ `estrito`: quem precisa SABER se revogou (corte de excedente, exclusão de
+// conta, desconectar pelo admin) passa `{ estrito: true }` e recebe o erro.
+// Antes a função engolia TODA falha e devolvia null — e o `exigirRevogacao`
+// de services/desconectarConexao apagava a linha achando que a Polp tinha
+// confirmado, deixando o consentimento vivo e cobrado sem rastro na base. O
+// eval do corte não pegava porque o mock lançava erro; o cliente real, nunca.
+//
+// 404 conta como revogado: consentimento que a Polp não conhece não é cobrado.
+// Sem `estrito` o comportamento é o de sempre (a rota do usuário apaga primeiro
+// e não pode virar 500 por causa do provedor).
+async function revogarConsentimento(id, { estrito = false } = {}) {
   try { return await api(`/consents/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
-  catch (e) { console.warn('[celcoin] revogar:', e.message); return null; }
+  catch (e) {
+    if (e && e.status === 404) return { jaRevogado: true };
+    console.warn('[celcoin] revogar:', e.message);
+    if (estrito) throw e;
+    return null;
+  }
 }
 
 async function listarConsentimentos() {

@@ -348,4 +348,52 @@ router.post('/revogar-conexoes-usuario', async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// ── DESCONECTAR UMA CONEXÃO PELO PAINEL ADMIN ───────────────────────────────
+// POST { conexao_id } → { ok, revogada, instituicao }
+//
+// Pra parar de pagar a Polp por um cliente que não usa mais. Mesmo serviço do
+// corte de excedente, no modo que só apaga se a Polp CONFIRMAR a revogação —
+// apagar sem revogar deixaria o consentimento cobrado e sem rastro aqui.
+// As contas e o histórico do cliente ficam; ele pode reconectar quando quiser.
+router.post('/desconectar-conexao', async (req, res) => {
+  if (!exigirSegredo(req, res)) return;
+  const id = String(req.body?.conexao_id || '').trim();
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(400).json({ erro: 'conexao_id inválido' });
+  try {
+    const { data: c, error } = await supabase.from('of_conexoes').select('*').eq('id', id).maybeSingle();
+    if (error) return res.status(500).json({ erro: error.message });
+    if (!c) return res.status(404).json({ erro: 'Conexão não encontrada (já foi desconectada?).' });
+    const { desconectarConexao } = require('../services/desconectarConexao');
+    const r = await desconectarConexao({ conexao: c, motivo: 'admin', exigirRevogacao: true });
+    if (!r.ok) {
+      return res.status(502).json({
+        erro: `A Polp não confirmou a revogação, então nada foi apagado (${r.erro || 'falhou'}). Tente de novo em instantes.`,
+      });
+    }
+    res.json({ ok: true, revogada: r.revogada, instituicao: c.instituicao || null });
+  } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// ── REVOGAR UM CONSENTIMENTO QUE SÓ EXISTE NA POLP ──────────────────────────
+// POST { consent_id } → { ok }
+//
+// Órfão = a Polp conhece e a Sora não (reconexão que deixou o antigo vivo,
+// conexão apagada sem revogar). Ninguém vê esse consentimento em tela nenhuma,
+// mas ele entra na fatura. ⚠️ Recusa se o id ainda é uma conexão NOSSA: aí o
+// caminho é o desconectar acima, que também arquiva e apaga a linha.
+router.post('/revogar-consentimento', async (req, res) => {
+  if (!exigirSegredo(req, res)) return;
+  const id = String(req.body?.consent_id || '').trim();
+  if (!id || id.length > 80) return res.status(400).json({ erro: 'consent_id inválido' });
+  try {
+    const { data: nossa, error } = await supabase.from('of_conexoes')
+      .select('id').eq('external_id', id).maybeSingle();
+    if (error) return res.status(500).json({ erro: error.message });
+    if (nossa) return res.status(409).json({ erro: 'Esse consentimento é de uma conexão ativa na Sora. Use "Desconectar" no cliente.' });
+    const celcoin = require('../services/polpCelcoin');
+    await celcoin.revogarConsentimento(id, { estrito: true });
+    res.json({ ok: true });
+  } catch (err) { res.status(502).json({ erro: `A Polp recusou: ${err.message}` }); }
+});
+
 module.exports = router;

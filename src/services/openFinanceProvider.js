@@ -108,7 +108,8 @@ function para(provider) {
       listarInstituicoes: () => cliente.listarInstituicoes(),
       criarConexao: (args) => cliente.criarConsentimento(args),
       getConexao: (id) => cliente.getConsentimento(id),
-      removerConexao: (id) => cliente.revogarConsentimento(id),
+      // `opts.estrito` faz a falha SUBIR (ver revogarConsentimento).
+      removerConexao: (id, opts) => cliente.revogarConsentimento(id, opts),
       // Só o trilho Celcoin tem /recreate. No Pluggy fica `undefined` e a
       // rota cai no caminho antigo — o `typeof === function` é a checagem.
       recriarConexao: (id, args) => cliente.recriarConsentimento(id, args || {}),
