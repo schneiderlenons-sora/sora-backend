@@ -66,7 +66,9 @@ router.get('/:phone', auth, async (req, res) => {
   try {
     const user = await getUser(req);
     if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado' });
-    const cols = 'id, tipo, categoria, valor, dia_vencimento, descricao, carteira, ativa';
+    // `created_at`: o painel usa como início quando `data_inicio` falta (as
+    // pendências de meses anteriores não podem ser de antes de a conta existir).
+    const cols = 'id, tipo, categoria, valor, dia_vencimento, descricao, carteira, ativa, created_at';
     const listar = (sel) => supabase.from('recorrencias')
       .select(sel)
       .eq('grupo_id', user.grupo_ativo)

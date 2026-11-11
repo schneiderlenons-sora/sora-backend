@@ -147,6 +147,11 @@ async function criarRecorrencia({
   // ⚠️ A camada de MOEDA vem junto da 157, e a linha de baixo já é o retrocesso:
   // sem a migration 160 a conta fixa ainda é criada, só sem registrar a moeda.
   let ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, ...modo, ...extra157, ...extraMoeda, criado_por: criadoPor }).select().single();
+  // ⚠️ As camadas de baixo NÃO têm frequência, data de início nem fim: cair
+  // nelas grava uma conta mensal "desde sempre" sem ninguém saber. Medido em
+  // nov/2026: 20 contas criadas depois da 157 saíram assim, causa não achada —
+  // este log é o que vai mostrá-la.
+  if (ins.error) console.warn('[recorrencias] insert completo falhou, caindo de camada:', ins.error.message);
   if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, ...modo, criado_por: criadoPor }).select().single();
   if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel, criado_por: criadoPor }).select().single();
   if (ins.error) ins = await supabase.from('recorrencias').insert({ ...base, ...variavel }).select().single();
