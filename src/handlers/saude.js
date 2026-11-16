@@ -6,6 +6,7 @@
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarBotaoLink } = require('../services/mensageiro');
 const nutricao = require('../services/nutricao');
+const pesoReg = require('../services/pesoRegistro');
 
 const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 
@@ -152,20 +153,37 @@ module.exports = async function handleSaude(mensagem, ctx) {
   }
 
   // ── PESO ─────────────────────────────────────────────────────────
-  if ((m = msg.match(/^(?:peso|registrar peso|to com|estou com)\s+(\d+(?:[.,]\d+)?)\s*kg?$/i))) {
-    const v = parseFloat(m[1].replace(',', '.'));
-    if (!v || v <= 0 || v > 600) {
-      await enviarTexto(phone, '❌ Peso inválido. Ex: *peso 75.2*');
+  // "peso 80", "peso 80,5 ontem", "peso 80 dia 10", "peso 80 10/11".
+  // Regra e data em services/pesoRegistro.js (dia de SÃO PAULO, nunca UTC:
+  // às 21h o UTC já virou amanhã e a pesagem da noite caía no dia seguinte).
+  const cmdPeso = pesoReg.lerComandoPeso(msg);
+  if (cmdPeso) {
+    const hoje = pesoReg.hojeSP();
+    const dia = cmdPeso.quando ? pesoReg.dataDaFrase(cmdPeso.quando, hoje) : hoje;
+    if (!dia) {
+      await enviarTexto(phone, '❌ Não entendi a data. Ex: *peso 75,2 ontem* ou *peso 75,2 10/11*');
       return true;
     }
-    const hoje = new Date().toISOString().slice(0, 10);
-    const { data: existing } = await supabase.from('pesos').select('id').eq('user_id', user.id).eq('data', hoje).maybeSingle();
-    if (existing) {
-      await supabase.from('pesos').update({ peso_kg: v }).eq('id', existing.id);
-    } else {
-      await supabase.from('pesos').insert({ grupo_id: grupoId, user_id: user.id, data: hoje, peso_kg: v });
+    const v = pesoReg.validarRegistro({ peso_kg: cmdPeso.peso, data: dia }, hoje);
+    if (v.erro) {
+      await enviarTexto(phone, '❌ Peso inválido. Ex: *peso 75,2*');
+      return true;
     }
-    await enviarTexto(phone, `⚖️ Peso de hoje registrado: *${v} kg*`);
+    const { data: existing, error: eLer } = await supabase.from('pesos').select('id')
+      .eq('user_id', user.id).eq('data', v.data).maybeSingle();
+    if (eLer) throw eLer;
+    const { error: eGravar } = existing
+      ? await supabase.from('pesos').update({ peso_kg: v.peso_kg }).eq('id', existing.id)
+      : await supabase.from('pesos').insert({ grupo_id: grupoId, user_id: user.id, data: v.data, peso_kg: v.peso_kg });
+    if (eGravar) {
+      await enviarTexto(phone, '😕 Não consegui salvar o peso agora. Tenta de novo em instantes.');
+      return true;
+    }
+    const quando = v.data === hoje ? 'de hoje'
+      : v.data === pesoReg.somarDias(hoje, -1) ? 'de ontem'
+      : `de ${v.data.slice(8, 10)}/${v.data.slice(5, 7)}`;
+    const kg = String(v.peso_kg).replace('.', ',');
+    await enviarTexto(phone, `⚖️ Peso ${quando} ${existing ? 'atualizado' : 'registrado'}: *${kg} kg*`);
     return true;
   }
 

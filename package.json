@@ -112,7 +112,8 @@
     "eval:revogar-consentimento": "node evals/revogarConsentimento.eval.js",
     "eval:abatimento-ciclo": "node evals/abatimentoCiclo.eval.js",
     "eval:categorias-negocio": "node evals/categoriasNegocio.eval.js",
-    "eval:categorias-negocio-rota": "node evals/categoriasNegocioRota.eval.js"
+    "eval:categorias-negocio-rota": "node evals/categoriasNegocioRota.eval.js",
+    "eval:peso": "node evals/pesoRegistro.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

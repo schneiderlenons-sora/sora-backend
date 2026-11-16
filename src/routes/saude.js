@@ -181,11 +181,23 @@ router.put('/perfil/:phone', auth, requireGrow, async (req, res) => {
 // ═════════════════════════════════════════════════════════════════
 // PESO
 // ═════════════════════════════════════════════════════════════════
+// Regra (valor, data em SP, nada no futuro) em services/pesoRegistro.js.
+// Um peso por DIA (unique user_id+data, migration 013): registrar de novo no
+// mesmo dia substitui — e a resposta diz isso (`substituiu`).
+const pesoReg = require('../services/pesoRegistro');
+
+// GET ?dias=30|90|365 (padrão 90) · ?dias=todos → o histórico inteiro.
 router.get('/pesos/:phone', auth, requireGrow, async (req, res) => {
   try {
     const { dias } = req.query;
-    const ini = new Date(Date.now() - (parseInt(dias) || 90) * 86400000).toISOString().slice(0,10);
-    const { data } = await supabase.from('pesos').select('*').eq('user_id', req._user.id).gte('data', ini).order('data');
+    let q = supabase.from('pesos').select('*').eq('user_id', req._user.id).order('data');
+    if (dias !== 'todos') {
+      const n = Math.min(Math.max(parseInt(dias) || 90, 1), 3650);
+      q = q.gte('data', pesoReg.somarDias(pesoReg.hojeSP(), -n));
+    }
+    const { data, error } = await q;
+    // Falha de leitura é erro, nunca lista vazia (vazio diria "você não tem pesos").
+    if (error) throw error;
     res.json(data || []);
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
@@ -193,21 +205,53 @@ router.get('/pesos/:phone', auth, requireGrow, async (req, res) => {
 router.post('/pesos', auth, requireGrow, async (req, res) => {
   try {
     const u = req._user;
-    const { peso_kg, data, observacao } = req.body;
+    const v = pesoReg.validarRegistro(req.body || {});
+    if (v.erro) return res.status(400).json({ erro: v.erro });
+    const { data: ja } = await supabase.from('pesos').select('id')
+      .eq('user_id', u.id).eq('data', v.data).maybeSingle();
     const { data: r, error } = await supabase.from('pesos').upsert({
-      grupo_id: u.grupo_ativo, user_id: u.id,
-      data: data || new Date().toISOString().slice(0,10),
-      peso_kg: parseFloat(peso_kg),
-      observacao,
+      grupo_id: u.grupo_ativo, user_id: u.id, ...v,
     }, { onConflict: 'user_id,data' }).select().single();
+    if (error) throw error;
+    res.json({ ...r, substituiu: !!ja });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// PUT /pesos/:id { peso_kg, data, observacao } — corrigir um registro.
+router.put('/pesos/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const u = req._user;
+    const { data: atual } = await supabase.from('pesos').select('id, data')
+      .eq('id', req.params.id).eq('user_id', u.id).maybeSingle();
+    if (!atual) return res.status(404).json({ erro: 'Registro não encontrado.' });
+    const v = pesoReg.validarRegistro(req.body || {});
+    if (v.erro) return res.status(400).json({ erro: v.erro });
+    if (v.data !== String(atual.data).slice(0, 10)) {
+      const { data: outro } = await supabase.from('pesos').select('id')
+        .eq('user_id', u.id).eq('data', v.data).maybeSingle();
+      if (outro) {
+        return res.status(409).json({
+          erro: `Já existe um peso em ${v.data.slice(8, 10)}/${v.data.slice(5, 7)}. Edite aquele registro ou apague um dos dois.`,
+        });
+      }
+    }
+    const { data: r, error } = await supabase.from('pesos').update(v)
+      .eq('id', atual.id).eq('user_id', u.id).select().single();
     if (error) throw error;
     res.json(r);
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// ⚠️ Só apaga o PRÓPRIO registro: antes era `.eq('id')` sozinho — qualquer
+// conta logada apagava o peso de qualquer outra pelo id.
 router.delete('/pesos/:id', auth, requireGrow, async (req, res) => {
-  try { await supabase.from('pesos').delete().eq('id', req.params.id); res.json({ ok: true }); }
-  catch (e) { res.status(500).json({ erro: e.message }); }
+  try {
+    const { data, error } = await supabase.from('pesos').delete()
+      .eq('id', req.params.id).eq('user_id', req._user.id).select('id');
+    if (error) throw error;
+    if (!data || !data.length) return res.status(404).json({ erro: 'Registro não encontrado.' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 // ═════════════════════════════════════════════════════════════════

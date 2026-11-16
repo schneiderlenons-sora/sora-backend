@@ -530,6 +530,14 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       return;
     }
 
+    // Fast-path do PESO ("peso 80", "peso 80 ontem", "peso 80 10/11"): o
+    // formato é estrito, então não precisa esperar a IA classificar como Grow.
+    if (!data && temAcessoGrow(user) && require('../services/pesoRegistro').lerComandoPeso(mensagem)) {
+      const ctx = { phone, grupoId: user.grupo_ativo, user, mensagem };
+      await require('../handlers/grow')(mensagem, ctx);
+      return;
+    }
+
     // Detetive Watson: "tem alguma duplicada?" → investiga e lista, sem IA.
     // ANTES do FAQ porque "duplicada" é pedido de AÇÃO, não pergunta genérica.
     if (!data && user?.grupo_ativo) {
