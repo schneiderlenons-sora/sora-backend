@@ -110,7 +110,9 @@
     "eval:parcelas-irmas": "node evals/parcelasIrmas.eval.js",
     "eval:grupo-do-usuario": "node evals/grupoDoUsuario.eval.js",
     "eval:revogar-consentimento": "node evals/revogarConsentimento.eval.js",
-    "eval:abatimento-ciclo": "node evals/abatimentoCiclo.eval.js"
+    "eval:abatimento-ciclo": "node evals/abatimentoCiclo.eval.js",
+    "eval:categorias-negocio": "node evals/categoriasNegocio.eval.js",
+    "eval:categorias-negocio-rota": "node evals/categoriasNegocioRota.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

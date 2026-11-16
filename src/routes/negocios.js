@@ -786,6 +786,266 @@ router.delete('/regras/:id', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// ─────────────────────────────────────────────────────────────────
+// CATEGORIAS PRÓPRIAS (migration 196) — regra em services/categoriasNegocio.js
+//
+// ⚠️ O lançamento guarda o NOME da categoria (texto), não um id. Por isso
+// RENOMEAR, JUNTAR e MOVER passam por `cascatearCategoria`, que troca o nome
+// nos lançamentos e nas regras aprendidas — senão o histórico ficaria numa
+// categoria que não existe mais (a família da conta-fantasma).
+// ─────────────────────────────────────────────────────────────────
+const catNeg = require('../services/categoriasNegocio');
+// Texto pra cliente: nada de "migration" (já chegou ao Robert uma vez).
+const AVISO_CATEGORIAS = 'As categorias personalizadas ainda estão sendo liberadas. Tente de novo em alguns minutos.';
+const semTabelaCat = (e) => !!e && /categorias_negocio|does not exist|schema cache/i.test(e.message || '');
+
+/** Categorias guardadas da empresa. Sem a 196: lista vazia + `semMigration`. */
+async function lerCategorias(empresaId) {
+  const { data, error } = await supabase.from('categorias_negocio')
+    .select('id, tipo, nome, icone, natureza, oculta')
+    .eq('empresa_id', empresaId);
+  if (error) {
+    if (semTabelaCat(error)) {
+      console.warn('[categorias-negocio] tabela ausente — falta rodar a migration 196');
+      return { registradas: [], semMigration: true };
+    }
+    throw error;
+  }
+  return { registradas: data || [], semMigration: false };
+}
+
+/** tipo + categoria de TODOS os lançamentos da empresa (paginado: o select para em 1.000). */
+async function categoriasUsadas(empresaId) {
+  let todas = [];
+  for (let de = 0; ; de += 1000) {
+    const { data, error } = await supabase.from('lancamentos_negocio')
+      .select('tipo, categoria')
+      .eq('empresa_id', empresaId)
+      .not('categoria', 'is', null)
+      .range(de, de + 999);
+    if (error) throw error;
+    todas = todas.concat(data || []);
+    if (!data || data.length < 1000) break;
+  }
+  return todas;
+}
+
+/** Troca o nome gravado — TODAS as grafias da mesma categoria — nos
+ *  lançamentos e nas regras aprendidas. Devolve quantos lançamentos mudaram. */
+async function cascatearCategoria(empresaId, tipo, de, para) {
+  const usados = await categoriasUsadas(empresaId);
+  const alvo = catNeg.variantes(de, usados.filter((l) => l.tipo === tipo).map((l) => l.categoria))
+    .filter((v) => v !== para);
+  let mudaram = 0;
+  if (alvo.length) {
+    const { data, error } = await supabase.from('lancamentos_negocio')
+      .update({ categoria: para })
+      .eq('empresa_id', empresaId).eq('tipo', tipo).in('categoria', alvo)
+      .select('id');
+    if (error) throw error;
+    mudaram = (data || []).length;
+  }
+  // Regras aprendidas (192): tolerante — sem a tabela, não há regra pra trocar.
+  const { data: regras, error: eR } = await supabase.from('regras_negocio')
+    .select('id, tipo, categoria').eq('empresa_id', empresaId);
+  if (!eR) {
+    const k = catNeg.chave(de);
+    const ids = (regras || [])
+      .filter((r) => (r.tipo === tipo || r.tipo == null) && r.categoria
+        && catNeg.chave(r.categoria) === k && r.categoria !== para)
+      .map((r) => r.id);
+    if (ids.length) {
+      const { error } = await supabase.from('regras_negocio')
+        .update({ categoria: para, updated_at: new Date().toISOString() }).in('id', ids);
+      if (error) console.warn('[categorias-negocio] regras não acompanharam:', error.message);
+    }
+  }
+  return mudaram;
+}
+
+// GET /api/negocios/categorias/:phone?empresa_id=
+// As guardadas + as já digitadas em lançamentos (pra reaproveitar), com uso.
+router.get('/categorias/:phone', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const empresaId = await resolverEmpresaId(user.id, req.query.empresa_id);
+    if (!empresaId) return res.json({ categorias: [] });
+    const [{ registradas, semMigration }, lancamentos] = await Promise.all([
+      lerCategorias(empresaId), categoriasUsadas(empresaId),
+    ]);
+    res.json({ categorias: catNeg.montarLista({ registradas, lancamentos }), semMigration });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// POST /api/negocios/categorias { empresa_id, tipo, nome, icone?, natureza? }
+// Cria — ou, se já existe (mesmo nome sem caixa/acento), atualiza ícone e
+// natureza e a devolve à lista. Quem lança (operador) pode criar.
+router.post('/categorias', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const b = req.body || {};
+    const empresa = await empresaDoUsuario(user.id, b.empresa_id);
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    const v = catNeg.validarNome(b.tipo, b.nome);
+    if (v.erro) return res.status(400).json({ erro: v.erro });
+    const icone = catNeg.iconeValido(b.icone);
+    if (icone === undefined) return res.status(400).json({ erro: 'Ícone inválido.' });
+    const natureza = catNeg.naturezaValida(b.tipo, b.natureza);
+    if (natureza === undefined) return res.status(400).json({ erro: 'Escolha fixa ou variável.' });
+
+    const { registradas, semMigration } = await lerCategorias(empresa.id);
+    if (semMigration) return res.status(503).json({ erro: AVISO_CATEGORIAS, semMigration: true });
+
+    const k = catNeg.chave(v.nome);
+    const ja = registradas.find((r) => r.tipo === b.tipo && catNeg.chave(r.nome) === k);
+    const agora = new Date().toISOString();
+    if (ja) {
+      const patch = { oculta: false, updated_at: agora };
+      if ('icone' in b) patch.icone = icone;
+      if ('natureza' in b) patch.natureza = natureza;
+      const { data, error } = await supabase.from('categorias_negocio')
+        .update(patch).eq('id', ja.id).select().maybeSingle();
+      if (error) throw error;
+      return res.json({ ok: true, categoria: data, criada: false });
+    }
+    const { data, error } = await supabase.from('categorias_negocio').insert({
+      empresa_id: empresa.id, tipo: b.tipo, nome: v.nome, icone, natureza, criado_por: user.id,
+    }).select().maybeSingle();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ erro: 'Essa categoria já existe.' });
+      throw error;
+    }
+    // A mesma categoria digitada antes com outra grafia ("CONVENIENCIA") passa a
+    // usar o nome guardado — senão o DRE mostraria duas linhas pra ela.
+    await cascatearCategoria(empresa.id, b.tipo, v.nome, v.nome);
+    res.json({ ok: true, categoria: data, criada: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// POST /api/negocios/categorias/renomear { empresa_id, tipo, de, para, juntar? }
+// Renomeia (e leva junto os lançamentos). Se `para` já é outra categoria,
+// responde 409 até vir `juntar: true` — juntar é como se acerta "COVENIENCIA".
+router.post('/categorias/renomear', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const b = req.body || {};
+    const empresa = await empresaDoUsuario(user.id, b.empresa_id, 'admin');
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    if (!catNeg.TIPOS.includes(b.tipo)) return res.status(400).json({ erro: 'Tipo inválido.' });
+    if (!catNeg.limpar(b.de) || catNeg.ehFixa(b.tipo, b.de)) {
+      return res.status(400).json({ erro: 'As categorias padrão não podem ser renomeadas.' });
+    }
+    const v = catNeg.validarNome(b.tipo, b.para);
+    if (v.erro) return res.status(400).json({ erro: v.erro });
+
+    const [{ registradas, semMigration }, usados] = await Promise.all([
+      lerCategorias(empresa.id), categoriasUsadas(empresa.id),
+    ]);
+    const lista = catNeg.montarLista({ registradas, lancamentos: usados });
+    const kDe = catNeg.chave(b.de), kPara = catNeg.chave(v.nome);
+    const origem = lista.find((c) => c.tipo === b.tipo && c.chave === kDe);
+    if (!origem) return res.status(404).json({ erro: 'Categoria não encontrada.' });
+    const destino = kPara !== kDe ? lista.find((c) => c.tipo === b.tipo && c.chave === kPara) : null;
+    if (destino && !b.juntar) {
+      return res.status(409).json({ erro: `Já existe a categoria "${destino.nome}".`, existente: destino.nome });
+    }
+    const nomeFinal = destino ? destino.nome : v.nome;
+    const regDe = semMigration ? null : registradas.find((r) => r.tipo === b.tipo && catNeg.chave(r.nome) === kDe);
+    const regPara = destino && !semMigration
+      ? registradas.find((r) => r.tipo === b.tipo && catNeg.chave(r.nome) === kPara) : null;
+
+    // 1) A linha guardada PRIMEIRO (é onde a unicidade pode estourar, e falhar
+    //    aqui não deixa rastro). Juntando com outra guardada, ela sai no fim.
+    let renomeou = false;
+    if (regDe && !regPara) {
+      const { error } = await supabase.from('categorias_negocio')
+        .update({ nome: nomeFinal, updated_at: new Date().toISOString() }).eq('id', regDe.id);
+      if (error) {
+        if (error.code === '23505') return res.status(409).json({ erro: `Já existe a categoria "${nomeFinal}".`, existente: nomeFinal });
+        throw error;
+      }
+      renomeou = true;
+    }
+    // 2) A cascata. Falhou? Desfaz o rename: histórico apontando pra um nome
+    //    que não existe é pior que não renomear.
+    let lancamentos;
+    try {
+      lancamentos = await cascatearCategoria(empresa.id, b.tipo, b.de, nomeFinal);
+    } catch (e) {
+      if (renomeou) {
+        await supabase.from('categorias_negocio').update({ nome: regDe.nome }).eq('id', regDe.id);
+      }
+      throw e;
+    }
+    // 3) Juntou com uma guardada: a de origem deixa de existir.
+    if (regDe && regPara) await supabase.from('categorias_negocio').delete().eq('id', regDe.id);
+    res.json({ ok: true, nome: nomeFinal, lancamentos, juntou: !!destino });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// POST /api/negocios/categorias/remover { empresa_id, tipo, nome, acao, para? }
+//   acao 'mover'   → os lançamentos vão pra `para` (padrão ou própria) e ela sai
+//   acao 'ocultar' → sai da lista; os lançamentos continuam com o nome
+// Sem lançamento nenhum, só apaga.
+router.post('/categorias/remover', auth, async (req, res) => {
+  try {
+    const user = await getUser(req);
+    if (!user?.grupo_ativo) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    if (!exigirNegocios(user)) return res.status(403).json({ erro: 'Recurso do plano Platinum.' });
+    const b = req.body || {};
+    const empresa = await empresaDoUsuario(user.id, b.empresa_id, 'admin');
+    if (!empresa) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+    if (!catNeg.TIPOS.includes(b.tipo)) return res.status(400).json({ erro: 'Tipo inválido.' });
+    if (!catNeg.limpar(b.nome) || catNeg.ehFixa(b.tipo, b.nome)) {
+      return res.status(400).json({ erro: 'As categorias padrão não podem ser removidas.' });
+    }
+    const [{ registradas, semMigration }, usados] = await Promise.all([
+      lerCategorias(empresa.id), categoriasUsadas(empresa.id),
+    ]);
+    const lista = catNeg.montarLista({ registradas, lancamentos: usados });
+    const k = catNeg.chave(b.nome);
+    const origem = lista.find((c) => c.tipo === b.tipo && c.chave === k);
+    if (!origem) return res.status(404).json({ erro: 'Categoria não encontrada.' });
+    const reg = registradas.find((r) => r.tipo === b.tipo && catNeg.chave(r.nome) === k);
+    const apagarLinha = async () => {
+      if (!reg) return;
+      const { error } = await supabase.from('categorias_negocio').delete().eq('id', reg.id);
+      if (error) throw error;
+    };
+
+    if (!origem.usos) { await apagarLinha(); return res.json({ ok: true, removida: true, lancamentos: 0 }); }
+
+    if (b.acao === 'mover') {
+      // Destino: uma padrão (pelo valor ou pelo rótulo) ou outra própria da lista.
+      const fixa = catNeg.valorFixa(b.tipo, b.para);
+      const propria = fixa ? null
+        : lista.find((c) => c.tipo === b.tipo && c.chave === catNeg.chave(b.para) && c.chave !== k);
+      const destino = fixa || propria?.nome;
+      if (!destino) return res.status(400).json({ erro: 'Escolha para qual categoria mover.' });
+      const lancamentos = await cascatearCategoria(empresa.id, b.tipo, b.nome, destino);
+      await apagarLinha();
+      return res.json({ ok: true, removida: true, lancamentos, para: destino });
+    }
+    if (b.acao === 'ocultar') {
+      if (semMigration) return res.status(503).json({ erro: AVISO_CATEGORIAS, semMigration: true });
+      const { error } = reg
+        ? await supabase.from('categorias_negocio').update({ oculta: true, updated_at: new Date().toISOString() }).eq('id', reg.id)
+        : await supabase.from('categorias_negocio').insert({
+          empresa_id: empresa.id, tipo: b.tipo, nome: origem.nome, oculta: true, criado_por: user.id,
+        });
+      if (error) throw error;
+      return res.json({ ok: true, oculta: true });
+    }
+    return res.status(409).json({ erro: 'Esta categoria tem lançamentos.', usos: origem.usos });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 // POST /api/negocios/lancamentos/:id/parar-serie — "parar de repetir"
 // A partir desta ocorrência: ela e as já pagas FICAM; as próximas em aberto
 // (digitadas, sem vínculo com o banco) saem, e o job deixa de gerar.

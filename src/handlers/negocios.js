@@ -5,6 +5,7 @@
 const supabase = require('../db/supabase');
 const { montarDre } = require('../services/dre');
 const { ehMovimentacao } = require('../services/espelhoContaEmpresa');
+const { aplicarNatureza } = require('../services/categoriasNegocio');
 const { empresasDoUsuario } = require('../services/acessoEmpresa');
 
 // Centavos util
@@ -385,6 +386,15 @@ async function gerarDre(userId, grupoId, periodo, empresaId) {
   // conta mas não é receita nem despesa — vem da conta do banco vinculada
   // (migration 189). Sem este filtro, aplicar R$ 10 mil viraria "despesa".
   lancamentos = lancamentos.filter((l) => !ehMovimentacao(l));
+
+  // Categoria PRÓPRIA de saída (migration 196) diz se é despesa fixa ou
+  // variável — é o que entra no ponto de equilíbrio. A natureza escolhida no
+  // próprio lançamento continua vencendo. Tolerante: sem a tabela, nada muda.
+  {
+    const { data: cats } = await supabase.from('categorias_negocio')
+      .select('tipo, nome, natureza').eq('empresa_id', empId);
+    lancamentos = aplicarNatureza(lancamentos, cats || []);
+  }
 
   // 2c. CMV — custo das mercadorias VENDIDAS no período, pelo custo congelado
   //     no item da venda. É o que transforma a compra de estoque em resultado.
