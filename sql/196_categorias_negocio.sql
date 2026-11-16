@@ -32,6 +32,27 @@ create table if not exists public.categorias_negocio (
   updated_at  timestamptz not null default now()
 );
 
+-- ⚠️ A TABELA JÁ EXISTIA: a migration 105 (fase 1 do Negócios) criou uma
+-- `categorias_negocio` que nunca foi usada (0 linhas), só com id, empresa_id,
+-- tipo, nome, icone, ativa e created_at. Nesse banco o `create table if not
+-- exists` acima não faz nada — por isso as colunas novas entram aqui, uma a
+-- uma. (A coluna `ativa` da 105 fica; o código não a usa.)
+alter table public.categorias_negocio add column if not exists natureza   text;
+alter table public.categorias_negocio add column if not exists oculta     boolean not null default false;
+alter table public.categorias_negocio add column if not exists criado_por uuid references public.users(id) on delete set null;
+alter table public.categorias_negocio add column if not exists updated_at timestamptz not null default now();
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'categorias_negocio_natureza_check') then
+    alter table public.categorias_negocio
+      add constraint categorias_negocio_natureza_check check (natureza in ('fixa', 'variavel'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'categorias_negocio_nome_tamanho_check') then
+    alter table public.categorias_negocio
+      add constraint categorias_negocio_nome_tamanho_check check (char_length(nome) between 1 and 30);
+  end if;
+end $$;
+
 -- Uma categoria por nome dentro da empresa e do tipo, ignorando caixa e acento
 -- ("Conveniência" e "CONVENIENCIA" são a mesma).
 -- ⚠️ translate() e não a extensão unaccent: no Supabase ela mora no schema
