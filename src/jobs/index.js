@@ -35,7 +35,10 @@ const oneLine = (s) => String(s || '').replace(/\s*[\r\n\t]+\s*/g, ' ').trim();
 // 10 min em services/moeda, então chamar por item não custa ida de rede.
 const fmtDoGrupo = (grupoId) => require('../services/moeda').formatadorDoGrupo(grupoId);
 
-const lembrete = async (phone, texto, core, agente) => {
+// `lembreteDetalhado` devolve `{ ok, nadaSaiu }`: `nadaSaiu` só é verdade
+// quando a Meta PROVOU que recusou todos os modelos — é o único caso em que
+// tentar de novo não arrisca mandar a mesma mensagem duas vezes.
+const lembreteDetalhado = async (phone, texto, core, agente) => {
   const vestida = agente
     // `direto` = voz CURTA. Repassado aqui senão o aviso diario continua
     // saindo com abertura e fecho — que e o texto que cansa.
@@ -86,7 +89,8 @@ const lembrete = async (phone, texto, core, agente) => {
   // `undefined` (o `enviarTexto` não devolve nada). Aí o "não entregou" seria
   // falso e a pessoa receberia a MESMA mensagem duas vezes.
   if (provedor() !== 'meta') {
-    return enviarProativo(phone, { texto: vestida.texto, template: fila[fila.length - 1] });
+    const r = await enviarProativo(phone, { texto: vestida.texto, template: fila[fila.length - 1] });
+    return { ok: r !== false, nadaSaiu: false, retorno: r };
   }
 
   // ⚠️ A REGRA QUE IMPEDE ENVIO DUPLICADO: só passa pro próximo modelo quando a
@@ -100,13 +104,22 @@ const lembrete = async (phone, texto, core, agente) => {
   // menos grave do que quatro iguais no WhatsApp do cliente.
   for (const template of fila) {
     const r = await enviarProativoDetalhado(phone, { texto: vestida.texto, template });
-    if (r.ok) return true;
+    if (r.ok) return { ok: true, nadaSaiu: false };
     if (!r.falhaDeModelo) {
       console.warn(`[lembrete] parei a fila em "${template.name}" (code ${r.code}) — falha ambígua, não repito o envio`);
-      return false;
+      return { ok: false, nadaSaiu: false };
     }
   }
-  return false;
+  // Todos os modelos foram RECUSADOS pela Meta (família 132xxx): está provado
+  // que nada saiu — quem chama pode tentar de novo mais tarde sem duplicar.
+  return { ok: false, nadaSaiu: true };
+};
+
+// Contrato de sempre (o retorno não é usado por ninguém hoje, mas fica igual):
+// `true` quando saiu; no Z-API, o que o envio devolveu.
+const lembrete = async (...args) => {
+  const r = await lembreteDetalhado(...args);
+  return 'retorno' in r ? r.retorno : r.ok;
 };
 
 /**
@@ -1350,83 +1363,76 @@ cron.schedule('0 9 * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// JOB 1J — A cada 15 min: lembretes de COMPROMISSOS da agenda (opt-in)
-// Dispara no momento certo respeitando a antecedência (na hora / 10min /
+// JOB 1J — A CADA MINUTO: lembretes de COMPROMISSOS da agenda (opt-in)
+// Dispara no minuto certo respeitando a antecedência (na hora / 10min /
 // 1h / 1 dia antes). Eventos "dia todo" (sem hora) usam 09:00 como base.
-// Dedup persistido via compromissos.lembrete_enviado.
+// Regra de tempo em `services/lembreteCompromisso.js`.
+//
+// ⚠️ A CADA MINUTO, NÃO DE 15 EM 15 (nov/2026). De 15 em 15, "10 min antes"
+// de um compromisso das 19:00 saía às 19:00 — na hora do compromisso — e o
+// cliente abria chamado às 18:54 dizendo que o aviso não veio. E o node-cron
+// 4 PULA a rodada quando o relógio dispara 1 segundo atrasado (só executa no
+// segundo :00): de 15 em 15, uma rodada pulada custava 15 minutos; agora, 1.
+// A consulta é uma só por minuto e só busca o que ainda não foi avisado.
+//
+// ⚠️ RESERVA ATÔMICA: só envia quem conseguir virar `lembrete_enviado` de
+// false pra true (`.eq('lembrete_enviado', false)` no UPDATE). Rodadas que se
+// sobrepõem, ou duas instâncias do servidor no ar durante um deploy, não
+// mandam o mesmo aviso duas vezes.
+//
+// ⚠️ FALHA PROVADA NÃO ENGOLE O AVISO. A marca era gravada ANTES de enviar e
+// nunca desfeita: se a Meta recusasse o modelo, o lembrete sumia em silêncio.
+// Agora, quando a Meta PROVA que nada saiu (`nadaSaiu`), a reserva é desfeita
+// e o próximo minuto tenta de novo — até `MAX_TENTATIVAS_LEMBRETE`. Falha
+// AMBÍGUA (timeout, 5xx) segue sem repetir: a mensagem pode ter saído, e
+// duas iguais são pior do que o risco.
 // ─────────────────────────────────────────────────────────────────
-function diasEpoch(dataStr) {
-  const [y, mo, d] = dataStr.split('-').map(Number);
-  return Math.floor(Date.UTC(y, mo - 1, d) / 86400000);
-}
+const { decidirLembrete, quandoTexto } = require('../services/lembreteCompromisso');
+const MAX_TENTATIVAS_LEMBRETE = 3;
+const tentativasLembrete = new Map(); // id → envios recusados (memória do processo)
 
-cron.schedule('*/15 * * * *', async () => {
-  const sp = agoraSP();
-  const hojeEpoch = diasEpoch(sp.dataStr);
-  const nowMin = hojeEpoch * 1440 + sp.minutos;
+async function avisarCompromisso(c, sp) {
+  const decisao = decidirLembrete(c, sp);
+  if (decisao === 'esperar') return 'esperar';
 
-  // Só os de hoje/ontem/amanhã com lembrete pendente (janela suficiente p/ "1 dia antes")
-  const ontem   = new Date(); ontem.setDate(ontem.getDate() - 1);
-  const amanha2 = new Date(); amanha2.setDate(amanha2.getDate() + 2);
-  const { data: comps } = await supabase.from('compromissos')
-    // `created_at` entra aqui pra responder se o briefing de hoje chegou a
-    // mencionar este compromisso — ver `services/briefingCobre.js`.
-    .select('id, grupo_id, user_id, titulo, hora, local, data, lembrete_antecedencia, created_at')
-    .eq('lembrete_ativo', true).eq('lembrete_enviado', false)
-    .gte('data', ontem.toISOString().slice(0, 10))
-    .lte('data', amanha2.toISOString().slice(0, 10));
+  if (decisao === 'expirado') {
+    // Passou mais de 1h do início sem aviso — tarde demais pra servir. Fica
+    // no log, porque é o rastro de um aviso que a pessoa NÃO recebeu.
+    await supabase.from('compromissos').update({ lembrete_enviado: true })
+      .eq('id', c.id).eq('lembrete_enviado', false);
+    console.warn(`📅 Lembrete compromisso EXPIRADO sem envio (${c.id}, ${c.data} ${c.hora || 'dia todo'})`);
+    return 'expirado';
+  }
 
-  for (const c of comps || []) {
-    const [hh, mm] = c.hora ? String(c.hora).split(':').map(Number) : [9, 0];
-    const eventMin = diasEpoch(c.data) * 1440 + (hh * 60 + (mm || 0));
-    const triggerMin = eventMin - (Number.isInteger(c.lembrete_antecedencia) ? c.lembrete_antecedencia : 60);
+  const phone = await phoneDoUser(c.user_id, c.grupo_id);
+  if (!phone) return 'sem-telefone';
+  if (!(await avisosLigados(c.user_id))) return 'avisos-desligados'; // kill-switch (não marca: reativa depois)
 
-    // Evento já passou (>1h) → marca enviado pra parar de checar
-    if (nowMin >= eventMin + 60) {
-      await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
-      continue;
-    }
-    if (nowMin < triggerMin) continue; // ainda não chegou a hora de avisar
+  // ⚠️ "Hoje" é responsabilidade do BRIEFING MATINAL (JOB 1K) só no caso
+  // em que ele de fato disse a mesma coisa: compromisso de DIA TODO que já
+  // existia quando o briefing saiu. Compromisso com hora SEMPRE avisa — a
+  // Sora prometeu "🔔 Te aviso 1h antes" na confirmação. Histórico das duas
+  // correções (30/09 e 01/10) em `services/briefingCobre.js`.
+  const ehHoje = String(c.data).slice(0, 10) === sp.dataStr;
+  const suprimir = ehHoje && await briefingCobriuCompromisso(c.user_id, c.created_at, sp.dataStr, c.hora, c.lembrete_antecedencia);
 
-    const phone = await phoneDoUser(c.user_id, c.grupo_id);
-    if (!phone) continue;
-    if (!(await avisosLigados(c.user_id))) continue; // kill-switch (não marca enviado p/ reativar depois)
+  // Reserva atômica — quem não conseguiu virar a marca não envia.
+  const { data: pego, error: errPego } = await supabase.from('compromissos')
+    .update({ lembrete_enviado: true })
+    .eq('id', c.id).eq('lembrete_enviado', false)
+    .select('id');
+  if (errPego || !pego || !pego.length) return 'ja-reservado';
+  if (suprimir) return 'coberto-pelo-briefing';
 
-    // ⚠️ "Hoje" é responsabilidade do BRIEFING MATINAL (JOB 1K), que já lista
-    // TUDO que acontece hoje — inclusive este compromisso — na mesma mensagem.
-    // Mesmo princípio já aplicado à fatura do cartão ("vence hoje é do
-    // briefing, se ligado, não repetimos aqui"; ver JOB de faturas): sem esta
-    // checagem o usuário recebia o compromisso duas vezes, uma do Loki aqui e
-    // outra dentro do briefing (bug real relatado). Só suprime quando é HOJE —
-    // lembrete de amanhã ("1 dia antes") ou atrasado continua saindo normal,
-    // porque o briefing de hoje não fala do de amanhã.
-    //
-    // ⚠️ MAS SÓ SUPRIME O QUE O BRIEFING REALMENTE MENCIONOU. Relato de
-    // cliente (30/09/2026): "não estou recebendo os avisos sobre tarefas ou
-    // lembretes agendados". Reconstruído na conta dele: o briefing saiu às
-    // 08:00, ele criou três compromissos às 08:23 para as 10h e 11h com
-    // lembrete de 1h, e às 09:00 este bloco marcou tudo como enviado sem
-    // enviar nada — em nome de um briefing que havia rodado 23 minutos ANTES
-    // de os compromissos existirem. Ele não recebeu nem um nem outro.
-    //
-    // A pergunta agora é respondida com dado (`created_at` × instante do
-    // briefing), não por suposição.
-    const ehHoje = c.data === sp.dataStr;
-    if (ehHoje && await briefingCobriuCompromisso(c.user_id, c.created_at, sp.dataStr, c.hora, c.lembrete_antecedencia)) {
-      await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
-      continue;
-    }
+  const quando = quandoTexto(c, sp.dataStr);
+  const txt =
+    `📅 *Lembrete de compromisso*\n\n` +
+    `*${c.titulo}*\n🕐 ${quando}${c.local ? `\n📍 ${c.local}` : ''}\n\n` +
+    `Ver agenda: 🌐 https://www.forsora.com/grow/agenda`;
 
-    await supabase.from('compromissos').update({ lembrete_enviado: true }).eq('id', c.id);
-    // "Hoje" só quando é hoje DE VERDADE — o lembrete de "1 dia antes" cai
-    // aqui com c.data = amanhã, e dizer "hoje às 9h" pra um compromisso de
-    // amanhã confundiria o usuário.
-    const quando = c.hora ? `${ehHoje ? 'hoje' : 'amanhã'} às ${c.hora}` : (ehHoje ? 'hoje' : 'amanhã');
-    const txt =
-      `📅 *Lembrete de compromisso*\n\n` +
-      `*${c.titulo}*\n🕐 ${quando}${c.local ? `\n📍 ${c.local}` : ''}\n\n` +
-      `Ver agenda: 🌐 https://www.forsora.com/grow/agenda`;
-    await lembrete(phone, txt,
+  let r;
+  try {
+    r = await lembreteDetalhado(phone, txt,
       `📅 *${c.titulo}* — ${quando}${c.local ? ` · 📍 ${c.local}` : ''}`,
       {
         id: 'loki', aviso: 'compromissos', seed: c.id,
@@ -1438,9 +1444,55 @@ cron.schedule('*/15 * * * *', async () => {
           `${quando.charAt(0).toUpperCase()}${quando.slice(1)}${c.local ? ` · ${c.local}` : ''}`,
         ],
       });
-    console.log(`📅 Lembrete compromisso → ${phone}: ${c.titulo}`);
+  } catch (e) {
+    // Erro antes de qualquer envio (o envio em si não lança: devolve falha).
+    console.error(`📅 Lembrete compromisso: erro ao montar (${c.id}):`, e.message);
+    r = { ok: false, nadaSaiu: true };
   }
-});
+
+  if (r.ok) {
+    tentativasLembrete.delete(c.id);
+    console.log(`📅 Lembrete compromisso → ${phone}: ${c.titulo}`);
+    return 'enviado';
+  }
+  if (r.nadaSaiu) {
+    const n = (tentativasLembrete.get(c.id) || 0) + 1;
+    tentativasLembrete.set(c.id, n);
+    if (n < MAX_TENTATIVAS_LEMBRETE) {
+      await supabase.from('compromissos').update({ lembrete_enviado: false }).eq('id', c.id);
+      console.warn(`📅 Lembrete compromisso RECUSADO pela Meta (${c.id}) — tento de novo (${n}/${MAX_TENTATIVAS_LEMBRETE})`);
+      return 'tentar-de-novo';
+    }
+    tentativasLembrete.delete(c.id);
+    console.error(`📅 Lembrete compromisso DESISTI após ${n} recusas da Meta (${c.id})`);
+    return 'desistiu';
+  }
+  console.warn(`📅 Lembrete compromisso: falha ambígua (${c.id}) — não repito pra não duplicar`);
+  return 'falha-ambigua';
+}
+
+cron.schedule('* * * * *', async () => {
+  const sp = agoraSP();
+
+  // Só os de ontem/hoje/amanhã/depois com lembrete pendente (janela que cobre
+  // o "1 dia antes" e a virada do dia em UTC).
+  const ontem   = new Date(); ontem.setDate(ontem.getDate() - 1);
+  const amanha2 = new Date(); amanha2.setDate(amanha2.getDate() + 2);
+  const { data: comps } = await supabase.from('compromissos')
+    // `created_at` entra aqui pra responder se o briefing de hoje chegou a
+    // mencionar este compromisso — ver `services/briefingCobre.js`.
+    .select('id, grupo_id, user_id, titulo, hora, local, data, lembrete_antecedencia, created_at')
+    .eq('lembrete_ativo', true).eq('lembrete_enviado', false)
+    .gte('data', ontem.toISOString().slice(0, 10))
+    .lte('data', amanha2.toISOString().slice(0, 10));
+
+  for (const c of comps || []) {
+    // ⚠️ Um compromisso com dado estranho não pode derrubar o aviso dos outros
+    // da mesma rodada.
+    try { await avisarCompromisso(c, sp); }
+    catch (e) { console.error(`📅 Lembrete compromisso: erro em ${c.id}:`, e.message); }
+  }
+}, { noOverlap: true });
 
 // ─────────────────────────────────────────────────────────────────
 // JOB 1K — A cada 15 min: BRIEFING MATINAL da agenda (opt-in)
