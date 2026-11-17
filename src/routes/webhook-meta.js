@@ -78,6 +78,59 @@ router.get('/diag', async (req, res) => {
   const wabaId  = process.env.WHATSAPP_WABA_ID;
   const auth    = { headers: { Authorization: `Bearer ${TOKEN}` } };
 
+  // ── &metricas=NOME[,NOME] : quantos a META diz que saíram e chegaram ─────
+  //
+  // Só LEITURA. Existe porque o envio do cron não deixa rastro: o erro vai pro
+  // log do Render e a falha de entrega chega por webhook só pra memória. Sem
+  // isto, "o lembrete não chegou" sempre virou palpite sobre QUAL porta falhou.
+  // `&dias=N` (padrão 14). `&meiahora=AAAA-MM-DD` dá o volume geral do número
+  // em fatias de 30 min naquele dia (fuso de SP), pra ver se algo saiu na hora.
+  if (req.query.metricas) {
+    const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 14, 1), 90);
+    const fim = Math.floor(Date.now() / 1000);
+    const ini = fim - dias * 86400;
+    const out = {};
+    try {
+      const nomes = String(req.query.metricas).split(',').map((s) => s.trim()).filter(Boolean).slice(0, 10);
+      const ids = {};
+      for (const n of nomes) {
+        const r = await axios.get(`https://graph.facebook.com/${version}/${wabaId}/message_templates`, { params: { access_token: TOKEN, name: n, fields: 'id,name' } });
+        const t = (r.data.data || []).find((x) => x.name === n);
+        if (t) ids[t.id] = n;
+      }
+      out.templates = ids;
+      if (Object.keys(ids).length) {
+        const r = await axios.get(`https://graph.facebook.com/${version}/${wabaId}/template_analytics`, {
+          ...auth,
+          params: {
+            start: ini, end: fim, granularity: 'DAILY',
+            metric_types: JSON.stringify(['SENT', 'DELIVERED', 'READ']),
+            template_ids: JSON.stringify(Object.keys(ids)),
+          },
+        });
+        out.porDia = (r.data.data || []).flatMap((b) => (b.data_points || [])).map((p) => ({
+          template: ids[p.template_id] || p.template_id,
+          dia: new Date(p.start * 1000).toISOString().slice(0, 10),
+          enviados: p.sent, entregues: p.delivered, lidos: p.read,
+        })).filter((p) => p.enviados || p.entregues);
+      }
+    } catch (e) { out.erroTemplates = e.response?.data?.error || e.message; }
+    if (req.query.meiahora) {
+      try {
+        const d0 = Math.floor(Date.parse(`${req.query.meiahora}T00:00:00-03:00`) / 1000);
+        const r = await axios.get(`https://graph.facebook.com/${version}/${wabaId}`, {
+          ...auth,
+          params: { fields: `analytics.start(${d0}).end(${d0 + 86400}).granularity(HALF_HOUR)` },
+        });
+        out.meiaHora = (r.data.analytics?.data_points || []).filter((p) => p.sent || p.delivered).map((p) => ({
+          inicio: new Date(p.start * 1000).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }),
+          enviados: p.sent, entregues: p.delivered,
+        }));
+      } catch (e) { out.erroMeiaHora = e.response?.data?.error || e.message; }
+    }
+    return res.json(out);
+  }
+
   // Templates da WABA. &tplinfo=all lista todos; &tplinfo=NOME detalha um.
   if (req.query.tplinfo) {
     try {
