@@ -264,7 +264,120 @@ async function materializarRollover(row, cartaoNome, cartao) {
   return tx;
 }
 
-module.exports = { TZ, ymHoje, mesSeguinte, somaFaturaCiclo, pagoDaFatura, statusFatura, materializarRollover, cent };
+// =============================================================================
+// PASSAR A FATURA ATRASADA PRA PRÓXIMA — sempre por ESCOLHA da pessoa (nov/2026).
+//
+// Fonte única do painel (`POST /fatura/rolar`) e do "passar" no WhatsApp.
+// Antes cada um chamava `materializarRollover` com o valor GRAVADO no aviso —
+// que podia estar velho (a pessoa pagou parte depois) — e dois toques rolavam
+// duas vezes. Agora:
+//   • o valor é RECALCULADO na hora (`statusFatura`);
+//   • só rola fatura VENCIDA de cartão MANUAL;
+//   • a RESERVA é o update condicional `aguardando → rolado`: só um toque passa;
+//     se o lançamento falhar, a reserva é desfeita;
+//   • juros (opcional) viram um GASTO de verdade ("Juros"), que entra nos
+//     relatórios — é dinheiro novo. O saldo rolado segue `transferencia: true`
+//     (a compra original já contou no mês dela).
+// Travado em `npm run eval:fatura-atrasada`.
+// =============================================================================
+async function rolarFatura({ grupoId, cartao, competencia, juros = 0, userId = null, hoje = hojeSP() }) {
+  const { validarJuros, nomeDoMes } = require('./faturaAtrasada');
+  if (!cartao) return { ok: false, codigo: 'cartao', erro: 'Cartão não encontrado.' };
+  if (cartao.of_conta_id) {
+    return { ok: false, codigo: 'open_finance', erro: 'Este cartão vem do banco: o próprio banco leva o saldo não pago pra próxima fatura.' };
+  }
+  if (!/^\d{4}-\d{2}$/.test(competencia || '')) return { ok: false, codigo: 'competencia', erro: 'Fatura inválida.' };
+  const vj = validarJuros(juros);
+  if (!vj.ok) return { ok: false, codigo: 'juros', erro: vj.erro };
+
+  const ciclo = cicloPorCompetencia(cartao, competencia);
+  if (!(ciclo.venc < hoje)) return { ok: false, codigo: 'nao_vencida', erro: 'Essa fatura ainda não venceu.' };
+
+  const st = await statusFatura(grupoId, cartao, competencia);
+  if (!(st.restante > 0.01)) return { ok: false, codigo: 'quitada', erro: 'Essa fatura já está paga — não há o que passar.' };
+
+  // Linha de controle (pode já existir: o aviso do JOB 1L a cria).
+  let { data: row } = await supabase.from('fatura_rollover')
+    .select('*').eq('cartao_id', cartao.id).eq('competencia', competencia).maybeSingle();
+  if (row && row.status === 'rolado') return { ok: true, jaRolado: true, valor: Number(row.valor) || 0 };
+  if (!row) {
+    const { data: novo, error } = await supabase.from('fatura_rollover').insert({
+      grupo_id: grupoId, user_id: userId, cartao_id: cartao.id, competencia,
+      valor: st.restante, status: 'aguardando',
+    }).select('*').maybeSingle();
+    if (error) {
+      // Corrida com outro toque (unique cartao_id+competencia): relê.
+      ({ data: row } = await supabase.from('fatura_rollover')
+        .select('*').eq('cartao_id', cartao.id).eq('competencia', competencia).maybeSingle());
+      if (!row) throw error;
+      if (row.status === 'rolado') return { ok: true, jaRolado: true, valor: Number(row.valor) || 0 };
+    } else {
+      row = novo;
+    }
+  }
+
+  // ⚠️ RESERVA ATÔMICA: só quem vira o status leva. Dois toques = um rollover.
+  const { data: pego, error: errPego } = await supabase.from('fatura_rollover')
+    .update({ status: 'rolado', valor: st.restante, rolado_em: new Date().toISOString() })
+    .eq('id', row.id).in('status', ['aguardando', 'cancelado'])
+    .select('id');
+  if (errPego) throw errPego;
+  if (!pego || !pego.length) return { ok: true, jaRolado: true, valor: Number(row.valor) || 0 };
+
+  const compAlvo = cartao.dia_fechamento
+    ? competenciaVizinha(cartao, competencia, 1)
+    : mesSeguinte(competencia);
+  const cicloAlvo = cicloPorCompetencia(cartao, compAlvo);
+  const data = `${cicloAlvo.ini}T12:00:00.000Z`;
+  const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+  const mes = nomeDoMes(competencia);
+
+  const inserirTx = async (campos) => {
+    let { data: tx, error } = await supabase.from('transacoes').insert(campos).select('id').single();
+    if (error && /transferencia/i.test(error.message || '') && 'transferencia' in campos) {
+      const { transferencia, ...semColuna } = campos;
+      ({ data: tx, error } = await supabase.from('transacoes').insert(semColuna).select('id').single());
+    }
+    if (error) throw error;
+    return tx;
+  };
+
+  let txPrincipal = null, txJuros = null;
+  try {
+    txPrincipal = await inserirTx({
+      id_curto: idCurto(), grupo_id: grupoId, criado_por: userId || row.user_id || null,
+      tipo: 'Gasto', categoria: 'Fatura anterior', valor: st.restante,
+      observacao: `Saldo não pago da fatura de ${mes} (${competencia})`,
+      carteira_nome: cartao.nome, pago: true, data, transferencia: true,
+    });
+    if (vj.valor > 0) {
+      txJuros = await inserirTx({
+        id_curto: idCurto(), grupo_id: grupoId, criado_por: userId || row.user_id || null,
+        tipo: 'Gasto', categoria: 'Juros', valor: vj.valor,
+        observacao: `Juros por passar a fatura de ${mes} pra próxima`,
+        carteira_nome: cartao.nome, pago: true, data, transferencia: false,
+      });
+    }
+  } catch (e) {
+    // Desfaz o que entrou e devolve a reserva — a fatura volta a ser atrasada,
+    // em vez de ficar "rolada" sem lançamento nenhum na seguinte.
+    const criadas = [txPrincipal, txJuros].filter(Boolean).map((t) => t.id);
+    if (criadas.length) await supabase.from('transacoes').delete().in('id', criadas);
+    await supabase.from('fatura_rollover')
+      .update({ status: 'aguardando', rolado_em: null }).eq('id', row.id);
+    throw e;
+  }
+
+  await supabase.from('fatura_rollover')
+    .update({ transacao_rollover_id: txPrincipal.id }).eq('id', row.id);
+
+  return {
+    ok: true, valor: st.restante, juros: vj.valor, competenciaDestino: compAlvo,
+    transacao_id: txPrincipal.id, transacao_juros_id: txJuros ? txJuros.id : null,
+  };
+}
+
+module.exports = { TZ, ymHoje, mesSeguinte, somaFaturaCiclo, pagoDaFatura, statusFatura, materializarRollover, rolarFatura, cent };
 
 // =============================================================================
 // PAGAMENTO DE FATURA VINDO DO OPEN FINANCE

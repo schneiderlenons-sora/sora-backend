@@ -5,7 +5,8 @@ const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
 const { debitarConta, registrarTransferencia, registrarFaturaExterna } = require('../services/contaDebito');
-const { statusFatura, materializarRollover } = require('../services/faturaRollover');
+const { statusFatura, rolarFatura } = require('../services/faturaRollover');
+const { faturasAtrasadas, situacaoDaFatura } = require('../services/faturaAtrasada');
 const { podeDesfazer, planoDeDesfazer } = require('../services/desfazerPagamentoFatura');
 const { moverSaldo } = require('../services/saldoCarteira');
 const { competenciaAtual, cicloPorCompetencia, competenciaVizinha, hojeSP } = require('../services/cicloFatura');
@@ -636,15 +637,30 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
     const st = await statusFatura(grupoId, cartao, competencia);
     const vista = await vistaDaFatura(cartao, competencia, st);
 
-    // Rollover aguardando confirmação (se a tabela existir).
+    // Rollover aguardando confirmação (se a tabela existir) + o desta
+    // competência, se ela já foi passada pra frente.
     let rollover = null;
+    let rolagem = null;
     try {
-      const { data } = await supabase.from('fatura_rollover')
-        .select('id, valor, competencia, status, confirmar_ate')
-        .eq('cartao_id', cartaoId).eq('status', 'aguardando')
-        .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (data) rollover = data;
+      const [{ data: aguard }, { data: daComp }] = await Promise.all([
+        supabase.from('fatura_rollover')
+          .select('id, valor, competencia, status, confirmar_ate')
+          .eq('cartao_id', cartaoId).eq('status', 'aguardando')
+          .order('created_at', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('fatura_rollover')
+          .select('id, valor, competencia, status, rolado_em')
+          .eq('cartao_id', cartaoId).eq('competencia', competencia).eq('status', 'rolado').maybeSingle(),
+      ]);
+      if (aguard) rollover = aguard;
+      if (daComp) rolagem = daComp;
     } catch { /* tolerante à 096 */ }
+
+    // Situação pra tela não dizer "Em aberto" numa fatura que venceu — nem
+    // "Atrasada" numa que a pessoa já passou pra frente.
+    const situacao = situacaoDaFatura({
+      venc: st.ciclo?.venc, hoje: hojeSP(), restante: vista.restante,
+      rolada: !!rolagem, ehOF: !!cartao.of_conta_id,
+    });
 
     // Parcelas que o banco já sabe que vão cair nesta fatura e que a Sora não
     // tem como transação (o Mercado Pago manda parcela sem o marcador "N/M").
@@ -662,7 +678,7 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
     const { linhas: previstas, total: totalPrevisto } = await parcelasPrevistasDe(cartaoId, competencia);
 
     res.json({
-      ...st, ...vista, competencia, rollover,
+      ...st, ...vista, competencia, rollover, rolagem, situacao,
       ...camposMoedaFatura(cartao, baseGrupo, await tabelaDosCartoes([cartao], baseGrupo)),
       // Fatura do EMISSOR nesta competência — o modal usa pra agrupar os
       // lançamentos como o banco agrupa (pertenceAFatura, modo híbrido).
@@ -700,6 +716,20 @@ router.get('/faturas/:phone', auth, async (req, res) => {
     const baseGrupo = await moedaBaseDoGrupo(grupoId);
     const tabelaCartoes = await tabelaDosCartoes(cartoes, baseGrupo);
 
+    // Rollovers dos cartões (aguardando + rolados) numa ida só: o aguardando vai
+    // pro payload como sempre, e o ROLADO encerra a busca de atrasadas — a fatura
+    // passada pra frente não é mais dívida dela, é da seguinte.
+    let rollovers = [];
+    try {
+      const ids = (cartoes || []).map((c) => c.id);
+      if (ids.length) {
+        const { data } = await supabase.from('fatura_rollover')
+          .select('id, cartao_id, valor, competencia, status, confirmar_ate')
+          .in('cartao_id', ids).in('status', ['aguardando', 'rolado']);
+        rollovers = data || [];
+      }
+    } catch { /* tolerante à 096 */ }
+
     const faturas = [];
     for (const c of cartoes || []) {
       const compAtual = competenciaAtual(c);
@@ -711,22 +741,27 @@ router.get('/faturas/:phone', auth, async (req, res) => {
       const st = await statusFatura(grupoId, c, competencia);
       const { fatura, pago, restante, quitada } = await vistaDaFatura(c, competencia, st);
 
-      // Fatura ANTERIOR que já venceu e ainda tem saldo: sem isto ela sumiria da
-      // tela (a "atual" é sempre a próxima a vencer, que pode estar vazia) e o
-      // usuário perderia de vista uma dívida real até o rollover rodar.
-      let vencida = null;
+      // Faturas que JÁ VENCERAM e não foram pagas (cartão manual). Sem isto elas
+      // somem da tela: a "atual" é sempre a próxima a vencer, e o cliente lia o
+      // salto pra fatura seguinte como se a vencida estivesse paga (relato de
+      // nov/2026). Regra única em services/faturaAtrasada.js.
+      let atrasadas = [];
       if (!ehOF && offset === 0) {
         try {
-          const compAnt = competenciaVizinha(c, competencia, -1);
-          const cicloAnt = cicloPorCompetencia(c, compAnt);
-          if (cicloAnt.venc < hoje) {
-            const stAnt = await statusFatura(grupoId, c, compAnt);
-            if (stAnt.restante > 0.01) {
-              vencida = { competencia: compAnt, venc: cicloAnt.venc, restante: stAnt.restante, label: cicloAnt.label };
-            }
-          }
+          const roladas = new Set(rollovers
+            .filter((r) => r.cartao_id === c.id && r.status === 'rolado')
+            .map((r) => r.competencia));
+          const criadoEm = c.created_at
+            ? new Date(c.created_at).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' })
+            : null;
+          atrasadas = await faturasAtrasadas(c, {
+            hoje, roladas, criadoEm,
+            status: (comp) => statusFatura(grupoId, c, comp),
+          });
         } catch { /* informativo — nunca derruba a listagem */ }
       }
+      // Compatibilidade: `vencida` = a mais recente.
+      const vencida = atrasadas[0] || null;
 
       // ⚠️ FATURA FECHADA E QUITADA: a tela precisa saber quanto vale a
       // SEGUINTE, que é a que está viva. Sem isto o dashboard mostra R$ 0,00
@@ -772,7 +807,7 @@ router.get('/faturas/:phone', auth, async (req, res) => {
         ...camposMoedaFatura(c, baseGrupo, tabelaCartoes),
         competencia, ini: ciclo.ini, fim: ciclo.fim, fimExcl: ciclo.fimExcl,
         venc: ciclo.venc, label: ciclo.label, porCiclo: ciclo.porCiclo,
-        of: ehOF, fatura, pago, restante, vencida, quitada, proxima,
+        of: ehOF, fatura, pago, restante, vencida, atrasadas, quitada, proxima,
         // Fatura do EMISSOR nesta competência. É o que permite a tela agrupar
         // os lançamentos como o banco agrupa, em vez de só pela data da compra
         // (ver `pertenceAFatura` modo híbrido). Vem de of_faturas (118).
@@ -785,56 +820,44 @@ router.get('/faturas/:phone', auth, async (req, res) => {
       });
     }
 
-    // Rollovers aguardando confirmação (1 query pra todos os cartões).
-    try {
-      const ids = (cartoes || []).map(c => c.id);
-      if (ids.length) {
-        const { data: rolls } = await supabase.from('fatura_rollover')
-          .select('id, cartao_id, valor, competencia, status, confirmar_ate')
-          .in('cartao_id', ids).eq('status', 'aguardando');
-        for (const r of rolls || []) {
-          const f = faturas.find(x => x.cartao_id === r.cartao_id);
-          if (f) f.rollover = r;
-        }
-      }
-    } catch { /* tolerante à 096 */ }
+    // Rollover aguardando (o aviso do WhatsApp já saiu e a pessoa não decidiu).
+    for (const r of rollovers.filter((x) => x.status === 'aguardando')) {
+      const f = faturas.find((x) => x.cartao_id === r.cartao_id);
+      if (f) f.rollover = r;
+    }
 
     res.json({ offset, faturas });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// POST /api/wallets/fatura/rolar — confirma o rollover (materializa agora).
-// Body: { rollover_id } OU { cartao_id, competencia } (cria+rola se ainda não existe).
+// POST /api/wallets/fatura/rolar — passa o saldo de uma fatura VENCIDA pra
+// próxima, por escolha da pessoa (nunca automático — ver services/faturaRollover
+// `rolarFatura`). Body: { cartao_id, competencia, juros? } OU { rollover_id, juros? }.
 router.post('/fatura/rolar', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const grupoId = req.grupoId || req.authUser?.grupoAtivo;
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
-    const { rollover_id, cartao_id, competencia } = req.body;
+    const { rollover_id, juros } = req.body || {};
+    let { cartao_id, competencia } = req.body || {};
 
-    let row = null;
     if (rollover_id) {
-      const { data } = await supabase.from('fatura_rollover').select('*').eq('id', rollover_id).eq('grupo_id', grupoId).maybeSingle();
-      row = data;
-    } else if (cartao_id && /^\d{4}-\d{2}$/.test(competencia || '')) {
-      // Cria o rollover na hora (usuário pediu pra rolar direto do painel).
-      const { data: cartao } = await supabase.from('wallets')
-        .select('id, nome, dia_fechamento, dia_vencimento')
-        .eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
-      if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
-      const st = await statusFatura(grupoId, cartao, competencia);
-      if (st.restante <= 0) return res.status(400).json({ erro: 'Fatura já quitada — nada a rolar.' });
-      const { data } = await supabase.from('fatura_rollover').upsert({
-        grupo_id: grupoId, user_id: req.userId, cartao_id, competencia, valor: st.restante, status: 'aguardando',
-      }, { onConflict: 'cartao_id,competencia' }).select().single();
-      row = data;
+      const { data } = await supabase.from('fatura_rollover')
+        .select('cartao_id, competencia').eq('id', rollover_id).eq('grupo_id', grupoId).maybeSingle();
+      if (!data) return res.status(404).json({ erro: 'Fatura não encontrada.' });
+      cartao_id = data.cartao_id; competencia = data.competencia;
     }
-    if (!row) return res.status(404).json({ erro: 'Rollover não encontrado.' });
-    if (row.status === 'rolado') return res.json({ ok: true, jaRolado: true });
+    if (!cartao_id) return res.status(400).json({ erro: 'cartao_id obrigatório' });
 
+    // ⚠️ ESCOPO PELO GRUPO na própria consulta: o id da URL sozinho deixaria
+    // rolar fatura de cartão alheio.
     const { data: cartao } = await supabase.from('wallets')
-      .select('id, nome, dia_fechamento, dia_vencimento').eq('id', row.cartao_id).maybeSingle();
-    const tx = await materializarRollover(row, cartao?.nome || 'cartão', cartao);
-    res.json({ ok: true, transacao_id: tx?.id || null });
+      .select('id, nome, of_conta_id, dia_fechamento, dia_vencimento')
+      .eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
+    if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
+
+    const r = await rolarFatura({ grupoId, cartao, competencia, juros, userId: req.userId || null });
+    if (!r.ok) return res.status(400).json({ erro: r.erro, codigo: r.codigo });
+    res.json(r);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

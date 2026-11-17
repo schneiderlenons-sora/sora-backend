@@ -113,7 +113,8 @@
     "eval:abatimento-ciclo": "node evals/abatimentoCiclo.eval.js",
     "eval:categorias-negocio": "node evals/categoriasNegocio.eval.js",
     "eval:categorias-negocio-rota": "node evals/categoriasNegocioRota.eval.js",
-    "eval:peso": "node evals/pesoRegistro.eval.js"
+    "eval:peso": "node evals/pesoRegistro.eval.js",
+    "eval:fatura-atrasada": "node evals/faturaAtrasada.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

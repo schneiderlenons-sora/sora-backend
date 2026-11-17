@@ -1793,89 +1793,95 @@ cron.schedule('0 9 * * *', async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// JOB 1L — Todo dia às 09:00: ROLLOVER da fatura do cartão (rotativo s/ juros)
-// Passo A: cartão manual venceu e sobrou saldo → avisa e pede confirmação (24h).
-// Passo B: rollover 'aguardando' há +24h → rola sozinho e avisa.
+// JOB 1L — Todo dia: AVISO de fatura ATRASADA do cartão MANUAL.
+//
+// ⚠️ NÃO ROLA MAIS NADA SOZINHO (nov/2026, decisão do dono). Antes, 24h depois
+// do aviso o saldo era empurrado pra fatura seguinte automaticamente — e a
+// fatura vencida sumia da tela como se tivesse sido paga (relato do Fábio,
+// 16/11). Agora ela fica ATRASADA no painel até ser paga, e passar pra frente
+// é escolha da pessoa: botão no card (com ou sem juros) ou "passar" aqui.
+//
+// ⚠️ E O JOB QUEBRAVA DESDE 10/08/2026: `notificarDono` lia `row`, que só
+// existia dentro do laço → ReferenceError depois de gravar e antes de avisar.
+// O laço abortava: um aviso NÃO enviado e um rollover SILENCIOSO por dia (100
+// faturas em 3 meses). O `seed` agora é parâmetro, e cada cartão tem o seu
+// try — um cartão com problema não derruba os outros.
+//
+// A linha `fatura_rollover` 'aguardando' é só a marca de "já avisei" (dedup).
 // Só cartões MANUAIS (Open Finance traz a fatura do banco). Migration 096.
 // ─────────────────────────────────────────────────────────────────
 const faturaRoll = require('../services/faturaRollover');
+const { textoAvisoAtraso, diasEntre: diasEntreAtraso } = require('../services/faturaAtrasada');
+const DIAS_AVISO_ATRASO = 3;
 cron.schedule('0 9 * * *', async () => {
-  console.log('💳 Processando rollover de fatura...');
+  console.log('💳 Processando aviso de fatura atrasada...');
   const { competenciaAtual, cicloPorCompetencia, competenciaVizinha, hojeSP } = require('../services/cicloFatura');
   const hojeStr = hojeSP();
 
   // `core` = resumo em 1 linha pro {{1}} do template lembretes_gerais (fora da
   // janela de 24h). `texto` = versão rica usada dentro da janela.
-  const notificarDono = async (grupoId, texto, pendenteCtx, core) => {
+  const notificarDono = async (grupoId, texto, pendenteCtx, core, seed) => {
     const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', grupoId).maybeSingle();
     if (!grupo?.dono_id) return;
     const { data: user } = await supabase.from('users').select('phone').eq('id', grupo.dono_id).maybeSingle();
     if (!user?.phone) return;
     if (!(await avisosLigados(grupo.dono_id))) return;
-    await lembrete(user.phone, texto, core, { id: 'sardinha', aviso: 'fatura', seed: row.id || row.cartao_id });
+    await lembrete(user.phone, texto, core, { id: 'sardinha', aviso: 'fatura', seed });
     if (pendenteCtx) {
       try { await criarPendente({ userId: grupo.dono_id, tipoPergunta: 'rolar_fatura', contexto: pendenteCtx, expiresInMin: 60 * 26 }); }
       catch { /* noop */ }
     }
   };
 
-  // ── PASSO A: detectar vencimento com saldo restante ──
+  let cartoes = [];
   try {
-    const { data: cartoes } = await supabase.from('wallets')
-      .select('id, nome, grupo_id, dia_fechamento, dia_vencimento, of_conta_id')
+    const { data } = await supabase.from('wallets')
+      .select('id, nome, grupo_id, dia_fechamento, dia_vencimento, of_conta_id, moeda')
       .eq('tipo', 'Crédito').not('dia_vencimento', 'is', null).is('of_conta_id', null);
+    cartoes = data || [];
+  } catch (e) { console.warn('[fatura atrasada] leitura dos cartões', e.message); return; }
 
-    for (const c of cartoes || []) {
-      // A fatura a cobrar é a ANTERIOR à atual — a atual, por definição, ainda
+  for (const c of cartoes) {
+    try {
+      // A fatura a avisar é a ANTERIOR à atual — a atual, por definição, ainda
       // não venceu (competenciaAtual = próximo vencimento ≥ hoje).
       const compVencida = competenciaVizinha(c, competenciaAtual(c, hojeStr), -1);
       const cicloVencido = cicloPorCompetencia(c, compVencida);
       if (cicloVencido.venc >= hojeStr) continue; // ainda não venceu
+      // ⚠️ SÓ A QUE ACABOU DE VENCER. Com o job travado desde agosto, havia ~70
+      // faturas vencidas há semanas sem aviso; consertar o job sem este corte
+      // dispararia dezenas de WhatsApps de uma vez. O estoque antigo aparece
+      // no painel como atrasada — o aviso é pra quem acabou de passar do dia.
+      if (diasEntreAtraso(cicloVencido.venc, hojeStr) > DIAS_AVISO_ATRASO) continue;
 
-      // Já existe rollover pra essa fatura? (dedup pela unique)
+      // Já avisou (ou já foi passada pra frente)? Dedup pela unique.
       const { data: jaTem } = await supabase.from('fatura_rollover')
         .select('id').eq('cartao_id', c.id).eq('competencia', compVencida).maybeSingle();
       if (jaTem) continue;
 
       const st = await faturaRoll.statusFatura(c.grupo_id, c, compVencida);
-      if (st.restante <= 0) continue;
+      if (st.restante <= 0.01) continue;
 
       const { data: grupo } = await supabase.from('grupos').select('dono_id').eq('id', c.grupo_id).maybeSingle();
-      const { data: row } = await supabase.from('fatura_rollover').upsert({
+      const { data: row, error } = await supabase.from('fatura_rollover').insert({
         grupo_id: c.grupo_id, user_id: grupo?.dono_id || null, cartao_id: c.id,
         competencia: compVencida, valor: st.restante, status: 'aguardando',
         avisado_em: new Date().toISOString(),
-        confirmar_ate: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-      }, { onConflict: 'cartao_id,competencia' }).select().single();
+      }).select().single();
+      if (error || !row) continue; // outra passada gravou primeiro — ela avisa
 
       const fmtRoll = (v) => brl(v, c.moeda || null);
-      const txt = `💳 *Fatura do ${c.nome}*\n\nVocê pagou parte, mas sobraram *${fmtRoll(st.restante)}*.\n\nQuer que eu role esse saldo pra próxima fatura? Responda *sim*.\n\n_Se não responder em 24h, eu rolo automaticamente pra você não ficar sem controle._`;
-      const core = `Sobraram ${fmtRoll(st.restante)} da fatura do ${c.nome}. Quer rolar pra próxima? Responda sim (senão rolo sozinho em 24h).`;
-      await notificarDono(c.grupo_id, txt, { rollover_id: row?.id, cartao_id: c.id, cartao_nome: c.nome, valor: st.restante }, core);
-    }
-  } catch (e) { console.warn('[rollover passo A]', e.message); }
+      const { texto, core } = textoAvisoAtraso({
+        cartaoNome: c.nome, competencia: compVencida, venc: cicloVencido.venc,
+        pago: st.pago, restante: st.restante, fmt: fmtRoll,
+      });
+      await notificarDono(c.grupo_id, texto,
+        { rollover_id: row.id, cartao_id: c.id, cartao_nome: c.nome, valor: st.restante },
+        core, row.id);
+    } catch (e) { console.warn(`[fatura atrasada] cartão ${c.id}:`, e.message); }
+  }
 
-  // ── PASSO B: passou 24h sem confirmar → rola sozinho ──
-  try {
-    const { data: pendentes } = await supabase.from('fatura_rollover')
-      .select('*').eq('status', 'aguardando').lt('confirmar_ate', new Date().toISOString());
-    for (const row of pendentes || []) {
-      const { data: cartao } = await supabase.from('wallets')
-        .select('id, nome, dia_fechamento, dia_vencimento, moeda').eq('id', row.cartao_id).maybeSingle();
-      await faturaRoll.materializarRollover(row, cartao?.nome || 'cartão', cartao);
-      const nome = cartao?.nome || 'cartão';
-      // O saldo rolado está NA MOEDA DO CARTÃO (migration 168).
-      const val = brl(row.valor, cartao?.moeda || null);
-      await notificarDono(
-        row.grupo_id,
-        `💳 Rolei *${val}* da fatura do ${nome} pra próxima fatura (você não confirmou em 24h). Está tudo registrado no painel.`,
-        null,
-        `Rolei ${val} da fatura do ${nome} pra próxima fatura (não confirmado em 24h). Registrado no painel.`,
-      );
-    }
-  } catch (e) { console.warn('[rollover passo B]', e.message); }
-
-  console.log('✅ Rollover de fatura processado.');
+  console.log('✅ Aviso de fatura atrasada processado.');
 });
 
 // ─────────────────────────────────────────────────────────────────

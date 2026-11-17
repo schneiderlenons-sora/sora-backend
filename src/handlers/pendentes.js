@@ -231,29 +231,46 @@ async function resolverPendente(pendente, mensagem, ctx) {
 
   // ─── ROLAR FATURA (rollover do cartão, migration 096) ──────────
   if (pendente.tipo_pergunta === 'rolar_fatura') {
-    const { rollover_id, cartao_nome, valor } = pendente.contexto || {};
-    if (/^(s|sim|pode|rola(r)?|isso|claro|quero|ok|beleza|manda|confirmo|👍)/i.test(lower)) {
+    const { rollover_id, cartao_nome } = pendente.contexto || {};
+    // ⚠️ Passar a fatura pra frente é ESCOLHA da pessoa (nov/2026) — não existe
+    // mais rolagem automática. A regra é a mesma do painel (`rolarFatura`):
+    // valor recalculado agora, só fatura vencida, um toque = um rollover.
+    if (/^(s|sim|pode|passa(r)?|rola(r)?|isso|claro|quero|ok|beleza|manda|confirmo|👍)/i.test(lower)) {
       try {
-        const { materializarRollover } = require('../services/faturaRollover');
-        const { data: row } = await supabase.from('fatura_rollover').select('*').eq('id', rollover_id).maybeSingle();
-        if (row && row.status === 'aguardando') {
-          // O cartão traz os dias do ciclo — o "Fatura anterior" é ancorado no
-          // INÍCIO do ciclo seguinte (senão pode cair na fatura errada).
-          const { data: cartao } = await supabase.from('wallets')
-            .select('id, nome, dia_fechamento, dia_vencimento').eq('id', row.cartao_id).maybeSingle();
-          await materializarRollover(row, cartao?.nome || cartao_nome || 'cartão', cartao);
-        }
+        const { rolarFatura } = require('../services/faturaRollover');
+        const { data: row } = await supabase.from('fatura_rollover')
+          .select('grupo_id, cartao_id, competencia, user_id').eq('id', rollover_id).maybeSingle();
+        const { data: cartao } = row
+          ? await supabase.from('wallets')
+            .select('id, nome, of_conta_id, dia_fechamento, dia_vencimento').eq('id', row.cartao_id).maybeSingle()
+          : { data: null };
         await removerPendente(pendente.id);
-        await enviarTexto(phone, `✅ Pronto! Rolei ${fmt(Number(valor || 0))} pra próxima fatura do ${cartao_nome || 'cartão'}.`);
+        if (!row || !cartao) {
+          await enviarTexto(phone, '⚠️ Não encontrei mais essa fatura. Confira em Cartões, no painel.');
+          return true;
+        }
+        const r = await rolarFatura({ grupoId: row.grupo_id, cartao, competencia: row.competencia, userId: row.user_id });
+        const nome = cartao.nome || cartao_nome || 'cartão';
+        if (!r.ok) {
+          await enviarTexto(phone, r.codigo === 'quitada'
+            ? `✅ A fatura do ${nome} já está paga — não há o que passar pra próxima.`
+            : `⚠️ Não consegui passar agora: ${r.erro}`);
+        } else if (r.jaRolado) {
+          await enviarTexto(phone, `✅ Essa fatura do ${nome} já tinha sido passada pra próxima.`);
+        } else {
+          await enviarTexto(phone,
+            `✅ Pronto! Passei ${fmt(r.valor)} pra próxima fatura do ${nome}.\n\n` +
+            `_Se o banco cobrou juros, lance como um gasto nesse cartão._`);
+        }
       } catch (e) {
         await removerPendente(pendente.id);
-        await enviarTexto(phone, `⚠️ Não consegui rolar agora: ${e.message}`);
+        await enviarTexto(phone, `⚠️ Não consegui passar agora: ${e.message}`);
       }
       return true;
     }
     if (/^(n|n[ãa]o|nao|depois|espera|ainda|vou pagar|deixa)/i.test(lower)) {
       await removerPendente(pendente.id);
-      await enviarTexto(phone, '👍 Beleza. Se o restante não for pago, eu rolo pra próxima fatura automaticamente no fim do prazo.');
+      await enviarTexto(phone, '👍 Beleza. Ela fica como *atrasada* no painel até você registrar o pagamento.');
       return true;
     }
     return false; // não bate — deixa a mensagem seguir (pode ser outra coisa)
