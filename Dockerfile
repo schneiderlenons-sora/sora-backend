@@ -1,4 +1,8 @@
-FROM node:22-alpine
+# ⚠️ MESMA versão do `.node-version` — mexeu num, mexa no outro. O serviço de
+# Ohio (sora-backend-ohio) roda por ESTE Dockerfile; o de Oregon roda no
+# runtime nativo do Render, que lê o `.node-version`. Com versões diferentes
+# os dois servidores não seriam o mesmo programa.
+FROM node:26.13.1-alpine
 
 WORKDIR /app
 
