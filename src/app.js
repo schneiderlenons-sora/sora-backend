@@ -34,7 +34,10 @@ app.use('/api', apiLimiter);
 // Lido em GET /health/env (protegido).
 const visitasFora = [];
 app.use((req, res, next) => {
-  if (!req.path.startsWith('/api') && !req.path.startsWith('/webhook')) {
+  // O health check do PRÓPRIO Render ("Render/1.0", a cada 5 s) encheria a
+  // lista em 100 segundos e empurraria o ping de verdade pra fora.
+  const ua = String(req.get('user-agent') || '');
+  if (!req.path.startsWith('/api') && !req.path.startsWith('/webhook') && !/^Render\//.test(ua)) {
     visitasFora.push({
       em: new Date().toISOString(),
       metodo: req.method,
