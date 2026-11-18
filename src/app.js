@@ -26,6 +26,26 @@ const apiLimiter = rateLimit({
 });
 app.use('/api', apiLimiter);
 
+// --- Quem bate FORA do app (pings que mantêm o servidor acordado) ---
+// O free tier dorme após 15 min sem acesso, e um serviço EXTERNO faz o ping —
+// configurado à mão, sem rastro no código. Guardar as 20 últimas visitas fora
+// de /api e /webhook (só em memória; user-agent, caminho, hora) é como se
+// descobre QUAL serviço é, pra apontá-lo pro servidor novo na troca de região.
+// Lido em GET /health/env (protegido).
+const visitasFora = [];
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api') && !req.path.startsWith('/webhook')) {
+    visitasFora.push({
+      em: new Date().toISOString(),
+      metodo: req.method,
+      caminho: req.path,
+      ua: String(req.get('user-agent') || '').slice(0, 160),
+    });
+    if (visitasFora.length > 20) visitasFora.shift();
+  }
+  next();
+});
+
 // --- Rota de saúde (testa se o servidor está rodando) ---
 app.get('/health', (req, res) => {
   // `crons`: este processo roda os lembretes/avisos? (config/crons.js). Na troca
@@ -50,7 +70,7 @@ app.get('/health/env', (req, res) => {
     if (doSistema.test(k)) continue;
     variaveis[k] = crypto.createHash('sha256').update(String(process.env[k])).digest('hex').slice(0, 8);
   }
-  res.json({ total: Object.keys(variaveis).length, variaveis });
+  res.json({ total: Object.keys(variaveis).length, variaveis, visitasFora });
 });
 
 // --- Rotas (vamos adicionar uma a uma) ---
