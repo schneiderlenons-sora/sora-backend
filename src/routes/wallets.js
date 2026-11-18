@@ -21,6 +21,7 @@ const vistaDaFatura = (cartao, competencia, st) =>
 // Parcelas a vencer projetadas pelo sync do Open Finance (migration 116).
 // A leitura mora em services/parcelasPrevistas.js pra ser a MESMA da agenda.
 const { lerPrevistas: parcelasPrevistasDe } = require('../services/parcelasPrevistas');
+const { mapEmOrdem, memoPorRequisicao } = require('../services/emParalelo');
 
 // Moeda da carteira (migration 144). A CONVERSÃO MORA NO BACKEND de propósito:
 // o painel recebe `saldo_brl` pronto e não precisa buscar câmbio no navegador —
@@ -712,57 +713,60 @@ router.get('/faturas/:phone', auth, async (req, res) => {
       .select('*')
       .eq('grupo_id', grupoId).eq('tipo', 'Crédito').order('created_at', { ascending: true });
 
-    // Moeda de cada fatura (migration 168) — ver camposMoedaFatura.
-    const baseGrupo = await moedaBaseDoGrupo(grupoId);
-    const tabelaCartoes = await tabelaDosCartoes(cartoes, baseGrupo);
+    // ⚠️ AS LEITURAS SAEM EM PARALELO (nov/2026) — e o resultado é o MESMO.
+    //
+    // Medido em produção com Server-Timing (Ohio, mesma região do banco): esta
+    // rota fazia 27 idas ao Supabase, 21 EM SÉRIE, ~20–25 ms cada — 458 ms dos
+    // 471 do servidor eram espera de banco; cálculo, 46 ms. O laço esperava um
+    // cartão inteiro antes de começar o próximo, e dentro do cartão cada
+    // leitura esperava a anterior mesmo sem depender dela.
+    //
+    // Agora: os cartões rodam juntos (no máximo 4 de cada vez — `mapEmOrdem`
+    // devolve NA ORDEM dos cartões), e dentro de cada um o que não depende da
+    // fatura atual (atrasadas, fatura publicada, parcelas previstas) sai junto
+    // com ela. Nada aqui grava — é só leitura, então a ordem de espera não muda
+    // o resultado. Conferido comparando a resposta antiga e a nova, byte a
+    // byte, em todos os grupos com cartão (ver o commit).
+    //
+    // ⚠️ Erro em `statusFatura`/`vistaDaFatura` continua derrubando a rota
+    // (500), como antes: `mapEmOrdem` para de começar cartões novos e repassa.
 
+    // Moeda de cada fatura (migration 168) — ver camposMoedaFatura.
     // Rollovers dos cartões (aguardando + rolados) numa ida só: o aguardando vai
     // pro payload como sempre, e o ROLADO encerra a busca de atrasadas — a fatura
     // passada pra frente não é mais dívida dela, é da seguinte.
-    let rollovers = [];
-    try {
-      const ids = (cartoes || []).map((c) => c.id);
-      if (ids.length) {
+    const lerRollovers = async () => {
+      try {
+        const ids = (cartoes || []).map((c) => c.id);
+        if (!ids.length) return [];
         const { data } = await supabase.from('fatura_rollover')
           .select('id, cartao_id, valor, competencia, status, confirmar_ate')
           .in('cartao_id', ids).in('status', ['aguardando', 'rolado']);
-        rollovers = data || [];
-      }
-    } catch { /* tolerante à 096 */ }
+        return data || [];
+      } catch { return []; /* tolerante à 096 */ }
+    };
+    const [{ baseGrupo, tabelaCartoes }, rollovers] = await Promise.all([
+      (async () => {
+        const base = await moedaBaseDoGrupo(grupoId);
+        return { baseGrupo: base, tabelaCartoes: await tabelaDosCartoes(cartoes, base) };
+      })(),
+      lerRollovers(),
+    ]);
 
-    const faturas = [];
-    for (const c of cartoes || []) {
+    // As parcelas previstas do mesmo cartão e competência são lidas por
+    // `vistaDaFatura` (dentro do valor) E por esta rota (pra lista): a MESMA
+    // leitura, uma vez só. Ninguém altera o resultado (faturaVista só lê o total).
+    const previstasDaReq = memoPorRequisicao(parcelasPrevistasDe);
+    const vistaDaReq = (cartao, competencia, st) =>
+      valorExibido(cartao, competencia, st, { parcelasPrevistas: previstasDaReq });
+
+    const faturas = await mapEmOrdem(cartoes || [], 4, async (c) => {
       const compAtual = competenciaAtual(c);
       const competencia = offset === 0 ? compAtual : competenciaVizinha(c, compAtual, offset);
       const ciclo = cicloPorCompetencia(c, competencia);
       const ehOF = !!c.of_conta_id;
 
       // Mesma conta da rota de status — fonte única (ver `valorExibido`).
-      const st = await statusFatura(grupoId, c, competencia);
-      const { fatura, pago, restante, quitada } = await vistaDaFatura(c, competencia, st);
-
-      // Faturas que JÁ VENCERAM e não foram pagas (cartão manual). Sem isto elas
-      // somem da tela: a "atual" é sempre a próxima a vencer, e o cliente lia o
-      // salto pra fatura seguinte como se a vencida estivesse paga (relato de
-      // nov/2026). Regra única em services/faturaAtrasada.js.
-      let atrasadas = [];
-      if (!ehOF && offset === 0) {
-        try {
-          const roladas = new Set(rollovers
-            .filter((r) => r.cartao_id === c.id && r.status === 'rolado')
-            .map((r) => r.competencia));
-          const criadoEm = c.created_at
-            ? new Date(c.created_at).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' })
-            : null;
-          atrasadas = await faturasAtrasadas(c, {
-            hoje, roladas, criadoEm,
-            status: (comp) => statusFatura(grupoId, c, comp),
-          });
-        } catch { /* informativo — nunca derruba a listagem */ }
-      }
-      // Compatibilidade: `vencida` = a mais recente.
-      const vencida = atrasadas[0] || null;
-
       // ⚠️ FATURA FECHADA E QUITADA: a tela precisa saber quanto vale a
       // SEGUINTE, que é a que está viva. Sem isto o dashboard mostra R$ 0,00
       // num cartão com compras novas — caso real medido: o EQI BLACK fechou
@@ -774,34 +778,65 @@ router.get('/faturas/:phone', auth, async (req, res) => {
       // então o pulo passa a vir PRONTO daqui, e as duas bebem da mesma fonte.
       // Só é calculado quando realmente pula: uma consulta a mais por cartão
       // quitado, não por cartão.
-      let proxima = null;
-      if (offset === 0 && quitada && ciclo.fim < hoje) {
+      const atualEProxima = async () => {
+        const st = await statusFatura(grupoId, c, competencia);
+        const vista = await vistaDaReq(c, competencia, st);
+        let proxima = null;
+        if (offset === 0 && vista.quitada && ciclo.fim < hoje) {
+          try {
+            const compProx = competenciaVizinha(c, competencia, 1);
+            const cicloProx = cicloPorCompetencia(c, compProx);
+            const stProx = await statusFatura(grupoId, c, compProx);
+            const vProx = await vistaDaReq(c, compProx, stProx);
+            proxima = {
+              competencia: compProx, restante: vProx.restante, fatura: vProx.fatura,
+              venc: cicloProx.venc, label: cicloProx.label,
+            };
+          } catch { /* informativo — nunca derruba a listagem */ }
+        }
+        return { vista, proxima };
+      };
+
+      // Faturas que JÁ VENCERAM e não foram pagas (cartão manual). Sem isto elas
+      // somem da tela: a "atual" é sempre a próxima a vencer, e o cliente lia o
+      // salto pra fatura seguinte como se a vencida estivesse paga (relato de
+      // nov/2026). Regra única em services/faturaAtrasada.js.
+      const lerAtrasadas = async () => {
+        if (ehOF || offset !== 0) return [];
         try {
-          const compProx = competenciaVizinha(c, competencia, 1);
-          const cicloProx = cicloPorCompetencia(c, compProx);
-          const stProx = await statusFatura(grupoId, c, compProx);
-          const vProx = await vistaDaFatura(c, compProx, stProx);
-          proxima = {
-            competencia: compProx, restante: vProx.restante, fatura: vProx.fatura,
-            venc: cicloProx.venc, label: cicloProx.label,
-          };
-        } catch { /* informativo — nunca derruba a listagem */ }
-      }
+          const roladas = new Set(rollovers
+            .filter((r) => r.cartao_id === c.id && r.status === 'rolado')
+            .map((r) => r.competencia));
+          const criadoEm = c.created_at
+            ? new Date(c.created_at).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' })
+            : null;
+          return await faturasAtrasadas(c, {
+            hoje, roladas, criadoEm,
+            status: (comp) => statusFatura(grupoId, c, comp),
+          });
+        } catch { return []; /* informativo — nunca derruba a listagem */ }
+      };
 
       // Parcelas que o banco conhece e a Sora não (só em fatura FUTURA — ver
       // parcelasPrevistasDe). Entram como parcela SEPARADA do total: quem soma
       // as transações continua sendo `somarFatura`, intocado.
       // Leitura tolerante: sem a 118 devolve vazio e a tela cai no ciclo.
-      let publicadaDaComp = null;
-      try {
-        const { data: pf } = await supabase.from('of_faturas')
-          .select('of_bill_id').eq('cartao_id', c.id).eq('competencia', competencia).maybeSingle();
-        publicadaDaComp = pf || null;
-      } catch { /* migration 118 pendente */ }
+      const lerPublicada = async () => {
+        try {
+          const { data: pf } = await supabase.from('of_faturas')
+            .select('of_bill_id').eq('cartao_id', c.id).eq('competencia', competencia).maybeSingle();
+          return pf || null;
+        } catch { return null; /* migration 118 pendente */ }
+      };
 
-      const prev = await parcelasPrevistasDe(c.id, competencia);
+      const [{ vista, proxima }, atrasadas, publicadaDaComp, prev] = await Promise.all([
+        atualEProxima(), lerAtrasadas(), lerPublicada(), previstasDaReq(c.id, competencia),
+      ]);
+      const { fatura, pago, restante, quitada } = vista;
+      // Compatibilidade: `vencida` = a mais recente.
+      const vencida = atrasadas[0] || null;
 
-      faturas.push({
+      return {
         cartao_id: c.id, nome: c.nome, limite: c.limite ?? null,
         // Todos os valores desta linha estão na moeda do CARTÃO.
         ...camposMoedaFatura(c, baseGrupo, tabelaCartoes),
@@ -817,8 +852,8 @@ router.get('/faturas/:phone', auth, async (req, res) => {
         // Entra no card "Previstos do mês"? (migration 123). Sem a coluna,
         // `undefined !== false` → true, que é o padrão desejado.
         nos_previstos: c.nos_previstos !== false,
-      });
-    }
+      };
+    });
 
     // Rollover aguardando (o aviso do WhatsApp já saiu e a pessoa não decidiu).
     for (const r of rollovers.filter((x) => x.status === 'aguardando')) {

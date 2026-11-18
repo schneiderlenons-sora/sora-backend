@@ -36,10 +36,22 @@ function ocorrenciasMensais(dia, deStr, ateStr) {
 // grupo. Recorrências/dívidas/faturas são finanças → sempre por grupo.
 async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
   const { userId = null, casaCompartilhada = false, incluirTransacoes = false, paraBriefing = false } = opts;
-  const eventos = [];
+
+  // ⚠️ AS FONTES RODAM EM PARALELO (nov/2026) — e o feed sai IGUAL.
+  //
+  // Medido em produção (Server-Timing, Ohio): a rota da agenda fazia 24 idas
+  // ao Supabase, 22 EM SÉRIE, ~20 ms cada — 400 ms dos 427 do servidor eram
+  // espera de banco. As fontes são independentes (cada uma lê o seu, com o
+  // seu try/catch), então cada uma monta a PRÓPRIA lista e elas são juntadas
+  // NA ORDEM DE ANTES (1, 2, 3, 4, 5, 6, 6B, 7, 7b, 8) — a dedup do fim
+  // depende da ordem (o primeiro igual fica). Fonte que estoura no meio
+  // devolve o que já tinha montado, como antes (o `eventos.push` de antes
+  // ficava no array comum). Só leitura. Conferido comparando o feed antigo e
+  // o novo, byte a byte, nos grupos reais (ver o commit).
+  const fontes = [];
 
   // 1. Compromissos nativos (editáveis) — pessoais
-  try {
+  fontes.push(async () => { const eventos = []; try {
     let q = supabase.from('compromissos').select('*')
       .gte('data', deStr).lte('data', ateStr);
     q = userId ? q.eq('user_id', userId) : q.eq('grupo_id', grupoId);
@@ -48,10 +60,10 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
       id: `comp-${c.id}`, source: 'compromisso', titulo: c.titulo, data: c.data, hora: c.hora || null,
       cor: c.cor || '#7c3aed', local: c.local || null, deeplink: '/grow/agenda', editavel: true, raw: c,
     });
-  } catch {}
+  } catch {} return eventos; });
 
   // 2. Consultas + retornos (Saúde)
-  try {
+  fontes.push(async () => { const eventos = []; try {
     let qc = supabase.from('consultas')
       .select('id, profissional, especialidade, data, hora, local, retorno_data, status');
     qc = userId ? qc.eq('user_id', userId) : qc.eq('grupo_id', grupoId);
@@ -68,7 +80,7 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
           data: c.retorno_data, hora: null, cor: '#0d9488', deeplink: '/grow/saude', editavel: false });
       }
     }
-  } catch {}
+  } catch {} return eventos; });
 
   // 3. Recorrências (contas e receitas fixas) — FORA do briefing: elas são
   //    lançadas automaticamente (JOB 1A) e já mandam a confirmação; listá-las no
@@ -85,7 +97,7 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
   //    ⚠️ BAIXA E AJUSTE SÃO LIDOS DE FORMA TOLERANTE: se a leitura falhar, a
   //    conta aparece como antes (em aberto). Esconder ou marcar "paga" por
   //    falta de dado é o erro que não se perdoa.
-  if (!paraBriefing) {
+  fontes.push(async () => { const eventos = []; if (!paraBriefing) {
     try {
       const { ocorrenciasDeFixas } = require('./ocorrenciasFixas');
       let { data: recs, error } = await supabase.from('recorrencias')
@@ -149,10 +161,10 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
           pago: o.estado === 'paga', adiada: o.adiada, receita: !desp });
       }
     } catch {}
-  }
+  } return eventos; });
 
   // 4. Dívidas (parcela do mês)
-  try {
+  fontes.push(async () => { const eventos = []; try {
     const { data } = await supabase.from('dividas')
       .select('id, titulo, valor_parcela, dia_vencimento, status, data_inicio').eq('grupo_id', grupoId).not('dia_vencimento', 'is', null);
     // Parcela já paga não aparece mais na agenda nem no briefing (mesma regra
@@ -173,13 +185,13 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
           cor: '#ea580c', valor: dv.valor_parcela || null, deeplink: '/dividas', editavel: false });
       }
     }
-  } catch {}
+  } catch {} return eventos; });
 
   // 5. Cartões — fatura: fecha + vence.
   //    Só tipo 'Crédito' (antes qualquer wallet com esses dias virava evento) e
   //    o vencimento leva o VALOR da fatura daquele ciclo, pra a agenda e o
   //    briefing mostrarem quanto vai vencer.
-  try {
+  fontes.push(async () => { const eventos = []; try {
     const { statusFatura } = require('./faturaRollover');
     const { valorExibido } = require('./faturaVista');
     const { competenciaAtual, cicloPorCompetencia } = require('./cicloFatura');
@@ -203,7 +215,11 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
       try { tabelaCartoes = await taxasParaBase(cartoesForaDaBase, baseGrupo); } catch { tabelaCartoes = {}; }
     }
 
-    for (const w of data || []) {
+    // O valor de cada cartão sai em PARALELO (no máximo 4 de cada vez) e volta
+    // NA ORDEM dos cartões; os eventos são montados depois, na mesma ordem de
+    // antes. Cada cartão tem o próprio try/catch — nunca rejeita.
+    const { mapEmOrdem } = require('./emParalelo');
+    const valores = await mapEmOrdem(data || [], 4, async (w) => {
       // Valor da fatura em aberto (só o vencimento mais próximo — não vale a
       // pena somar ciclo a ciclo pra um feed que pode varrer meses) + se ela
       // já foi QUITADA. `valorExibido` é a mesma fonte única do painel
@@ -224,6 +240,11 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
         }
         quitada = !!vista.quitada;
       } catch { /* tolerante: o evento vale mesmo sem o valor */ }
+      return { valorFatura, quitada };
+    });
+
+    (data || []).forEach((w, i) => {
+      const { valorFatura, quitada } = valores[i];
       const vencAtual = (() => {
         try { return cicloPorCompetencia(w, competenciaAtual(w)).venc; } catch { return null; }
       })();
@@ -242,11 +263,11 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
       for (const d of ocorrenciasMensais(w.dia_fechamento, deStr, ateStr))
         eventos.push({ id: `fec-${w.id}-${d}`, source: 'fechamento', titulo: `Fecha fatura ${w.nome}`, data: d, hora: null,
           cor: '#60a5fa', deeplink: '/cartao-de-credito', editavel: false });
-    }
-  } catch {}
+    });
+  } catch {} return eventos; });
 
   // 6. Manutenções (próxima prevista)
-  try {
+  fontes.push(async () => { const eventos = []; try {
     let qm = supabase.from('manutencoes')
       .select('id, nome, icone, frequencia_dias, ultima_data').not('ultima_data', 'is', null);
     qm = (casaCompartilhada || !userId) ? qm.eq('grupo_id', grupoId) : qm.eq('user_id', userId);
@@ -259,7 +280,7 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
         eventos.push({ id: `man-${mn.id}`, source: 'manutencao', titulo: `Manutenção: ${mn.nome}`, data: ds, hora: null,
           cor: '#d97706', deeplink: '/grow/casa', editavel: false });
     }
-  } catch {}
+  } catch {} return eventos; });
 
   // 6B. Tarefas com prazo.
   //
@@ -272,7 +293,7 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
   // tarefa feita virando evento entulharia o dia com o que já saiu do caminho.
   //
   // Prioridade dá a cor, porque é o que a pessoa usa pra decidir a ordem do dia.
-  try {
+  fontes.push(async () => { const eventos = []; try {
     if (userId) {
       const CORES_PRI = { urgente: '#ef4444', alta: '#f97316', media: '#eab308', baixa: '#22c55e' };
       const { data } = await supabase.from('tarefas')
@@ -292,13 +313,13 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
         });
       }
     }
-  } catch {}
+  } catch {} return eventos; });
 
   // 7. Contas do NEGÓCIO (saída pendente com vencimento) — multi-empresa.
   //    Escopo pelas empresas do grupo. `valor` vai em REAIS porque é a
   //    convenção do feed, mas a tabela guarda em centavos → /100.
   //    Tolerante: se a 091 ainda não rodou, o catch mantém o resto do feed.
-  try {
+  fontes.push(async () => { const eventos = []; try {
     const { data: emps } = await supabase.from('empresas')
       .select('id, nome, cor').eq('grupo_id', grupoId).eq('ativa', true);
     const ids = (emps || []).map(e => e.id);
@@ -322,12 +343,12 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
         });
       }
     }
-  } catch {}
+  } catch {} return eventos; });
 
   // 7b. FOLHA — salário de funcionário no dia de pagamento. Evento VIRTUAL
   //     (ocorrenciasMensais), igual dívidas: não cria linha por mês. Some do
   //     mês em que já houver pagamento lançado pra aquele funcionário.
-  try {
+  fontes.push(async () => { const eventos = []; try {
     const { data: emps } = await supabase.from('empresas')
       .select('id, nome, cor').eq('grupo_id', grupoId).eq('ativa', true);
     const ids = (emps || []).map(e => e.id);
@@ -361,11 +382,11 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
         }
       }
     }
-  } catch {}
+  } catch {} return eventos; });
 
   // 8. Transações (gastos/receitas) — OPT-IN. Só a agenda pede isso; o briefing
   //    matinal NÃO (senão listaria cada gasto do dia). Finanças = por grupo.
-  if (incluirTransacoes) {
+  fontes.push(async () => { const eventos = []; if (incluirTransacoes) {
     try {
       const { data } = await supabase.from('transacoes')
         .select('id, tipo, categoria, valor, data, observacao')
@@ -385,7 +406,11 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
         });
       }
     } catch {}
-  }
+  } return eventos; });
+
+  // Todas juntas, e juntadas NA ORDEM das fontes acima (não na de término).
+  // Cada fonte tem o próprio try/catch e devolve a sua lista — nunca rejeita.
+  const eventos = (await Promise.all(fontes.map((f) => f()))).flat();
 
   // Dedup — rede de segurança: eventos idênticos (mesma fonte, título, dia e
   // valor) viram um só, pra nunca duplicar no briefing/agenda mesmo com dados
