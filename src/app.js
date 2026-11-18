@@ -28,7 +28,9 @@ app.use('/api', apiLimiter);
 
 // --- Rota de saúde (testa se o servidor está rodando) ---
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', bot: 'Sora', versao: '2.0' });
+  // `crons`: este processo roda os lembretes/avisos? (config/crons.js). Na troca
+  // de região é como se confere, de fora, que só UM dos dois servidores os roda.
+  res.json({ status: 'ok', bot: 'Sora', versao: '2.0', crons: require('./config/crons').cronsLigados() });
 });
 
 // --- Rotas (vamos adicionar uma a uma) ---

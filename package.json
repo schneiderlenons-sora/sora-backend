@@ -9,6 +9,7 @@
     "dev": "nodemon src/app.js",
     "eval": "node evals/interpretador.eval.js",
     "eval:ciclo": "node evals/cicloFatura.eval.js",
+    "eval:crons-ativos": "node evals/cronsAtivos.eval.js",
     "eval:celcoin": "node evals/celcoinSync.eval.js",
     "eval:conta-pj": "node evals/contaPj.eval.js",
     "eval:espelho-empresa": "node evals/espelhoContaEmpresa.eval.js",

@@ -1,4 +1,19 @@
-const cron      = require('node-cron');
+// ⚠️ TODO agendamento passa por este `cron` — a TRAVA mora aqui
+// (config/crons.js). Com `CRONS_ATIVOS=0` nenhum dos jobs abaixo é registrado:
+// é como se sobe um segundo backend (troca de região) sem lembrete em dobro.
+// O `require('node-cron')` continua aqui de propósito: os evals trocam esse
+// módulo por um falso, e a trava passa por ele.
+const cronReal  = require('node-cron');
+const { cronsLigados, valorReconhecido } = require('../config/crons');
+const CRONS_LIGADOS = cronsLigados();
+let cronsAgendados = 0;
+const cron = {
+  schedule(expr, fn, opts) {
+    cronsAgendados++;
+    if (CRONS_LIGADOS) return cronReal.schedule(expr, fn, opts);
+    return { start() {}, stop() {}, destroy() {} };
+  },
+};
 const { venceHoje, lembreteHoje } = require('../services/frequenciaRecorrencia');
 const { CATEGORIA_FATURA } = require('../services/categorizar');
 const supabase  = require('../db/supabase');
@@ -2452,6 +2467,18 @@ cron.schedule('15 5 * * *', async () => {
   }
 });
 console.log('   • Todo dia 05:15 — contas que se repetem (Negócios)');
+
+// A linha que diz, no log do Render, se ESTE servidor manda lembrete. Na troca
+// de região é por ela (e pelo `crons` do /health) que se confere qual dos dois
+// está com os crons — nunca os dois.
+if (CRONS_LIGADOS) {
+  console.log(`⏰ Crons LIGADOS: ${cronsAgendados} agendamentos`);
+} else {
+  if (!valorReconhecido()) {
+    console.warn(`⚠️ CRONS_ATIVOS="${process.env.CRONS_ATIVOS}" não reconhecido — tratado como DESLIGADO. Use 1 (liga) ou 0 (desliga).`);
+  }
+  console.log(`⏸️  Crons DESLIGADOS (CRONS_ATIVOS=${process.env.CRONS_ATIVOS}): ${cronsAgendados} agendamentos ignorados — este servidor não manda lembrete, aviso nem resumo`);
+}
 
 // Exportado SÓ pra teste (evals/lembreteFila.eval.js e evals/moedaBase.eval.js).
 // O arquivo registra crons ao ser exigido, então o eval stuba `node-cron` antes
