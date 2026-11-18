@@ -252,14 +252,102 @@ function vencidaNoMes(divida, hoje = hojeSP()) {
   return true;
 }
 
+/** Até quantas parcelas pra trás a conta do atraso olha (depois disso: "N ou mais"). */
+const MAX_PARCELAS_ATRASO = 12;
+
+/**
+ * Parcelas JÁ VENCIDAS e sem pagamento — "ATRASADA ATÉ PAGAR" (nov/2026).
+ *
+ * ⚠️ O BUG QUE ISTO CORRIGE (relato do Fábio, 18/11/2026 — o mesmo do cartão):
+ * `vencidaNoMes` só olha o vencimento DO MÊS CORRENTE. A parcela do dia 10 de
+ * outubro não paga ficava "EM ATRASO" de 11 a 31/10 e, no dia 1º de novembro,
+ * a regra passava a olhar o dia 10 de NOVEMBRO (ainda por vir) e a dívida
+ * VOLTAVA A "ATIVA": a parcela de outubro sumia como se tivesse sido paga.
+ *
+ * Agora a dívida segue atrasada enquanto a última parcela vencida não tiver
+ * pagamento — MAS SÓ QUANDO HÁ PROVA: pagamento registrado na Sora. A conta é
+ * a de sempre: o último pagamento quitou a parcela `vencimentoCoberto`; as
+ * ocorrências do `dia` DEPOIS dela e já vencidas estão em aberto.
+ *
+ * ⚠️ SEM PAGAMENTO REGISTRADO = COMPORTAMENTO DE ANTES (só o mês corrente).
+ * A pessoa pode estar pagando por fora sem registrar — afirmar atraso de meses
+ * sem prova nenhuma é o alarme falso que `emAtraso` já recusa (e quebraria o
+ * relato "mudei o vencimento do dia 15 pro 20 e continua em atraso"). Medido
+ * em 18/11/2026: das 113 dívidas manuais ativas, 54 nunca tiveram pagamento
+ * registrado; com "até pagar" sem prova, 14 delas virariam atraso permanente.
+ *
+ * ⚠️ VENCE HOJE NÃO É ATRASO (igual a `vencidaNoMes`). Dívida do Open Finance
+ * não passa por aqui — o status dela vem do banco.
+ *
+ * @returns {{ desde: string, ultima: string, dias: number, quantas: number,
+ *             ouMais: boolean, comPagamento: boolean } | null}
+ *   desde   = a parcela vencida MAIS ANTIGA sem pagamento (dentro da janela);
+ *   ultima  = a mais recente que já venceu;
+ *   dias    = dias de atraso da mais antiga;
+ *   quantas = parcelas vencidas sem pagamento (teto MAX_PARCELAS_ATRASO e as
+ *             que ainda faltam pagar); `ouMais` = bateu no teto da janela.
+ */
+function parcelasEmAtraso(divida, hoje = hojeSP()) {
+  const dia = Number(divida && divida.dia_vencimento);
+  if (!dia || dia < 1 || dia > 31) return null;
+  if (divida.status === 'quitada') return null;
+  const total = Number(divida.parcelas_total) || 0;
+  const pagas = Number(divida.parcelas_pagas) || 0;
+  if (total > 0 && pagas >= total) return null;
+
+  const pago = divida.ultimo_pagamento ? String(divida.ultimo_pagamento).slice(0, 10) : null;
+  const { Y, M } = partes(hoje);
+
+  // Sem prova de pagamento: só a parcela DESTE mês conta (a regra de antes).
+  if (!pago) {
+    if (!vencidaNoMes(divida, hoje)) return null;
+    const venc = ocorrencia(Y, M, dia);
+    return { desde: venc, ultima: venc, dias: diffDias(venc, hoje), quantas: 1, ouMais: false, comPagamento: false };
+  }
+
+  // A última ocorrência que JÁ VENCEU (hoje = "vence hoje", não atraso).
+  let base = M;
+  let ultima = ocorrencia(Y, M, dia);
+  if (ultima >= hoje) { base = M - 1; ultima = ocorrencia(Y, base, dia); }
+
+  const inicio = divida.data_inicio ? String(divida.data_inicio).slice(0, 10) : null;
+  if (inicio && ultima <= inicio) return null;                   // 1ª parcela nunca vence no mês do contrato
+  // Data do banco pra frente = o emissor diz que não venceu (mesma trava de vencidaNoMes).
+  if (divida.proximo_vencimento && String(divida.proximo_vencimento).slice(0, 10) > ultima) return null;
+
+  const coberta = vencimentoCoberto(pago, dia);
+  if (coberta >= ultima) return null;                            // o último pagamento já cobre
+
+  // Conta pra trás, parcela a parcela, até a coberta, o início ou o teto.
+  const teto = total > 0 ? Math.min(MAX_PARCELAS_ATRASO, total - pagas) : MAX_PARCELAS_ATRASO;
+  let quantas = 0;
+  let desde = ultima;
+  let ouMais = false;
+  for (let i = 0; ; i++) {
+    const v = ocorrencia(Y, base - i, dia);
+    if (v <= coberta) break;
+    if (inicio && v <= inicio) break;
+    if (quantas >= teto) { ouMais = quantas >= MAX_PARCELAS_ATRASO; break; }
+    quantas += 1;
+    desde = v;
+  }
+  return { desde, ultima, dias: diffDias(desde, hoje), quantas, ouMais, comPagamento: true };
+}
+
 /**
  * O status que a dívida deve ter AGORA, partindo do atual. Só alterna entre
  * 'ativa' e 'em_atraso' — 'quitada' (ou outro valor) nunca é mexido aqui.
+ *
+ * ⚠️ Usa `parcelasEmAtraso` (atrasada ATÉ PAGAR, com prova), não mais
+ * `vencidaNoMes` (só o mês corrente). `vencidaNoMes` segue sendo a regra do
+ * LEMBRETE de atraso do WhatsApp, de propósito: o lembrete só dispara depois do
+ * vencimento deste mês, e ali as duas regras dão o mesmo resultado — ninguém
+ * passa a receber mensagem a mais por causa desta mudança.
  */
 function statusDeAtraso(divida, hoje = hojeSP()) {
   const atual = divida && divida.status;
   if (atual !== 'ativa' && atual !== 'em_atraso') return atual;
-  return vencidaNoMes(divida, hoje) ? 'em_atraso' : 'ativa';
+  return parcelasEmAtraso(divida, hoje) ? 'em_atraso' : 'ativa';
 }
 
 
@@ -287,4 +375,5 @@ function statusPorParcelas(divida) {
 module.exports = {
   proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, ultimoDiaDoMes, hojeSP,
   ultimoPagamentoPorDivida, emAtraso, vencidaNoMes, statusDeAtraso, statusPorParcelas,
+  parcelasEmAtraso, MAX_PARCELAS_ATRASO,
 };

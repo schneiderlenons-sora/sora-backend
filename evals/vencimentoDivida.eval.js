@@ -17,6 +17,7 @@
 // =============================================================================
 const {
   proximoVencimento, vencimentoCoberto, ocorrencia, diffDias, emAtraso, vencidaNoMes, statusDeAtraso, statusPorParcelas,
+  parcelasEmAtraso, MAX_PARCELAS_ATRASO,
 } = require('../src/services/vencimentoDivida');
 
 const falhas = [];
@@ -220,6 +221,92 @@ console.log('── selo em atraso ──');
   eq(statusDeAtraso({ dia_vencimento: 15, status: 'ativa' }, H), 'em_atraso', 'status: ativa vira em_atraso');
   eq(statusDeAtraso({ dia_vencimento: 15, status: 'quitada' }, H), 'quitada', 'status: quitada nunca é mexida');
   eq(statusDeAtraso({ dia_vencimento: 15, status: 'cancelada' }, H), 'cancelada', 'status: outro valor nunca é mexido');
+}
+console.log('  ok');
+
+// ── ATRASADA ATÉ PAGAR (parcelasEmAtraso) ──────────────────────────────────
+// Relato do Fábio (18/11/2026), o mesmo do cartão: "não paguei e no outro mês
+// não mostrava em atraso". `vencidaNoMes` só olha o vencimento do MÊS CORRENTE:
+// a parcela de 10/10 não paga deixava de ser atraso em 1º/11.
+console.log('── atrasada até pagar ──');
+{
+  // O caso do relato: pagou a de setembro, NÃO pagou a de outubro.
+  const fabio = { dia_vencimento: 10, status: 'ativa', ultimo_pagamento: '2026-09-09' };
+  eq(vencidaNoMes(fabio, '2026-11-05'), false, 'a regra antiga (do mês) NÃO via a de outubro em 05/11 — era o bug');
+  eq(parcelasEmAtraso(fabio, '2026-11-05'),
+    { desde: '2026-10-10', ultima: '2026-10-10', dias: 26, quantas: 1, ouMais: false, comPagamento: true },
+    '⚠️ 05/11: a de 10/10 SEGUE atrasada (26 dias)');
+  eq(statusDeAtraso(fabio, '2026-11-05'), 'em_atraso', '⚠️ o selo fica EM ATRASO na virada do mês');
+  eq(parcelasEmAtraso(fabio, '2026-11-18'),
+    { desde: '2026-10-10', ultima: '2026-11-10', dias: 39, quantas: 2, ouMais: false, comPagamento: true },
+    '18/11: outubro E novembro em aberto — desde 10/10');
+  eq(parcelasEmAtraso(fabio, '2026-10-10'), null, 'no dia do vencimento ainda não é atraso');
+  eq(parcelasEmAtraso(fabio, '2026-10-11')?.quantas, 1, 'um dia depois já é');
+
+  // Pagou ATRASADO (12/10 a de 10/10) → em dia; não conta duas vezes.
+  eq(parcelasEmAtraso({ ...fabio, ultimo_pagamento: '2026-10-12' }, '2026-11-05'), null, 'pagou a de outubro atrasado → em dia');
+  // Pagou ADIANTADO a de novembro (07/11) → em dia.
+  eq(parcelasEmAtraso({ ...fabio, ultimo_pagamento: '2026-11-07' }, '2026-11-18'), null, 'pagou adiantado → em dia');
+
+  // ⚠️ SEM PAGAMENTO REGISTRADO = EXATAMENTE COMO ANTES (só o mês corrente).
+  // Protege o relato "mudei do dia 15 pro 20 e continua em atraso" e quem paga
+  // por fora sem registrar.
+  eq(parcelasEmAtraso({ dia_vencimento: 20, status: 'em_atraso' }, '2026-09-18'), null, '⚠️ sem pagamento e o do mês não venceu → NÃO é atraso (caso "mudei pro dia 20")');
+  eq(statusDeAtraso({ dia_vencimento: 20, status: 'em_atraso' }, '2026-09-18'), 'ativa', '⚠️ e o selo continua saindo');
+  eq(parcelasEmAtraso({ dia_vencimento: 10, status: 'ativa' }, '2026-11-18'),
+    { desde: '2026-11-10', ultima: '2026-11-10', dias: 8, quantas: 1, ouMais: false, comPagamento: false },
+    'sem pagamento: só a parcela DESTE mês (como sempre foi)');
+
+  // Contrato: nada antes do início.
+  eq(parcelasEmAtraso({ dia_vencimento: 10, ultimo_pagamento: '2026-08-10', data_inicio: '2026-09-15' }, '2026-11-18')?.quantas, 2,
+    'para no data_inicio: setembro (antes do contrato) não conta');
+  eq(parcelasEmAtraso({ dia_vencimento: 10, ultimo_pagamento: '2026-08-10', data_inicio: '2026-11-12' }, '2026-11-18'), null,
+    'contrato depois do último vencimento → nada vencido');
+  // Teto pelas parcelas que faltam.
+  eq(parcelasEmAtraso({ dia_vencimento: 10, ultimo_pagamento: '2026-05-10', parcelas_total: 3, parcelas_pagas: 2 }, '2026-11-18')?.quantas, 1,
+    'nunca mais atrasadas do que as que faltam pagar');
+  // Teto da janela.
+  const velha = parcelasEmAtraso({ dia_vencimento: 10, ultimo_pagamento: '2024-01-10' }, '2026-11-18');
+  eq([velha?.quantas, velha?.ouMais], [MAX_PARCELAS_ATRASO, true], 'muito tempo sem pagar: para no teto e diz "ou mais"');
+  // Travas que já existiam.
+  eq(parcelasEmAtraso({ ...fabio, status: 'quitada' }, '2026-11-18'), null, 'quitada nunca');
+  eq(parcelasEmAtraso({ ...fabio, parcelas_total: 10, parcelas_pagas: 10 }, '2026-11-18'), null, 'todas pagas nunca');
+  eq(parcelasEmAtraso({ ...fabio, proximo_vencimento: '2026-12-10' }, '2026-11-18'), null, 'banco diz que a próxima é mês que vem → não');
+  eq(parcelasEmAtraso({ ...fabio, dia_vencimento: null }, '2026-11-18'), null, 'sem dia → nunca');
+  // Mês curto: dia 31 vence em 28/02.
+  eq(parcelasEmAtraso({ dia_vencimento: 31, ultimo_pagamento: '2026-01-30' }, '2026-03-05')?.desde, '2026-02-28', 'dia 31 → a de fevereiro é 28/02');
+  // Vence hoje não entra na conta.
+  eq(parcelasEmAtraso({ dia_vencimento: 18, ultimo_pagamento: '2026-09-17' }, '2026-11-18'),
+    { desde: '2026-10-18', ultima: '2026-10-18', dias: 31, quantas: 1, ouMais: false, comPagamento: true },
+    'a de HOJE (18/11) não conta como atrasada; a de 18/10 sim');
+
+  // ── PROVA DE NÃO-REGRESSÃO: regra antiga (vencidaNoMes) × nova, dia a dia ──
+  // Em toda combinação: (1) o que era atraso continua; (2) sem pagamento é
+  // IDÊNTICO; (3) a única diferença é a pretendida.
+  let casos = 0; let novos = 0;
+  const viol = [];
+  const dias = [1, 5, 10, 15, 18, 28, 29, 30, 31];
+  const pagamentos = [null, '2025-12-20', '2026-03-09', '2026-06-01', '2026-06-30', '2026-09-12', '2026-10-28', '2026-12-31'];
+  const inicios = [null, '2025-11-15', '2026-05-20', '2026-10-01'];
+  for (let t = Date.UTC(2026, 0, 1); t <= Date.UTC(2027, 1, 28); t += 86400000) {
+    const hoje = new Date(t).toISOString().slice(0, 10);
+    for (const dia of dias) for (const ultimo_pagamento of pagamentos) for (const data_inicio of inicios) {
+      if (ultimo_pagamento && ultimo_pagamento > hoje) continue;
+      const d = { dia_vencimento: dia, status: 'ativa', ultimo_pagamento, data_inicio };
+      const antiga = vencidaNoMes(d, hoje);
+      const nova = !!parcelasEmAtraso(d, hoje);
+      casos++;
+      if (antiga && !nova) viol.push(`(1) deixou de ser atraso: ${JSON.stringify(d)} ${hoje}`);
+      if (!ultimo_pagamento && antiga !== nova) viol.push(`(2) sem pagamento mudou: ${JSON.stringify(d)} ${hoje}`);
+      if (nova && !antiga) {
+        novos++;
+        const venceEsteMes = ocorrencia(+hoje.slice(0, 4), +hoje.slice(5, 7) - 1, dia);
+        if (!ultimo_pagamento || venceEsteMes < hoje) viol.push(`(3) diferença fora do previsto: ${JSON.stringify(d)} ${hoje}`);
+      }
+    }
+  }
+  eq(viol.slice(0, 3), [], `⚠️ não-regressão em ${casos} combinações (${novos} viram atraso — todas antes do vencimento do mês, com pagamento registrado)`);
+  ok(novos > 0, 'a varredura exercita o caso novo');
 }
 console.log('  ok');
 
