@@ -240,7 +240,7 @@ POLP_CELCOIN_WEBHOOK_SECRET  = a chave da "Assinatura HMAC-SHA256" (opcional,
 Sem as duas primeiras, o trilho responde 503 e o Pluggy segue normal.
 
 **Webhook** (Dashboard → Webhooks → Novo Endpoint, provider **Celcoin**):
-- URL: `https://sora-backend-jqm8.onrender.com/api/webhooks/celcoin`
+- URL: `https://sora-backend-ohio.onrender.com/api/webhooks/celcoin` (até 18/11/2026 era o `sora-backend-jqm8`, em Oregon)
 - Eventos: **marcar todos**. O handler agenda um sync do consentimento inteiro
   com **debounce de 20s**, então a rajada (accounts + accounts.transactions +
   credit_cards + bills…) vira UMA sincronização. Marcar só alguns é o que dá
