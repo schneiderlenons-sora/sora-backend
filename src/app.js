@@ -1,4 +1,7 @@
 require('dotenv').config();
+// Medição sob demanda (só com `x-sora-diag`) — ver src/diag/tempoRequisicao.js.
+const tempoRequisicao = require('./diag/tempoRequisicao');
+tempoRequisicao.instalar();
 require('./jobs');
 const express   = require('express');
 const cors      = require('cors');
@@ -6,6 +9,7 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 app.set('trust proxy', 1); // Render fica atrás de proxy — pra o rate limit ler o IP real
+app.use(tempoRequisicao.middleware);
 app.use(cors());
 // `verify` guarda o corpo CRU em req.rawBody. Assinatura HMAC (webhook da Polp/
 // Celcoin) tem que ser conferida sobre os bytes exatos que chegaram — recompor
