@@ -32,8 +32,10 @@ function instalar() {
     const url = String((input && input.url) || input || '');
     if (!/supabase\.co/.test(url)) return original(input, init);
     const t0 = performance.now();
+    // Só o NOME da tabela/rota (nunca filtro nem valor) — pra achar a ida lenta.
+    const alvo = (url.match(/\/rest\/v1\/([^?]+)/) || url.match(/\/(auth\/v1\/[^?]+)/) || [])[1] || '?';
     const p = original(input, init);
-    p.then(() => st.idas.push([t0, performance.now()]), () => st.idas.push([t0, performance.now()]));
+    p.then(() => st.idas.push([t0, performance.now(), alvo]), () => st.idas.push([t0, performance.now(), alvo]));
     return p;
   };
 }
@@ -64,6 +66,10 @@ function middleware(req, res, next) {
         `banco;dur=${espera.toFixed(1)};desc="${st.idas.length} idas, ${ondas} em serie"`,
         `cpu;dur=${((c.user + c.system) / 1000).toFixed(1)}`,
       ].join(', '));
+      // Cada ida: início (relativo ao começo da requisição), duração e tabela.
+      // É o que mostra QUAL consulta está no caminho crítico.
+      res.setHeader('X-Sora-Idas', [...st.idas].sort((a, b) => a[0] - b[0])
+        .map(([a, b, alvo]) => `${Math.round(a - st.t0)}+${Math.round(b - a)}:${alvo}`).join(' ').slice(0, 4000));
     } catch { /* medição nunca derruba a resposta */ }
     return writeHead.apply(this, args);
   };
