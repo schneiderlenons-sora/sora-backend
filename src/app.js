@@ -33,6 +33,26 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', bot: 'Sora', versao: '2.0', crons: require('./config/crons').cronsLigados() });
 });
 
+// --- Conferência de variáveis entre DOIS servidores (troca de região) ---
+// Devolve o NOME de cada variável de ambiente e só 8 caracteres do sha256 do
+// valor: dá pra comparar Oregon × Ohio e achar a variável que não foi copiada
+// (falta dela costuma ser SILENCIOSA — suporte que não recebe, assinatura da
+// Celcoin que deixa de ser conferida) sem nenhum valor sair do servidor.
+// Mesmo segredo do diag-cotacao e do of-debug, que já abrem muito mais que isto.
+app.get('/health/env', (req, res) => {
+  const chave = process.env.API_SECRET_TOKEN;
+  if (!chave || req.query.key !== chave) return res.sendStatus(403);
+  const crypto = require('crypto');
+  // Variáveis do sistema/Render/npm: mudam de um serviço pro outro por natureza.
+  const doSistema = /^(RENDER|NODE_|NPM_|YARN_|COREPACK_|XDG_|PATH$|HOME$|HOSTNAME$|PWD$|OLDPWD$|SHLVL$|_$|PORT$|IS_PULL_REQUEST$|LANG$|TERM$|USER$|SHELL$|INIT_CWD$|COLOR$|EDITOR$|DEBIAN_FRONTEND$)/i;
+  const variaveis = {};
+  for (const k of Object.keys(process.env).sort()) {
+    if (doSistema.test(k)) continue;
+    variaveis[k] = crypto.createHash('sha256').update(String(process.env[k])).digest('hex').slice(0, 8);
+  }
+  res.json({ total: Object.keys(variaveis).length, variaveis });
+});
+
 // --- Rotas (vamos adicionar uma a uma) ---
 app.use('/webhook',          require('./routes/webhook'));
 app.use('/webhook/meta',     require('./routes/webhook-meta'));
