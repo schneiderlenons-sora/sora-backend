@@ -219,8 +219,18 @@ async function statusFatura(grupoId, cartao, ym) {
   try {
     anterior = cicloPorCompetencia(cartao, competenciaVizinha(cartao, ym, -1));
   } catch { anterior = null; }
-  const fatura = cent(await somaFaturaCiclo(grupoId, cartao.nome, ciclo, anterior));
-  const pago = cent(await pagoDaFatura(cartao.id, ym));
+  // ⚠️ A SOMA E O PAGO SAEM JUNTOS (nov/2026): são leituras independentes
+  // (transações do ciclo × pagamentos_fatura da competência), e em série cada
+  // fatura calculada pagava uma ida a mais ao banco — medido na linha do tempo
+  // da rota de faturas, onde isto se repete na fatura atual, em CADA mês da
+  // corrente de atrasadas, na agenda e no WhatsApp. O resultado é o mesmo:
+  // `pagoDaFatura` nunca rejeita (erro vira 0), e erro na soma continua subindo.
+  const [somaBruta, pagoBruto] = await Promise.all([
+    somaFaturaCiclo(grupoId, cartao.nome, ciclo, anterior),
+    pagoDaFatura(cartao.id, ym),
+  ]);
+  const fatura = cent(somaBruta);
+  const pago = cent(pagoBruto);
   const restante = Math.max(0, cent(fatura - pago));
   return { fatura, pago, restante, ciclo };
 }
