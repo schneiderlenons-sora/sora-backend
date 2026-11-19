@@ -4,6 +4,7 @@
 // Agora: exige o access token do usuário logado, valida no Supabase e
 // AMARRA o request ao próprio usuário (sobrescreve o phone informado).
 const supabase = require('../db/supabase');
+const chamadaInterna = require('../services/chamadaInterna');
 
 // ── Cache curto da VALIDAÇÃO do token ──────────────────────────────────────
 //
@@ -66,12 +67,22 @@ async function validarToken(jwt) {
 
 async function auth(req, res, next) {
   try {
-    const header = req.headers['authorization'] || '';
-    const jwt = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
-    if (!jwt) return res.status(401).json({ erro: 'Não autenticado' });
+    // Leitura em nome de quem conectou o ChatGPT (routes/mcp.js): o pedido vem
+    // por loopback, assinado com um segredo que só existe na memória deste
+    // processo — e só vale em GET. Daqui pra baixo é o caminho de sempre: a
+    // linha de `users`, o grupo, o anti-IDOR. Ver services/chamadaInterna.js.
+    const interno = chamadaInterna.verificar(req);
+    let user;
+    if (interno) {
+      user = { id: interno.userId, user_metadata: {} };
+    } else {
+      const header = req.headers['authorization'] || '';
+      const jwt = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+      if (!jwt) return res.status(401).json({ erro: 'Não autenticado' });
 
-    const user = await validarToken(jwt);
-    if (!user) return res.status(401).json({ erro: 'Sessão inválida' });
+      user = await validarToken(jwt);
+      if (!user) return res.status(401).json({ erro: 'Sessão inválida' });
+    }
 
     // Dados básicos do usuário (pra autorização por posse)
     //

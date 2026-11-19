@@ -116,13 +116,15 @@
     "eval:categorias-negocio": "node evals/categoriasNegocio.eval.js",
     "eval:categorias-negocio-rota": "node evals/categoriasNegocioRota.eval.js",
     "eval:peso": "node evals/pesoRegistro.eval.js",
-    "eval:fatura-atrasada": "node evals/faturaAtrasada.eval.js"
+    "eval:fatura-atrasada": "node evals/faturaAtrasada.eval.js",
+    "eval:ia-conectada": "node evals/iaConectada.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@supabase/supabase-js": "^2.105.4",
     "axios": "^1.16.0",
     "cors": "^2.8.6",
@@ -133,7 +135,8 @@
     "nanoid": "^3.3.12",
     "node-cron": "^4.2.1",
     "openai": "^6.39.1",
-    "yahoo-finance2": "^3.14.0"
+    "yahoo-finance2": "^3.14.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

@@ -27,6 +27,10 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { erro: 'Muitas requisições. Tente novamente em instantes.' },
+  // As leituras internas da Sora no ChatGPT chegam todas de 127.0.0.1 e
+  // dividiriam um balde só entre todos os clientes. Elas têm o teto delas,
+  // por conexão, em routes/mcp.js.
+  skip: (req) => !!require('./services/chamadaInterna').verificar(req),
 });
 app.use('/api', apiLimiter);
 
@@ -81,6 +85,8 @@ app.get('/health/env', (req, res) => {
 });
 
 // --- Rotas (vamos adicionar uma a uma) ---
+// Sora no ChatGPT: /mcp, /oauth/*, /.well-known/* e /api/ia-conectada/*.
+app.use(require('./routes/mcp'));
 app.use('/webhook',          require('./routes/webhook'));
 app.use('/webhook/meta',     require('./routes/webhook-meta'));
 app.use('/webhook/negocios', require('./routes/webhook-negocios'));
