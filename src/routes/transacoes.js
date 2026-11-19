@@ -748,14 +748,21 @@ router.post('/parcelado', auth, exigirPermissao('admin', 'escrita'), async (req,
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// POST /api/transacoes/bulk — importação em massa (OFX/CSV)
+// POST /api/transacoes/bulk — importação em massa (OFX/CSV/PDF)
+//
+// `mover_fitids` + `carteira_destino` (opcionais): lançamentos deste arquivo que
+// JÁ foram importados noutra conta do grupo vão pra conta escolhida agora — é a
+// saída de quem importou a fatura na conta errada (services/importacaoExtrato.js).
+// A resposta diz o que aconteceu com cada parte: `inserted`, `duplicados`
+// (já existiam e ficaram onde estavam) e `movidas`.
 router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { transacoes } = req.body;
-    if (!Array.isArray(transacoes) || transacoes.length === 0) {
+    const transacoes = Array.isArray(req.body?.transacoes) ? req.body.transacoes : null;
+    const moverFitids = Array.isArray(req.body?.mover_fitids) ? req.body.mover_fitids : [];
+    if (!transacoes || (transacoes.length === 0 && moverFitids.length === 0)) {
       return res.status(400).json({ erro: 'Lista de transações vazia.' });
     }
-    if (transacoes.length > 1000) {
+    if (transacoes.length > 1000 || moverFitids.length > 1000) {
       return res.status(400).json({ erro: 'Limite de 1000 transações por importação.' });
     }
 
@@ -796,8 +803,20 @@ router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res)
         fitid:         t.fitid || null,
       }));
 
+    // Já importadas noutra conta → pra conta escolhida agora. Só pra carteira que
+    // EXISTE no grupo: o `reconciliarConta` cairia em 'Dinheiro' e moveria tudo
+    // pra uma conta que a pessoa nem escolheu.
+    let movidas = 0;
+    if (moverFitids.length) {
+      const destino = nomesReais.get(normNome(req.body?.carteira_destino || transacoes[0]?.carteira_nome));
+      if (destino) {
+        const { moverImportadas } = require('../services/importacaoExtrato');
+        ({ movidas } = await moverImportadas(supabase, { grupoId: req.grupoId, fitids: moverFitids, destino }));
+      }
+    }
+
     const duplicados = transacoes.length - rows.length;
-    if (rows.length === 0) return res.json({ inserted: 0, duplicados });
+    if (rows.length === 0) return res.json({ inserted: 0, duplicados, movidas });
 
     // Regra do usuário manda sobre o motor de palavras (migration 104): quem já
     // corrigiu "FernandoPeixoto" não vai ver o extrato novo cair em "Outros".
@@ -817,7 +836,7 @@ router.post('/bulk', auth, exigirPermissao('admin', 'escrita'), async (req, res)
       require('../services/limites').verificarLimiteEmBackground(req.grupoId, null);
     }
 
-    res.json({ inserted: data?.length || 0, duplicados });
+    res.json({ inserted: data?.length || 0, duplicados, movidas });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
