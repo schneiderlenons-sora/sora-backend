@@ -44,7 +44,7 @@ const metaRecurso = () => ({
   authorization_servers: [cfg.issuer],
   scopes_supported: cfg.escoposSuportados,
   bearer_methods_supported: ['header'],
-  resource_name: 'Sora',
+  resource_name: 'ForSora',
   resource_policy_uri: cfg.politicaUrl,
   resource_tos_uri: cfg.termosUrl,
 });
@@ -71,6 +71,15 @@ router.get('/.well-known/oauth-authorization-server', (req, res) => res.json({
   op_policy_uri: cfg.politicaUrl,
   op_tos_uri: cfg.termosUrl,
 }));
+
+// Verificação de domínio do diretório do ChatGPT: a OpenAI dá um texto no
+// portal e confere se ele está publicado aqui. O texto entra pela variável
+// OPENAI_APPS_CHALLENGE no Render (não é segredo: é público por definição).
+router.get('/.well-known/openai-apps-challenge', (req, res) => {
+  const t = String(process.env.OPENAI_APPS_CHALLENGE || '').trim();
+  if (!t) return res.sendStatus(404);
+  res.type('text/plain').send(t);
+});
 
 // ── Token e revogação ───────────────────────────────────────────────────────
 // Por IP. O ChatGPT renova de poucos IPs, então o teto é folgado; o que ele
@@ -110,21 +119,23 @@ function recusar401(res, descricao) {
   const meta = `${cfg.issuer}/.well-known/oauth-protected-resource`;
   const extra = descricao ? `, error="invalid_token", error_description="${descricao}"` : '';
   res.set('WWW-Authenticate', `Bearer resource_metadata="${meta}", scope="${cfg.ESCOPO_LEITURA}"${extra}`);
-  return res.status(401).json({ error: 'invalid_token', error_description: descricao || 'Conecte sua conta da Sora.' });
+  return res.status(401).json({ error: 'invalid_token', error_description: descricao || 'Conecte sua conta da ForSora.' });
 }
 
 const SEM_ACESSO = {
-  desligada: 'A conexão da Sora com assistentes de IA está desligada no momento.',
-  teste: 'A conexão da Sora com assistentes de IA ainda está em teste fechado e esta conta não faz parte dele.',
-  plano: 'A conexão da Sora com o ChatGPT e o Claude faz parte dos planos Premium e Platinum. O plano desta conta não inclui. A pessoa pode ver os planos no painel da Sora (forsora.com).',
+  desligada: 'A conexão da ForSora com assistentes de IA está desligada no momento.',
+  teste: 'A conexão da ForSora com assistentes de IA ainda não está disponível para esta conta.',
+  // ⚠️ SEM falar de planos/upgrade: as diretrizes do diretório do ChatGPT
+  // proíbem o app de exibir planos ou promover upgrade dentro da conversa.
+  plano: 'A conta desta pessoa na ForSora não inclui a conexão com assistentes de IA.',
 };
 
 const INSTRUCOES = [
-  'Estas ferramentas leem os dados financeiros que a pessoa organiza na Sora (forsora.com): transações, contas, cartões, faturas, dívidas, metas, contas fixas, investimentos e limites.',
+  'Estas ferramentas leem os dados financeiros que a pessoa organiza na ForSora (forsora.com): transações, contas, cartões, faturas, dívidas, metas, contas fixas, investimentos e limites.',
   'Use as ferramentas em vez de supor números. Os valores vêm na moeda indicada em `moeda` (normalmente BRL).',
-  'Aqui é só leitura: para lançar, corrigir ou apagar algo, a pessoa usa o painel ou o WhatsApp da Sora.',
+  'Aqui é só leitura: para lançar, corrigir ou apagar algo, a pessoa usa o painel ou o WhatsApp da ForSora.',
   'Os totais do resumo deixam de fora transferências entre contas, pagamento de fatura e ajuste de saldo — não são ganho nem gasto.',
-  'Os dados são do grupo ativo da pessoa na Sora; em gestão compartilhada, incluem os lançamentos das outras pessoas do grupo.',
+  'Os dados são do grupo ativo da pessoa na ForSora; em gestão compartilhada, incluem os lançamentos das outras pessoas do grupo.',
 ].join(' ');
 
 // Teto de chamadas por conexão (janela deslizante de 1 minuto, em memória).
@@ -141,7 +152,9 @@ const erroFerramenta = (texto) => ({ isError: true, content: [{ type: 'text', te
 
 function criarServidor({ acesso, usuario, pode, moeda }) {
   const server = new Server(
-    { name: 'sora', title: 'Sora', version: '1.0.0' },
+    // ⚠️ "ForSora", não "Sora": Sora é o app de vídeo da OpenAI — mesmo
+    // motivo da recusa 4.1(a) da Apple. O nome que aparece nos diretórios.
+    { name: 'forsora', title: 'ForSora', version: '1.0.0' },
     { capabilities: { tools: {} }, instructions: INSTRUCOES },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: descritores(cfg.ESCOPO_LEITURA) }));
@@ -167,7 +180,7 @@ function criarServidor({ acesso, usuario, pode, moeda }) {
     } catch (e) {
       if (e instanceof ErroFerramenta) return erroFerramenta(e.message);
       console.error(`[ia] ${nome}:`, e.message);
-      return erroFerramenta('A Sora não conseguiu responder agora. Tente de novo em instantes.');
+      return erroFerramenta('A ForSora não conseguiu responder agora. Tente de novo em instantes.');
     } finally {
       oauth.registrarUso(supabase, { conexaoId: acesso.conexaoId, userId: usuario.id, ferramenta: nome, ok, ms: Date.now() - t0 });
     }

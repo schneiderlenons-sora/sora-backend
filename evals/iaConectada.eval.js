@@ -351,12 +351,13 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
     ok(!JSON.stringify(res).includes('5511'), '§9 resumo: telefone de membro NUNCA sai');
 
     const tx = await ferr.porNome.listar_transacoes.executar(ctx, { busca: 'uber' });
-    eq(tx.transacoes.map((x) => x.id), ['t1'], '§9 transações: busca por trecho');
+    eq(tx.transacoes.map((x) => x.descricao), ['Uber centro'], '§9 transações: busca por trecho');
+    ok(tx.transacoes.every((x) => !('id' in x)), '§9 transações: sem id interno (minimização de dado)');
     ok(!JSON.stringify(tx).includes('5511'), '§9 transações: telefone de quem lançou NUNCA sai');
     const todas = await ferr.porNome.listar_transacoes.executar(ctx, {});
-    eq(todas.transacoes.find((x) => x.id === 't2').entra_no_resumo, false, '§9 pagamento de fatura marcado fora do resumo (ehTransferencia)');
-    eq(todas.transacoes.find((x) => x.id === 't1').data, '2026-11-10', '§9 meia-noite UTC = data pura');
-    eq(todas.transacoes.find((x) => x.id === 't2').data, '2026-11-01', '§9 01:30 UTC = dia anterior em São Paulo');
+    eq(todas.transacoes.find((x) => x.descricao === 'Pagamento fatura').entra_no_resumo, false, '§9 pagamento de fatura marcado fora do resumo (ehTransferencia)');
+    eq(todas.transacoes.find((x) => x.descricao === 'Uber centro').data, '2026-11-10', '§9 meia-noite UTC = data pura');
+    eq(todas.transacoes.find((x) => x.descricao === 'Pagamento fatura').data, '2026-11-01', '§9 01:30 UTC = dia anterior em São Paulo');
     eq((await ferr.porNome.listar_transacoes.executar(ctx, { conta: 'itau' })).transacoes.length, 2, '§9 filtro de conta sem acento');
 
     const fat = await ferr.porNome.faturas_dos_cartoes.executar(ctx, {});
@@ -442,7 +443,7 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
     const ini = await rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'eval', version: '1' } } });
     const iniJ = await ini.json();
     eq(ini.status, 200, '§10 initialize 200');
-    eq(iniJ.result?.serverInfo?.name, 'sora', '§10 servidor se apresenta');
+    eq([iniJ.result?.serverInfo?.name, iniJ.result?.serverInfo?.title], ['forsora', 'ForSora'], '§10 servidor se apresenta como ForSora (Sora é o app de vídeo da OpenAI)');
 
     const lista = await (await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })).json();
     eq(lista.result?.tools?.length, 11, '§10 tools/list traz as 11');
@@ -463,7 +464,14 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
     // Plano que venceu: a conexão segue, a ferramenta explica.
     dbHttp.t.users[0].plano = 'basico';
     const semPlano = await (await rpc({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'resumo_do_mes', arguments: {} } })).json();
-    ok(semPlano.result?.isError && /Premium/.test(semPlano.result.content[0].text), '§10 sem plano: a ferramenta explica (o ChatGPT repassa)');
+    ok(semPlano.result?.isError && !!semPlano.result.content[0].text, '§10 sem plano: a ferramenta explica (o ChatGPT repassa)');
+    ok(!/premium|platinum|planos?|upgrade|assin/i.test(semPlano.result.content[0].text), '§10 sem plano: NÃO fala de planos nem de upgrade (diretriz do ChatGPT)');
+    const desafio = await fetch(`${base}/.well-known/openai-apps-challenge`);
+    eq(desafio.status, 404, '§10 verificação de domínio: 404 sem a variável');
+    process.env.OPENAI_APPS_CHALLENGE = 'abc123';
+    const desafio2 = await fetch(`${base}/.well-known/openai-apps-challenge`);
+    eq([desafio2.status, await desafio2.text()], [200, 'abc123'], '§10 verificação de domínio: devolve o texto puro');
+    delete process.env.OPENAI_APPS_CHALLENGE;
     dbHttp.t.users[0].plano = 'premium';
 
     const meta = await (await fetch(`${base}/.well-known/oauth-authorization-server`)).json();

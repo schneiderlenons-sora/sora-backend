@@ -29,8 +29,8 @@ async function pedir(ctx, caminho) {
   if (status === 403) {
     throw new ErroFerramenta('Esta parte não está liberada no plano da conta, ou a pessoa não tem permissão de leitura neste grupo.');
   }
-  if (status === 404) throw new ErroFerramenta('Não encontrei a conta da pessoa na Sora (sem grupo ativo).');
-  throw new ErroFerramenta('A Sora não conseguiu ler esses dados agora. Tente de novo em instantes.');
+  if (status === 404) throw new ErroFerramenta('Não encontrei a conta da pessoa na ForSora (sem grupo ativo).');
+  throw new ErroFerramenta('A ForSora não conseguiu ler esses dados agora. Tente de novo em instantes.');
 }
 
 /**
@@ -63,7 +63,7 @@ const FERRAMENTAS = [
   {
     name: 'resumo_do_mes',
     title: 'Resumo do mês',
-    description: 'Receitas, despesas e resultado de um mês, com o total por categoria — os mesmos números do Dashboard da Sora. Transferências entre contas, pagamento de fatura e ajuste de saldo NÃO entram (não são ganho nem gasto). Valores na moeda da conta da pessoa.',
+    description: 'Receitas, despesas e resultado de um mês, com o total por categoria — os mesmos números do painel da ForSora. Transferências entre contas, pagamento de fatura e ajuste de saldo NÃO entram (não são ganho nem gasto). Valores na moeda da conta da pessoa.',
     inputSchema: {
       type: 'object',
       properties: { mes: { type: 'string', description: 'Mês no formato AAAA-MM. Padrão: o mês atual.' } },
@@ -142,7 +142,6 @@ const FERRAMENTAS = [
         // A rota lê até 500 do mês: acima disso a busca pode não ter visto tudo.
         ...(Number(r.total) > 500 ? { aviso: 'O mês tem mais de 500 lançamentos; a busca olhou os 500 mais recentes.' } : {}),
         transacoes: filtradas.slice(0, limite).map((t) => ({
-          id: t.id,
           data: diaSP(t.data),
           descricao: t.observacao || null,
           valor: r2(t.valor),
@@ -376,7 +375,7 @@ const FERRAMENTAS = [
   {
     name: 'categorias',
     title: 'Categorias',
-    description: 'As categorias da pessoa (de despesa e de receita), com a categoria-pai de cada subcategoria. Use os nomes exatamente como aparecem aqui para filtrar transações.',
+    description: 'As categorias da pessoa (de despesa e de receita), com a categoria-pai de cada subcategoria. São os mesmos nomes aceitos no filtro `categoria` de listar_transacoes.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     async executar(ctx) {
       const cs = await pedir(ctx, `/api/categorias/${PH}`) || [];
