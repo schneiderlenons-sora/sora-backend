@@ -3,7 +3,7 @@ const router   = express.Router();
 const supabase = require('../db/supabase');
 const auth     = require('../middlewares/auth');
 const { exigirPermissao } = require('../middlewares/permissao');
-const { debitarConta } = require('../services/contaDebito');
+const { debitarConta, creditarConta } = require('../services/contaDebito');
 
 const norm = p => p?.replace(/\D/g, '');
 
@@ -145,8 +145,10 @@ router.post('/:id/aporte', auth, exigirPermissao('admin', 'escrita'), async (req
     const v = parseFloat(valor);
     if (!v || v <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
 
+    // Só meta do próprio grupo (antes bastava saber o id).
     const { data: meta } = await supabase.from('metas')
-      .select('titulo, valor_atual, valor_objetivo').eq('id', req.params.id).maybeSingle();
+      .select('titulo, valor_atual, valor_objetivo')
+      .eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
     if (!meta) return res.status(404).json({ erro: 'Meta não encontrada.' });
 
     const novoValor = parseFloat(meta.valor_atual || 0) + v;
@@ -163,7 +165,7 @@ router.post('/:id/aporte', auth, exigirPermissao('admin', 'escrita'), async (req
 
     const { data: atualizada } = await supabase.from('metas')
       .update({ valor_atual: novoValor, status: novoStatus, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select().single();
+      .eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
 
     // Opcional: desconta de uma conta e registra a saída nas transações.
     let debito = null;
@@ -180,34 +182,84 @@ router.post('/:id/aporte', auth, exigirPermissao('admin', 'escrita'), async (req
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// POST /api/metas/:id/resgate — registra resgate e diminui valor_atual
+// POST /api/metas/:id/resgate — registra resgate e diminui valor_atual.
+//
+// Opcional (`wallet_id`): o dinheiro VOLTA pra uma conta — soma no saldo e
+// registra a entrada nas transações. Pedido de cliente (nov/2026): "resgatei
+// 500 da meta e o valor não ia pra lugar nenhum". É o espelho do aporte, que
+// já descontava de uma conta, e usa a MESMA função do resgate de investimento
+// (`creditarConta`): a entrada sai marcada como transferência, porque resgatar
+// da própria meta não é renda nova — sem a marca, o mês mostraria uma
+// "receita" que é só o dinheiro da pessoa mudando de lugar.
+//
+// ⚠️ Ou acontece tudo, ou nada: a conta é conferida ANTES de mexer na meta, e
+// se a devolução falhar depois, o resgate é desfeito. Meta reduzida sem o
+// dinheiro chegar na conta seria dinheiro sumindo da tela.
 router.post('/:id/resgate', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
-    const { valor, observacao, data } = req.body;
-    const v = parseFloat(valor);
-    if (!v || v <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
+    const { valor, observacao, data, wallet_id } = req.body;
+    const v = Math.round(parseFloat(valor) * 100) / 100;
+    if (!Number.isFinite(v) || v <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
 
-    const { data: meta } = await supabase.from('metas')
-      .select('valor_atual, valor_objetivo').eq('id', req.params.id).maybeSingle();
+    // Só meta do próprio grupo (antes bastava saber o id).
+    const { data: meta, error: eMeta } = await supabase.from('metas')
+      .select('titulo, valor_atual, valor_objetivo, status')
+      .eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+    if (eMeta) return res.status(500).json({ erro: `Não consegui ler a meta: ${eMeta.message}` });
     if (!meta) return res.status(404).json({ erro: 'Meta não encontrada.' });
-    if (v > parseFloat(meta.valor_atual)) return res.status(400).json({ erro: 'Valor maior que o disponível.' });
+    const atual = parseFloat(meta.valor_atual) || 0;
+    if (v - atual > 0.001) return res.status(400).json({ erro: 'Valor maior que o disponível.' });
 
-    const novoValor = parseFloat(meta.valor_atual) - v;
-    const novoStatus = novoValor >= parseFloat(meta.valor_objetivo) ? 'concluido' : 'ativo';
+    let conta = null;
+    if (wallet_id) {
+      const { data: w, error: eW } = await supabase.from('wallets')
+        .select('id, nome, tipo').eq('id', wallet_id).eq('grupo_id', req.grupoId).maybeSingle();
+      if (eW) return res.status(500).json({ erro: `Não consegui ler a conta: ${eW.message}` });
+      if (!w) return res.status(404).json({ erro: 'Conta não encontrada.' });
+      if (w.tipo === 'Crédito') {
+        return res.status(400).json({ erro: 'O resgate volta pra uma conta, não pra um cartão de crédito.' });
+      }
+      conta = w;
+    }
 
-    await supabase.from('meta_aportes').insert({
+    const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const { data: mov, error: eMov } = await supabase.from('meta_aportes').insert({
       meta_id:    req.params.id,
       user_id:    req.userId,
       valor:      v,
       tipo:       'resgate',
       observacao: observacao || null,
-      data:       data || new Date().toISOString().slice(0, 10),
-    });
+      data:       data || hoje,
+    }).select('id').single();
+    if (eMov) return res.status(500).json({ erro: `Não consegui registrar o resgate: ${eMov.message}` });
 
-    const { data: atualizada } = await supabase.from('metas')
+    const novoValor = Math.round((atual - v) * 100) / 100;
+    const novoStatus = novoValor >= parseFloat(meta.valor_objetivo) ? 'concluido' : 'ativo';
+    const { data: atualizada, error: eUp } = await supabase.from('metas')
       .update({ valor_atual: novoValor, status: novoStatus, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select().single();
-    res.json(atualizada);
+      .eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
+    if (eUp) {
+      await supabase.from('meta_aportes').delete().eq('id', mov.id);
+      return res.status(500).json({ erro: `Não consegui atualizar a meta: ${eUp.message}` });
+    }
+
+    let credito = null;
+    if (conta) {
+      try {
+        credito = await creditarConta({
+          grupoId: req.grupoId, walletId: conta.id, valor: v,
+          categoria: 'Metas', observacao: `Resgate: ${meta.titulo || 'meta'}`,
+          userId: req.userId, data,
+        });
+      } catch (e) {
+        await supabase.from('metas')
+          .update({ valor_atual: meta.valor_atual, status: meta.status, updated_at: new Date().toISOString() })
+          .eq('id', req.params.id).eq('grupo_id', req.grupoId);
+        await supabase.from('meta_aportes').delete().eq('id', mov.id);
+        return res.status(500).json({ erro: `Não consegui devolver o valor pra ${conta.nome}, então o resgate não foi feito. Tente de novo.` });
+      }
+    }
+    res.json({ ...atualizada, credito });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
