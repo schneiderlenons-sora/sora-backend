@@ -301,16 +301,24 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
   {
     const antes = { ...process.env };
     delete process.env.IA_CONECTADA_ABERTA; delete process.env.IA_CONECTADA_ATIVA;
-    eq(cfg.acessoIa({ email: 'comercialsora@gmail.com', plano: 'premium' }), { ok: true }, '§8 conta de teste premium entra');
-    eq(cfg.acessoIa({ email: 'Comercialsora@Gmail.com ', plano: 'platinum' }), { ok: true }, '§8 e-mail com caixa/espaço diferente entra');
-    eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'premium' }).motivo, 'teste', '§8 fora do teste fechado não entra');
-    eq(cfg.acessoIa({ email: 'comercialsora@gmail.com', plano: 'basico' }).motivo, 'plano', '§8 Básico não entra');
-    eq(cfg.acessoIa({ email: 'comercialsora@gmail.com', plano: 'kit' }).motivo, 'plano', '§8 Kit não entra');
-    eq(cfg.acessoIa({ email: 'comercialsora@gmail.com', plano: 'black' }), { ok: true }, '§8 black legado = premium');
-    eq(cfg.acessoIa({ email: 'comercialsora@gmail.com', plano: 'premium', plano_valido_ate: '2020-01-01' }).motivo, 'plano', '§8 plano vencido não entra');
-    process.env.IA_CONECTADA_ABERTA = '1';
-    eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'premium' }), { ok: true }, '§8 aberta: todo premium entra');
+    // Padrão: ABERTA pra todo Premium/Platinum (desde 19/11/2026).
+    eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'premium' }), { ok: true }, '§8 aberta (padrão): todo premium entra');
+    eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'platinum' }), { ok: true }, '§8 aberta (padrão): todo platinum entra');
     eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'gratis' }).motivo, 'plano', '§8 aberta: grátis segue fora');
+    eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'basico' }).motivo, 'plano', '§8 Básico não entra');
+    eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'kit' }).motivo, 'plano', '§8 Kit não entra');
+    eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'black' }), { ok: true }, '§8 black legado = premium');
+    eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'premium', plano_valido_ate: '2020-01-01' }).motivo, 'plano', '§8 plano vencido não entra');
+    eq(cfg.acessoIa(null).motivo, 'plano', '§8 sem linha de usuário não entra');
+    // IA_CONECTADA_ABERTA=0 volta ao teste fechado.
+    process.env.IA_CONECTADA_ABERTA = '0';
+    eq(cfg.acessoIa({ email: 'comercialsora@gmail.com', plano: 'premium' }), { ok: true }, '§8 fechada: conta de teste premium entra');
+    eq(cfg.acessoIa({ email: 'Comercialsora@Gmail.com ', plano: 'platinum' }), { ok: true }, '§8 fechada: e-mail com caixa/espaço diferente entra');
+    eq(cfg.acessoIa({ email: 'cliente@x.com', plano: 'premium' }).motivo, 'teste', '§8 fechada: fora da lista não entra');
+    eq(cfg.acessoIa({ email: 'comercialsora@gmail.com', plano: 'basico' }).motivo, 'plano', '§8 fechada: lista não fura o plano');
+    eq(cfg.issuer, 'https://mcp.forsora.com', '§8 emissor padrão é o domínio próprio');
+    eq(cfg.recurso, 'https://mcp.forsora.com/mcp', '§8 recurso padrão é o domínio próprio');
+    delete process.env.IA_CONECTADA_ABERTA;
     process.env.IA_CONECTADA_ATIVA = '0';
     eq(cfg.acessoIa({ email: 'comercialsora@gmail.com', plano: 'premium' }).motivo, 'desligada', '§8 interruptor desliga tudo');
     process.env = antes;

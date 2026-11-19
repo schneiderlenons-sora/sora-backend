@@ -12,12 +12,13 @@ const { normalizarPlano } = require('./planos');
 
 const semBarra = (u) => String(u || '').replace(/\/+$/, '');
 
-// ⚠️ O ENDEREÇO FICA GRAVADO NO CHATGPT DE CADA CLIENTE. Trocar depois derruba
-// todas as conexões (cada um teria de conectar de novo). Antes de abrir pra
-// clientes, apontar `MCP_BASE_URL` pra um domínio próprio (ex.:
-// https://mcp.forsora.com) — a troca de região de nov/2026 mudou o endereço do
-// backend, e um domínio próprio sobrevive a isso.
-const BASE = semBarra(process.env.MCP_BASE_URL || 'https://sora-backend-ohio.onrender.com');
+// ⚠️ O ENDEREÇO FICA GRAVADO NO CHATGPT/CLAUDE DE CADA CLIENTE. Trocar depois
+// derruba todas as conexões (cada um teria de conectar de novo). Por isso é um
+// domínio PRÓPRIO (CNAME na Vercel → o serviço do Render), e não o endereço do
+// Render: a troca de região de nov/2026 mudou o endereço do backend, e o
+// domínio sobrevive a isso. Trocar de servidor = apontar o CNAME pro novo.
+// O Claude também exige que o domínio do servidor seja o da empresa.
+const BASE = semBarra(process.env.MCP_BASE_URL || 'https://mcp.forsora.com');
 
 const config = {
   /** Emissor do OAuth. Tem de bater EXATAMENTE com o `iss` devolvido. */
@@ -103,16 +104,16 @@ const CLIENTES_CONHECIDOS = {
 // ficam de fora: é diferencial do Premium, como o Oráculo.
 const PLANOS = ['premium', 'platinum'];
 
-// ⚠️ TESTE FECHADO. Enquanto o app não estiver publicado no ChatGPT, só estas
-// contas entram (mesmo modelo do Open Finance no começo). `IA_CONECTADA_ABERTA=1`
-// no Render abre pra todo Premium/Platinum.
+// ABERTA pra todo Premium/Platinum desde 19/11/2026 (decisão do dono).
+// `IA_CONECTADA_ABERTA=0` no Render volta ao teste fechado: só estas contas
+// entram. Espelho: `ABERTA` em sora-frontend/lib/ia-conectada.ts.
 const EMAILS_TESTE = [
   'schneider.lenon.s@gmail.com',
   'schineiderlenon@gmail.com',
   'comercialsora@gmail.com',
 ];
 
-const aberta = () => process.env.IA_CONECTADA_ABERTA === '1';
+const aberta = () => process.env.IA_CONECTADA_ABERTA !== '0';
 /** Interruptor geral: `IA_CONECTADA_ATIVA=0` desliga tudo na hora (sem deploy). */
 const ativa = () => process.env.IA_CONECTADA_ATIVA !== '0';
 
