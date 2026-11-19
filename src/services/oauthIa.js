@@ -38,11 +38,11 @@ function pkceConfere(verifier, challenge) {
   return iguais(crypto.createHash('sha256').update(verifier).digest('base64url'), challenge);
 }
 
-/** Endereço de retorno aceito? https, origem da lista, sem fragmento. */
-function retornoAceito(u) {
+/** Endereço de retorno aceito? https, nos domínios DO PRÓPRIO cliente, sem fragmento. */
+function retornoAceito(u, origens) {
   try {
     const url = new URL(u);
-    return url.protocol === 'https:' && !url.hash && !url.username && cfg.ORIGENS_RETORNO.includes(url.origin);
+    return url.protocol === 'https:' && !url.hash && !url.username && (origens || []).includes(url.origin);
   } catch { return false; }
 }
 
@@ -54,7 +54,8 @@ const cacheClientes = new Map();   // client_id → { cliente, ate }
  * @returns {Promise<{ id: string, nome: string, logo: string|null, redirects: string[] } | null>}
  */
 async function buscarCliente(clientId, { buscar = fetch, agora = Date.now() } = {}) {
-  if (typeof clientId !== 'string' || !cfg.CLIENTE_ID_OK.test(clientId)) return null;
+  const conhecido = cfg.clienteDoId(clientId);
+  if (!conhecido) return null;
   const hit = cacheClientes.get(clientId);
   if (hit && hit.ate > agora) return hit.cliente;
 
@@ -75,10 +76,13 @@ async function buscarCliente(clientId, { buscar = fetch, agora = Date.now() } = 
   if (!doc) return null;
 
   const redirects = (Array.isArray(doc.redirect_uris) ? doc.redirect_uris : [])
-    .filter((u) => typeof u === 'string' && retornoAceito(u));
+    .filter((u) => typeof u === 'string' && retornoAceito(u, conhecido.origens));
   if (!redirects.length) return null;
   const logo = typeof doc.logo_uri === 'string' && /^https:\/\//.test(doc.logo_uri) ? doc.logo_uri : null;
-  const cliente = { id: clientId, nome: String(doc.client_name || 'ChatGPT').slice(0, 60), logo, redirects };
+  const cliente = {
+    id: clientId, nome: String(doc.client_name || conhecido.nome).slice(0, 60), logo, redirects,
+    chave: conhecido.chave, empresa: conhecido.empresa,
+  };
   // Só cacheia o que veio da OpenAI de verdade; o conhecido é barato de refazer.
   cacheClientes.set(clientId, { cliente, ate: agora + 60 * 60 * 1000 });
   return cliente;
@@ -86,12 +90,12 @@ async function buscarCliente(clientId, { buscar = fetch, agora = Date.now() } = 
 
 // ── Pedido de autorização (a tela de consentimento) ─────────────────────────
 /**
- * Confere os parâmetros que o ChatGPT mandou pra /oauth/autorizar.
+ * Confere os parâmetros que o ChatGPT/Claude mandou pra /oauth/autorizar.
  *
  * ⚠️ DOIS TIPOS DE ERRO. Enquanto cliente e endereço de retorno não foram
  * confirmados, o erro NUNCA volta pro endereço de retorno (seria redirecionar
  * pra um lugar que não conferimos): `redirecionar: false`, a tela mostra.
- * Depois disso, o erro volta pro ChatGPT, como manda o OAuth.
+ * Depois disso, o erro volta pro cliente, como manda o OAuth.
  */
 async function validarPedido(p, opts = {}) {
   const q = p || {};
@@ -119,12 +123,12 @@ async function validarPedido(p, opts = {}) {
 
   return {
     ok: true,
-    cliente: { id: cliente.id, nome: cliente.nome, logo: cliente.logo, host: new URL(redirect).host },
+    cliente: { id: cliente.id, nome: cliente.nome, logo: cliente.logo, host: new URL(redirect).host, chave: cliente.chave, empresa: cliente.empresa },
     redirect_uri: redirect, state, escopo, recurso: cfg.recurso, code_challenge: q.code_challenge,
   };
 }
 
-/** URL de volta pro ChatGPT. Sempre com `iss` (RFC 9207 — o ChatGPT confere). */
+/** URL de volta pro cliente. Sempre com `iss` (RFC 9207 — o ChatGPT confere). */
 function urlRetorno(redirectUri, params) {
   const u = new URL(redirectUri);
   for (const [k, v] of Object.entries({ ...params, iss: cfg.issuer })) {
@@ -147,7 +151,7 @@ async function aprovar(db, { userId, pedido, agora = Date.now() }) {
   return urlRetorno(pedido.redirect_uri, { code, state: pedido.state });
 }
 
-/** A pessoa negou: volta pro ChatGPT com `access_denied`. */
+/** A pessoa negou: volta pro cliente com `access_denied`. */
 function negar(pedido) {
   return urlRetorno(pedido.redirect_uri, {
     error: 'access_denied', error_description: 'A pessoa não autorizou.', state: pedido.state,

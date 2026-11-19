@@ -82,7 +82,17 @@ const DOC_CHATGPT = {
   redirect_uris: ['https://chatgpt.com/connector_platform_oauth_redirect', 'https://evil.example/cb'],
   logo_uri: 'https://persistent.oaistatic.com/x.png',
 };
-const buscarOk = async (url) => ({ ok: true, json: async () => (url === DOC_CHATGPT.client_id ? DOC_CHATGPT : { client_id: url, redirect_uris: ['https://evil.example/cb'] }) });
+// O documento real do Claude (conferido em 18/11/2026) + um retorno pro
+// chatgpt.com plantado, que tem de ser descartado (domínio de OUTRO cliente).
+const DOC_CLAUDE = {
+  client_id: 'https://claude.ai/oauth/mcp-oauth-client-metadata', client_name: 'Claude',
+  redirect_uris: ['https://claude.ai/api/mcp/auth_callback', 'https://chatgpt.com/connector_platform_oauth_redirect'],
+  token_endpoint_auth_method: 'none',
+};
+const DOCS = { [DOC_CHATGPT.client_id]: DOC_CHATGPT, [DOC_CLAUDE.client_id]: DOC_CLAUDE };
+const buscarOk = async (url) => ({ ok: true, json: async () => (DOCS[url] || { client_id: url, redirect_uris: ['https://evil.example/cb'] }) });
+// O claude.ai responde ao Render com o desafio do Cloudflare (HTML, 403).
+const buscarCloudflare = async () => ({ ok: false, status: 403, json: async () => { throw new Error('html'); } });
 const buscarFora = async () => { throw new Error('rede'); };
 
 const verifier = crypto.randomBytes(40).toString('base64url');
@@ -119,10 +129,15 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
   ok(oauth.pkceConfere(verifier, challenge), '§2 PKCE certo confere');
   ok(!oauth.pkceConfere(verifier + 'a', challenge), '§2 verifier errado não confere');
   ok(!oauth.pkceConfere('curto', challenge), '§2 verifier curto demais não confere');
-  ok(oauth.retornoAceito(REDIRECT), '§2 retorno do ChatGPT aceito');
-  ok(!oauth.retornoAceito('https://evil.example/cb'), '§2 retorno de outro host recusado');
-  ok(!oauth.retornoAceito('http://chatgpt.com/x'), '§2 http recusado');
-  ok(!oauth.retornoAceito('https://chatgpt.com.evil.example/x'), '§2 sufixo enganoso recusado');
+  const O_GPT = ['https://chatgpt.com'];
+  ok(oauth.retornoAceito(REDIRECT, O_GPT), '§2 retorno do ChatGPT aceito');
+  ok(!oauth.retornoAceito('https://evil.example/cb', O_GPT), '§2 retorno de outro host recusado');
+  ok(!oauth.retornoAceito('http://chatgpt.com/x', O_GPT), '§2 http recusado');
+  ok(!oauth.retornoAceito('https://chatgpt.com.evil.example/x', O_GPT), '§2 sufixo enganoso recusado');
+  ok(!oauth.retornoAceito('https://claude.ai/api/mcp/auth_callback', O_GPT), '§2 domínio de outro cliente recusado');
+  ok(!oauth.retornoAceito(REDIRECT), '§2 sem lista de domínios, nada passa');
+  eq(cfg.clienteDoId('https://claude.ai/oauth/claude-code-client-metadata'), null, '§2 Claude Code (localhost) fica de fora');
+  eq(cfg.clienteDoId('https://claude.ai/oauth/mcp-oauth-client-metadata?x=1'), null, '§2 id do Claude com sufixo não casa');
 
   // ── §3 Pedido de autorização ──────────────────────────────────────────────
   {
@@ -160,6 +175,28 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
 
     const url = new URL(oauth.urlRetorno(REDIRECT, { code: 'c', state: 's' }));
     eq(url.searchParams.get('iss'), cfg.issuer, '§3 resposta leva `iss` igual ao emissor (RFC 9207)');
+
+    // Claude
+    const CLAUDE_RET = 'https://claude.ai/api/mcp/auth_callback';
+    const pedidoClaude = { ...pedidoBase, client_id: DOC_CLAUDE.client_id, redirect_uri: CLAUDE_RET };
+    delete pedidoClaude.resource;   // o Claude não manda `resource`
+    oauth._limparCaches();
+    const cl = await oauth.validarPedido(pedidoClaude, { buscar: buscarOk });
+    ok(cl.ok, '§3 pedido do Claude (sem `resource`) é aceito');
+    eq([cl.cliente?.nome, cl.cliente?.empresa, cl.cliente?.chave], ['Claude', 'Anthropic', 'claude'], '§3 Claude identificado (nome, empresa)');
+    eq(cl.recurso, cfg.recurso, '§3 sem `resource`, o token sai pra este /mcp');
+    oauth._limparCaches();
+    const clCruzado = await oauth.validarPedido({ ...pedidoClaude, redirect_uri: REDIRECT }, { buscar: buscarOk });
+    ok(!clCruzado.ok && clCruzado.redirecionar === false, '§3 documento do Claude não manda o código pro chatgpt.com');
+    oauth._limparCaches();
+    const gptCruzado = await oauth.validarPedido({ ...pedidoBase, redirect_uri: CLAUDE_RET }, { buscar: buscarOk });
+    ok(!gptCruzado.ok && gptCruzado.redirecionar === false, '§3 id do ChatGPT não manda o código pro claude.ai');
+    oauth._limparCaches();
+    const clCf = await oauth.validarPedido(pedidoClaude, { buscar: buscarCloudflare });
+    ok(clCf.ok, '§3 claude.ai barrado pelo Cloudflare: o Claude conhecido segue conectando');
+    oauth._limparCaches();
+    const clCom = await oauth.validarPedido({ ...pedidoClaude, redirect_uri: 'https://claude.com/api/mcp/auth_callback' }, { buscar: buscarCloudflare });
+    ok(clCom.ok, '§3 retorno futuro em claude.com aceito');
   }
 
   // ── §4 Código → token ─────────────────────────────────────────────────────
@@ -208,6 +245,21 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
   const c2 = await novoCodigo();
   const tok = (await oauth.trocarCodigo(db, { code: c2, code_verifier: verifier, redirect_uri: REDIRECT, client_id: DOC_CHATGPT.client_id, resource: cfg.recurso })).corpo;
   ok(!!tok?.access_token, '§4 conexão nova emitida');
+
+  // Claude conecta ao lado (sem `resource` nem na troca) — e não derruba o ChatGPT.
+  {
+    oauth._limparCaches();
+    const pc = await oauth.validarPedido({ ...pedidoBase, client_id: DOC_CLAUDE.client_id,
+      redirect_uri: 'https://claude.ai/api/mcp/auth_callback', resource: undefined }, { buscar: buscarOk });
+    const cc = new URL(await oauth.aprovar(db, { userId: USER, pedido: pc })).searchParams.get('code');
+    const tc = await oauth.trocarCodigo(db, { code: cc, code_verifier: verifier, redirect_uri: 'https://claude.ai/api/mcp/auth_callback', client_id: DOC_CLAUDE.client_id });
+    ok(!!tc.corpo?.access_token, '§4 Claude: código vira token sem `resource`');
+    oauth._limparCaches();
+    ok(!!(await oauth.validarAcesso(db, tok.access_token)), '§4 conectar o Claude NÃO derruba o ChatGPT');
+    eq((await oauth.validarAcesso(db, tc.corpo.access_token))?.cliente, 'Claude', '§4 token do Claude identifica o Claude');
+    const cx = db.t.ia_conexoes.find((c) => c.cliente_nome === 'Claude' && !c.revogada_em);
+    await oauth.revogar(db, { conexaoId: cx.id, userId: USER });
+  }
 
   // ── §5 Token no /mcp ──────────────────────────────────────────────────────
   oauth._limparCaches();
@@ -429,6 +481,6 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
     console.log(`✗ ${falhas.length} de ${casos} falharam:\n - ` + falhas.join('\n - '));
     process.exit(1);
   }
-  console.log(`✓ Sora no ChatGPT: ${casos} casos (OAuth, chamada interna, ferramentas e /mcp por HTTP)`);
+  console.log(`✓ Sora no ChatGPT/Claude: ${casos} casos (OAuth, chamada interna, ferramentas e /mcp por HTTP)`);
   process.exit(0);
 })().catch((e) => { console.error('✗ eval quebrou:', e); process.exit(1); });

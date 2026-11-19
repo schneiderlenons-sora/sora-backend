@@ -114,9 +114,9 @@ function recusar401(res, descricao) {
 }
 
 const SEM_ACESSO = {
-  desligada: 'A conexão da Sora com o ChatGPT está desligada no momento.',
-  teste: 'A Sora no ChatGPT ainda está em teste fechado e esta conta não faz parte dele.',
-  plano: 'A Sora no ChatGPT faz parte dos planos Premium e Platinum. O plano desta conta não inclui. A pessoa pode ver os planos no painel da Sora (forsora.com).',
+  desligada: 'A conexão da Sora com assistentes de IA está desligada no momento.',
+  teste: 'A conexão da Sora com assistentes de IA ainda está em teste fechado e esta conta não faz parte dele.',
+  plano: 'A conexão da Sora com o ChatGPT e o Claude faz parte dos planos Premium e Platinum. O plano desta conta não inclui. A pessoa pode ver os planos no painel da Sora (forsora.com).',
 };
 
 const INSTRUCOES = [
@@ -238,7 +238,7 @@ router.get('/api/ia-conectada/pedido', auth, async (req, res) => {
     const usuario = await linhaDoUsuario(req.authUser.id);
     res.json({
       ok: true,
-      cliente: { nome: pedido.cliente.nome, logo: pedido.cliente.logo, host: pedido.cliente.host },
+      cliente: { nome: pedido.cliente.nome, logo: pedido.cliente.logo, host: pedido.cliente.host, chave: pedido.cliente.chave, empresa: pedido.cliente.empresa },
       escopo: pedido.escopo,
       acesso: cfg.acessoIa(usuario),
       email: usuario?.email || null,

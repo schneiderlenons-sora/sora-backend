@@ -22,7 +22,7 @@ const BASE = semBarra(process.env.MCP_BASE_URL || 'https://sora-backend-ohio.onr
 const config = {
   /** Emissor do OAuth. Tem de bater EXATAMENTE com o `iss` devolvido. */
   issuer: BASE,
-  /** O recurso protegido (o servidor MCP). O ChatGPT manda isto em `resource`. */
+  /** O recurso protegido (o servidor MCP). O ChatGPT manda isto em `resource` (o Claude não manda). */
   recurso: `${BASE}/mcp`,
   tokenEndpoint: `${BASE}/oauth/token`,
   revogarEndpoint: `${BASE}/oauth/revoke`,
@@ -47,22 +47,54 @@ const config = {
 };
 
 // ── Quem é cliente OAuth aceito ─────────────────────────────────────────────
-// ⚠️ SÓ O CHATGPT, por decisão do dono (nov/2026). O cliente se identifica por
+// ChatGPT e Claude (decisão do dono, nov/2026). O cliente se identifica por
 // URL (Client ID Metadata Document): o `client_id` é o endereço de um JSON
-// publicado pela OpenAI, e é dele que saem nome e endereços de retorno.
+// publicado pela OpenAI / pela Anthropic, e é dele que saem nome e endereços
+// de retorno.
 //
 // Aceitar QUALQUER URL seria abrir a porta pra um "app" que se apresenta como
 // "ChatGPT" na tela de consentimento e devolve o código pra outro lugar. Por
-// isso o id tem de ser da OpenAI E todo endereço de retorno tem de ser
-// https://chatgpt.com. Pra ligar o Claude depois, é aqui que entra.
-const CLIENTE_ID_OK = /^https:\/\/chatgpt\.com\/oauth\/(?:[A-Za-z0-9_-]{1,80}\/)?client\.json$/;
-const ORIGENS_RETORNO = ['https://chatgpt.com'];
+// isso cada cliente tem o id da EMPRESA dele e só pode voltar pros domínios
+// DELA — o documento do ChatGPT não consegue mandar o código pro claude.ai e
+// vice-versa.
+//
+// ⚠️ Claude Code (o da linha de comando) fica de fora: ele volta pra
+// `localhost`, onde qualquer programa do computador escuta. É ferramenta de
+// desenvolvedor, não o app que o cliente usa.
+const CLIENTES = [
+  {
+    chave: 'chatgpt', nome: 'ChatGPT', empresa: 'OpenAI',
+    id: /^https:\/\/chatgpt\.com\/oauth\/(?:[A-Za-z0-9_-]{1,80}\/)?client\.json$/,
+    origens: ['https://chatgpt.com'],
+  },
+  {
+    // https://claude.com/docs/connectors/building/authentication — o Claude
+    // usa CIMD quando o servidor anuncia `client_id_metadata_document_supported`
+    // e `none` (é o nosso caso). O documento: client_name "Claude",
+    // retorno https://claude.ai/api/mcp/auth_callback (conferido em 18/11/2026).
+    chave: 'claude', nome: 'Claude', empresa: 'Anthropic',
+    id: /^https:\/\/claude\.ai\/oauth\/mcp-oauth-client-metadata$/,
+    // A Anthropic avisa que o retorno pode passar pra claude.com.
+    origens: ['https://claude.ai', 'https://claude.com'],
+  },
+];
 
-/** Documento conhecido, usado só se a OpenAI não responder na hora. */
+/** Qual cliente é este `client_id`? */
+const clienteDoId = (clientId) =>
+  (typeof clientId === 'string' && CLIENTES.find((c) => c.id.test(clientId))) || null;
+
+/**
+ * Documento conhecido, usado só se o dono do documento não responder na hora
+ * (o claude.ai fica atrás de um desafio do Cloudflare que pode barrar o Render).
+ */
 const CLIENTES_CONHECIDOS = {
   'https://chatgpt.com/oauth/client.json': {
     client_name: 'ChatGPT',
     redirect_uris: ['https://chatgpt.com/connector_platform_oauth_redirect'],
+  },
+  'https://claude.ai/oauth/mcp-oauth-client-metadata': {
+    client_name: 'Claude',
+    redirect_uris: ['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback'],
   },
 };
 
@@ -85,7 +117,7 @@ const aberta = () => process.env.IA_CONECTADA_ABERTA === '1';
 const ativa = () => process.env.IA_CONECTADA_ATIVA !== '0';
 
 /**
- * Esta conta pode usar a Sora no ChatGPT?
+ * Esta conta pode usar a Sora no ChatGPT / Claude?
  * @param {{ email?: string|null, plano?: string|null, plano_valido_ate?: string|null }} u
  * @returns {{ ok: boolean, motivo?: 'desligada'|'teste'|'plano' }}
  */
@@ -106,8 +138,8 @@ function acessoIa(u, agora = new Date()) {
 module.exports = {
   ...config,
   config,
-  CLIENTE_ID_OK,
-  ORIGENS_RETORNO,
+  CLIENTES,
+  clienteDoId,
   CLIENTES_CONHECIDOS,
   PLANOS,
   EMAILS_TESTE,
