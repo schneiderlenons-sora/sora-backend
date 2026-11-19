@@ -352,9 +352,13 @@ const FERRAMENTAS = [
       ]);
       const gastoPor = {};
       for (const c of resumo.por_categoria || []) gastoPor[limpaCat(c.categoria)] = (gastoPor[limpaCat(c.categoria)] || 0) + (Number(c.total) || 0);
+      // ⚠️ O teto mora em `limite_mensal` (o nome vale também pro teto ANUAL,
+      // migration 171) — é o que o painel e o alerta do WhatsApp leem. Lido
+      // como `limite`, saía 0 pra todo mundo. Limite pausado não conta.
+      const ativos = (lista) => (lista || []).filter((l) => l.ativo !== false);
       const linha = (l) => {
         const gasto = nomesDoLimite(l.categoria, cats || []).reduce((s, n) => s + (gastoPor[n] || 0), 0);
-        const teto = Number(l.limite ?? l.valor) || 0;
+        const teto = Number(l.limite_mensal) || 0;
         return { categoria: l.categoria, teto: r2(teto), gasto: r2(gasto), usado_pct: teto > 0 ? Math.round((gasto / teto) * 1000) / 10 : null };
       };
       const geralAtivo = lim.meta_mensal_ativo !== false && Number(lim.meta_mensal) > 0;
@@ -366,9 +370,9 @@ const FERRAMENTAS = [
             usado_pct: Math.round(((Number(resumo.gastos) || 0) / Number(lim.meta_mensal)) * 1000) / 10,
           },
         } : {}),
-        por_categoria: (lim.categorias || []).map(linha),
-        ...(Array.isArray(lim.categorias_ano) && lim.categorias_ano.length
-          ? { tetos_anuais: lim.categorias_ano.map((l) => ({ categoria: l.categoria, teto_do_ano: r2(l.limite ?? l.valor) })) } : {}),
+        por_categoria: ativos(lim.categorias).map(linha),
+        ...(ativos(lim.categorias_ano).length
+          ? { tetos_anuais: ativos(lim.categorias_ano).map((l) => ({ categoria: l.categoria, teto_do_ano: r2(Number(l.limite_mensal) || 0) })) } : {}),
       };
     },
   },

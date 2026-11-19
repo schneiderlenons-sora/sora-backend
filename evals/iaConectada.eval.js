@@ -332,7 +332,15 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
         { nome: 'Nubank', competencia: '2026-11', label: 'Fatura de novembro', ini: '2026-10-06', fim: '2026-11-05', venc: '2026-11-12', fatura: 1000, pago: 1000, restante: 0, quitada: true, fechada: true, of: true, proxima: { competencia: '2026-12', label: 'Fatura de dezembro', venc: '2026-12-12', restante: 345.67 } },
         { nome: 'C6', competencia: '2026-11', ini: '2026-10-20', fim: '2026-11-19', venc: '2026-11-28', fatura: 500, pago: 0, restante: 500, quitada: false, fechada: false, atrasadas: [{ competencia: '2026-10', venc: '2026-10-28', restante: 80 }] },
       ] },
-      '/api/limites/eu?mes=2026-11': { meta_mensal: 4000, meta_mensal_ativo: true, categorias: [{ categoria: 'Alimentação', limite: 1000, mes_referencia: '2026-11' }] },
+      // ⚠️ Formato REAL da linha de `category_limits` (o teto é `limite_mensal`).
+      // Com o formato inventado (`limite`), a ferramenta lia o campo errado e
+      // este eval passava: o teto saía 0 pra todo cliente.
+      '/api/limites/eu?mes=2026-11': { meta_mensal: 4000, meta_mensal_ativo: true,
+        categorias: [
+          { id: 'l1', grupo_id: 'g1', categoria: 'Alimentação', limite_mensal: 1000, mes_referencia: '2026-11', percentual_alerta: 80, ativo: true, periodo: 'mensal' },
+          { id: 'l2', grupo_id: 'g1', categoria: 'Mercado', limite_mensal: 500, mes_referencia: '2026-11', percentual_alerta: 80, ativo: false, periodo: 'mensal' },
+        ],
+        categorias_ano: [{ id: 'l3', grupo_id: 'g1', categoria: 'Viagem', limite_mensal: 6000, mes_referencia: '2026', ativo: true, periodo: 'anual' }] },
       '/api/categorias/eu': [{ id: 'c1', nome: '🍔 Alimentação', parent_id: null, tipo: 'despesa' }, { id: 'c2', nome: 'iFood', parent_id: 'c1', tipo: 'despesa', parent: { nome: '🍔 Alimentação' } }, { id: 'c3', nome: 'Mercado', parent_id: null, tipo: 'despesa' }],
       '/api/investimentos/eu': { __status: 403, erro: 'Esta funcionalidade exige plano' },
     };
@@ -367,6 +375,10 @@ const OUTRO = '22222222-2222-4222-8222-222222222222';
 
     const lim = await ferr.porNome.limites_de_gastos.executar(ctx, {});
     eq(lim.por_categoria[0].gasto, 420, '§9 limite da categoria-pai soma a subcategoria (nomesDoLimite): 300 + 120');
+    eq(lim.por_categoria[0].teto, 1000, '§9 o teto vem de limite_mensal (não sai 0)');
+    eq(lim.por_categoria[0].usado_pct, 42, '§9 percentual usado = gasto / teto');
+    eq(lim.por_categoria.length, 1, '§9 limite pausado fica de fora');
+    eq(lim.tetos_anuais?.[0]?.teto_do_ano, 6000, '§9 teto anual também vem de limite_mensal');
     eq(lim.limite_geral?.gasto, 3210.46, '§9 limite geral = despesas do resumo');
 
     let erroPlano = null;
