@@ -2,6 +2,9 @@ const supabase = require('../db/supabase');
 const { enviarTexto } = require('../services/mensageiro');
 const { oferecerDesconto } = require('../services/descontoConta');
 const { criarPendente } = require('../services/pendentes');
+// Categoria da dívida (198). Lida à parte e tolerante: a busca da dívida aqui
+// pede colunas fixas, e pôr `categoria` nela quebraria tudo antes da migration.
+const { categoriaDoPagamento, lerCategoriaDivida } = require('../services/categoriaDivida');
 
 // Dinheiro na moeda do GRUPO (Fase 3) — o `fmt` nasce dentro do handler.
 const { formatadorDoGrupo } = require('../services/moeda');
@@ -229,7 +232,8 @@ module.exports = async function handleDividas(data, ctx) {
       await enviarTexto(phone, partes.join('\n'));
     }
     // Pergunta se quer descontar de uma conta (cria a transação de saída)
-    await oferecerDesconto({ user, phone, grupoId, valor: v, categoria: 'Dívidas', observacao: `Pagamento: ${divida.titulo}` });
+    const catPg = categoriaDoPagamento({ categoria: await lerCategoriaDivida(supabase, divida.id) });
+    await oferecerDesconto({ user, phone, grupoId, valor: v, categoria: catPg, observacao: `Pagamento: ${divida.titulo}` });
     return;
   }
 
@@ -270,7 +274,8 @@ module.exports = async function handleDividas(data, ctx) {
       `✅ ${divida.titulo} — ${fmt(valorQuitacao)}\n` +
       `Você está livre dessa! 🙌`
     );
-    await oferecerDesconto({ user, phone, grupoId, valor: valorQuitacao, categoria: 'Dívidas', observacao: `Quitação: ${divida.titulo}` });
+    const catQt = categoriaDoPagamento({ categoria: await lerCategoriaDivida(supabase, divida.id) });
+    await oferecerDesconto({ user, phone, grupoId, valor: valorQuitacao, categoria: catQt, observacao: `Quitação: ${divida.titulo}` });
     return;
   }
 

@@ -51,6 +51,7 @@
     "eval:caixinhas": "node evals/caixinhas.eval.js",
     "eval:resgate": "node evals/resgateInvestimento.eval.js",
     "eval:resgate-meta": "node evals/resgateMetaRota.eval.js",
+    "eval:categoria-divida": "node evals/categoriaDivida.eval.js",
     "eval:aporte": "node evals/aporteInvestimento.eval.js",
     "agentes:preview": "node scripts/preview-agentes.js",
     "eval:reconciliar-parcelas": "node evals/reconciliarParcelas.eval.js",

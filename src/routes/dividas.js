@@ -7,6 +7,8 @@ const { debitarConta } = require('../services/contaDebito');
 const { proximoVencimento, ultimoPagamentoPorDivida, hojeSP, emAtraso, statusDeAtraso, statusPorParcelas } = require('../services/vencimentoDivida');
 
 const { sugestoesBaixa, ehDebitoDeEmprestimo } = require('../services/baixaDivida');
+// Categoria da dívida (migration 198): em que categoria o pagamento é lançado.
+const { categoriaDoPagamento, resolverCategoriaDivida, faltaColunaCategoria } = require('../services/categoriaDivida');
 const { diaSP } = require('../services/consultaParcela');
 
 const norm = p => p?.replace(/\D/g, '');
@@ -195,6 +197,15 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Título obrigatório.' });
     if (!valor_total || valor_total <= 0) return res.status(400).json({ erro: 'Valor total inválido.' });
 
+    // Categoria (migration 198): só nome que existe na lista de despesas do
+    // grupo, gravado com a grafia oficial. Vazia = "Dívidas", como antes.
+    let categoria = null;
+    if ('categoria' in req.body) {
+      const c = await resolverCategoriaDivida(supabase, req.grupoId, req.body.categoria);
+      if (!c.ok) return res.status(c.status).json({ erro: c.erro, motivo: c.motivo });
+      categoria = c.categoria;
+    }
+
     // Auto-calcula valor da parcela se não vier mas tem parcelas_total
     let vp = valor_parcela;
     if (!vp && parcelas_total > 0) vp = parseFloat(valor_total) / parseInt(parcelas_total, 10);
@@ -217,11 +228,20 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       status:         (parcelas_total && parseInt(parcelas_pagas || 0, 10) >= parseInt(parcelas_total, 10)) ? 'quitada' : 'ativa',
     };
     if (imagem_url) payload.imagem_url = imagem_url;
+    if (categoria) payload.categoria = categoria;
     Object.assign(payload, extrasConsorcio);
 
     // `imagem_url` é coluna nova (migration 088). Se ainda não rodou, remove e
     // tenta de novo (a dívida cria sem foto até migrar).
     let r = await supabase.from('dividas').insert(payload).select().single();
+    // ⚠️ A categoria (198) vem ANTES da foto: o erro de coluna faltando cita
+    // "column", e a tolerância da foto (abaixo) casaria com ele e jogaria a
+    // FOTO fora à toa. Sem a 198 a dívida nasce sem categoria ("Dívidas").
+    if (r.error && 'categoria' in payload && faltaColunaCategoria(r.error)) {
+      console.warn('[dividas] coluna categoria ausente (migration 198 pendente)');
+      delete payload.categoria;
+      r = await supabase.from('dividas').insert(payload).select().single();
+    }
     if (r.error && 'imagem_url' in payload && /imagem_url|column/i.test(r.error.message || '')) {
       delete payload.imagem_url;
       r = await supabase.from('dividas').insert(payload).select().single();
@@ -282,6 +302,13 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
         patch.conta_pagamento_id = conta.id;
       }
     }
+    // Categoria (migration 198). `in`, não truthy: mandar vazio/null é como se
+    // VOLTA ao padrão "Dívidas".
+    if ('categoria' in req.body) {
+      const c = await resolverCategoriaDivida(supabase, req.grupoId, req.body.categoria);
+      if (!c.ok) return res.status(c.status).json({ erro: c.erro, motivo: c.motivo });
+      patch.categoria = c.categoria;
+    }
     // Campos do consórcio (migration 125) — ver `camposConsorcio`.
     const extrasConsorcio = camposConsorcio(req.body);
     Object.assign(patch, extrasConsorcio);
@@ -289,6 +316,12 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
 
     const upd = () => supabase.from('dividas').update(patch).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
     let r = await upd();
+    // ⚠️ Antes da foto, pelo mesmo motivo do POST (o erro cita "column").
+    if (r.error && 'categoria' in patch && faltaColunaCategoria(r.error)) {
+      console.warn('[dividas] coluna categoria ausente (migration 198 pendente)');
+      delete patch.categoria;
+      r = await upd();
+    }
     if (r.error && 'imagem_url' in patch && /imagem_url|column/i.test(r.error.message || '')) {
       delete patch.imagem_url; // migration 088 pendente
       r = await upd();
@@ -490,7 +523,8 @@ router.post('/:id/pagar', auth, exigirPermissao('admin', 'escrita'), async (req,
       try {
         debito = await debitarConta({
           grupoId: req.grupoId, walletId: req.body.wallet_id, valor: v,
-          categoria: 'Dívidas', observacao: `Pagamento: ${divida.titulo}`,
+          // A categoria da dívida (198); sem ela, "Dívidas" como sempre.
+          categoria: categoriaDoPagamento(divida), observacao: `Pagamento: ${divida.titulo}`,
           userId: req.userId, data: data_pagamento,
         });
       } catch (e) { debito = { erro: e.message }; }
@@ -507,8 +541,9 @@ router.post('/:id/quitar', auth, exigirPermissao('admin', 'escrita'), async (req
   try {
     const { valor, observacao, data_pagamento } = req.body;
 
+    // Só dívida do próprio grupo (antes bastava o id; a de /pagar já era assim).
     const { data: divida } = await supabase.from('dividas')
-      .select('*').eq('id', req.params.id).maybeSingle();
+      .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
     if (!divida) return res.status(404).json({ erro: 'Dívida não encontrada.' });
 
     const restantes = Math.max(0, (divida.parcelas_total || 0) - (divida.parcelas_pagas || 0));
@@ -529,7 +564,7 @@ router.post('/:id/quitar', auth, exigirPermissao('admin', 'escrita'), async (req
       status:         'quitada',
       data_quitacao:  data_pagamento || new Date().toISOString().slice(0, 10),
       updated_at:     new Date().toISOString(),
-    }).eq('id', req.params.id).select().single();
+    }).eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
 
     // Opcional: desconta de uma conta e registra a saída nas transações.
     let debito = null;
@@ -537,7 +572,7 @@ router.post('/:id/quitar', auth, exigirPermissao('admin', 'escrita'), async (req
       try {
         debito = await debitarConta({
           grupoId: req.grupoId, walletId: req.body.wallet_id, valor: valorQuitacao,
-          categoria: 'Dívidas', observacao: `Quitação: ${divida.titulo}`,
+          categoria: categoriaDoPagamento(divida), observacao: `Quitação: ${divida.titulo}`,
           userId: req.userId, data: data_pagamento,
         });
       } catch (e) { debito = { erro: e.message }; }
@@ -555,7 +590,7 @@ router.patch('/:id/lembrete', auth, exigirPermissao('admin', 'escrita'), async (
     const { ativo } = req.body;
     const { data, error } = await supabase.from('dividas')
       .update({ lembretes_ativos: !!ativo, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select().single();
+      .eq('id', req.params.id).eq('grupo_id', req.grupoId).select().single();
     if (error) throw error;
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
