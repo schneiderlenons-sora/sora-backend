@@ -121,7 +121,8 @@
     "eval:peso": "node evals/pesoRegistro.eval.js",
     "eval:fatura-atrasada": "node evals/faturaAtrasada.eval.js",
     "eval:ia-conectada": "node evals/iaConectada.eval.js",
-    "eval:importacao-extrato": "node evals/importacaoExtrato.eval.js"
+    "eval:importacao-extrato": "node evals/importacaoExtrato.eval.js",
+    "eval:plano-vitalicio": "node evals/planoVitalicio.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

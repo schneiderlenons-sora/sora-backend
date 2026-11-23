@@ -94,7 +94,7 @@ async function auth(req, res, next) {
     // graça, e a leitura repetida lá custava uma viagem inteira.
     const { data: row } = await supabase
       .from('users')
-      .select('id, phone, grupo_ativo, plano, plano_valido_ate')
+      .select('id, phone, grupo_ativo, plano, plano_valido_ate, vitalicio')
       .eq('id', user.id)
       .maybeSingle();
 

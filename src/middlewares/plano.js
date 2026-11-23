@@ -55,7 +55,7 @@ function exigirPlano(...planosPermitidos) {
       // endereço, e nem toda rota carrega um.
       let user = jaLida;
       if (!user) {
-        const q = supabase.from('users').select('id, phone, plano, plano_valido_ate');
+        const q = supabase.from('users').select('id, phone, plano, plano_valido_ate, vitalicio');
         const r = userId
           ? await q.eq('id', userId).maybeSingle()
           : await q.eq('phone', String(phone).replace(/\D/g, '')).maybeSingle();
@@ -77,7 +77,13 @@ function exigirPlano(...planosPermitidos) {
       // (import, escrita manual no Supabase, rota futura), o usuário viraria
       // `inativo` sozinho e cairia no paywall sem ter cancelado nada. Barato
       // de proteger aqui, caro de descobrir depois.
-      const venceAlgumDia = planoAtual !== 'inativo' && planoAtual !== 'gratis';
+      //
+      // ⚠️ VITALÍCIO TAMBÉM FICA DE FORA: pagou uma vez, não vence. Caso real
+      // (nov/2026): o sync do Stripe regravou num vitalício a validade de uma
+      // assinatura ANTIGA; quando a data passou, esta linha o deixou `inativo`
+      // — pagando o vitalício e a mensalidade, sem acesso. O sync foi
+      // corrigido; isto é a rede pra qualquer outro caminho que grave validade.
+      const venceAlgumDia = !user.vitalicio && planoAtual !== 'inativo' && planoAtual !== 'gratis';
       if (venceAlgumDia && user.plano_valido_ate) {
         if (new Date(user.plano_valido_ate) < new Date()) {
           planoAtual = 'inativo';
