@@ -304,43 +304,73 @@ router.delete('/sair/:grupo_id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// PATCH /membro/:membro_id — atualiza papel (somente admin)
+// Quem pode administrar os MEMBROS de um grupo: o DONO (sempre) ou um membro
+// com papel admin. Devolve também o dono, pra as rotas não deixarem mexer nele.
+//
+// ⚠️ BUG REAL (relato de cliente, nov/2026): as rotas de remover e de mudar
+// papel procuravam o papel de quem pediu SÓ em `grupo_membros` — e o dono do
+// grupo que nasceu com a conta NUNCA tem linha ali (é dono por
+// `grupos.dono_id`). O dono convidava, via o menu "Remover do grupo" e levava
+// "Apenas admins podem remover membros". Medido: 4 dos 18 grupos com convidados.
+//
+// O dono vence o papel de membro de propósito: há donos com uma linha
+// "escrita" no PRÓPRIO grupo (o link de convite aberto por eles mesmos, antes
+// da trava de `convite_proprio`), e essa linha não pode tirar o poder deles.
+async function administracaoDoGrupo(grupoId, userId) {
+  const { data: grupo } = await supabase.from('grupos')
+    .select('dono_id').eq('id', grupoId).maybeSingle();
+  if (!grupo) return { pode: false, donoId: null };
+  if (grupo.dono_id === userId) return { pode: true, donoId: grupo.dono_id };
+  const { data: meu } = await supabase.from('grupo_membros')
+    .select('papel').eq('grupo_id', grupoId).eq('user_id', userId).maybeSingle();
+  return { pode: meu?.papel === 'admin', donoId: grupo.dono_id };
+}
+
+// PATCH /membro/:membro_id — atualiza papel (dono ou admin)
 router.patch('/membro/:membro_id', auth, async (req, res) => {
   try {
-    const { phone, papel } = req.body;
+    const { papel } = req.body;
     if (!['admin','escrita','leitura'].includes(papel)) {
       return res.status(400).json({ erro: 'Papel inválido.' });
     }
     const user = await getUser(req);
+    if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const { data: membro } = await supabase.from('grupo_membros')
-      .select('grupo_id').eq('id', req.params.membro_id).single();
+      .select('grupo_id, user_id').eq('id', req.params.membro_id).maybeSingle();
     if (!membro) return res.status(404).json({ erro: 'Membro não encontrado.' });
 
-    // Verifica se quem pediu é admin do grupo
-    const { data: meuPapel } = await supabase.from('grupo_membros')
-      .select('papel').eq('grupo_id', membro.grupo_id).eq('user_id', user.id).single();
-    if (meuPapel?.papel !== 'admin') return res.status(403).json({ erro: 'Apenas admins podem alterar papéis.' });
+    const adm = await administracaoDoGrupo(membro.grupo_id, user.id);
+    if (!adm.pode) return res.status(403).json({ erro: 'Apenas admins podem alterar papéis.' });
+    // Quem criou o grupo continua admin: um admin promovido não rebaixa o dono.
+    if (membro.user_id === adm.donoId) {
+      return res.status(400).json({ erro: 'Quem criou o grupo é sempre admin, então o papel dele não muda.' });
+    }
 
-    await supabase.from('grupo_membros').update({ papel }).eq('id', req.params.membro_id);
+    const { error } = await supabase.from('grupo_membros').update({ papel }).eq('id', req.params.membro_id);
+    if (error) return res.status(500).json({ erro: 'Não consegui alterar o papel agora. Tente de novo em instantes.' });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
-// DELETE /membro/:membro_id — remove membro (somente admin)
+// DELETE /membro/:membro_id — remove membro (dono ou admin)
 router.delete('/membro/:membro_id', auth, async (req, res) => {
   try {
-    const { phone } = req.body;
     const user = await getUser(req);
+    if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     const { data: membro } = await supabase.from('grupo_membros')
-      .select('grupo_id, user_id').eq('id', req.params.membro_id).single();
+      .select('grupo_id, user_id').eq('id', req.params.membro_id).maybeSingle();
     if (!membro) return res.status(404).json({ erro: 'Membro não encontrado.' });
     if (membro.user_id === user.id) return res.status(400).json({ erro: 'Use sair do grupo.' });
 
-    const { data: meuPapel } = await supabase.from('grupo_membros')
-      .select('papel').eq('grupo_id', membro.grupo_id).eq('user_id', user.id).single();
-    if (meuPapel?.papel !== 'admin') return res.status(403).json({ erro: 'Apenas admins podem remover membros.' });
+    const adm = await administracaoDoGrupo(membro.grupo_id, user.id);
+    if (!adm.pode) return res.status(403).json({ erro: 'Apenas admins podem remover membros.' });
+    // Um admin promovido não expulsa quem criou o grupo.
+    if (membro.user_id === adm.donoId) {
+      return res.status(400).json({ erro: 'Quem criou o grupo não pode ser removido dele.' });
+    }
 
-    await supabase.from('grupo_membros').delete().eq('id', req.params.membro_id);
+    const { error: erroDel } = await supabase.from('grupo_membros').delete().eq('id', req.params.membro_id);
+    if (erroDel) return res.status(500).json({ erro: 'Não consegui remover agora. Tente de novo em instantes.' });
 
     // Mesmo ajuste do endpoint "sair": se o grupo removido era o `grupo_ativo`
     // do membro expulso, ele fica preso lendo/gravando num grupo do qual não
