@@ -1,6 +1,7 @@
 const { extrairTermoParcela } = require('../services/consultaParcela');
 const { categorizarDescricao } = require('../services/categorizar');
 const { detectarAPagar } = require('../services/aPagarPeriodo');
+const { detectarAReceber } = require('../services/aReceberPeriodo');
 // "altera a transacao ab12cd pra 50" — parser local-first, sem IA.
 const { detectarAlteracao } = require('../services/alterarTexto');
 
@@ -504,6 +505,13 @@ function interpretarRapido(message) {
   // "paguei" — lançamento nunca cai aqui (travado em eval:a-pagar).
   const aPagar = detectarAPagar(message);
   if (aPagar) return aPagar;
+
+  // --- QUANTO TENHO A RECEBER <período> --- (espelho do "a pagar")
+  // Antes não existia: a frase caía na IA e virava a lista de receitas FIXAS,
+  // sem as entradas previstas (13º). Mesmas travas: exige pergunta + "receber",
+  // recusa "recebi" e frase com valor (travado em eval:a-receber).
+  const aReceber = detectarAReceber(message);
+  if (aReceber) return aReceber;
 
   // --- CANCELAR PLANO / ASSINATURA (orienta a cancelar pela Stripe) ---
   // Específico de plano/assinatura — não conflita com "cancelar recorrência X"

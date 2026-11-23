@@ -122,7 +122,9 @@
     "eval:fatura-atrasada": "node evals/faturaAtrasada.eval.js",
     "eval:ia-conectada": "node evals/iaConectada.eval.js",
     "eval:importacao-extrato": "node evals/importacaoExtrato.eval.js",
-    "eval:plano-vitalicio": "node evals/planoVitalicio.eval.js"
+    "eval:plano-vitalicio": "node evals/planoVitalicio.eval.js",
+    "eval:a-receber": "node evals/aReceber.eval.js",
+    "eval:listar-recorrencias": "node evals/listarRecorrencias.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

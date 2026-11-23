@@ -34,20 +34,31 @@ const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', c
  * depois das 21h no Brasil o dia já virou; a conta do dia seguinte apareceria
  * como "já passou". Mesma regra do resto do sistema.
  */
+// ⚠️ RECEITA FIXA É GRAVADA COMO 'Recebimento' — o mesmo `tipo` das transações.
+// O interpretador, a IA e a Central falam em `filtro: 'Receita'`, e este handler
+// consultava `tipo = 'Receita'`, que NÃO EXISTE na base (medido: 0 linhas; 129
+// receitas fixas ativas em 59 grupos são 'Recebimento'). "Quais minhas receitas
+// fixas?" respondia "nenhuma" pra todo mundo, e a listagem geral mostrava as
+// receitas com ícone de gasto e fora do "entra R$ X". O contrato externo
+// ('Receita') fica; a tradução é aqui. 'Receita' segue aceito na leitura.
+const TIPO_NO_BANCO = { Gasto: 'Gasto', Receita: 'Recebimento' };
+const ehReceitaFixa = (tipo) => tipo === 'Recebimento' || tipo === 'Receita';
+
 async function listarRecorrencias(data, ctx) {
   const { phone, grupoId } = ctx;
   const filtro = data.filtro === 'Gasto' || data.filtro === 'Receita' ? data.filtro : null;
+  const tipoBanco = filtro ? TIPO_NO_BANCO[filtro] : null;
 
   const cols = 'tipo, categoria, valor, dia_vencimento, descricao';
   let q = supabase.from('recorrencias').select(`${cols}, valor_variavel`)
     .eq('grupo_id', grupoId).eq('ativa', true);
-  if (filtro) q = q.eq('tipo', filtro);
+  if (tipoBanco) q = q.eq('tipo', tipoBanco);
   let { data: rows, error } = await q.order('dia_vencimento', { ascending: true });
   // Migration 066 (valor_variavel) pendente → refaz sem ela em vez de quebrar.
   if (error) {
     let q2 = supabase.from('recorrencias').select(cols)
       .eq('grupo_id', grupoId).eq('ativa', true);
-    if (filtro) q2 = q2.eq('tipo', filtro);
+    if (tipoBanco) q2 = q2.eq('tipo', tipoBanco);
     ({ data: rows } = await q2.order('dia_vencimento', { ascending: true }));
   }
   const lista = rows || [];
@@ -57,7 +68,7 @@ async function listarRecorrencias(data, ctx) {
       : filtro === 'Receita' ? 'nenhuma receita fixa cadastrada'
       : 'nenhuma recorrência cadastrada';
     await enviarTexto(phone,
-      `🔁 Você tem ${nada}.\n\nPra criar, é só mandar: *todo mês 1000 aluguel dia 5* 📌`);
+      `🔁 Você não tem ${nada}.\n\nPra criar, é só mandar: *todo mês 1000 aluguel dia 5* 📌`);
     return;
   }
 
@@ -68,7 +79,7 @@ async function listarRecorrencias(data, ctx) {
     const dia = r.dia_vencimento ? `dia ${String(r.dia_vencimento).padStart(2, '0')}` : 'sem dia';
     // Conta de valor variável não tem valor fixo — exibir um número seria mentir.
     const valor = r.valor_variavel ? '_valor varia_' : brl(r.valor);
-    const icone = r.tipo === 'Receita' ? '💰' : '💸';
+    const icone = ehReceitaFixa(r.tipo) ? '💰' : '💸';
     return `${icone} *${valor}* · ${String(r.descricao || r.categoria || 'Sem descrição').slice(0, 34)} — ${dia}`;
   };
 
@@ -77,7 +88,7 @@ async function listarRecorrencias(data, ctx) {
 
   // Só soma valor FIXO — variável entra como contagem, não como número inventado.
   const somar = (tipo) => lista
-    .filter((r) => r.tipo === tipo && !r.valor_variavel)
+    .filter((r) => (tipo === 'Receita' ? ehReceitaFixa(r.tipo) : r.tipo === tipo) && !r.valor_variavel)
     .reduce((s, r) => s + (Number(r.valor) || 0), 0);
   const variaveis = lista.filter((r) => r.valor_variavel).length;
 

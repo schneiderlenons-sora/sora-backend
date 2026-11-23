@@ -696,6 +696,11 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
         await require('../handlers/aPagar')(data, ctx);
         break;
 
+      // "Quanto tenho a receber esse mês?" (espelho do a_pagar)
+      case 'a_receber':
+        await require('../handlers/aReceber')(data, ctx);
+        break;
+
       // Contas bancárias + cartões de crédito
       case 'set_wallet':
       case 'set_cartao':
