@@ -1,6 +1,7 @@
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarImagem, enviarBotaoLink } = require('../services/mensageiro');
 const { growShareCfg } = require('../services/growShare');
+const { grafiaPorPalavra } = require('../services/descricaoTx');
 const {
   periodoDaFrase, janela: janelaAgenda, montarAgenda,
 } = require('../services/agendaWhatsapp');
@@ -51,6 +52,12 @@ function proximoDiaSemana(alvo) { // alvo: 0=dom .. 6=sab
   const d = new Date(hoje); d.setDate(d.getDate() + delta); return d;
 }
 
+// Mês escrito → índice do Date (0 = janeiro). Chave já em minúsculas.
+const MES_PT = {
+  janeiro: 0, fevereiro: 1, 'março': 2, marco: 2, abril: 3, maio: 4, junho: 5,
+  julho: 6, agosto: 7, setembro: 8, outubro: 9, novembro: 10, dezembro: 11,
+};
+
 function parseDataPt(t) {
   const txt = ' ' + t.toLowerCase() + ' ';
   let m;
@@ -63,9 +70,29 @@ function parseDataPt(t) {
     const yy = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : new Date().getFullYear();
     return { iso: isoD(new Date(yy, mo - 1, dd, 12)), matched: m[0] };
   }
-  // "dia 20"
-  if (m = txt.match(/\bdia\s+(\d{1,2})\b/)) {
+  // "dia 20" · "dia 20 de dezembro" · "dia 20 de dezembro de 2027"
+  //
+  // ⚠️ O MÊS ESCRITO ERA IGNORADO. Só o "dia 20" casava e o mês saía do
+  // calendário: "dia 5 de janeiro" dito em novembro virava 5 de DEZEMBRO, e o
+  // "de janeiro" ficava preso no título ("Festa da Ana de novembro").
+  //
+  // Só o formato COM "dia" ganhou o mês, de propósito: ele já era data antes,
+  // então nenhuma frase muda de rumo (agenda × tarefa × nota) — muda só o mês,
+  // que passa a ser o que a pessoa disse. "5 de dezembro" sem o "dia" continua
+  // não sendo data: o Brasil é cheio de "Rua 25 de Março", "Av. 7 de Setembro".
+  if (m = txt.match(/\bdia\s+(\d{1,2})(?:\s+de\s+(janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+(\d{4}))?)?\b/)) {
     const dd = +m[1], now = new Date();
+    if (m[2]) {
+      const mo = MES_PT[m[2]];
+      const yy = m[3] ? +m[3] : now.getFullYear();
+      let d = new Date(yy, mo, dd, 12);
+      if (d.getMonth() === mo) { // "dia 31 de fevereiro" não existe → regra antiga abaixo
+        // Sem ano: a próxima vez que essa data acontece (agenda é futuro).
+        if (!m[3] && d < new Date(now.getFullYear(), now.getMonth(), now.getDate())) d = new Date(yy + 1, mo, dd, 12);
+        return { iso: isoD(d), matched: m[0] };
+      }
+      m = m[0].match(/^dia\s+(\d{1,2})/);
+    }
     let d = new Date(now.getFullYear(), now.getMonth(), dd, 12);
     if (d < new Date(now.getFullYear(), now.getMonth(), now.getDate())) d = new Date(now.getFullYear(), now.getMonth() + 1, dd, 12);
     return { iso: isoD(d), matched: m[0] };
@@ -238,14 +265,41 @@ function temDataHora(mensagem) {
 // frases como "Amanhã preciso ligar…" deixavam o "Amanhã" no título.
 const CONECTORES_BORDA = '(?:de|do|da|dos|das|no|na|nos|nas|em|para|pra|pro|por|com|a|o|as|os|à|às|ao|aos|um|uma|e|que)';
 
-function tituloCompromisso(base, dt, hr) {
+// ── O QUE SAI JUNTO COM A DATA E A HORA ─────────────────────────────────────
+//
+// Relato do Bruno (24/11/2026): "marca santo antonio dia 29/11 as 8" salvou
+// "Santo antonio DIA". O parser reconhece "29/11" e tira só isso — o "dia" que
+// vinha antes ficava. Mesma família, medida no handler real antes do conserto:
+//   "jantar NO DIA 29/11"          → "Jantar no dia"
+//   "reunião NA sexta com o Pedro" → "Reunião na com o pedro"
+//   "reunião às 15h com o Pedro"   → o "às" ficava no meio
+// Na BORDA o laço de conectores já limpava; no MEIO da frase, não.
+//
+// ⚠️ Só sai o que está COLADO na data. "Festa DA Ana dia 29/11" mantém o "da":
+// entre ele e a data está "Ana", que não é artigo.
+//
+// ⚠️ PALAVRA INTEIRA (INI/FIM). A remoção antiga era por pedaço de texto: a
+// abreviação "qua" (quarta) apagava o miolo de "quadra" — "futebol na quadra
+// qua 20h" virava "Futebol na dra".
+const INI = '(?<![\\p{L}\\p{M}\\p{N}])';
+const FIM = '(?![\\p{L}\\p{M}\\p{N}])';
+const ANTES_DA_DATA = '(?:(?:no|na|em|pro|pra|para|at[ée]|do|da|nest[ae]|ness[ae])\\s+(?:(?:o|a)\\s+)?)?(?:pr[óo]xim[ao]\\s+)?(?:dia\\s+)?';
+const DEPOIS_DA_DATA = '(?:[\\s-]+feira)?(?:\\s+que\\s+vem)?';
+const ANTES_DA_HORA = '(?:(?:[àa]s|pelas|perto\\s+das)\\s+)?';
+
+// `grafia` (opcional): a mensagem como a pessoa escreveu — ou uma lista delas,
+// aplicadas em ordem (a última vence). O título é montado em minúsculas, porque
+// todo o reconhecimento trabalha assim; no fim cada palavra volta à grafia
+// original ("Reunião com Pedro", não "Reunião com pedro"). Ver
+// `grafiaPorPalavra` em services/descricaoTx.js.
+function tituloCompromisso(base, dt, hr, grafia) {
   const semAcento = (s) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '');
   const escapar = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   let t = String(base || '');
-  // Case-insensitive: o `matched` vem minúsculo, o título não.
-  if (dt?.matched) t = t.replace(new RegExp(escapar(dt.matched), 'gi'), ' ');
-  if (hr?.matched) t = t.replace(new RegExp(escapar(hr.matched), 'gi'), ' ');
+  // Case-insensitive: o `matched` vem minúsculo, o título pode não vir.
+  if (dt?.matched) t = t.replace(new RegExp(INI + ANTES_DA_DATA + escapar(dt.matched) + DEPOIS_DA_DATA + FIM, 'giu'), ' ');
+  if (hr?.matched) t = t.replace(new RegExp(INI + ANTES_DA_HORA + escapar(hr.matched) + FIM, 'giu'), ' ');
 
   t = t.replace(/\b(?:de|pela|pela)\s+(manh[ãa]|tarde|noite)\b/gi, ' ');
   t = t.replace(/\bda\s+(manh[ãa]|tarde|noite)\b/gi, ' ');
@@ -271,6 +325,11 @@ function tituloCompromisso(base, dt, hr) {
   }
 
   if (!t || semAcento(t).length < 2) return 'Compromisso';
+  for (const fonte of [].concat(grafia || [])) if (fonte) t = grafiaPorPalavra(t, fonte);
+  // Inicial maiúscula só quando a 1ª palavra está toda minúscula: quem escreveu
+  // "iPhone" ou "eBay" quis assim, e "IPhone" seria corrigir a pessoa.
+  const primeira = (t.match(/^[\p{L}\p{M}\p{N}]+/u) || [''])[0];
+  if (primeira !== primeira.toLowerCase()) return t;
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
@@ -996,7 +1055,10 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
       return;
     }
     const dataISO = dt ? dt.iso : isoD(new Date());
-    const titulo = tituloCompromisso(base, dt, hr);
+    // A grafia vem da mensagem da PESSOA (a última da lista vence). Quando a
+    // frase passou pela IA, `mensagem` é o comando que ela devolveu e
+    // `opts.original` é o que a pessoa escreveu.
+    const titulo = tituloCompromisso(base, dt, hr, [mensagem, opts.original]);
     const hora = hr ? hr.hora : null;
     const antecedencia = ant ? ant.minutos : (hora ? 60 : 0);
     const { data: novoComp, error } = await supabase.from('compromissos').insert({
@@ -1087,7 +1149,7 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
       const cmd = preservarDataOriginal(mensagem, await interpretarGrowComando(mensagem));
       if (cmd && cmd.toLowerCase().trim() !== msg) {
         console.log(`🌱→IA traduziu: "${mensagem}" → "${cmd}"`);
-        return await handleGrow(cmd, ctx, { semIA: true });
+        return await handleGrow(cmd, ctx, { semIA: true, original: mensagem });
       }
     } catch { /* cai no menu padrão */ }
   }

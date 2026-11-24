@@ -74,6 +74,70 @@ function grafiaOriginal(descricao, original) {
 }
 
 /**
+ * A grafia que a pessoa escreveu, PALAVRA POR PALAVRA.
+ *
+ * Irmã de `grafiaOriginal` para quando o texto NÃO é um trecho contínuo da
+ * mensagem. Na Agenda a data sai do MEIO da frase: "Reunião dia 18/11 com
+ * Pedro às 8h" vira o título "reunião com pedro", e procurar esse trecho
+ * inteiro no original não acha nada. (Relato do Bruno, 24/11/2026: "pedi
+ * 'Reunião com Pedro' e a IA anota só a primeira letra maiúscula".)
+ *
+ * Duas camadas, da mais fiel pra menos:
+ *   1. Todas as palavras do texto aparecem SEGUIDAS no original (só espaço ou
+ *      pontuação entre elas) → devolve a fatia original. É o que traz de volta
+ *      o ponto de "Dr. Carlos" e o hífen de "check-up", que a limpeza do título
+ *      troca por espaço.
+ *   2. Senão, troca cada palavra pela grafia da mesma palavra no original,
+ *      procurando EM ORDEM (o título nunca inverte a frase).
+ *
+ * ⚠️ SÓ MUDA A GRAFIA, nunca o conteúdo: palavra que não está no original fica
+ * como veio, e nada é acrescentado ou tirado. Por isso a fatia da camada 1 só
+ * vale quando NÃO há letra nem número entre as palavras — senão ela traria de
+ * volta a data que o título acabou de tirar.
+ *
+ * Não capitaliza: quem chama decide a inicial.
+ *
+ * @param {string} texto     o que foi extraído (em geral minúsculo)
+ * @param {string} original  a mensagem como a pessoa escreveu
+ */
+function grafiaPorPalavra(texto, original) {
+  const t = String(texto || '');
+  const o = String(original || '');
+  if (!t.trim() || !o.trim()) return t;
+
+  // Letras COM as marcas combinantes: texto colado às vezes vem decomposto
+  // ("o" + U+0302), e sem o \p{M} a palavra se partiria no acento.
+  const palavras = (s) => [...s.matchAll(/[\p{L}\p{M}\p{N}]+/gu)]
+    .map((m) => ({ txt: m[0], ini: m.index, fim: m.index + m[0].length, k: chave(m[0]) }));
+  const pt = palavras(t);
+  const po = palavras(o);
+  if (!pt.length || !po.length) return t;
+
+  // Alinha em ordem: cada palavra do texto pega a próxima igual no original.
+  const casadas = [];
+  let desde = 0;
+  for (const p of pt) {
+    let achou = -1;
+    for (let x = desde; x < po.length; x++) if (po[x].k === p.k) { achou = x; break; }
+    casadas.push(achou);
+    if (achou >= 0) desde = achou + 1;
+  }
+
+  const seguidas = casadas.every((x, n) => x >= 0 && (n === 0 || x === casadas[n - 1] + 1));
+  if (seguidas) {
+    return o.slice(po[casadas[0]].ini, po[casadas[casadas.length - 1]].fim).replace(/\s+/g, ' ');
+  }
+
+  let saida = '';
+  let pos = 0;
+  pt.forEach((p, n) => {
+    saida += t.slice(pos, p.ini) + (casadas[n] >= 0 ? po[casadas[n]].txt : p.txt);
+    pos = p.fim;
+  });
+  return saida + t.slice(pos);
+}
+
+/**
  * A linha "Descrição: X" da confirmação — ou `null` quando não vale mostrar.
  *
  * ⚠️ NÃO REPETE A CATEGORIA. Em "uber 18" a descrição extraída é "uber" e a
@@ -95,4 +159,4 @@ function linhaDescricao(descricao, categoria) {
   return `📝 Descrição: ${d}`;
 }
 
-module.exports = { grafiaOriginal, linhaDescricao, inicialMaiuscula, chave };
+module.exports = { grafiaOriginal, grafiaPorPalavra, linhaDescricao, inicialMaiuscula, chave };
