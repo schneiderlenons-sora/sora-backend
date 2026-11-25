@@ -209,7 +209,7 @@ const FERRAMENTAS = [
           return {
             cartao: f.nome, moeda: f.moeda || ctx.moeda,
             fatura: f.label || f.competencia,
-            periodo: { de: f.ini, ate: f.fim },
+            periodo: { de: f.ini, ate: f.ultimo || f.fim },
             vencimento: f.venc,
             total: r2(f.fatura), pago: r2(f.pago), falta_pagar: r2(f.restante),
             quitada: !!f.quitada, fechada: !!f.fechada,

@@ -149,7 +149,7 @@ async function somaFaturaCiclo(grupoId, cartaoNome, ciclo, cicloAnterior) {
   // ninguém, então não tem como ter deixado nada de fora — era o que fazia
   // fatura FUTURA ganhar valor do nada (três cartões, R$ 67,11 e R$ 254,29).
   const anterior = cicloAnterior && cicloAnterior.ini && cicloAnterior.fimExcl <= ciclo.ini
-    && cicloAnterior.fim < hojeSP()
+    && (cicloAnterior.ultimo || cicloAnterior.fim) < hojeSP()
     ? cicloAnterior
     : null;
   const inicioBusca = anterior ? anterior.ini : ciclo.ini;
@@ -467,7 +467,7 @@ async function pagamentosDaFatura(cartaoId, competencia) {
 function quitadaDepoisDoFechamento(pagamentos, fatura, ciclo) {
   if (!(Number(fatura) > 0.01) || !ciclo?.fim) return false;
   const depois = (pagamentos || [])
-    .filter((p) => String(p.data).slice(0, 10) > ciclo.fim)
+    .filter((p) => String(p.data).slice(0, 10) > (ciclo.ultimo || ciclo.fim))
     .reduce((s, p) => s + (Number(p.valor) || 0), 0);
   return cent(depois) >= cent(fatura) - 0.01;
 }

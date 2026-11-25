@@ -345,10 +345,13 @@ async function faturasFechadasAbertas(grupoId, wallets) {
       try {
         const comp = passo ? competenciaVizinha(c, atual, passo) : atual;
         const st = await statusFatura(grupoId, c, comp);
-        if (!(st.ciclo && st.ciclo.fim < hoje)) continue;      // só fatura que já FECHOU
+        if (!(st.ciclo && st.ciclo.fimExcl <= hoje)) continue;  // só fatura que já FECHOU
         const v = await valorExibido(c, comp, st, {});
         if (!(v.restante > 0.01)) continue;
-        out.push({ cartao_id: c.id, cartao_nome: c.nome, competencia: comp, fatura: v.fatura, restante: v.restante, fim: st.ciclo.fim, venc: st.ciclo.venc });
+        // `fim` aqui = ÚLTIMO dia da fatura (`ultimo`): o pagamento conta a
+        // partir do dia seguinte. É o fechamento no padrão; com a opção
+        // "dia do fechamento vai pra próxima" (migration 200) é a véspera.
+        out.push({ cartao_id: c.id, cartao_nome: c.nome, competencia: comp, fatura: v.fatura, restante: v.restante, fim: st.ciclo.ultimo || st.ciclo.fim, venc: st.ciclo.venc });
       } catch { /* cartão com dado ruim não derruba a sugestão */ }
     }
   }
@@ -363,7 +366,7 @@ router.get('/pagamentos-fatura-sugeridos/:phone', auth, async (req, res) => {
     const grupoId = user.grupo_ativo;
     const P = require('../services/pagamentoFaturaConta');
     const { data: wallets } = await supabase.from('wallets')
-      .select('id, grupo_id, nome, tipo, saldo, of_conta_id, dia_fechamento, dia_vencimento, of_limite_usado, moeda')
+      .select('id, grupo_id, nome, tipo, saldo, of_conta_id, dia_fechamento, dia_vencimento, fechamento_dia_proxima, of_limite_usado, moeda')
       .eq('grupo_id', grupoId);
     const faturas = await faturasFechadasAbertas(grupoId, wallets);
     if (!faturas.length) return res.json({ pares: [] });
@@ -420,7 +423,7 @@ router.post('/vincular-pagamento-fatura', auth, exigirPermissao('admin', 'escrit
     }
 
     const { data: wallets } = await supabase.from('wallets')
-      .select('id, grupo_id, nome, tipo, saldo, of_conta_id, dia_fechamento, dia_vencimento, of_limite_usado, moeda')
+      .select('id, grupo_id, nome, tipo, saldo, of_conta_id, dia_fechamento, dia_vencimento, fechamento_dia_proxima, of_limite_usado, moeda')
       .eq('grupo_id', req.grupoId);
     const P = require('../services/pagamentoFaturaConta');
     if (!P.saidasDeConta([tx], wallets || []).length) {

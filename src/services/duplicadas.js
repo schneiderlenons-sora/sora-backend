@@ -320,7 +320,7 @@ async function buscarAnalise(grupoId, { dias = 90, cartaoId = null } = {}) {
 
   if (cartaoId) {
     const { data: w } = await supabase.from('wallets')
-      .select('id, nome, dia_fechamento, dia_vencimento')
+      .select('id, nome, dia_fechamento, dia_vencimento, of_conta_id, fechamento_dia_proxima')
       .eq('id', cartaoId).eq('grupo_id', grupoId).maybeSingle();
 
     if (w && w.dia_fechamento) {
@@ -328,7 +328,7 @@ async function buscarAnalise(grupoId, { dias = 90, cartaoId = null } = {}) {
       const comp = competenciaAtual(w);
       const ciclo = cicloPorCompetencia(w, comp);
       q = q.eq('carteira_nome', w.nome).gte('data', ciclo.ini).lt('data', ciclo.fimExcl);
-      escopo = { tipo: 'fatura', cartao: w.nome, competencia: comp, ini: ciclo.ini, fim: ciclo.fim };
+      escopo = { tipo: 'fatura', cartao: w.nome, competencia: comp, ini: ciclo.ini, fim: ciclo.ultimo || ciclo.fim };
     } else if (w) {
       // Sem data de fechamento não existe ciclo — filtra só pelo cartão.
       q = q.eq('carteira_nome', w.nome)

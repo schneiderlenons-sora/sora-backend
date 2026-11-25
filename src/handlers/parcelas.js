@@ -188,7 +188,7 @@ module.exports = async function handleParcelas(data, ctx) {
     const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
     const semRuido = (s) => norm(s).replace(/\b(cartao|credito|debito|fatura|conta|banco|meu|minha|do|da|de|no|na|o|a)\b/g, '').replace(/\s+/g, ' ').trim();
     const { data: todosCartoes } = await supabase.from('wallets')
-      .select('id, nome, dia_fechamento, dia_vencimento, of_conta_id, saldo, moeda').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
+      .select('id, nome, dia_fechamento, dia_vencimento, fechamento_dia_proxima, of_conta_id, saldo, moeda').eq('grupo_id', grupoId).eq('tipo', 'Crédito')
       .order('created_at', { ascending: true });
     let cartoes = todosCartoes || [];
     const termoN = semRuido(termo);

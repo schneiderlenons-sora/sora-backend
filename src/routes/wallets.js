@@ -104,7 +104,8 @@ router.get('/:phone', auth, async (req, res) => {
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { nome, tipo, saldo, limite, cheque_especial,
-            dia_fechamento, dia_vencimento, bandeira, ultimos4, moeda } = req.body;
+            dia_fechamento, dia_vencimento, bandeira, ultimos4, moeda,
+            fechamento_dia_proxima } = req.body;
     const grupoId = req.grupoId; // grupo do usuário autenticado (exigirPermissao)
     if (!grupoId) return res.status(404).json({ erro: 'Não encontrado' });
 
@@ -140,6 +141,12 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
     }
     if (bandeira       !== undefined) row.bandeira       = bandeira || null;
     if (ultimos4       !== undefined) row.ultimos4       = ultimos4 || null;
+    // "Compra no dia do fechamento vai pra próxima fatura" (migration 200).
+    // Só entra quando LIGADA, num cartão de crédito que não é do Open Finance
+    // (lá a data do lançamento no banco já decide — ver services/cicloFatura).
+    if (fechamento_dia_proxima === true && tipo === 'Crédito' && !(antes && antes.of_conta_id)) {
+      row.fechamento_dia_proxima = true;
+    }
     // Moeda da conta (migration 144). `normalizarMoeda` devolve 'BRL' pra
     // qualquer coisa fora do catálogo — é aqui que mora a validação, e NÃO num
     // CHECK do banco (três incidentes desta base foram CHECK falhando calado).
@@ -279,7 +286,7 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     const {
       nome, tipo, saldo, limite, cheque_especial,
       dia_fechamento, dia_vencimento, bandeira, ultimos4, nos_previstos, moeda,
-      conta_pagamento_id,
+      conta_pagamento_id, fechamento_dia_proxima,
     } = req.body;
 
     const nomeNovo = typeof nome === 'string' ? nome.trim().slice(0, 60) : null;
@@ -345,6 +352,23 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
       }
     }
 
+    // "Compra no dia do fechamento vai pra próxima fatura" (migration 200,
+    // sugestão do Arisson). Por CARTÃO e só em cartão MANUAL: medido, a regra
+    // vale pra maioria dos bancos mas não pra todos, e no Open Finance a data
+    // do lançamento no banco já resolve (ligar lá empurraria duas vezes).
+    if (fechamento_dia_proxima !== undefined) {
+      if (typeof fechamento_dia_proxima !== 'boolean') {
+        return res.status(400).json({ erro: 'fechamento_dia_proxima tem de ser true ou false.' });
+      }
+      if (atual.tipo !== 'Crédito') {
+        return res.status(400).json({ erro: 'Só cartão de crédito tem dia de fechamento.' });
+      }
+      if (fechamento_dia_proxima && atual.of_conta_id) {
+        return res.status(400).json({ erro: 'Este cartão vem do banco pelo Open Finance: a fatura já segue a data em que o banco lança cada compra.' });
+      }
+      patch.fechamento_dia_proxima = fechamento_dia_proxima;
+    }
+
     if (!Object.keys(patch).length) return res.json(atual);
 
     // Renomeia a WALLET primeiro: é a operação que pode falhar por constraint,
@@ -355,6 +379,9 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     // 123 (nos_previstos): tenta com tudo e refaz só com o essencial.
     // ⚠️ A conta de pagamento NÃO entra no refazer-sem-a-coluna: se ela foi
     // pedida e a 170 não rodou, o certo é dizer isso, e não fingir que salvou.
+    if (error && patch.fechamento_dia_proxima !== undefined && /fechamento_dia_proxima/i.test(error.message || '')) {
+      return res.status(400).json({ erro: 'Esta opção ainda está sendo liberada. Tente de novo em alguns minutos.' });
+    }
     if (error && patch.conta_pagamento_id !== undefined && /conta_pagamento_id/i.test(error.message || '')) {
       return res.status(400).json({
         erro: 'Recurso ainda não liberado no banco. Rode a migration sql/170_cartao_conta_pagamento.sql.',
@@ -436,7 +463,7 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
     if (!itens.length) return res.status(400).json({ erro: 'Escolha a conta e o valor do pagamento.' });
 
     const { data: cartao } = await supabase.from('wallets')
-      .select('id, nome, dia_fechamento, dia_vencimento, moeda, of_conta_id').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
+      .select('id, nome, dia_fechamento, dia_vencimento, fechamento_dia_proxima, moeda, of_conta_id').eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
 
     // ⚠️ CARTÃO EM OUTRA MOEDA QUE A DO GRUPO (migration 168) não aceita
     // pagamento manual — ver moeda.cartaoForaDaBase. Recusa ANTES de debitar
@@ -626,7 +653,7 @@ router.get('/fatura/status/:phone', auth, async (req, res) => {
     if (!cartaoId) return res.status(400).json({ erro: 'cartao_id obrigatório' });
 
     const { data: cartao } = await supabase.from('wallets')
-      .select('id, nome, of_conta_id, saldo, dia_fechamento, dia_vencimento, moeda, of_limite_usado')
+      .select('id, nome, of_conta_id, saldo, dia_fechamento, dia_vencimento, fechamento_dia_proxima, moeda, of_limite_usado')
       .eq('id', cartaoId).eq('grupo_id', grupoId).maybeSingle();
     if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
     const baseGrupo = await moedaBaseDoGrupo(grupoId);
@@ -782,7 +809,9 @@ router.get('/faturas/:phone', auth, async (req, res) => {
         const st = await statusFatura(grupoId, c, competencia);
         const vista = await vistaDaReq(c, competencia, st);
         let proxima = null;
-        if (offset === 0 && vista.quitada && ciclo.fim < hoje) {
+        // "Já fechou" = o ÚLTIMO dia da fatura passou (com a opção "dia do
+        // fechamento vai pra próxima", migration 200, é a véspera do fechamento).
+        if (offset === 0 && vista.quitada && (ciclo.ultimo || ciclo.fim) < hoje) {
           try {
             const compProx = competenciaVizinha(c, competencia, 1);
             const cicloProx = cicloPorCompetencia(c, compProx);
@@ -840,14 +869,14 @@ router.get('/faturas/:phone', auth, async (req, res) => {
         cartao_id: c.id, nome: c.nome, limite: c.limite ?? null,
         // Todos os valores desta linha estão na moeda do CARTÃO.
         ...camposMoedaFatura(c, baseGrupo, tabelaCartoes),
-        competencia, ini: ciclo.ini, fim: ciclo.fim, fimExcl: ciclo.fimExcl,
+        competencia, ini: ciclo.ini, fim: ciclo.fim, fimExcl: ciclo.fimExcl, ultimo: ciclo.ultimo || ciclo.fim,
         venc: ciclo.venc, label: ciclo.label, porCiclo: ciclo.porCiclo,
         of: ehOF, fatura, pago, restante, vencida, atrasadas, quitada, proxima,
         // Fatura do EMISSOR nesta competência. É o que permite a tela agrupar
         // os lançamentos como o banco agrupa, em vez de só pela data da compra
         // (ver `pertenceAFatura` modo híbrido). Vem de of_faturas (118).
         of_bill_id: publicadaDaComp ? publicadaDaComp.of_bill_id : null,
-        fechada: ciclo.fim < hoje,
+        fechada: (ciclo.ultimo || ciclo.fim) < hoje,
         parcelas_previstas: prev.linhas, total_previsto: prev.total,
         // Entra no card "Previstos do mês"? (migration 123). Sem a coluna,
         // `undefined !== false` → true, que é o padrão desejado.
@@ -886,7 +915,7 @@ router.post('/fatura/rolar', auth, exigirPermissao('admin', 'escrita'), async (r
     // ⚠️ ESCOPO PELO GRUPO na própria consulta: o id da URL sozinho deixaria
     // rolar fatura de cartão alheio.
     const { data: cartao } = await supabase.from('wallets')
-      .select('id, nome, of_conta_id, dia_fechamento, dia_vencimento')
+      .select('id, nome, of_conta_id, dia_fechamento, dia_vencimento, fechamento_dia_proxima')
       .eq('id', cartao_id).eq('grupo_id', grupoId).maybeSingle();
     if (!cartao) return res.status(404).json({ erro: 'Cartão não encontrado.' });
 

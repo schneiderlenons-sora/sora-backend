@@ -40,7 +40,7 @@ async function copiarDadosGrupo(origemId, destinoId, userId) {
   // 2) Contas/cartões — com o dono = quem criou o grupo.
   try {
     const { data: ws } = await supabase.from('wallets')
-      .select('nome, tipo, saldo, limite, dia_fechamento, dia_vencimento, bandeira, ultimos4')
+      .select('nome, tipo, saldo, limite, dia_fechamento, dia_vencimento, fechamento_dia_proxima, bandeira, ultimos4')
       .eq('grupo_id', origemId);
     if (ws?.length) {
       await supabase.from('wallets').insert(ws.map(w => ({ ...w, grupo_id: destinoId, criado_por: userId })));

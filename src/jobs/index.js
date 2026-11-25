@@ -298,7 +298,7 @@ async function processarFaturas() {
   // Traz todos os cartões com ciclo definido e decide em JS (o helper clampa o
   // dia ao último do mês, então fech=31 fecha em 28/02).
   const { data: cartoes } = await supabase.from('wallets')
-    .select('id, nome, grupo_id, criado_por, saldo, of_conta_id, dia_fechamento, dia_vencimento, ultimo_aviso_fechamento, ultimo_aviso_vencimento, moeda')
+    .select('id, nome, grupo_id, criado_por, saldo, of_conta_id, dia_fechamento, dia_vencimento, fechamento_dia_proxima, ultimo_aviso_fechamento, ultimo_aviso_vencimento, moeda')
     .eq('tipo', 'Crédito')
     .not('dia_fechamento', 'is', null);
 
@@ -1851,7 +1851,7 @@ cron.schedule('0 9 * * *', async () => {
   let cartoes = [];
   try {
     const { data } = await supabase.from('wallets')
-      .select('id, nome, grupo_id, dia_fechamento, dia_vencimento, of_conta_id, moeda')
+      .select('id, nome, grupo_id, dia_fechamento, dia_vencimento, fechamento_dia_proxima, of_conta_id, moeda')
       .eq('tipo', 'Crédito').not('dia_vencimento', 'is', null).is('of_conta_id', null);
     cartoes = data || [];
   } catch (e) { console.warn('[fatura atrasada] leitura dos cartões', e.message); return; }

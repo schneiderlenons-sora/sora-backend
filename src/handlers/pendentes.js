@@ -242,7 +242,7 @@ async function resolverPendente(pendente, mensagem, ctx) {
           .select('grupo_id, cartao_id, competencia, user_id').eq('id', rollover_id).maybeSingle();
         const { data: cartao } = row
           ? await supabase.from('wallets')
-            .select('id, nome, of_conta_id, dia_fechamento, dia_vencimento').eq('id', row.cartao_id).maybeSingle()
+            .select('id, nome, of_conta_id, dia_fechamento, dia_vencimento, fechamento_dia_proxima').eq('id', row.cartao_id).maybeSingle()
           : { data: null };
         await removerPendente(pendente.id);
         if (!row || !cartao) {
@@ -638,7 +638,7 @@ async function resolverPendente(pendente, mensagem, ctx) {
 
     // Fim do wizard — busca dados completos e confirma
     const { data: cartao } = await supabase.from('wallets')
-      .select('nome, limite, dia_fechamento, dia_vencimento, bandeira')
+      .select('nome, limite, dia_fechamento, dia_vencimento, fechamento_dia_proxima, bandeira, of_conta_id')
       .eq('id', wallet_id).single();
 
     await removerPendente(pendente.id);

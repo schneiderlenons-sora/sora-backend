@@ -405,11 +405,11 @@ async function valorExibido(cartaoIn, competencia, st, deps = {}) {
     ? (fatura > 0.01 && restante <= 0.01)
     : fonte.startsWith('simulada')
       ? quitadaDepoisDoFechamento(pagamentos, fatura, st.ciclo)
-      : (fatura > 0.01 && restante <= 0.01 && st.ciclo.fim < hojeSP());
+      : (fatura > 0.01 && restante <= 0.01 && (st.ciclo.ultimo || st.ciclo.fim) < hojeSP());
 
   return {
     fatura, pago, restante, quitada,
-    fechada: st.ciclo.fim < hojeSP(),
+    fechada: (st.ciclo.ultimo || st.ciclo.fim) < hojeSP(),
     // `doBanco` = o número não saiu da nossa soma de transações. A tela usa
     // isso pra decidir se pode confiar no valor (e pra rotular a origem).
     doBanco: fonte.startsWith('banco') || fonte.startsWith('simulada'),

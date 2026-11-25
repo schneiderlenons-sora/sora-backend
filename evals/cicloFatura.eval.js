@@ -132,6 +132,83 @@ ok(C.competenciaVizinha(car, atual, +1) === '2026-09', 'vizinha +1 errada');
 ok(C.competenciaVizinha({}, '2026-01', -1) === '2025-12', 'vizinha sem fechamento (virada de ano) errada');
 console.log(`  ok    ${C.competenciaVizinha(car, atual, -1)} ← ${atual} → ${C.competenciaVizinha(car, atual, 1)}`);
 
+// ── 9. ⚠️ Opção "compra no dia do fechamento vai pra PRÓXIMA" (migration 200) ─
+// Sugestão do Arisson (nov/2026, Itaú manual). É POR CARTÃO: a medição mostrou
+// que trocar pra todos fazia 11 faturas já pagas aparecerem atrasadas.
+console.log('── 9. Dia do fechamento na próxima fatura (opção do cartão) ──');
+{
+  // 9a. REGRESSÃO ZERO sem a opção: cópia congelada da função ANTIGA.
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const antigo = (Y, M0, fech, venc) => {
+    const fim = C.fechamentoDe(Y, M0, fech);
+    const antY = M0 === 0 ? Y - 1 : Y, antM = M0 === 0 ? 11 : M0 - 1;
+    const ini = new Date(C.fechamentoDe(antY, antM, fech)); ini.setUTCDate(ini.getUTCDate() + 1);
+    const fimExcl = new Date(fim); fimExcl.setUTCDate(fimExcl.getUTCDate() + 1);
+    const v = C.vencimentoApos(fim, venc);
+    return { ini: iso(ini), fim: iso(fim), fimExcl: iso(fimExcl), venc: iso(v) };
+  };
+  let casos = 0, iguais = 0;
+  for (const Y of [2025, 2026, 2027, 2028]) for (let M0 = 0; M0 < 12; M0++) for (let fech = 1; fech <= 31; fech++) for (const venc of [1, 5, 10, 15, 20, 25, 28, 31]) {
+    casos++;
+    const a = antigo(Y, M0, fech, venc);
+    for (const opcoes of [undefined, {}, { diaNaProxima: false }]) {
+      const n = C.cicloPorFechamento(Y, M0, fech, venc, opcoes);
+      if (n.ini === a.ini && n.fim === a.fim && n.fimExcl === a.fimExcl && n.venc === a.venc && n.ultimo === n.fim) iguais++;
+      else falhas.push(`9a: ${Y}-${M0 + 1} fech ${fech} venc ${venc} ${JSON.stringify(opcoes)} divergiu da regra antiga`);
+    }
+  }
+  ok(iguais === casos * 3, `9a: sem a opção, ${iguais}/${casos * 3} iguais à regra antiga`);
+  console.log(`  ok    sem a opção: ${casos} combinações × 3 formas de chamar = iguais à regra antiga`);
+
+  // 9b. Com a opção: o dia do fechamento é da PRÓXIMA; contíguo; o fechamento,
+  // o vencimento e a competência NÃO mudam (só as bordas andam um dia).
+  const NA = { diaNaProxima: true };
+  let contiguos = 0, total = 0;
+  for (const Y of [2025, 2026, 2027]) for (let M0 = 0; M0 < 12; M0++) for (let fech = 1; fech <= 31; fech++) {
+    const c = C.cicloPorFechamento(Y, M0, fech, 10, NA);
+    const prox = C.cicloPorFechamento(Y, M0 + 1, fech, 10, NA);
+    const padrao = C.cicloPorFechamento(Y, M0, fech, 10);
+    total++;
+    if (c.fimExcl === prox.ini) contiguos++;
+    else falhas.push(`9b: ${Y}-${M0 + 1} fech ${fech}: buraco/sobreposição (${c.fimExcl} × ${prox.ini})`);
+    if (c.fimExcl !== c.fim) falhas.push(`9b: fimExcl deveria ser o próprio fechamento (${c.fimExcl} × ${c.fim})`);
+    if (!(c.ultimo < c.fim)) falhas.push(`9b: o último dia deveria ser a véspera do fechamento (${c.ultimo} × ${c.fim})`);
+    if (c.fim !== padrao.fim || c.venc !== padrao.venc || c.competencia !== padrao.competencia) {
+      falhas.push(`9b: fechamento/vencimento/competência NÃO podem mudar com a opção (${Y}-${M0 + 1} fech ${fech})`);
+    }
+  }
+  ok(contiguos === total, `9b: ${contiguos}/${total} ciclos contíguos com a opção`);
+  console.log(`  ok    com a opção: ${total} ciclos contíguos, fechamento e vencimento intactos`);
+
+  // 9c. O caso do Arisson: Itaú manual, fecha 24, vence 1. Compra em 24/11.
+  const arisson = { dia_fechamento: 24, dia_vencimento: 1, of_conta_id: null };
+  const comOp = { ...arisson, fechamento_dia_proxima: true };
+  ok(C.cicloPorCompetencia(arisson, '2026-12').fimExcl === '2026-11-25', '9c: padrão — a fatura de dezembro vai até 24/11 inclusive');
+  ok(C.cicloPorCompetencia(comOp, '2026-12').fimExcl === '2026-11-24', '9c: com a opção — a fatura de dezembro termina em 23/11');
+  ok(C.cicloPorCompetencia(comOp, '2027-01').ini === '2026-11-24', '9c: com a opção — a compra de 24/11 abre a fatura de janeiro');
+  ok(C.cicloPorCompetencia(comOp, '2026-12').label === '24/10 a 23/11', '9c: o rótulo mostra o último dia que entra (23/11)');
+  ok(C.cicloPorCompetencia(arisson, '2026-12').label === '25/10 a 24/11', '9c: rótulo do padrão intacto');
+  console.log(`  ok    Arisson: compra de 24/11 → fatura ${C.cicloPorCompetencia(comOp, '2027-01').competencia} (${C.cicloPorCompetencia(comOp, '2027-01').label})`);
+
+  // 9d. Quem decide: só cartão MANUAL com a opção. Open Finance ignora.
+  ok(C.diaNaProximaDe({ fechamento_dia_proxima: true, of_conta_id: null }) === true, '9d: manual com a opção → próxima');
+  ok(C.diaNaProximaDe({ fechamento_dia_proxima: true }) === true, '9d: manual (sem of_conta_id) com a opção → próxima');
+  ok(C.diaNaProximaDe({ fechamento_dia_proxima: true, of_conta_id: 'acc1' }) === false, '9d: ⚠️ Open Finance IGNORA a opção');
+  ok(C.diaNaProximaDe({ fechamento_dia_proxima: false }) === false, '9d: opção desligada');
+  ok(C.diaNaProximaDe({ fechamento_dia_proxima: 'true' }) === false, '9d: só o booleano true liga');
+  ok(C.diaNaProximaDe(null) === false && C.diaNaProximaDe({}) === false, '9d: sem cartão ou sem a coluna → padrão');
+  const of = { dia_fechamento: 24, dia_vencimento: 1, of_conta_id: 'acc1', fechamento_dia_proxima: true };
+  ok(JSON.stringify(C.cicloPorCompetencia(of, '2026-12')) === JSON.stringify(C.cicloPorCompetencia({ dia_fechamento: 24, dia_vencimento: 1 }, '2026-12')),
+    '9d: cartão do Open Finance com a opção marcada calcula igual ao padrão');
+
+  // 9e. A fatura "atual" (escolhida pelo vencimento) e a navegação não mudam.
+  for (const hoje of ['2026-11-23', '2026-11-24', '2026-11-25', '2026-12-01', '2026-12-02']) {
+    ok(C.competenciaAtual(comOp, hoje) === C.competenciaAtual(arisson, hoje), `9e: a fatura "atual" não muda com a opção (${hoje})`);
+  }
+  ok(C.competenciaVizinha(comOp, '2026-12', 1) === '2027-01' && C.competenciaVizinha(comOp, '2026-12', -1) === '2026-11', '9e: vizinhas com a opção');
+  console.log('  ok    fatura atual e navegação iguais com e sem a opção');
+}
+
 console.log(`\n${falhas.length ? `${falhas.length} FALHA(S) ❌` : 'tudo passou ✅'}`);
 if (falhas.length) {
   console.log('\n── Falhas ──');

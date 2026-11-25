@@ -31,7 +31,7 @@ function somaDias(ymd, n) {
 
 /**
  * A saída `t` pode ser o pagamento da fatura `f`?
- * f = { cartao_id, competencia, fatura, restante, fim (fechamento), venc }
+ * f = { cartao_id, competencia, fatura, restante, fim (último dia da fatura — o fechamento no padrão), venc }
  */
 function saidaPagaFatura(t, f) {
   if (!t || !f || t.tipo !== 'Gasto') return false;

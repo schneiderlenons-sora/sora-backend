@@ -88,7 +88,7 @@ async function rodarDiagnostico({ grupoId = null, salvar = false } = {}) {
       .gte('data', desde).lte('data', `${somaDias(hoje, 1)}T23:59:59`).order('id'));
   }
   const wallets = await paginado(() => soGrupo(supabase.from('wallets')
-    .select('id, grupo_id, nome, tipo, saldo, of_conta_id, of_consent_id, dia_fechamento, dia_vencimento, of_limite_usado, moeda')).order('id'));
+    .select('id, grupo_id, nome, tipo, saldo, of_conta_id, of_consent_id, dia_fechamento, dia_vencimento, fechamento_dia_proxima, of_limite_usado, moeda')).order('id'));
   const { data: conexoes } = await supabase.from('of_conexoes').select('external_id, grupo_id');
   const pagamentos = await paginado(() => soGrupo(supabase.from('pagamentos_fatura')
     .select('grupo_id, cartao_id, competencia, valor, data, transacao_id')).gte('data', somaDias(hoje, -180)).order('id'));

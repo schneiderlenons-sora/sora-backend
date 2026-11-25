@@ -68,7 +68,7 @@ async function faturasAtrasadas(cartao, { hoje = hojeSP(), status, roladas = new
   for (let i = 0; i < max; i++) {
     const ciclo = cicloPorCompetencia(cartao, comp);
     if (ciclo.venc >= hoje) break; // defesa: não deveria acontecer
-    if (criadoEm && ciclo.fim < criadoEm) break;
+    if (criadoEm && (ciclo.ultimo || ciclo.fim) < criadoEm) break;
     if (roladas.has(comp)) break;
     const st = await status(comp);
     const restante = Math.round((Number(st && st.restante) || 0) * 100) / 100;

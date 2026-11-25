@@ -478,7 +478,7 @@ module.exports = async function handleWallets(data, ctx) {
   // Cartões pela FATURA ABERTA (ciclo de fechamento); contas pelo gasto do MÊS.
   if (data.acao === 'gastos_carteiras') {
     const { data: wallets } = await supabase.from('wallets')
-      .select('nome, tipo, limite, dia_fechamento, dia_vencimento, moeda').eq('grupo_id', grupoId).order('nome');
+      .select('nome, tipo, limite, dia_fechamento, dia_vencimento, fechamento_dia_proxima, moeda, of_conta_id').eq('grupo_id', grupoId).order('nome');
 
     if (!wallets?.length) {
       await enviarTexto(phone,

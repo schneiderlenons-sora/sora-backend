@@ -65,23 +65,55 @@ function vencimentoApos(fim, diaVencimento) {
   return v;
 }
 
+// ── A COMPRA FEITA NO DIA DO FECHAMENTO: em qual fatura? ─────────────────────
+//
+// Padrão (a regra de sempre): o dia do fechamento ENTRA na fatura que fecha.
+// Opção do cartão (`fechamento_dia_proxima`, migration 200): o dia do
+// fechamento já é da PRÓXIMA fatura — é como Nubank, C6, Mercado Pago e boa
+// parte do Itaú fazem (sugestão do Arisson, nov/2026, cartão Itaú manual).
+//
+// ⚠️ É POR CARTÃO, NUNCA GLOBAL — e isso foi MEDIDO. Comparando com a fatura
+// que o BANCO usou (8.336 compras com fatura publicada):
+//   · cartão MANUAL (só a data da compra): 92,6% de acerto hoje × 94,3% com a
+//     regra nova — mas Caixa, BB, Inter e Bradesco PIORAM;
+//   · trocar pra todos os cartões manuais fazia 11 faturas JÁ PAGAS (pago =
+//     total, ao centavo) aparecerem atrasadas: pra esses bancos a regra de
+//     sempre é a certa.
+//
+// ⚠️ OPEN FINANCE IGNORA A OPÇÃO: lá a data que decide é a do LANÇAMENTO no
+// banco (`dataDaFatura`), que já empurra a compra do dia do fechamento pra
+// próxima. Aplicar a opção por cima empurraria DUAS vezes — medido: 95,1% →
+// 92,6%.
+//
+// `fim` continua sendo a DATA DO FECHAMENTO nos dois modos (é dela que saem o
+// vencimento, a competência e o "fecha hoje"). O último dia que ENTRA na
+// fatura é `ultimo` — use `fimExcl` pra filtrar e `ultimo` pra mostrar.
+function diaNaProximaDe(cartao) {
+  return !!(cartao && cartao.fechamento_dia_proxima === true && !cartao.of_conta_id);
+}
+const opcoesDo = (cartao) => ({ diaNaProxima: diaNaProximaDe(cartao) });
+
 // Ciclo cujo FECHAMENTO cai no mês (Y,M0).
-// Retorna { ini, fim, fimExcl, venc, competencia, label } — datas 'YYYY-MM-DD'.
+// Retorna { ini, fim, fimExcl, ultimo, venc, competencia, label } — datas 'YYYY-MM-DD'.
 // `fimExcl` é exclusivo (pra usar direto em .lt('data', fimExcl)).
-function cicloPorFechamento(Y, M0, diaFechamento, diaVencimento) {
+function cicloPorFechamento(Y, M0, diaFechamento, diaVencimento, opcoes = {}) {
+  const naProxima = !!(opcoes && opcoes.diaNaProxima);
   const fim = fechamentoDe(Y, M0, diaFechamento);
-  // Fechamento anterior + 1 dia → garante contiguidade mesmo em mês curto.
+  // Padrão: fechamento anterior + 1 dia. Com a opção: o próprio fechamento
+  // anterior (ele já é desta fatura). Contíguo nos dois modos, mesmo em mês curto.
   const antY = M0 === 0 ? Y - 1 : Y;
   const antM = M0 === 0 ? 11 : M0 - 1;
   const ini = new Date(fechamentoDe(antY, antM, diaFechamento));
-  ini.setUTCDate(ini.getUTCDate() + 1);
+  if (!naProxima) ini.setUTCDate(ini.getUTCDate() + 1);
   const fimExcl = new Date(fim);
-  fimExcl.setUTCDate(fimExcl.getUTCDate() + 1);
+  if (!naProxima) fimExcl.setUTCDate(fimExcl.getUTCDate() + 1);
+  const ultimo = new Date(fimExcl);
+  ultimo.setUTCDate(ultimo.getUTCDate() - 1);
   const venc = vencimentoApos(fim, diaVencimento);
   return {
-    ini: iso(ini), fim: iso(fim), fimExcl: iso(fimExcl),
+    ini: iso(ini), fim: iso(fim), fimExcl: iso(fimExcl), ultimo: iso(ultimo),
     venc: iso(venc), competencia: ym(venc),
-    label: `${dm(ini)} a ${dm(fim)}`,
+    label: `${dm(ini)} a ${dm(ultimo)}`,
     porCiclo: true,
   };
 }
@@ -98,7 +130,7 @@ function cicloMesCalendario(ym0, diaVencimento) {
     ? dataUTC(Y, M0, Math.min(Math.max(parseInt(diaVencimento, 10) || 10, 1), ultimoDia(Y, M0)))
     : fim;
   return {
-    ini: iso(ini), fim: iso(fim), fimExcl: iso(fimExcl),
+    ini: iso(ini), fim: iso(fim), fimExcl: iso(fimExcl), ultimo: iso(fim),
     venc: iso(venc), competencia: ym0,
     label: `${dm(ini)} a ${dm(fim)}`,
     porCiclo: false,
@@ -116,11 +148,12 @@ function competenciaAtual(cartao, hojeStr) {
   // Começa no ciclo que fechou no mês ANTERIOR: quando o vencimento é antes do
   // fechamento (ex.: fecha 24, vence 5), a fatura que vence hoje fechou no mês
   // passado — começar no mês de hoje pularia ela. Avança até venc >= hoje.
+  const op = opcoesDo(cartao);
   for (let i = -1; i < 4; i++) {
-    const c = cicloPorFechamento(Y, (M - 1) + i, cartao.dia_fechamento, cartao.dia_vencimento);
+    const c = cicloPorFechamento(Y, (M - 1) + i, cartao.dia_fechamento, cartao.dia_vencimento, op);
     if (c.venc >= hoje) return c.competencia;
   }
-  return cicloPorFechamento(Y, M - 1, cartao.dia_fechamento, cartao.dia_vencimento).competencia;
+  return cicloPorFechamento(Y, M - 1, cartao.dia_fechamento, cartao.dia_vencimento, op).competencia;
 }
 
 // Resolve o ciclo de um cartão para uma competência ('YYYY-MM' do vencimento).
@@ -129,14 +162,15 @@ function cicloPorCompetencia(cartao, competencia) {
   const comp = /^\d{4}-\d{2}$/.test(competencia || '') ? competencia : hojeSP().slice(0, 7);
   if (!cartao?.dia_fechamento) return cicloMesCalendario(comp, cartao?.dia_vencimento);
   const [Y, M] = comp.split('-').map(Number);
+  const op = opcoesDo(cartao);
   // O ciclo que vence em `comp` fecha no mesmo mês ou no anterior — testa os
   // dois (e vizinhos, por segurança) e devolve o que casa a competência.
   for (const off of [0, -1, 1, -2]) {
-    const c = cicloPorFechamento(Y, (M - 1) + off, cartao.dia_fechamento, cartao.dia_vencimento);
+    const c = cicloPorFechamento(Y, (M - 1) + off, cartao.dia_fechamento, cartao.dia_vencimento, op);
     if (c.competencia === comp) return c;
   }
   // Não deveria acontecer; devolve o do mês pra nunca retornar null.
-  return cicloPorFechamento(Y, M - 1, cartao.dia_fechamento, cartao.dia_vencimento);
+  return cicloPorFechamento(Y, M - 1, cartao.dia_fechamento, cartao.dia_vencimento, op);
 }
 
 // Navega entre faturas (delta em ciclos: -1 = anterior, +1 = próxima).
@@ -148,7 +182,7 @@ function competenciaVizinha(cartao, competencia, delta) {
     return ym(d);
   }
   const [fY, fM] = base.fim.split('-').map(Number);
-  return cicloPorFechamento(fY, (fM - 1) + delta, cartao.dia_fechamento, cartao.dia_vencimento).competencia;
+  return cicloPorFechamento(fY, (fM - 1) + delta, cartao.dia_fechamento, cartao.dia_vencimento, opcoesDo(cartao)).competencia;
 }
 
 /**
@@ -190,6 +224,6 @@ function dataDaFatura(tx) {
 
 module.exports = {
   TZ, hojeSP, ultimoDia, fechamentoDe, vencimentoApos,
-  cicloPorFechamento, cicloMesCalendario,
+  cicloPorFechamento, cicloMesCalendario, diaNaProximaDe,
   competenciaAtual, cicloPorCompetencia, competenciaVizinha, dataDaFatura,
 };

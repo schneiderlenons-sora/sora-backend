@@ -54,7 +54,7 @@ module.exports = async function handleFaturaCartao(data, ctx) {
   const { phone, grupoId } = ctx;
 
   const { data: cartoes } = await supabase.from('wallets')
-    .select('id, nome, tipo, moeda, limite, dia_fechamento, dia_vencimento, saldo, of_conta_id, of_limite_usado')
+    .select('id, nome, tipo, moeda, limite, dia_fechamento, dia_vencimento, fechamento_dia_proxima, saldo, of_conta_id, of_limite_usado')
     .eq('grupo_id', grupoId).eq('tipo', 'Crédito').order('nome');
 
   if (!cartoes?.length) {
@@ -129,7 +129,7 @@ module.exports = async function handleFaturaCartao(data, ctx) {
     .sort((a, b) => String(a.data).localeCompare(String(b.data)))
     .map((t) => `${dia(t.data)} · ${nome(t)} — ${fmtC(valorDe(t))}`);
 
-  const periodo = `${dia(ciclo.ini)} a ${dia(ciclo.fim)}`;
+  const periodo = `${dia(ciclo.ini)} a ${dia(ciclo.ultimo || ciclo.fim)}`;
   let msg = `💳 *Fatura ${cartao.nome}* · ${rotuloComp(comp)}\n`;
   msg += `_Período: ${periodo}_\n\n`;
 
