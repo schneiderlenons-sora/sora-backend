@@ -141,7 +141,11 @@ A *única* exceção é se você criar/entrar num *grupo* (gestão compartilhada
   // ── PLANOS / PAGAMENTO ─────────────────────────────────────────────
   {
     id: 'precos-planos',
-    gatilhos: [/quanto custa/, /qual.{0,10}(preco|valor)/, /\bpreco\b/, /quais (os|sao os)? ?planos/, /\bplanos?\b.{0,15}(valor|preco|quanto)/, /\bmensalidade\b/, /quanto (e|fica|sai)/],
+    // ⚠️ "mensalidade" SOZINHA não é pergunta de preço: "mensalidade da
+    // academia/escola/IA" é o gasto da pessoa. Só casa quando pergunta o valor
+    // ("qual/quanto/valor ... mensalidade") ou fala da Sora/do plano dela
+    // junto. "plano" sozinho NÃO: "mensalidade do plano de saúde" é gasto.
+    gatilhos: [/quanto custa/, /qual.{0,10}(preco|valor)/, /\bpreco\b/, /quais (os|sao os)? ?planos/, /\bplanos?\b.{0,15}(valor|preco|quanto)/, /\b(qual|quanto|valor)\b.{0,20}\bmensalidade\b/, /\bmensalidade\b.{0,25}\b(sora|forsora|assinatura|app|aplicativo|premium|platinum|basico)\b/, /quanto (e|fica|sai)\b/],
     resposta:
 `Temos 3 planos (sem fidelidade, cancela quando quiser):
 

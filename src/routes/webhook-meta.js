@@ -52,9 +52,20 @@ router.get('/diag', async (req, res) => {
     let saida = null, erro = null;
     try { saida = interpretarRapido(String(req.query.frase)); }
     catch (e) { erro = e?.message || String(e); }
+    // Sem ação do leitor, a próxima porta é a RESPOSTA PRONTA (FAQ): se ela
+    // casar, a IA nunca vê a frase. Foi assim que "mensalidade da IA … 107,54"
+    // virou tabela de preços (nov/2026).
+    let faq = null;
+    if (!saida) {
+      try {
+        const resp = require("../services/faq").responderFaq(String(req.query.frase));
+        if (resp) faq = (require("../data/faq").FAQ.find((f) => f.resposta === resp) || {}).id || "?";
+      } catch (e) { erro = erro || e?.message || String(e); }
+    }
     return res.json({
       frase: req.query.frase,
-      acao: saida?.acao ?? null,          // null = cai pra IA
+      acao: saida?.acao ?? null,          // null = cai pra resposta pronta ou IA
+      faq,                                // id da resposta pronta, ou null = vai pra IA
       interpretado: saida,
       erro,
       ms: Date.now() - t0,

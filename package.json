@@ -125,7 +125,8 @@
     "eval:importacao-extrato": "node evals/importacaoExtrato.eval.js",
     "eval:plano-vitalicio": "node evals/planoVitalicio.eval.js",
     "eval:a-receber": "node evals/aReceber.eval.js",
-    "eval:listar-recorrencias": "node evals/listarRecorrencias.eval.js"
+    "eval:listar-recorrencias": "node evals/listarRecorrencias.eval.js",
+    "eval:faq": "node evals/faq.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
