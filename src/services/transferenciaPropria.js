@@ -65,6 +65,41 @@ function paresTransferencia(transacoes, wallets, ehTransferencia, { minimo = MIN
   return pares;
 }
 
+// ── Quais pares a TELA sugere ────────────────────────────────────────────────
+//
+// Relato (Breno, nov/2026): conectou 4 bancos e o Open Finance trouxe 6 meses
+// de histórico. O Bradesco não marca o Pix que ele manda pra si mesmo (a
+// ENTRADA no PicPay/Nubank/Mercado Pago vem marcada), então cada transferência
+// dele contava como gasto — R$ 14.949,84 só em setembro. A tela só olhava 60
+// dias: os meses de trás nunca apareciam pra ele confirmar.
+//
+// Por isso duas janelas:
+//   · últimos 60 dias → QUALQUER par, como sempre;
+//   · de 60 dias a 1 ano → SÓ o MEIO-PAR (uma ponta já marcada, pelo banco ou
+//     pela pessoa). É o sinal forte: o banco já disse que aquele dinheiro veio
+//     de uma conta da própria pessoa. O par sem nenhuma ponta marcada é onde
+//     mora a coincidência medida ("Jogo Wolverine" × "Pix de Letícia") —
+//     esse NÃO ganha alcance.
+// Continua SÓ SUGESTÃO: quem marca é a pessoa. (eval:transferencia-propria)
+const JANELA_QUALQUER_PAR = 60;
+const JANELA_MEIO_PAR = 365;
+
+/**
+ * @param hoje  'AAAA-MM-DD' (dia de São Paulo)
+ * @returns pares a sugerir, do mais recente pro mais antigo
+ */
+function paresParaSugerir(transacoes, wallets, ehTransferencia, { hoje, minimo = MINIMO } = {}) {
+  const hojeN = diaNum(hoje);
+  return paresTransferencia(transacoes, wallets, ehTransferencia, { minimo })
+    .filter(({ saida, entrada }) => {
+      const idade = hojeN - diaNum(saida.data);
+      if (idade > JANELA_MEIO_PAR) return false;
+      if (idade <= JANELA_QUALQUER_PAR) return true;
+      return ehTransferencia(saida) !== ehTransferencia(entrada);   // meio-par
+    })
+    .sort((a, b) => String(b.saida.data).localeCompare(String(a.saida.data)));
+}
+
 /** O par informado (por id) é, pela MESMA régua, uma transferência? */
 function confirmaPar(saida, entrada, wallets, ehTransferencia) {
   if (!saida || !entrada || saida.grupo_id !== entrada.grupo_id) return false;
@@ -73,4 +108,4 @@ function confirmaPar(saida, entrada, wallets, ehTransferencia) {
   return paresTransferencia([saida, entrada], wallets, ehTransferencia).length === 1;
 }
 
-module.exports = { paresTransferencia, confirmaPar, MINIMO };
+module.exports = { paresTransferencia, paresParaSugerir, confirmaPar, MINIMO, JANELA_QUALQUER_PAR, JANELA_MEIO_PAR };

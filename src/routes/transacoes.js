@@ -263,24 +263,27 @@ router.get('/transferencias-sugeridas/:phone', auth, async (req, res) => {
     if (!user?.grupo_ativo) return res.json({ pares: [] });
     const grupoId = user.grupo_ativo;
     const { hojeSP } = require('../services/cicloFatura');
-    const { paresTransferencia, MINIMO } = require('../services/transferenciaPropria');
+    const { paresParaSugerir, MINIMO, JANELA_MEIO_PAR } = require('../services/transferenciaPropria');
     const { ehTransferencia } = require('../services/resumoTransacoes');
-    const d = new Date(`${hojeSP()}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - 60);
+    // Lê 1 ano: até 60 dias vale qualquer par; daí pra trás só o MEIO-PAR (ver
+    // `paresParaSugerir` — relato do Breno, nov/2026).
+    const hoje = hojeSP();
+    const d = new Date(`${hoje}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - JANELA_MEIO_PAR - 1);
     // Leitura estreita: só o que pode virar par (R$ 50+). A ponta JÁ marcada
     // entra (o meio-par é o caso real), e a régua pula o par com as duas marcadas.
     const COLS = 'id, grupo_id, tipo, valor, categoria, observacao, carteira_nome, data, transferencia';
     let { data: txs, error } = await supabase.from('transacoes').select(`${COLS}, ignorar_em`)
       .eq('grupo_id', grupoId).gte('data', d.toISOString().slice(0, 10))
-      .gte('valor', MINIMO).limit(2000);
+      .gte('valor', MINIMO).limit(5000);
     if (error && /ignorar_em/i.test(error.message || '')) {
       ({ data: txs, error } = await supabase.from('transacoes').select(COLS)
         .eq('grupo_id', grupoId).gte('data', d.toISOString().slice(0, 10))
-        .gte('valor', MINIMO).limit(2000));
+        .gte('valor', MINIMO).limit(5000));
     }
     if (error || !txs || !txs.length) return res.json({ pares: [] });
     const { data: wallets } = await supabase.from('wallets').select('grupo_id, nome, tipo').eq('grupo_id', grupoId);
     const enxuto = (t) => ({ id: t.id, valor: t.valor, tipo: t.tipo, observacao: t.observacao, categoria: t.categoria, carteira_nome: t.carteira_nome, data: t.data });
-    const pares = paresTransferencia(txs, wallets || [], ehTransferencia)
+    const pares = paresParaSugerir(txs, wallets || [], ehTransferencia, { hoje })
       .map(({ saida, entrada }) => ({ saida: enxuto(saida), entrada: enxuto(entrada) }));
     res.json({ pares });
   } catch (err) {
@@ -1022,6 +1025,29 @@ router.put('/:id', auth, exigirPermissao('admin', 'escrita'), async (req, res) =
     // Estado ANTES (pra reconciliar o saldo da carteira pela diferença).
     const { data: antes } = await supabase.from('transacoes')
       .select('*').eq('id', req.params.id).eq('grupo_id', req.grupoId).maybeSingle();
+
+    // ── "Transferência entre minhas contas" (relato do Breno, nov/2026) ──────
+    // O banco classifica errado (TED do financiamento como transferência; Pix
+    // pra si mesmo como gasto) e a pessoa não tinha como trocar. Só entra no
+    // patch quando MUDA — editar outra coisa numa linha marcada (inclusive em
+    // cartão) segue exatamente como antes. A regra mora em
+    // services/marcaTransferencia.js (eval:marca-transferencia).
+    // ⚠️ Não mexe em saldo: só vale pra linha do banco, e conta do Open Finance
+    // nunca tem saldo ajustado aqui (o `ajustesDeSaldo` abaixo também pula
+    // quando um dos lados é transferência).
+    const { transferencia } = req.body;
+    if (transferencia !== undefined && antes && transferencia !== (antes.transferencia === true)) {
+      const { data: carteiras } = await supabase.from('wallets').select('nome, tipo').eq('grupo_id', req.grupoId);
+      const chave = (s) => String(s || '').trim().toLowerCase();
+      const carteira = (carteiras || []).find((w) => chave(w.nome) === chave(antes.carteira_nome)) || null;
+      const { validarMarcaTransferencia } = require('../services/marcaTransferencia');
+      const v = validarMarcaTransferencia({
+        antes, carteira, transferencia,
+        categoriaFinal: patch.categoria !== undefined ? patch.categoria : antes.categoria,
+      });
+      if (!v.ok) return res.status(v.status).json({ erro: v.erro });
+      patch.transferencia = transferencia;
+    }
 
     // ⚠️ LINHA CONVERTIDA (conta/cartão fora da moeda base, migration 168): a
     // tela edita o `valor` NA BASE, e o original em `valor_moeda` tem de andar

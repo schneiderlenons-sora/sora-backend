@@ -126,7 +126,9 @@
     "eval:plano-vitalicio": "node evals/planoVitalicio.eval.js",
     "eval:a-receber": "node evals/aReceber.eval.js",
     "eval:listar-recorrencias": "node evals/listarRecorrencias.eval.js",
-    "eval:faq": "node evals/faq.eval.js"
+    "eval:faq": "node evals/faq.eval.js",
+    "eval:marca-transferencia": "node evals/marcaTransferencia.eval.js",
+    "eval:transferencia-propria": "node evals/transferenciaPropria.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
