@@ -15,7 +15,7 @@
 // Rodar: npm run eval:widget-chave
 // =============================================================================
 process.env.WIDGETS_ATIVOS = '';
-process.env.WIDGETS_ABERTOS = '';
+process.env.WIDGETS_ABERTOS = '0';
 const chave = require('../src/services/widgetChave');
 const { acessoWidget } = require('../src/config/widgets');
 
@@ -112,12 +112,12 @@ function bancoFalso() {
   console.log('── 6. quem pode usar ──');
   {
     const assinante = { email: 'a@x.com', plano: 'premium', assinatura_stripe: true };
-    certo(acessoWidget(assinante).motivo === 'teste', 'teste FECHADO por padrão');
+    certo(acessoWidget(assinante).motivo === 'teste', 'WIDGETS_ABERTOS=0 volta ao teste fechado');
     for (const e of ['schneider.lenon.s@gmail.com', 'COMERCIALSORA@gmail.com']) {
       certo(acessoWidget({ email: e, plano: 'premium', vitalicio: true }).ok, `lista de teste entra com qualquer plano (${e})`);
     }
-    process.env.WIDGETS_ABERTOS = '1';
-    certo(acessoWidget(assinante).ok, 'premium com assinatura do Stripe entra');
+    process.env.WIDGETS_ABERTOS = '';
+    certo(acessoWidget(assinante).ok, 'ABERTO por padrão (sem a variável): premium com assinatura do Stripe entra');
     certo(acessoWidget({ ...assinante, plano: 'basico' }).ok, 'básico com assinatura entra');
     certo(acessoWidget({ ...assinante, plano: 'platinum' }).ok, 'platinum entra');
     certo(acessoWidget({ ...assinante, plano: 'black' }).ok, 'black (= premium) entra');
@@ -133,7 +133,7 @@ function bancoFalso() {
     process.env.WIDGETS_ATIVOS = '0';
     certo(acessoWidget({ email: 'comercialsora@gmail.com' }).motivo === 'desligado', 'interruptor geral desliga até a lista de teste');
     process.env.WIDGETS_ATIVOS = '';
-    process.env.WIDGETS_ABERTOS = '';
+    process.env.WIDGETS_ABERTOS = '0';
   }
 
   console.log(`\n${ok} verificações · ${falhas ? `${falhas} FALHAS` : 'todas ok'}`);

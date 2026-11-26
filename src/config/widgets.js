@@ -5,9 +5,11 @@
 // (Stripe, Play ou Apple). Vitalício, Kit, grátis e inativo ficam de fora — o
 // widget mostra "Fora do seu plano" (no iPhone, sem oferta de compra nenhuma).
 //
-// TESTE FECHADO até o dono abrir: `WIDGETS_ABERTOS=1` no Render libera pra todo
-// assinante. As contas da lista entram SEMPRE, com qualquer plano — a conta de
-// testes (comercialsora) é vitalícia e ficaria de fora.
+// ABERTO pra todo assinante desde 25/11/2026 (decisão do dono: os clientes
+// testam). Voltar ao teste fechado: `WIDGETS_ABERTOS=0` no Render + `WIDGETS_ABERTO
+// = false` em sora-frontend/lib/widgets.ts. As contas da lista entram SEMPRE, com
+// qualquer plano — a conta de testes (comercialsora) é vitalícia e é a que a
+// revisão da Apple usa.
 // Desligar tudo na hora (sem deploy): `WIDGETS_ATIVOS=0`.
 // ─────────────────────────────────────────────────────────────────────────────
 const { normalizarPlano } = require('./planos');
@@ -21,7 +23,7 @@ const EMAILS_TESTE = [
 const PLANOS_ASSINATURA = ['basico', 'premium', 'platinum'];
 
 const ativos = () => process.env.WIDGETS_ATIVOS !== '0';
-const abertos = () => process.env.WIDGETS_ABERTOS === '1';
+const abertos = () => process.env.WIDGETS_ABERTOS !== '0';
 
 /** Validade dos códigos de conexão (uso único). */
 const CODIGO_TTL_S = 5 * 60;
