@@ -175,16 +175,39 @@ function crud(tabela, campos, filtroPai) {
 
 // ─── ARQUIVOS (bucket privado, URLs assinadas) ───────────────────────
 const BUCKET = 'dados-arquivos';
+// Cota de 500 MB por pessoa (decisão do dono, nov/2026) — services/espacoDrive.js.
+const espaco = require('../services/espacoDrive');
 
 // Gera URL assinada de UPLOAD (o front envia o arquivo direto pro Storage).
+// ⚠️ A COTA É CONFERIDA AQUI: o arquivo vai direto pro storage depois. O
+// tamanho vem do front (o antigo não manda: conta 0, e a pessoa que já está
+// no limite é barrada do mesmo jeito). Mentir o tamanho dá no máximo um
+// arquivo a mais (o bucket limita cada um a 10 MB) — o uso é medido no storage.
 router.post('/upload-url', auth, requireGrow, async (req, res) => {
   try {
+    const uso = await espaco.usoDoDrive(supabase, req.userRow.id);
+    if (!uso) console.warn('[drive] não consegui medir o espaço de', req.userRow.id, '— deixei subir');
+    const dec = espaco.decidirUpload(uso ? uso.bytes : null, req.body.tamanho);
+    if (!dec.ok) {
+      return res.status(dec.motivo === 'cheio' ? 413 : 400).json({
+        erro: dec.erro, codigo: dec.motivo === 'cheio' ? 'drive_cheio' : 'arquivo_grande',
+        usado: uso ? uso.bytes : null, limite: espaco.COTA_BYTES,
+      });
+    }
     const nome = String(req.body.filename || 'arquivo').replace(/[^\w.\- ]+/g, '_').slice(0, 90);
     const path = `${req.userRow.id}/${crypto.randomUUID()}-${nome}`;
     const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
     if (error) return res.status(503).json({ erro: `Storage indisponível: rode a migration 042. (${error.message})` });
     res.json({ path, token: data.token, nome });
   } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Quanto a pessoa usa do Drive (a barra "X de 500 MB" na tela).
+router.get('/espaco/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    const uso = await espaco.usoDoDrive(supabase, req.userRow.id);
+    res.json({ usado: uso ? uso.bytes : null, arquivos: uso ? uso.arquivos : null, limite: espaco.COTA_BYTES });
+  } catch (e) { res.json({ usado: null, arquivos: null, limite: espaco.COTA_BYTES }); }
 });
 
 // Gera URL assinada de DOWNLOAD (válida 2 min). Só do próprio usuário.
@@ -217,9 +240,61 @@ router.delete('/dados_itens/:id', auth, requireGrow, async (req, res) => {
   try {
     const { data: item } = await supabase.from('dados_itens')
       .select('arquivo_url').eq('id', req.params.id).eq('user_id', req.userRow.id).maybeSingle();
-    if (item?.arquivo_url) { try { await supabase.storage.from(BUCKET).remove([item.arquivo_url]); } catch {} }
+    // ⚠️ Só apaga arquivo da PASTA DA PESSOA: o caminho vem do item, que um
+    // dia veio do corpo de uma requisição.
+    if (item?.arquivo_url) await espaco.apagarArquivos(supabase, req.userRow.id, [item.arquivo_url]);
     await supabase.from('dados_itens').delete().eq('id', req.params.id).eq('user_id', req.userRow.id);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// ⚠️ APAGAR PASTA/SUBPASTA LEVA OS ARQUIVOS JUNTO. O banco apaga os itens em
+// cascata, mas o storage não sabe disso: os arquivos ficavam lá, ocupando
+// espaço que ninguém conseguia liberar (com a cota, comeriam o espaço da
+// pessoa). Ordem: lê os caminhos → apaga no banco → apaga no storage. Apagar o
+// arquivo antes e o banco falhar deixaria item apontando pro nada.
+for (const [tabela, chave] of [['dados_quadros', 'quadroId'], ['dados_secoes', 'secaoId']]) {
+  router.delete(`/${tabela}/:id`, auth, requireGrow, async (req, res) => {
+    try {
+      const caminhos = await espaco.arquivosDe(supabase, req.userRow.id, { [chave]: req.params.id });
+      const { error } = await supabase.from(tabela).delete().eq('id', req.params.id).eq('user_id', req.userRow.id);
+      if (error) return res.status(500).json({ erro: 'Não consegui apagar agora. Tente de novo.' });
+      if (caminhos && caminhos.length) await espaco.apagarArquivos(supabase, req.userRow.id, caminhos);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+  });
+}
+
+// Item com arquivo: o caminho TEM de ser da pasta da pessoa (o download já
+// conferia; criar/editar não). E trocar o arquivo de um item apaga o antigo.
+const CAMPOS_ITEM = ['secao_id', 'tipo', 'titulo', 'valor', 'arquivo_url', 'arquivo_nome', 'ordem'];
+const arquivoAlheio = (req) => req.body.arquivo_url && !espaco.caminhoDaPessoa(req.userRow.id, req.body.arquivo_url);
+router.post('/dados_itens', auth, requireGrow, async (req, res) => {
+  try {
+    if (arquivoAlheio(req)) return res.status(400).json({ erro: 'Arquivo inválido.' });
+    const ins = { user_id: req.userRow.id };
+    for (const k of CAMPOS_ITEM) if (k in req.body) ins[k] = req.body[k];
+    const { data, error } = await supabase.from('dados_itens').insert(ins).select().single();
+    if (error) return res.status(500).json({ erro: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+router.put('/dados_itens/:id', auth, requireGrow, async (req, res) => {
+  try {
+    if (arquivoAlheio(req)) return res.status(400).json({ erro: 'Arquivo inválido.' });
+    const patch = {};
+    for (const k of CAMPOS_ITEM) if (k in req.body) patch[k] = req.body[k];
+    let antigo = null;
+    if ('arquivo_url' in patch) {
+      const { data: atual } = await supabase.from('dados_itens').select('arquivo_url')
+        .eq('id', req.params.id).eq('user_id', req.userRow.id).maybeSingle();
+      antigo = atual && atual.arquivo_url !== patch.arquivo_url ? atual.arquivo_url : null;
+    }
+    const { data, error } = await supabase.from('dados_itens')
+      .update(patch).eq('id', req.params.id).eq('user_id', req.userRow.id).select().single();
+    if (error || !data) return res.status(404).json({ erro: 'Não encontrado' });
+    if (antigo) await espaco.apagarArquivos(supabase, req.userRow.id, [antigo]);
+    res.json(data);
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 

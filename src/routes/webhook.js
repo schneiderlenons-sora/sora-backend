@@ -400,8 +400,10 @@ async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInf
       if (!rDrive.ok) {
         console.error(`📁 Drive falhou [${phone}]:`, rDrive.erro, rDrive.detalhe || '');
         await enviarTexto(phone, rDrive.erro === 'grande'
-          ? '😕 Esse arquivo é grande demais (máx. 20 MB).'
-          : '😕 Não consegui guardar esse arquivo agora. Tenta de novo em instantes.');
+          ? '😕 Esse arquivo é grande demais (máx. 10 MB).'
+          : rDrive.erro === 'cheio'
+            ? `😕 ${rDrive.mensagem} É só abrir o Drive no painel: https://www.forsora.com/grow/dados`
+            : '😕 Não consegui guardar esse arquivo agora. Tenta de novo em instantes.');
         return;
       }
       await enviarBotaoLink(phone, {

@@ -13,7 +13,10 @@ const supabase = require('../db/supabase');
 
 const BUCKET      = 'dados-arquivos';
 const QUADRO_ROOT = 'Recebidos';
-const MAX_BYTES   = 20 * 1024 * 1024; // 20 MB
+// ⚠️ 10 MB, igual ao limite do bucket (migration 042). Era 20: arquivo entre
+// 10 e 20 MB baixava e o storage recusava ("não consegui guardar").
+const espaco = require('./espacoDrive');
+const MAX_BYTES   = espaco.MAX_ARQUIVO;
 
 // palavra-chave → { pasta, ícone } (sem IA)
 const MAPA_PASTA = [
@@ -83,6 +86,11 @@ async function acharOuCriarSecao(userId, quadroId, nome, icone) {
 async function salvarArquivoDrive({ userId, fileUrl, fileName, mimeType, caption }) {
   if (!userId || !fileUrl) return { ok: false, erro: 'sem_url' };
 
+  // 0) cota de 500 MB: quem já está no limite nem baixa (services/espacoDrive.js)
+  const uso = await espaco.usoDoDrive(supabase, userId);
+  const cheio = espaco.decidirUpload(uso ? uso.bytes : null, 0);
+  if (!cheio.ok) return { ok: false, erro: 'cheio', mensagem: cheio.erro };
+
   // 1) baixa — 2 tentativas: pública e, se falhar, com o client-token do Z-API
   // (algumas URLs de mídia do Z-API exigem o header de autenticação).
   const baixar = (hdr) => axios.get(fileUrl, {
@@ -96,6 +104,8 @@ async function salvarArquivoDrive({ userId, fileUrl, fileName, mimeType, caption
   }
   if (!buffer) return { ok: false, erro: 'download', detalhe: `${erroDl?.response?.status || ''} ${erroDl?.message || ''}`.trim() };
   if (buffer.length > MAX_BYTES) return { ok: false, erro: 'grande' };
+  const cabe = espaco.decidirUpload(uso ? uso.bytes : null, buffer.length);
+  if (!cabe.ok) return { ok: false, erro: cabe.motivo, mensagem: cabe.erro };
 
   // 2) resolve a PASTA (= quadro de topo): legenda explícita > palavra-chave >
   // "Recebidos". Se bater no mapa, usa o nome canônico ("curriculos" → "Currículos").

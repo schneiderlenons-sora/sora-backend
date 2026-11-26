@@ -134,7 +134,8 @@
     "eval:widget-resumo": "node evals/widgetResumo.eval.js",
     "eval:importar-desde": "node evals/importarDesde.eval.js",
     "eval:notas-painel": "node evals/notasPainel.eval.js",
-    "eval:compromisso-periodo": "node evals/compromissoPeriodo.eval.js"
+    "eval:compromisso-periodo": "node evals/compromissoPeriodo.eval.js",
+    "eval:espaco-drive": "node evals/espacoDrive.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
