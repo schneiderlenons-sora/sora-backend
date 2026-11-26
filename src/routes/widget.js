@@ -101,11 +101,18 @@ router.get('/resumo', async (req, res) => {
   }
 });
 
+// Lista os aparelhos E diz se a conta pode usar (a tela explica o porquê em vez
+// de mostrar um botão que daria 403).
 router.get('/aparelhos', auth, async (req, res) => {
+  let acesso = { ok: false, motivo: 'plano' };
   try {
-    res.json({ aparelhos: await chave.listar(supabase, req.authUser.id) });
+    const { data: u } = await supabase.from('users')
+      .select('email, plano, vitalicio, stripe_subscription_id, plano_fonte, plano_valido_ate')
+      .eq('id', req.authUser.id).maybeSingle();
+    acesso = acessoWidget(u && { ...u, assinatura_stripe: !!u.stripe_subscription_id });
+    res.json({ acesso, aparelhos: await chave.listar(supabase, req.authUser.id) });
   } catch (err) {
-    if (faltaMigration(err)) return res.json({ aparelhos: [], liberando: true });
+    if (faltaMigration(err)) return res.json({ acesso, aparelhos: [], liberando: true });
     res.status(500).json({ erro: 'Não consegui carregar os aparelhos.' });
   }
 });
