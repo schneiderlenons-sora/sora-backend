@@ -553,8 +553,13 @@ async function capturaRapida(mensagem, ctx) {
     const { error } = await supabase.from('notas').insert({
       grupo_id: grupoId, user_id: user.id, texto, titulo, origem: ctx.origem === 'audio' ? 'audio' : 'texto',
     });
-    if (error) { await enviarTexto(phone, '😕 Não consegui salvar a nota agora (rode a migration 063). Tenta de novo em instantes.'); return true; }
-    await enviarTexto(phone, `📝 *Nota salva!*\n\n_${titulo}_\n\nPra achar depois: *o que anotei sobre ...*`);
+    if (error) {
+      // Detalhe técnico só no log: o cliente não precisa ler "migration".
+      console.warn('[grow/nota] salvar falhou:', error.message);
+      await enviarTexto(phone, '😕 Não consegui salvar a nota agora. Tenta de novo em instantes.');
+      return true;
+    }
+    await enviarTexto(phone, `📝 *Nota salva!*\n\n_${titulo}_\n\nPra achar depois: *o que anotei sobre ...* — ou no painel, em *Drive → Notas*.`);
     return true;
   }
 
