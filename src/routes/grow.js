@@ -896,14 +896,26 @@ router.post('/receitas/:id/cozinhar', auth, requirePremiumGrow, async (req, res)
 // ─── AGENDA / COMPROMISSOS ───────────────────────────────────────────
 const CATS_COMP = ['pessoal', 'trabalho', 'familia', 'saude', 'financas', 'estudos', 'outro'];
 
+// Compromisso de MAIS DE UM DIA (migration 204): regra em
+// services/compromissoPeriodo.js. `data` segue sendo o início; `data_fim`
+// nulo = um dia só. Sem a 204, marcar "até" responde 503 sem jargão e o resto
+// funciona como antes.
+const periodoComp = require('../services/compromissoPeriodo');
+const faltaColunaFim = (e) => /data_fim/i.test(String((e && e.message) || ''));
+const MSG_FIM_NAO_LIBERADO = 'Evento de mais de um dia ainda está sendo liberado. Por enquanto, marque um dia só.';
+
 router.get('/compromissos/:phone', auth, requireAgenda, async (req, res) => {
   try {
     let q = supabase.from('compromissos')
       .select('*').eq('user_id', req.userRow.id);
-    if (req.query.de)  q = q.gte('data', req.query.de);
+    // ⚠️ Busca pelo INÍCIO desde antes da janela e filtra aqui: evento que
+    // começou antes de `de` e ainda acontece dentro dela tem de vir. (Filtrar
+    // por `data_fim` na consulta quebraria tudo antes da migration 204.)
+    if (req.query.de)  q = q.gte('data', periodoComp.inicioDaBusca(req.query.de));
     if (req.query.ate) q = q.lte('data', req.query.ate);
     const { data } = await q.order('data', { ascending: true }).order('hora', { ascending: true, nullsFirst: true });
-    res.json({ itens: data || [] });
+    const de = req.query.de || '0000-01-01', ate = req.query.ate || '9999-12-31';
+    res.json({ itens: (data || []).filter((c) => periodoComp.cruzaIntervalo(c, de, ate)) });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
@@ -912,14 +924,21 @@ router.post('/compromissos', auth, requireAgenda, async (req, res) => {
     const { titulo, descricao, data, hora, local, categoria, cor, lembrete_ativo, lembrete_antecedencia } = req.body;
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Titulo obrigatorio' });
     if (!data)           return res.status(400).json({ erro: 'Data obrigatoria' });
-    const { data: novo, error } = await supabase.from('compromissos').insert({
+    const per = periodoComp.validarPeriodo(data, req.body.data_fim);
+    if (!per.ok) return res.status(400).json({ erro: per.erro });
+    const linha = {
       grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, titulo: titulo.trim(),
       descricao: descricao || null, data, hora: hora || null, local: local || null,
       categoria: CATS_COMP.includes(categoria) ? categoria : 'pessoal',
       cor: cor || '#7c3aed',
       lembrete_ativo: !!lembrete_ativo,
       lembrete_antecedencia: Number.isInteger(lembrete_antecedencia) ? lembrete_antecedencia : 60,
-    }).select().single();
+    };
+    // Só manda a coluna nova quando há fim: evento de um dia grava igual a antes
+    // (e funciona mesmo sem a migration 204).
+    if (per.dataFim) linha.data_fim = per.dataFim;
+    const { data: novo, error } = await supabase.from('compromissos').insert(linha).select().single();
+    if (error && per.dataFim && faltaColunaFim(error)) return res.status(503).json({ erro: MSG_FIM_NAO_LIBERADO });
     if (error) return res.status(500).json({ erro: error.message });
 
     // Espelha no Planejamento Semanal como bloco PONTUAL (só nesse dia).
@@ -936,13 +955,36 @@ router.put('/compromissos/:id', auth, requireAgenda, async (req, res) => {
     const patch = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
     if ('categoria' in patch && !CATS_COMP.includes(patch.categoria)) patch.categoria = 'pessoal';
+
+    // Período (início/fim). Mudar só o início MANTÉM a duração; o fim é sempre
+    // conferido contra o início que vai ficar valendo.
+    if ('data' in req.body || 'data_fim' in req.body) {
+      const { data: atual } = await supabase.from('compromissos').select('*')
+        .eq('id', req.params.id).eq('user_id', req.userRow.id).maybeSingle();
+      if (!atual) return res.status(404).json({ erro: 'Compromisso nao encontrado' });
+      const inicio = 'data' in req.body ? req.body.data : atual.data;
+      const fim = 'data_fim' in req.body
+        ? req.body.data_fim
+        : ('data' in req.body ? periodoComp.fimAoMoverInicio(atual, inicio) : (atual.data_fim ?? null));
+      const per = periodoComp.validarPeriodo(inicio, fim);
+      if (!per.ok) return res.status(400).json({ erro: per.erro });
+      if ('data_fim' in req.body || atual.data_fim) patch.data_fim = per.dataFim;
+    }
+
     // Mexeu em data/hora/lembrete → reabilita o disparo do aviso
     if ('data' in patch || 'hora' in patch || 'lembrete_ativo' in patch || 'lembrete_antecedencia' in patch) {
       patch.lembrete_enviado = false;
     }
-    const { data, error } = await supabase.from('compromissos')
+    const gravar = () => supabase.from('compromissos')
       .update(patch).eq('id', req.params.id).eq('user_id', req.userRow.id)
       .select().single();
+    let { data, error } = await gravar();
+    // Sem a migration 204: "um dia só" grava como sempre; "até" não dá.
+    if (error && 'data_fim' in patch && faltaColunaFim(error)) {
+      if (patch.data_fim) return res.status(503).json({ erro: MSG_FIM_NAO_LIBERADO });
+      delete patch.data_fim;
+      ({ data, error } = await gravar());
+    }
     if (error || !data) return res.status(404).json({ erro: 'Compromisso nao encontrado' });
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }

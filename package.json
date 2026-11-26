@@ -133,7 +133,8 @@
     "eval:widget-chave": "node evals/widgetChave.eval.js",
     "eval:widget-resumo": "node evals/widgetResumo.eval.js",
     "eval:importar-desde": "node evals/importarDesde.eval.js",
-    "eval:notas-painel": "node evals/notasPainel.eval.js"
+    "eval:notas-painel": "node evals/notasPainel.eval.js",
+    "eval:compromisso-periodo": "node evals/compromissoPeriodo.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

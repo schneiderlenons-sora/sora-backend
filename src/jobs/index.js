@@ -1517,6 +1517,8 @@ cron.schedule('* * * * *', async () => {
 // ─────────────────────────────────────────────────────────────────
 const { montarFeed } = require('../services/agendaFeed');
 const { growShareCfg } = require('../services/growShare');
+// Compromisso de vários dias: "Dia de campo (dia 2 de 2)" — services/compromissoPeriodo.js.
+const sufixoDoPeriodo = (e) => (e.periodo ? require('../services/compromissoPeriodo').sufixoDoDia(e.periodo.dia, e.periodo.total) : '');
 const EMOJI_AGENDA = { compromisso: '📌', consulta: '🩺', recorrencia: '💰', divida: '💳', fatura: '💳', fechamento: '🧾', manutencao: '🔧' };
 
 cron.schedule('*/15 * * * *', async () => {
@@ -1549,7 +1551,7 @@ cron.schedule('*/15 * * * *', async () => {
     const linhas = eventos.map(e => {
       const h = e.hora ? `*${e.hora}*` : '•';
       const val = e.valor != null ? ` (${fmtBrief(e.valor)})` : '';
-      return `${EMOJI_AGENDA[e.source] || '•'} ${h} ${e.titulo}${val}`;
+      return `${EMOJI_AGENDA[e.source] || '•'} ${h} ${e.titulo}${sufixoDoPeriodo(e)}${val}`;
     });
     const dataFmt = new Date(sp.dataStr + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
     const txt =
@@ -1568,7 +1570,7 @@ cron.schedule('*/15 * * * *', async () => {
     const resumo = oneLine(eventos.map((e) => {
       const h = e.hora ? `${e.hora} ` : '';
       const val = e.valor != null ? ` (${fmtBrief(e.valor)})` : '';
-      return `${EMOJI_AGENDA[e.source] || '•'} ${h}${e.titulo}${val}`;
+      return `${EMOJI_AGENDA[e.source] || '•'} ${h}${e.titulo}${sufixoDoPeriodo(e)}${val}`;
     }).join('  ·  ')).slice(0, 900);
     // O BRIEFING É DO LOKI — ele é o dono da agenda (compromissos, hábitos,
     // manutenções já são a voz dele). `falar()` veste o texto rico e o `core`
@@ -1583,7 +1585,7 @@ cron.schedule('*/15 * * * *', async () => {
     const itensLista = eventos.map((e) => {
       const h = e.hora ? `${e.hora} ` : '';
       const val = e.valor != null ? ` (${fmtBrief(e.valor)})` : '';
-      return `${EMOJI_AGENDA[e.source] || '•'} ${h}${e.titulo}${val}`;
+      return `${EMOJI_AGENDA[e.source] || '•'} ${h}${e.titulo}${sufixoDoPeriodo(e)}${val}`;
     });
     await lembrete(u.phone, txt, resumo, {
       id: 'loki', aviso: 'briefing', seed: u.id,

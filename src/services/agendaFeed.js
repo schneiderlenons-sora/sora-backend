@@ -51,15 +51,30 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
   const fontes = [];
 
   // 1. Compromissos nativos (editáveis) — pessoais
+  //
+  //    ⚠️ DE MAIS DE UM DIA (migration 204): o evento aparece em CADA dia da
+  //    janela, com `periodo` ("dia 2 de 3"). Busca pelo INÍCIO desde antes da
+  //    janela (`inicioDaBusca`) — evento que começou ontem e termina amanhã
+  //    tem de aparecer hoje. Nunca filtra por `data_fim` na consulta (quebraria
+  //    a agenda de todo mundo antes da migration). Evento de um dia sai
+  //    EXATAMENTE como antes (mesmo id, sem `periodo`).
   fontes.push(async () => { const eventos = []; try {
+    const { diasNoIntervalo, inicioDaBusca, ultimoDia } = require('./compromissoPeriodo');
     let q = supabase.from('compromissos').select('*')
-      .gte('data', deStr).lte('data', ateStr);
+      .gte('data', inicioDaBusca(deStr)).lte('data', ateStr);
     q = userId ? q.eq('user_id', userId) : q.eq('grupo_id', grupoId);
     const { data } = await q;
-    for (const c of data || []) eventos.push({
-      id: `comp-${c.id}`, source: 'compromisso', titulo: c.titulo, data: c.data, hora: c.hora || null,
-      cor: c.cor || '#7c3aed', local: c.local || null, deeplink: '/grow/agenda', editavel: true, raw: c,
-    });
+    for (const c of data || []) {
+      for (const d of diasNoIntervalo(c, deStr, ateStr)) {
+        const varios = d.total > 1;
+        eventos.push({
+          id: varios ? `comp-${c.id}-${d.data}` : `comp-${c.id}`, source: 'compromisso', titulo: c.titulo,
+          data: varios ? d.data : c.data, hora: c.hora || null,
+          cor: c.cor || '#7c3aed', local: c.local || null, deeplink: '/grow/agenda', editavel: true, raw: c,
+          ...(varios ? { periodo: { dia: d.dia, total: d.total, inicio: String(c.data).slice(0, 10), fim: ultimoDia(c) } } : {}),
+        });
+      }
+    }
   } catch {} return eventos; });
 
   // 2. Consultas + retornos (Saúde)

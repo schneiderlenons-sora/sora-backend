@@ -58,6 +58,12 @@ const MES_PT = {
   julho: 6, agosto: 7, setembro: 8, outubro: 9, novembro: 10, dezembro: 11,
 };
 
+// Compromisso de MAIS DE UM DIA ("de 27 a 28/11") — regra em services/compromissoPeriodo.js.
+const {
+  lerPeriodoNaFrase, inicioDaBusca: inicioDaBuscaComp, cruzaIntervalo: cruzaIntervaloComp,
+  diasNoIntervalo: diasNoIntervaloComp, ultimoDia: ultimoDiaComp, dataCurta: dataCurtaComp,
+} = require('../services/compromissoPeriodo');
+
 function parseDataPt(t) {
   const txt = ' ' + t.toLowerCase() + ' ';
   let m;
@@ -153,6 +159,16 @@ const RE_DATA_EXPLICITA = /^\d{1,2}\/\d{1,2}|^dia\s+\d{1,2}/i;
 
 function preservarDataOriginal(mensagem, cmd) {
   if (!cmd) return cmd;
+  // Período ("de 27 a 28/11"): vence o que a IA devolveu, pelo mesmo motivo da
+  // data explícita abaixo — e a IA costuma resumir o período num dia só.
+  const perOrig = lerPeriodoNaFrase(String(mensagem || ''));
+  if (perOrig) {
+    const perCmd = lerPeriodoNaFrase(cmd);
+    if (perCmd && perCmd.inicio === perOrig.inicio && perCmd.fim === perOrig.fim) return cmd;
+    const dtCmd = perCmd || parseDataPt(cmd.toLowerCase());
+    const semData = dtCmd ? cmd.replace(new RegExp(escaparRe(dtCmd.matched), 'i'), ' ') : cmd;
+    return `${semData.replace(/\s+/g, ' ').trim()} ${perOrig.matched}`;
+  }
   const dtOrig = parseDataPt(String(mensagem || '').toLowerCase());
   if (!dtOrig || !RE_DATA_EXPLICITA.test(dtOrig.matched)) return cmd;
 
@@ -982,10 +998,23 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
   if (periodo) {
     const soHoje = periodo.dias === 0;
     const { de: deStr, ate: ateStr } = janelaAgenda(periodo.dias);
-    const { data: comps } = await supabase.from('compromissos')
-      .select('titulo, data, hora, local').eq('user_id', user.id)
-      .gte('data', deStr).lte('data', ateStr)
+    // `*` (e não as 4 colunas de antes) pra trazer o `data_fim` quando a
+    // migration 204 já rodou, sem quebrar quando ainda não rodou.
+    const { data: brutos } = await supabase.from('compromissos')
+      .select('*').eq('user_id', user.id)
+      .gte('data', inicioDaBuscaComp(deStr)).lte('data', ateStr)
       .order('data', { ascending: true }).order('hora', { ascending: true, nullsFirst: true });
+    const comps = (brutos || [])
+      .filter((c) => cruzaIntervaloComp(c, deStr, ateStr))
+      .map((c) => {
+        const [primeiro] = diasNoIntervaloComp(c, deStr, ateStr);
+        if (!primeiro || primeiro.total === 1) return c;
+        const ate = dataCurtaComp(ultimoDiaComp(c));
+        const quando = primeiro.dia === 1 ? ` (até ${ate})` : ` (dia ${primeiro.dia} de ${primeiro.total}, até ${ate})`;
+        return { ...c, data: primeiro.data, titulo: `${c.titulo}${quando}` };
+      })
+      .sort((a, b) => String(a.data).localeCompare(String(b.data))
+        || (a.hora ? 1 : 0) - (b.hora ? 1 : 0) || String(a.hora || '').localeCompare(String(b.hora || '')));
     if (!comps?.length) {
       await enviarTexto(phone, soHoje
         ? '📅 Você não tem compromissos hoje. Aproveita! 😎'
@@ -1053,7 +1082,10 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     // antes" seria confundido com o horário do evento.
     const ant = parseAntecedenciaPt(resto);
     const base = ant?.matched ? resto.replace(ant.matched, ' ') : resto;
-    const dt = parseDataPt(base);
+    // Período primeiro ("de 27 a 28/11"): sem isso o parser de um dia pegaria
+    // só o "28/11" e o "de 27 a" ficaria no título.
+    const per = lerPeriodoNaFrase(base);
+    const dt = per ? { iso: per.inicio, matched: per.matched } : parseDataPt(base);
     const hr = parseHoraPt(dt?.matched ? base.replace(dt.matched, ' ') : base);
     if (!dt && !hr) {
       await enviarTexto(phone, '📅 Pra marcar, me diz *o quê* e *quando*.\n\nEx.: *marca dentista terça 15h* · *agendar reunião amanhã 9h me avisa 1 dia antes*');
@@ -1066,11 +1098,21 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
     const titulo = tituloCompromisso(base, dt, hr, [mensagem, opts.original]);
     const hora = hr ? hr.hora : null;
     const antecedencia = ant ? ant.minutos : (hora ? 60 : 0);
-    const { data: novoComp, error } = await supabase.from('compromissos').insert({
+    const linhaComp = {
       grupo_id: grupoId, user_id: user.id, titulo, data: dataISO, hora,
       categoria: 'pessoal', cor: '#7c3aed',
       lembrete_ativo: true, lembrete_antecedencia: antecedencia,
-    }).select().single();
+      ...(per ? { data_fim: per.fim } : {}),
+    };
+    let { data: novoComp, error } = await supabase.from('compromissos').insert(linhaComp).select().single();
+    // Sem a migration 204: marca o 1º dia e diz isso (melhor que não marcar).
+    let soPrimeiroDia = false;
+    if (error && per && /data_fim/i.test(String(error.message || ''))) {
+      delete linhaComp.data_fim;
+      ({ data: novoComp, error } = await supabase.from('compromissos').insert(linhaComp).select().single());
+      soPrimeiroDia = !error;
+    }
+    const periodoSalvo = per && !soPrimeiroDia;
 
     // Também marca no Planejamento Semanal — como bloco PONTUAL (só nesse dia),
     // sem entrar no template que se repete toda semana.
@@ -1087,10 +1129,18 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
       return;
     }
     const dataFmt = new Date(dataISO + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+    // Vários dias: "sex, 27/11 a sáb, 28/11 (dia todo)" e o aviso vale pro 1º dia.
+    const quandoFmt = periodoSalvo
+      ? `${dataCurtaComp(dataISO)} a ${dataCurtaComp(per.fim)}${hora ? `, às ${hora}` : ' (dia todo)'}`
+      : `${dataFmt}${hora ? ` às ${hora}` : ' (dia todo)'}`;
+    const avisoPeriodo = periodoSalvo ? ' (do 1º dia)' : '';
+    const notaSoPrimeiro = soPrimeiroDia
+      ? `⚠️ Por enquanto marquei só o 1º dia: evento de vários dias ainda está sendo liberado.\n\n`
+      : '';
     await enviarBotaoLink(phone, {
       message:
-        `📅 *Marquei!*\n\n*${titulo}*\n🗓️ ${dataFmt}${hora ? ` às ${hora}` : ' (dia todo)'}\n` +
-        `🔔 ${fmtAntecedencia(ant ? ant.minutos : null, !!hora)}\n\n` +
+        `📅 *Marquei!*\n\n*${titulo}*\n🗓️ ${quandoFmt}\n` +
+        `🔔 ${fmtAntecedencia(ant ? ant.minutos : null, !!hora)}${avisoPeriodo}\n\n` + notaSoPrimeiro +
         `_Quer ser avisado em outro momento? É só me dizer aqui, ex.: *me lembra 1 dia antes* ou *2 horas antes*._`,
       label: 'Ver agenda',
       url: `${APP_URL_GROW}/grow/agenda`,
