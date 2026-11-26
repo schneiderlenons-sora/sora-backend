@@ -44,6 +44,7 @@ const { salvarFaturas } = require('./faturasBanco');
 const { planejarDedupReprocesso } = require('./dedupReprocesso');
 const { nomeDaContaOf, conexaoEmpresarial } = require('./nomeContaOf');
 const { espelharDoConsentimento } = require('./espelhoContaEmpresa');
+const { filtrarPorCorte } = require('./importarDesde');
 
 const PROVIDER = 'polp-celcoin';
 const idCurto = () => Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -2711,8 +2712,12 @@ async function reconciliarReprocesso(grupoId, walletNome, normalizadas) {
 // moeda base do grupo (migration 168) — o lançamento é gravado convertido, com o
 // valor original ao lado, igual à conta em moeda estrangeira lançada à mão. Sem
 // ele (todo grupo em real, com conta em real), a linha sai idêntica à de antes.
-async function inserirTransacoes(grupoId, userId, walletNome, txs, cambio = null) {
-  const validas = txs.filter(Boolean);
+// `desde` (opcional): a data de corte da conexão (migration 202, "trazer
+// movimentações a partir de"). Linha de dia anterior NÃO é gravada — por
+// nenhuma sincronização, nem a do botão Atualizar (180 dias). Só a GRAVAÇÃO é
+// filtrada: fatura, parcelas e dedup seguem vendo o lote inteiro.
+async function inserirTransacoes(grupoId, userId, walletNome, txs, cambio = null, { desde = null } = {}) {
+  const validas = filtrarPorCorte(txs, desde);
   if (!validas.length) return 0;
 
   const ids = validas.map((t) => t.externalId);
@@ -3307,6 +3312,9 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
   // Conexão de empresa (migration 188): conta/cartão novo nasce "… PJ". Sem a
   // coluna, `select('*')` não a traz e isto é false — o sync segue igual.
   const empresarial = conexaoEmpresarial(conexao);
+  // Data de corte (migration 202). Sem a coluna, `select('*')` não a traz e o
+  // sync grava tudo, como sempre.
+  const desdeCorte = conexao.importar_desde || null;
   const hoje = hojeSP();
   const fromDate = new Date(Date.now() - dias * 864e5).toISOString().slice(0, 10);
   const relatorio = { contas: [], caixinhas: [], cartoes: [], dividas: [], investimentos: [], avisos: [] };
@@ -3374,7 +3382,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         const cambio = moedaConta === base ? null
           : { moedaConta, base, tabela: await taxasParaBase([moedaConta], base) };
         const normalizadasConta = txs.map(normalizeTxConta);
-        const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadasConta, cambio);
+        const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadasConta, cambio, { desde: desdeCorte });
         novasTx += novas;
         // Limpa cópias velhas de reprocesso do agregador também na conta.
         await reconciliarReprocesso(grupoId, walletNome, normalizadasConta);
@@ -3438,7 +3446,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         const moedaCartao = moedaDaConta(n);
         const cambioCartao = moedaCartao === base ? null
           : { moedaConta: moedaCartao, base, tabela: await taxasParaBase([moedaCartao], base) };
-        const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadas, cambioCartao);
+        const novas = await inserirTransacoes(grupoId, userId, walletNome, normalizadas, cambioCartao, { desde: desdeCorte });
         // ⚠️ O HISTÓRICO JÁ IMPORTADO FICOU NA DATA DA COMPRA. Ver
         // reconciliarParcelas: sem isto a fatura do cliente nunca fecha com a
         // do banco, por mais certo que o cálculo esteja.

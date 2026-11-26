@@ -417,9 +417,13 @@ router.get('/conexoes', auth, async (req, res) => {
     const filtros = [];
     if (grupoId) filtros.push(`grupo_id.eq.${grupoId}`);
     if (userId) filtros.push(`user_id.eq.${userId}`);
-    const { data } = await supabase.from('of_conexoes')
-      .select('external_id, provider, instituicao, status, ultimo_erro, ultima_sync, created_at, grupo_id, user_id')
+    // ⚠️ `importar_desde` (migration 202) é pedida à parte: coluna inexistente
+    // derruba o SELECT inteiro e a aba ficaria sem nenhum banco.
+    const COLS = 'external_id, provider, instituicao, status, ultimo_erro, ultima_sync, created_at, grupo_id, user_id';
+    const ler = (cols) => supabase.from('of_conexoes').select(cols)
       .or(filtros.join(',')).order('created_at', { ascending: false });
+    let { data, error: errLista } = await ler(`${COLS}, importar_desde`);
+    if (errLista) ({ data } = await ler(COLS));
 
     // Nome do grupo de origem, só das que estão fora daqui.
     const fora = [...new Set((data || []).filter((c) => c.grupo_id && c.grupo_id !== grupoId).map((c) => c.grupo_id))];
@@ -1419,6 +1423,110 @@ router.delete('/conexoes/:externalId', auth, exigirPermissao('admin', 'escrita')
     await desconectarConexao({ conexao: c, motivo: 'usuario' });
     res.json({ ok: true, provider: c.provider });
   } catch (err) { res.status(500).json({ erro: err.message }); }
+});
+
+// ── "TRAZER MOVIMENTAÇÕES A PARTIR DE [DATA]" (migration 202) ──────────────
+//
+// Pedido de cliente (Tatiane, 26/11/2026): a conexão trouxe meses que ela não
+// quer acompanhar. Regra em services/importarDesde.js (eval:importar-desde):
+// nenhuma sincronização grava movimentação anterior à data, e ao salvar dá pra
+// apagar as que já vieram — só as DO BANCO e só desta conexão.
+//
+//   GET /conexoes/:externalId/anteriores?desde=AAAA-MM-DD → { quantidade }
+//   PUT /conexoes/:externalId/importar-desde { desde | null, apagar_anteriores }
+
+/** A conexão do grupo atual, só do trilho que roda hoje (o legado não usa o corte). */
+async function conexaoDoGrupo(req) {
+  const { data: c } = await supabase.from('of_conexoes').select('*')
+    .eq('external_id', req.params.externalId).eq('grupo_id', req.grupoId).maybeSingle();
+  return c || null;
+}
+
+/**
+ * Movimentações DO BANCO desta conexão com dia anterior a `desde`.
+ * As carteiras da conexão saem de `wallets.of_consent_id` (81 de 81 conexões
+ * vivas com as carteiras ligadas, medido em 26/11/2026). Lançamento digitado
+ * (sem of_tx_id) nunca entra.
+ */
+async function movimentacoesAnteriores(conexao, desde) {
+  const { dentroDoCorte, limiteDaConsulta } = require('../services/importarDesde');
+  const { data: ws, error: errW } = await supabase.from('wallets')
+    .select('nome').eq('grupo_id', conexao.grupo_id).eq('of_consent_id', conexao.external_id);
+  if (errW) throw new Error(errW.message);
+  const nomes = (ws || []).map((w) => w.nome).filter(Boolean);
+  if (!nomes.length) return [];
+  const linhas = [];
+  for (let i = 0; ; i += 1000) {
+    const { data, error } = await supabase.from('transacoes')
+      .select('id, data').eq('grupo_id', conexao.grupo_id).in('carteira_nome', nomes)
+      .not('of_tx_id', 'is', null).lt('data', limiteDaConsulta(desde))
+      .order('id').range(i, i + 999);
+    if (error) throw new Error(error.message);
+    linhas.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  // ⚠️ A consulta pega também a data pura do PRÓPRIO dia `desde` (meia-noite
+  // UTC < 03:00 UTC): quem decide é `dentroDoCorte`, no dia de São Paulo.
+  return linhas.filter((t) => !dentroDoCorte(t.data, desde));
+}
+
+router.get('/conexoes/:externalId/anteriores', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { validarImportarDesde } = require('../services/importarDesde');
+    const { hojeSP } = require('../services/vencimentoDivida');
+    const v = validarImportarDesde(req.query.desde, { hoje: hojeSP() });
+    if (!v.ok) return res.status(400).json({ erro: v.erro });
+    if (!v.desde) return res.json({ quantidade: 0 });
+    const c = await conexaoDoGrupo(req);
+    if (!c) return res.status(404).json({ erro: 'Conexão não encontrada.' });
+    res.json({ quantidade: (await movimentacoesAnteriores(c, v.desde)).length });
+  } catch (err) {
+    console.error('[of/anteriores]', err.message);
+    res.status(500).json({ erro: 'Não consegui contar agora. Tente de novo.' });
+  }
+});
+
+router.put('/conexoes/:externalId/importar-desde', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
+  try {
+    const { validarImportarDesde } = require('../services/importarDesde');
+    const { hojeSP } = require('../services/vencimentoDivida');
+    const celcoin = require('../services/polpCelcoin');
+    const v = validarImportarDesde(req.body && req.body.desde, { hoje: hojeSP() });
+    if (!v.ok) return res.status(400).json({ erro: v.erro });
+
+    const c = await conexaoDoGrupo(req);
+    if (!c) return res.status(404).json({ erro: 'Conexão não encontrada.' });
+    if (c.provider !== celcoin.PROVIDER) {
+      return res.status(409).json({ erro: 'Esta conexão é antiga e não tem essa opção. Conecte o banco de novo pra usar.' });
+    }
+
+    // ⚠️ GRAVA O CORTE ANTES DE APAGAR: apagando primeiro, um sync que rodasse
+    // no meio traria de volta o que acabou de sair.
+    const { error: errUp } = await supabase.from('of_conexoes')
+      .update({ importar_desde: v.desde }).eq('id', c.id);
+    if (errUp) {
+      console.warn('[of/importar-desde] falta a migration 202?', errUp.message);
+      return res.status(503).json({ erro: 'Essa opção ainda está sendo liberada. Tente de novo mais tarde.' });
+    }
+
+    let apagadas = 0;
+    if (v.desde && req.body && req.body.apagar_anteriores === true) {
+      const alvo = await movimentacoesAnteriores(c, v.desde);
+      // Saldo não muda: conta e cartão do Open Finance têm o saldo do BANCO.
+      // Ligações com outras tabelas viram null (pagamento de fatura, parcela de
+      // dívida, caixa da empresa) ou somem junto (conversa pendente) — FKs.
+      for (let i = 0; i < alvo.length; i += 200) {
+        const ids = alvo.slice(i, i + 200).map((t) => t.id);
+        const { error } = await supabase.from('transacoes').delete().in('id', ids).eq('grupo_id', c.grupo_id);
+        if (error) throw new Error(error.message);
+        apagadas += ids.length;
+      }
+    }
+    res.json({ ok: true, importar_desde: v.desde, apagadas });
+  } catch (err) {
+    console.error('[of/importar-desde]', err.message);
+    res.status(500).json({ erro: 'Não consegui salvar agora. Tente de novo.' });
+  }
 });
 
 

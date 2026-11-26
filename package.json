@@ -131,7 +131,8 @@
     "eval:transferencia-propria": "node evals/transferenciaPropria.eval.js",
     "eval:fechamento-dia-proxima": "node evals/fechamentoDiaProxima.eval.js",
     "eval:widget-chave": "node evals/widgetChave.eval.js",
-    "eval:widget-resumo": "node evals/widgetResumo.eval.js"
+    "eval:widget-resumo": "node evals/widgetResumo.eval.js",
+    "eval:importar-desde": "node evals/importarDesde.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"
