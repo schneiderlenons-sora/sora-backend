@@ -998,6 +998,82 @@ router.delete('/compromissos/:id', auth, requireAgenda, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// ─── AGENDA: ANIVERSÁRIOS E DATAS COMEMORATIVAS (migration 205) ──────
+// Pedido de cliente (Tatiane, nov/2026). Repetem todo ano; lembrete 1 semana
+// antes e no dia (JOB 1U). Regra em services/aniversarios.js
+// (eval:aniversarios). Pessoais (por user_id), como a Agenda. Sem a 205 a
+// lista vem vazia com `liberado: false` e criar responde 503 sem jargão.
+const aniv = require('../services/aniversarios');
+const faltaTabelaAniv = (e) => /aniversarios/i.test(String((e && e.message) || ''));
+const MSG_ANIV_NAO_LIBERADO = 'A aba Aniversários ainda está sendo liberada. Tente de novo mais tarde.';
+const ANIV_COLS = 'id, nome, tipo, dia, mes, ano, lembrete_semana, lembrete_dia, observacao, created_at';
+
+router.get('/aniversarios/:phone', auth, requireAgenda, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('aniversarios').select(ANIV_COLS)
+      .eq('user_id', req.userRow.id).order('mes', { ascending: true }).order('dia', { ascending: true });
+    if (error) {
+      if (faltaTabelaAniv(error)) return res.json({ itens: [], liberado: false });
+      return res.status(500).json({ erro: 'Não consegui carregar os aniversários agora. Eles continuam salvos.' });
+    }
+    res.json({ itens: data || [], liberado: true });
+  } catch (err) { res.status(500).json({ erro: 'Não consegui carregar os aniversários agora. Eles continuam salvos.' }); }
+});
+
+router.post('/aniversarios', auth, requireAgenda, async (req, res) => {
+  try {
+    const v = aniv.validarAniversario(req.body);
+    if (!v.ok) return res.status(400).json({ erro: v.erro });
+    const { data, error } = await supabase.from('aniversarios')
+      .insert({ ...v.dados, user_id: req.userRow.id, grupo_id: req.userRow.grupo_ativo || null })
+      .select(ANIV_COLS).single();
+    if (error) {
+      if (faltaTabelaAniv(error)) return res.status(503).json({ erro: MSG_ANIV_NAO_LIBERADO });
+      console.warn('[aniversarios] criar falhou:', error.message);
+      return res.status(500).json({ erro: 'Não consegui salvar agora. Tente de novo.' });
+    }
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: 'Não consegui salvar agora. Tente de novo.' }); }
+});
+
+router.put('/aniversarios/:id', auth, requireAgenda, async (req, res) => {
+  try {
+    const mexeNaData = ['dia', 'mes', 'ano'].some((k) => k in (req.body || {}));
+    let corpo = req.body || {};
+    let atual = null;
+    if (mexeNaData) {
+      // Junta com o que está salvo ANTES de validar: dia + mês + ano têm de
+      // fechar juntos (29/02 só em ano bissexto; mudar só o dia é permitido).
+      ({ data: atual } = await supabase.from('aniversarios').select('dia, mes, ano')
+        .eq('id', req.params.id).eq('user_id', req.userRow.id).maybeSingle());
+      if (!atual) return res.status(404).json({ erro: 'Data não encontrada.' });
+      corpo = { ...corpo, dia: 'dia' in corpo ? corpo.dia : atual.dia, mes: 'mes' in corpo ? corpo.mes : atual.mes, ano: 'ano' in corpo ? corpo.ano : atual.ano };
+    }
+    const v = aniv.validarAniversario(corpo, { parcial: true });
+    if (!v.ok) return res.status(400).json({ erro: v.erro });
+    const patch = { ...v.dados, updated_at: new Date().toISOString() };
+    // Mudou a DATA: os avisos deste ano voltam a valer pra data nova.
+    if (atual && (v.dados.dia !== atual.dia || v.dados.mes !== atual.mes)) {
+      patch.aviso_semana_ano = null; patch.aviso_dia_ano = null;
+    }
+    const { data, error } = await supabase.from('aniversarios').update(patch)
+      .eq('id', req.params.id).eq('user_id', req.userRow.id).select(ANIV_COLS).single();
+    if (error && faltaTabelaAniv(error)) return res.status(503).json({ erro: MSG_ANIV_NAO_LIBERADO });
+    if (error || !data) return res.status(404).json({ erro: 'Data não encontrada.' });
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: 'Não consegui salvar agora. Tente de novo.' }); }
+});
+
+router.delete('/aniversarios/:id', auth, requireAgenda, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('aniversarios').delete()
+      .eq('id', req.params.id).eq('user_id', req.userRow.id).select('id');
+    if (error) return res.status(500).json({ erro: 'Não consegui apagar agora. Tente de novo.' });
+    if (!data || !data.length) return res.status(404).json({ erro: 'Data não encontrada.' });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ erro: 'Não consegui apagar agora. Tente de novo.' }); }
+});
+
 // ─── AGENDA: FEED UNIFICADO (Fase 2 — agregador) ─────────────────────
 // Lógica em src/services/agendaFeed.js (reutilizada pelo briefing matinal).
 const { montarFeed, isoLocal } = require('../services/agendaFeed');

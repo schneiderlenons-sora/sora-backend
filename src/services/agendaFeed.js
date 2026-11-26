@@ -423,6 +423,27 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
     } catch {}
   } return eventos; });
 
+  // 9. Aniversários e datas comemorativas (migration 205) — TODO ANO, pessoais.
+  //    Read-only aqui (`editavel: false`): a tela abre o formulário próprio pelo
+  //    `source`. `anos` = "faz 30 anos" quando a pessoa informou o ano.
+  //    Sem a tabela, a fonte devolve vazio (as outras seguem).
+  fontes.push(async () => { const eventos = []; try {
+    const A = require('./aniversarios');
+    let q = supabase.from('aniversarios').select('id, nome, tipo, dia, mes, ano, lembrete_semana, lembrete_dia, observacao');
+    q = userId ? q.eq('user_id', userId) : q.eq('grupo_id', grupoId);
+    const { data, error } = await q;
+    if (!error) {
+      for (const a of data || []) {
+        for (const d of A.ocorrencias(a, deStr, ateStr)) {
+          eventos.push({
+            id: `aniv-${a.id}-${d}`, source: 'aniversario', titulo: A.tituloDe(a), data: d, hora: null,
+            cor: '#db2777', deeplink: '/grow/agenda', editavel: false, raw: a, anos: A.rotuloAnos(a, d),
+          });
+        }
+      }
+    }
+  } catch {} return eventos; });
+
   // Todas juntas, e juntadas NA ORDEM das fontes acima (não na de término).
   // Cada fonte tem o próprio try/catch e devolve a sua lista — nunca rejeita.
   const eventos = (await Promise.all(fontes.map((f) => f()))).flat();

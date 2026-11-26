@@ -1518,8 +1518,9 @@ cron.schedule('* * * * *', async () => {
 const { montarFeed } = require('../services/agendaFeed');
 const { growShareCfg } = require('../services/growShare');
 // Compromisso de vários dias: "Dia de campo (dia 2 de 2)" — services/compromissoPeriodo.js.
-const sufixoDoPeriodo = (e) => (e.periodo ? require('../services/compromissoPeriodo').sufixoDoDia(e.periodo.dia, e.periodo.total) : '');
-const EMOJI_AGENDA = { compromisso: '📌', consulta: '🩺', recorrencia: '💰', divida: '💳', fatura: '💳', fechamento: '🧾', manutencao: '🔧' };
+const sufixoDoPeriodo = (e) => (e.periodo ? require('../services/compromissoPeriodo').sufixoDoDia(e.periodo.dia, e.periodo.total) : '')
+  + (e.anos ? ` (${e.anos})` : ''); // aniversário: "Aniversário: Ana (faz 30 anos)"
+const EMOJI_AGENDA = { aniversario: '🎂', compromisso: '📌', consulta: '🩺', recorrencia: '💰', divida: '💳', fatura: '💳', fechamento: '🧾', manutencao: '🔧' };
 
 cron.schedule('*/15 * * * *', async () => {
   const sp = agoraSP();
@@ -2469,6 +2470,34 @@ cron.schedule('15 5 * * *', async () => {
   }
 });
 console.log('   • Todo dia 05:15 — contas que se repetem (Negócios)');
+
+// ─────────────────────────────────────────────────────────────────
+// JOB 1U — ANIVERSÁRIOS E DATAS COMEMORATIVAS (migration 205)
+//
+// Pedido de cliente (Tatiane, nov/2026): lembrete UMA SEMANA antes (dá tempo
+// do presente) e NO DIA. A cada 30 min das 9h às 22h de SP: pega também a data
+// cadastrada mais tarde no dia. Cada aviso sai uma vez por ano (marca
+// reservada antes de enviar). "No dia" com o briefing ligado fica com o
+// briefing, que já lista o aniversário. Regra em services/aniversarios.js
+// (eval:aniversarios). Usa o modelo do lembrete de compromisso (já aprovado na
+// Meta). Sem a migration 205 a consulta falha e o job não faz nada.
+// ─────────────────────────────────────────────────────────────────
+cron.schedule('*/30 * * * *', async () => {
+  const sp = agoraSP();
+  const { avisarAniversarios, HORA_AVISO } = require('../services/aniversarios');
+  if (sp.minutos < HORA_AVISO * 60 || sp.minutos >= 22 * 60) return;
+  try {
+    const r = await avisarAniversarios({
+      supabase, hoje: sp.dataStr, phoneDoUser, avisosLigados, briefingLigado,
+      enviar: (phone, aviso, { seed }) => lembreteDetalhado(phone, aviso.texto, aviso.core,
+        { id: 'loki', aviso: 'compromissos', seed, direto: true, campos: aviso.campos }),
+    });
+    if (r.enviados || r.falhas || r.tentarDeNovo) console.log('🎂 Aniversários:', JSON.stringify(r));
+  } catch (e) {
+    console.error('🎂 Aniversários: erro', e.message);
+  }
+}, { noOverlap: true });
+console.log('   • A cada 30 min (9h–22h) — aniversários e datas comemorativas');
 
 // A linha que diz, no log do Render, se ESTE servidor manda lembrete. Na troca
 // de região é por ela (e pelo `crons` do /health) que se confere qual dos dois
