@@ -8,7 +8,7 @@ const norm = p => p?.replace(/\D/g, '');
 
 async function getUser(req) {
   const { data } = await supabase.from('users')
-    .select('id, plano, plano_grow, grow_trial_fim, grow_pin_hash, grow_pin_ativo, grow_pin_erros, grow_pin_travado_ate')
+    .select('id, grupo_ativo, plano, plano_grow, grow_trial_fim, grow_pin_hash, grow_pin_ativo, grow_pin_erros, grow_pin_travado_ate')
     .eq('id', req.authUser?.id || '__none__').maybeSingle();
   return data;
 }
@@ -221,6 +221,82 @@ router.delete('/dados_itens/:id', auth, requireGrow, async (req, res) => {
     await supabase.from('dados_itens').delete().eq('id', req.params.id).eq('user_id', req.userRow.id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// ─── NOTAS (aba Notas do Drive) ──────────────────────────────────────
+// A MESMA tabela das notas do WhatsApp (063). Regras em services/notasPainel.js
+// (eval:notas-painel). Privado por user_id. Sem a migration 203 tudo funciona,
+// menos fixar.
+const notasPainel = require('../services/notasPainel');
+const NOTA_COLS = 'id, titulo, texto, categoria, origem, created_at';
+
+router.get('/notas/:phone', auth, requireGrow, async (req, res) => {
+  try {
+    // ⚠️ Colunas da 203 pedidas à parte: sem elas o SELECT inteiro falharia e
+    // a pessoa veria "nenhuma nota" com as notas no banco.
+    const ler = (cols) => supabase.from('notas').select(cols).eq('user_id', req.userRow.id)
+      .order('created_at', { ascending: false }).limit(1000);
+    let { data, error } = await ler(`${NOTA_COLS}, fixada, updated_at`);
+    if (error && notasPainel.faltaColuna(error)) ({ data, error } = await ler(NOTA_COLS));
+    // ⚠️ Falha de leitura NÃO vira lista vazia: "suas notas sumiram" é pior que um erro.
+    if (error) return res.status(500).json({ erro: 'Não consegui carregar suas notas agora. Elas continuam salvas.' });
+    res.json(notasPainel.ordenarNotas(data || []));
+  } catch (e) { res.status(500).json({ erro: 'Não consegui carregar suas notas agora. Elas continuam salvas.' }); }
+});
+
+router.post('/notas', auth, requireGrow, async (req, res) => {
+  try {
+    const v = notasPainel.limparNota(req.body);
+    if (!v.ok) return res.status(400).json({ erro: v.erro });
+    const { fixada, ...base } = v.dados;
+    const ins = {
+      ...base, user_id: req.userRow.id, grupo_id: req.userRow.grupo_ativo || null, origem: 'texto',
+    };
+    const { data, error } = await supabase.from('notas').insert(ins).select('*').single();
+    if (error) {
+      console.warn('[notas] criar falhou:', error.message);
+      return res.status(500).json({ erro: 'Não consegui salvar a nota agora. Tente de novo.' });
+    }
+    // Criar já fixada (raro): segue o caminho do PUT, que tolera a 203 ausente.
+    if (fixada === true) {
+      const r = await supabase.from('notas').update({ fixada: true }).eq('id', data.id).eq('user_id', req.userRow.id);
+      if (!r.error) data.fixada = true;
+    }
+    res.json(data);
+  } catch (e) { res.status(500).json({ erro: 'Não consegui salvar a nota agora. Tente de novo.' }); }
+});
+
+router.put('/notas/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const v = notasPainel.limparNota(req.body, { parcial: true });
+    if (!v.ok) return res.status(400).json({ erro: v.erro });
+    const atualizar = (patch) => supabase.from('notas').update(patch)
+      .eq('id', req.params.id).eq('user_id', req.userRow.id).select('*').maybeSingle();
+    let { data, error } = await atualizar({ ...v.dados, updated_at: new Date().toISOString() });
+    if (error && notasPainel.faltaColuna(error)) {
+      // Sem a 203: fixar não tem onde gravar; o texto grava sem o updated_at.
+      if ('fixada' in v.dados) {
+        return res.status(503).json({ erro: 'Fixar notas ainda está sendo liberado. Tente de novo mais tarde.' });
+      }
+      ({ data, error } = await atualizar(v.dados));
+    }
+    if (error) {
+      console.warn('[notas] editar falhou:', error.message);
+      return res.status(500).json({ erro: 'Não consegui salvar a nota agora. Tente de novo.' });
+    }
+    if (!data) return res.status(404).json({ erro: 'Nota não encontrada.' });
+    res.json(data);
+  } catch (e) { res.status(500).json({ erro: 'Não consegui salvar a nota agora. Tente de novo.' }); }
+});
+
+router.delete('/notas/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('notas').delete()
+      .eq('id', req.params.id).eq('user_id', req.userRow.id).select('id');
+    if (error) return res.status(500).json({ erro: 'Não consegui apagar agora. Tente de novo.' });
+    if (!data || !data.length) return res.status(404).json({ erro: 'Nota não encontrada.' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: 'Não consegui apagar agora. Tente de novo.' }); }
 });
 
 crud('dados_quadros', ['nome', 'cor', 'icone', 'ordem']);
