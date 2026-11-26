@@ -130,6 +130,10 @@ function bancoFalso() {
     }
     certo(acessoWidget({ ...assinante, plano_valido_ate: '2026-01-01' }, new Date('2026-11-25')).motivo === 'plano', 'plano vencido fica de fora');
     certo(acessoWidget(null).motivo === 'plano', 'sem conta fica de fora');
+    const { CONTAS_LIBERADAS } = require('../src/config/widgets');
+    certo(acessoWidget({ id: CONTAS_LIBERADAS[0], plano: 'premium', vitalicio: true }).ok, 'conta liberada pelo id entra mesmo vitalícia (painel)');
+    certo(acessoWidget({ user_id: CONTAS_LIBERADAS[0], plano: 'premium', vitalicio: true }).ok, 'conta liberada pelo id entra (contexto do widget usa user_id)');
+    certo(acessoWidget({ id: 'outra', plano: 'premium', vitalicio: true }).motivo === 'plano', 'as outras vitalícias seguem de fora');
     process.env.WIDGETS_ATIVOS = '0';
     certo(acessoWidget({ email: 'comercialsora@gmail.com' }).motivo === 'desligado', 'interruptor geral desliga até a lista de teste');
     process.env.WIDGETS_ATIVOS = '';

@@ -20,6 +20,13 @@ const EMAILS_TESTE = [
   'comercialsora@gmail.com',
 ];
 
+// Contas liberadas com QUALQUER plano, por id (sem e-mail de cliente no código).
+// Decisão do dono, 25/11/2026: quem sugeriu os widgets (vitalício) ganha acesso
+// como agradecimento. A regra dos outros não muda.
+const CONTAS_LIBERADAS = [
+  'efe5c528-0720-45d0-97e5-be23deb212cd', // sugeriu os widgets (nov/2026)
+];
+
 const PLANOS_ASSINATURA = ['basico', 'premium', 'platinum'];
 
 const ativos = () => process.env.WIDGETS_ATIVOS !== '0';
@@ -38,6 +45,7 @@ function acessoWidget(u, agora = new Date()) {
   if (!u) return { ok: false, motivo: 'plano' };
   const email = String(u.email || '').trim().toLowerCase();
   if (EMAILS_TESTE.includes(email)) return { ok: true };
+  if (CONTAS_LIBERADAS.includes(String(u.id || u.user_id || ''))) return { ok: true };
   if (!abertos()) return { ok: false, motivo: 'teste' };
 
   let plano = normalizarPlano(u.plano);
@@ -52,4 +60,4 @@ function acessoWidget(u, agora = new Date()) {
   return { ok: true };
 }
 
-module.exports = { EMAILS_TESTE, PLANOS_ASSINATURA, CODIGO_TTL_S, acessoWidget, ativos, abertos };
+module.exports = { EMAILS_TESTE, CONTAS_LIBERADAS, PLANOS_ASSINATURA, CODIGO_TTL_S, acessoWidget, ativos, abertos };

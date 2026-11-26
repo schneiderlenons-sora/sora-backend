@@ -40,7 +40,7 @@ router.post('/codigo', auth, async (req, res) => {
     const userId = req.authUser && req.authUser.id;
     if (!userId) return res.status(401).json({ erro: 'Não autenticado' });
     const { data: u } = await supabase.from('users')
-      .select('email, plano, vitalicio, stripe_subscription_id, plano_fonte, plano_valido_ate')
+      .select('id, email, plano, vitalicio, stripe_subscription_id, plano_fonte, plano_valido_ate')
       .eq('id', userId).maybeSingle();
     const acesso = acessoWidget(u && { ...u, assinatura_stripe: !!u.stripe_subscription_id });
     if (!acesso.ok) return res.status(403).json({ erro: 'Os widgets não fazem parte do seu plano.', motivo: acesso.motivo });
@@ -107,7 +107,7 @@ router.get('/aparelhos', auth, async (req, res) => {
   let acesso = { ok: false, motivo: 'plano' };
   try {
     const { data: u } = await supabase.from('users')
-      .select('email, plano, vitalicio, stripe_subscription_id, plano_fonte, plano_valido_ate')
+      .select('id, email, plano, vitalicio, stripe_subscription_id, plano_fonte, plano_valido_ate')
       .eq('id', req.authUser.id).maybeSingle();
     acesso = acessoWidget(u && { ...u, assinatura_stripe: !!u.stripe_subscription_id });
     res.json({ acesso, aparelhos: await chave.listar(supabase, req.authUser.id) });
