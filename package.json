@@ -136,7 +136,8 @@
     "eval:notas-painel": "node evals/notasPainel.eval.js",
     "eval:compromisso-periodo": "node evals/compromissoPeriodo.eval.js",
     "eval:espaco-drive": "node evals/espacoDrive.eval.js",
-    "eval:aniversarios": "node evals/aniversarios.eval.js"
+    "eval:aniversarios": "node evals/aniversarios.eval.js",
+    "eval:humor": "node evals/humorRegistro.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

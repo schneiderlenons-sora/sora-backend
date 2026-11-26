@@ -474,10 +474,16 @@ router.delete('/projetos/:id', auth, requireGrow, async (req, res) => {
 });
 
 // ─── HUMOR / BEM-ESTAR ───────────────────────────────────────────────
+// Pedido de cliente (Tatiane, nov/2026): escolher a DATA do registro (dormiu
+// depois da meia-noite, esqueceu um dia) e corrigir a data depois. Regra em
+// services/humorRegistro.js (eval:humor). ⚠️ "Hoje" é o dia de São Paulo —
+// era UTC, e das 21h à meia-noite o humor caía no dia seguinte.
+const humorReg = require('../services/humorRegistro');
+
 router.get('/humor/:phone', auth, requireGrow, async (req, res) => {
   try {
-    const dias = parseInt(req.query.dias) || 30;
-    const inicio = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+    const dias = Math.min(Math.max(parseInt(req.query.dias) || 30, 1), 400);
+    const inicio = require('../services/pesoRegistro').somarDias(humorReg.hojeSP(), -dias);
     const { data } = await supabase.from('registros_humor')
       .select('*').eq('user_id', req.userRow.id)
       .gte('data', inicio).order('data', { ascending: true });
@@ -485,21 +491,55 @@ router.get('/humor/:phone', auth, requireGrow, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
+// Registrar (um por dia): no dia que já tem registro, SUBSTITUI — e avisa.
 router.post('/humor', auth, requireGrow, async (req, res) => {
   try {
-    const { humor, nota, gratidao, energia, sono_horas, data } = req.body;
-    if (!humor || humor < 1 || humor > 5) return res.status(400).json({ erro: 'Humor 1-5 obrigatorio' });
-    const reg = data_req(data);
-    const { data: r } = await supabase.from('registros_humor').upsert({
-      grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, data: reg,
-      humor: parseInt(humor),
-      nota: nota || null,
-      gratidao: gratidao && gratidao.length ? gratidao : null,
-      energia: energia ? parseInt(energia) : null,
-      sono_horas: sono_horas ? parseFloat(sono_horas) : null,
+    const v = humorReg.limparHumor(req.body);
+    if (!v.ok) return res.status(400).json({ erro: v.erro });
+    const { data: ja } = await supabase.from('registros_humor').select('id')
+      .eq('grupo_id', req.userRow.grupo_ativo).eq('user_id', req.userRow.id).eq('data', v.dados.data).maybeSingle();
+    const { data: r, error } = await supabase.from('registros_humor').upsert({
+      grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, ...v.dados,
     }, { onConflict: 'grupo_id,user_id,data' }).select().single();
-    res.json(r);
-  } catch (err) { res.status(500).json({ erro: err.message }); }
+    if (error || !r) return res.status(500).json({ erro: 'Não consegui salvar agora. Tente de novo.' });
+    res.json({ ...r, substituiu: !!ja });
+  } catch (err) { res.status(500).json({ erro: 'Não consegui salvar agora. Tente de novo.' }); }
+});
+
+// Editar um registro — inclusive MUDAR A DATA. Dia que já tem outro registro:
+// 409 (a pessoa escolhe qual fica; nunca apaga um pelo outro em silêncio).
+router.put('/humor/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const v = humorReg.limparHumor(req.body, { parcial: true });
+    if (!v.ok) return res.status(400).json({ erro: v.erro });
+    const { data: atual } = await supabase.from('registros_humor').select('id, data')
+      .eq('id', req.params.id).eq('user_id', req.userRow.id).maybeSingle();
+    if (!atual) return res.status(404).json({ erro: 'Registro não encontrado.' });
+    if (v.dados.data && v.dados.data !== String(atual.data).slice(0, 10)) {
+      const { data: outro } = await supabase.from('registros_humor').select('id')
+        .eq('user_id', req.userRow.id).eq('data', v.dados.data).neq('id', atual.id).limit(1);
+      if (outro && outro.length) {
+        return res.status(409).json({ erro: 'Esse dia já tem um registro de humor. Edite o que já existe ou apague um dos dois.', codigo: 'dia_ocupado' });
+      }
+    }
+    const { data, error } = await supabase.from('registros_humor').update(v.dados)
+      .eq('id', atual.id).eq('user_id', req.userRow.id).select().single();
+    if (error && /duplicate|unique/i.test(error.message || '')) {
+      return res.status(409).json({ erro: 'Esse dia já tem um registro de humor. Edite o que já existe ou apague um dos dois.', codigo: 'dia_ocupado' });
+    }
+    if (error || !data) return res.status(500).json({ erro: 'Não consegui salvar agora. Tente de novo.' });
+    res.json(data);
+  } catch (err) { res.status(500).json({ erro: 'Não consegui salvar agora. Tente de novo.' }); }
+});
+
+router.delete('/humor/:id', auth, requireGrow, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('registros_humor').delete()
+      .eq('id', req.params.id).eq('user_id', req.userRow.id).select('id');
+    if (error) return res.status(500).json({ erro: 'Não consegui apagar agora. Tente de novo.' });
+    if (!data || !data.length) return res.status(404).json({ erro: 'Registro não encontrado.' });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ erro: 'Não consegui apagar agora. Tente de novo.' }); }
 });
 
 // ─── LISTA DE COMPRAS ────────────────────────────────────────────────

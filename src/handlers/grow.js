@@ -1158,7 +1158,8 @@ module.exports = async function handleGrow(mensagem, ctx, opts = {}) {
       }
     }
     if (humor != null) {
-      const hoje = new Date().toISOString().slice(0, 10);
+      // ⚠️ Dia de São Paulo (era UTC: das 21h à meia-noite caía no dia seguinte).
+      const hoje = require('../services/humorRegistro').hojeSP();
       await supabase.from('registros_humor').upsert({
         grupo_id: grupoId, user_id: user.id, data: hoje, humor, nota: mensagem,
       }, { onConflict: 'grupo_id,user_id,data' });
