@@ -80,13 +80,28 @@ console.log('── 1–2. vai sobrar e Livre ──');
 
   const lim = montarResumo({ ...base(), metaMensal: 2000 }, { agora: AGORA });
   eq([lim.livre.disponivel, lim.livre.numero], [1000, '76'], 'com limite: vale o MENOR (2000 − 1000 gastos = 1000 → 76 por dia)');
+  eq([lim.livre.motivo, lim.livre.resto, lim.livre.resto_oculto], ['limite', 'R$ 1.000 até o limite', 'R$ •••• até o limite'],
+    '⚠️ quando o LIMITE manda, o texto diz que é o limite (não "até 30/11")');
+  eq(r.livre.motivo, 'caixa', 'sem limite, quem manda é o caixa');
+  const limFolgado = montarResumo({ ...base(), metaMensal: 9000 }, { agora: AGORA });
+  eq([limFolgado.livre.motivo, limFolgado.livre.resto], ['caixa', 'R$ 2.950 até 30/11'], 'limite folgado: o caixa é o menor e o texto é o do caixa');
 
   const apert = montarResumo({ ...base(), gastosMes: 10000 }, { agora: AGORA });
   eq([apert.livre.estado, apert.livre.status], ['apertado', 'Abaixo do ritmo'], 'muito gasto no mês → abaixo do ritmo');
 
   const verm = montarResumo({ ...base(), wallets: [{ nome: 'Nubank', tipo: 'Corrente', saldo_base: -1000 }, { nome: 'Cartão X', tipo: 'Crédito', saldo_base: -500 }] }, { agora: AGORA });
-  eq([verm.livre.estado, verm.livre.prefixo, verm.livre.numero, verm.livre.abaixo, verm.livre.resto],
-    ['vermelho', '−R$', '50', 'além do previsto', 'Faltam 13 dias no mês'], 'no vermelho: −R$ 50 além do previsto');
+  eq([verm.livre.estado, verm.livre.motivo, verm.livre.prefixo, verm.livre.numero, verm.livre.abaixo, verm.livre.status, verm.livre.resto],
+    ['vermelho', 'caixa', 'R$', '50', 'vai faltar no mês', 'Revise os gastos', 'Faltam 13 dias no mês'],
+    'no vermelho pelo CAIXA: R$ 50 que vão faltar no mês (sem sinal: a frase explica)');
+
+  // Caso real do dono (nov/2026): caixa sobrando, limite estourado. Antes saía
+  // "−R$ 1.972 além do previsto" e não dava pra saber de onde vinha.
+  const estourou = montarResumo({ ...base(), metaMensal: 4500, gastosMes: 6471.14 }, { agora: AGORA });
+  eq([estourou.livre.estado, estourou.livre.motivo, estourou.livre.prefixo, estourou.livre.numero,
+    estourou.livre.abaixo, estourou.livre.status, estourou.livre.resto, estourou.livre.resto_oculto],
+  ['vermelho', 'limite', 'R$', '1.972', 'acima do limite', 'Limite estourado', 'R$ 6.471 de R$ 4.500', 'Faltam 13 dias no mês'],
+  '⚠️ limite estourado com caixa positivo: diz que é o LIMITE e mostra gasto × limite');
+  eq(estourou.livre.projetado, 2950, 'o "vai sobrar" do caixa continua no retrato (a aba Previstos não muda)');
 }
 
 console.log('── 3. Próximas contas ──');

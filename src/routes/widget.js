@@ -20,7 +20,7 @@ const supabase = require('../db/supabase');
 const auth = require('../middlewares/auth');
 const chave = require('../services/widgetChave');
 const { acessoWidget } = require('../config/widgets');
-const { lerDados, montarResumo, FORMATO } = require('../services/widgetResumo');
+const { lerDados, montarResumo, FORMATO, TEXTOS } = require('../services/widgetResumo');
 const { hojeSP } = require('../services/vencimentoDivida');
 
 // Retrato pronto por conta: { etag, corpo }. Some num restart — aí só custa
@@ -79,7 +79,7 @@ router.get('/resumo', async (req, res) => {
     if (!acesso.ok) return res.json({ formato: FORMATO, estado: acesso.motivo });
     if (!ctx.grupo_id) return res.json({ formato: FORMATO, estado: 'sem_grupo' });
 
-    const etag = `"w${FORMATO}-${ctx.grupo_id.slice(0, 8)}-${ctx.versao}-${hojeSP()}"`;
+    const etag = `"w${FORMATO}.${TEXTOS}-${ctx.grupo_id.slice(0, 8)}-${ctx.versao}-${hojeSP()}"`;
     res.set('ETag', etag);
     res.set('Cache-Control', 'private, no-cache');
     if (req.get('if-none-match') === etag) return res.status(304).end();

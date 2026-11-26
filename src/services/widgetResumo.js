@@ -26,6 +26,10 @@ const { parcelasEmAtraso, hojeSP } = require('./vencimentoDivida');
 const { formatar } = require('./moeda');
 
 const FORMATO = 1;
+// ⚠️ Suba quando um TEXTO do retrato mudar. Ele entra no ETag: sem isso o
+// aparelho manda o ETag antigo, recebe 304 e fica com o texto velho até o dado
+// da conta mudar. (2 = Livre diz se quem manda é o limite ou o caixa, nov/2026.)
+const TEXTOS = 2;
 const cent = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const LETRAS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
@@ -100,9 +104,14 @@ function livre({ proj, gastosMes, metaMensal, hoje, fmts }) {
 
   // Com limite geral do mês, vale o MENOR: o que sobra no caixa ou o que
   // ainda cabe no limite. Sem limite, é o "vai sobrar" do painel.
-  let disponivel = cent(proj.projetado);
+  // ⚠️ O texto tem de dizer QUAL dos dois mandou: "−R$ 1.972 além do previsto"
+  // com o caixa sobrando R$ 4.497 (era o limite estourado) não fez sentido pro
+  // dono (nov/2026). `motivo` = 'limite' quando o limite é o menor.
+  const caixa = cent(proj.projetado);
   const limite = Number(metaMensal) > 0 ? Number(metaMensal) : null;
-  if (limite) disponivel = Math.min(disponivel, cent(limite - (Number(gastosMes) || 0)));
+  const noLimite = limite ? cent(limite - (Number(gastosMes) || 0)) : null;
+  const motivo = noLimite != null && noLimite < caixa ? 'limite' : 'caixa';
+  const disponivel = motivo === 'limite' ? noLimite : caixa;
 
   const gasto = Math.max(0, Number(gastosMes) || 0);
   // A MARÉ: do dinheiro livre do mês (o que já foi gasto + o que ainda sobra),
@@ -120,24 +129,35 @@ function livre({ proj, gastosMes, metaMensal, hoje, fmts }) {
     estado, nivel: Math.round(nivel * 1000) / 1000, ritmo: Math.round(ritmo * 1000) / 1000,
     aproximado: !!proj.aproximado, por_dia: cent(porDia), disponivel, dias_restantes: diasRestantes,
     // O "vai sobrar" da aba Previstos, sem o limite do mês (o eval compara com o painel).
-    projetado: cent(proj.projetado),
+    projetado: caixa,
     com_limite: !!limite,
+    motivo,
   };
+  const faltam = diasRestantes === 1 ? 'Último dia do mês' : `Faltam ${diasRestantes} dias no mês`;
   if (estado === 'vermelho') {
+    // O número grande vai SEM sinal: quem explica é a linha de baixo, a cor e
+    // o alerta ("−R$ 1.972 acima do limite" leria como sinal duplo).
+    const numero = fmts.inteiro(Math.ceil(-disponivel)).replace(fmts.simbolo, '').trim();
+    if (motivo === 'limite') {
+      return {
+        ...base,
+        prefixo: fmts.simbolo, numero, sufixo: '', abaixo: 'acima do limite', status: 'Limite estourado',
+        resto: `${fmts.inteiro(gasto)} de ${fmts.inteiro(limite)}`,
+        resto_oculto: faltam,
+      };
+    }
     return {
       ...base,
-      prefixo: `−${fmts.simbolo}`, numero: fmts.inteiro(Math.ceil(-disponivel)).replace(fmts.simbolo, '').trim(),
-      sufixo: '', abaixo: 'além do previsto', status: 'Revise os gastos',
-      resto: diasRestantes === 1 ? 'Último dia do mês' : `Faltam ${diasRestantes} dias no mês`,
-      resto_oculto: diasRestantes === 1 ? 'Último dia do mês' : `Faltam ${diasRestantes} dias no mês`,
+      prefixo: fmts.simbolo, numero, sufixo: '', abaixo: 'vai faltar no mês', status: 'Revise os gastos',
+      resto: faltam, resto_oculto: faltam,
     };
   }
   return {
     ...base,
     prefixo: fmts.simbolo, numero: fmts.inteiro(porDia).replace(fmts.simbolo, '').trim(),
     sufixo: 'por dia', abaixo: '', status: estado === 'apertado' ? 'Abaixo do ritmo' : 'No ritmo',
-    resto: `${fmts.inteiro(disponivel)} até ${ddmm(fimMes)}`,
-    resto_oculto: `${fmts.simbolo} •••• até ${ddmm(fimMes)}`,
+    resto: motivo === 'limite' ? `${fmts.inteiro(disponivel)} até o limite` : `${fmts.inteiro(disponivel)} até ${ddmm(fimMes)}`,
+    resto_oculto: motivo === 'limite' ? `${fmts.simbolo} •••• até o limite` : `${fmts.simbolo} •••• até ${ddmm(fimMes)}`,
   };
 }
 
@@ -382,4 +402,4 @@ async function lerDados(grupoId, { metaMensal = null } = {}) {
   };
 }
 
-module.exports = { montarResumo, lerDados, faturaNaBase, quando, atrasoTexto, iconeDaConta, FORMATO };
+module.exports = { montarResumo, lerDados, faturaNaBase, quando, atrasoTexto, iconeDaConta, FORMATO, TEXTOS };
