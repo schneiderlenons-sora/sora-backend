@@ -111,6 +111,82 @@ router.get('/ping', auth, exigirAcesso, async (req, res) => {
   }
 });
 
+// GET /api/open-finance/diag-polp?key=<API_SECRET_TOKEN> — mede DE DENTRO do
+// Render (só aqui existem as credenciais da Polp) se a Polp/Celcoin responde e
+// em que estado estão os consentimentos das conexões PARADAS. SÓ LEITURA: não
+// cria, não revoga e não sincroniza nada. Nasceu no fim de uma manutenção da
+// Celcoin (nov/2026): cliente via "503 Service Temporarily Unavailable" ao
+// conectar, e sem isto não dava pra separar "provedor fora" de "bug nosso".
+// `&consent=<id>` detalha um consentimento (recursos e cronograma de sync).
+router.get('/diag-polp', async (req, res) => {
+  if (!process.env.API_SECRET_TOKEN || req.query.key !== process.env.API_SECRET_TOKEN) return res.sendStatus(403);
+  const celcoin = require('../services/polpCelcoin');
+  const limpo = (s) => String(s || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+  const medir = async (fn) => {
+    const i = Date.now();
+    try { const r = await fn(); return { ok: true, ms: Date.now() - i, ...r }; }
+    catch (e) { return { ok: false, ms: Date.now() - i, status: e.status || null, erro: limpo(e.message) }; }
+  };
+  const cronograma = (sch) => {
+    const lista = Array.isArray(sch) ? sch : [];
+    const ult = lista.map((s) => s.last_sync_at).filter(Boolean).sort();
+    const prox = lista.map((s) => s.next_sync_at).filter(Boolean).sort();
+    return { ultimo: ult[ult.length - 1] || null, proximo: prox[0] || null, recursos: lista.length };
+  };
+
+  const saida = { agora: new Date().toISOString(), configurado: celcoin.configurado() };
+  saida.alertas = await medir(async () => ({
+    ultimos: (await celcoin.alertas()).slice(0, 4).map((a) => ({ em: a.created_at, texto: a.content })),
+  }));
+  saida.instituicoes = await medir(async () => {
+    const j = await celcoin.api('/institutions');
+    const lista = Array.isArray(j && j.data) ? j.data : [];
+    return { primeira_pagina: lista.length, operacionais: lista.filter((x) => x.status === 'OPERATIONAL').length };
+  });
+  let consents = [];
+  saida.consentimentos = await medir(async () => {
+    consents = await celcoin.listarConsentimentos();
+    const por = {};
+    for (const c of consents) por[c.status] = (por[c.status] || 0) + 1;
+    return { total: consents.length, por_status: por };
+  });
+
+  // Conexões nossas sem sincronizar há mais de 12h: como a Polp as vê.
+  const { data: nossas } = await supabase.from('of_conexoes')
+    .select('external_id, instituicao, status, ultima_sync').eq('provider', celcoin.PROVIDER);
+  const limite = Date.now() - 12 * 3600 * 1000;
+  const porId = new Map(consents.map((c) => [String(c.id), c]));
+  const paradas = (nossas || []).filter((c) => !c.ultima_sync || new Date(c.ultima_sync).getTime() < limite).slice(0, 15);
+  saida.paradas = [];
+  for (const c of paradas) {
+    const p = porId.get(String(c.external_id));
+    const item = {
+      consent: String(c.external_id).slice(0, 8), banco: c.instituicao, nosso_status: c.status, nossa_ultima_sync: c.ultima_sync,
+      polp: p ? { status: p.status, execucao: p.execution_status || null, flags: p.flags || [], atualizado: p.updated_at || null }
+        : 'não está na lista da Polp',
+    };
+    if (p && p.status === 'AUTHORISED') item.cronograma = cronograma(await celcoin.syncSchedules(c.external_id));
+    saida.paradas.push(item);
+  }
+
+  // Uma autorizada recente: os recursos são consultados na Celcoin EM TEMPO
+  // REAL (doc), então isto prova que a Celcoin responde agora.
+  const alvo = req.query.consent
+    ? String(req.query.consent)
+    : ((nossas || []).filter((c) => (porId.get(String(c.external_id)) || {}).status === 'AUTHORISED')
+      .sort((a, b) => String(b.ultima_sync).localeCompare(String(a.ultima_sync)))[0] || {}).external_id;
+  if (alvo) {
+    saida.tempo_real = await medir(async () => {
+      const r = await celcoin.listarResources(alvo);
+      if (r && r.erro) throw new Error(r.erro);
+      const por = {};
+      for (const x of (Array.isArray(r) ? r : [])) por[`${x.type}:${x.status}`] = (por[`${x.type}:${x.status}`] || 0) + 1;
+      return { consent: String(alvo).slice(0, 8), recursos: por, cronograma: cronograma(await celcoin.syncSchedules(alvo)) };
+    });
+  }
+  res.json(saida);
+});
+
 const INST_TTL = 6 * 60 * 60 * 1000; // 6h
 // Cache POR TRILHO: a lista de bancos da Celcoin (v2) é diferente da da Pluggy (v1).
 const instCache = { };   // provider → { em, lista }
@@ -288,10 +364,34 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
     });
   } catch (err) {
     console.error('[open-finance/conectar]', err.message);
-    // Teste fechado (só o dono chega aqui) → devolve o motivo real pra diagnosticar.
-    res.status(500).json({ erro: `Falha ao conectar: ${err.message}`.slice(0, 300) });
+    const { status, erro } = erroDeConexaoParaCliente(err);
+    res.status(status).json({ erro });
   }
 });
+
+/**
+ * O que o CLIENTE lê quando conectar falha. O motivo técnico fica no log.
+ * ⚠️ Antes ia `Falha ao conectar: ${err.message}` cru (texto de quando só o
+ * dono testava): no fim de uma manutenção da Celcoin (nov/2026) o cliente
+ * recebeu na tela a página HTML do 503 do provedor.
+ */
+function erroDeConexaoParaCliente(err) {
+  const st = err && err.status;
+  // Provedor fora do ar, instável ou sem resposta (rede): não é nada que a
+  // pessoa fez, e tentar de novo depois resolve.
+  if (!st || st >= 500 || st === 429) {
+    return { status: 503, erro: 'O Open Finance está instável agora, do lado do provedor que conecta com os bancos. Tente de novo em alguns minutos.' };
+  }
+  // 400/404/409/422: a recusa traz um motivo que a pessoa pode corrigir (ex.:
+  // "o campo cpf é obrigatório para esta instituição"). Vai a mensagem do
+  // provedor, sem o prefixo técnico nem HTML.
+  const motivo = String((err.body && (err.body.message || err.body.error)) || '')
+    .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  if ([400, 404, 409, 422].includes(st) && motivo && motivo.length <= 200) {
+    return { status: 422, erro: `O banco recusou a conexão: ${motivo}` };
+  }
+  return { status: 502, erro: 'Não consegui conectar agora. Tente de novo em alguns minutos.' };
+}
 
 // Conexões visíveis pra quem pergunta.
 //
