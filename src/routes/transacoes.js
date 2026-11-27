@@ -540,6 +540,18 @@ router.get('/:phone', auth, async (req, res) => {
 });
 
 // POST /api/transacoes — cria transação pelo painel
+// Divisão pedida junto com a criação (services/divisaoCompra.js). Nunca derruba
+// a criação: a compra já foi gravada quando isto roda.
+async function dividirDepoisDeCriar(grupoId, tx, divisao) {
+  if (!divisao || !tx) return null;
+  try {
+    return await require('../services/divisaoCompra').dividirAoCriar({ grupoId, tx, divisaoBruta: divisao });
+  } catch (e) {
+    console.warn('[transacoes] divisão ao criar falhou:', e.message);
+    return { ok: false, erro: 'A compra foi lançada, mas não consegui dividir agora. Divida pelo menu dela.' };
+  }
+}
+
 router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => {
   try {
     const { phone, tipo, categoria, valor, observacao, carteira_nome, data, pago, recorrente,
@@ -678,7 +690,10 @@ router.post('/', auth, exigirPermissao('admin', 'escrita'), async (req, res) => 
       } catch (e) { console.error('[transacoes] recorrência do modal falhou:', e.message); }
     }
 
-    res.json(tx);
+    // Compra DIVIDIDA com outra pessoa (migration 206). A compra já está
+    // gravada: se a divisão falhar, a tela avisa e a pessoa divide depois.
+    const divisaoResultado = await dividirDepoisDeCriar(grupoId, tx, req.body?.divisao);
+    res.json(divisaoResultado ? { ...tx, divisao_resultado: divisaoResultado } : tx);
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
@@ -750,7 +765,10 @@ router.post('/parcelado', auth, exigirPermissao('admin', 'escrita'), async (req,
         .update({ saldo: (card.saldo || 0) - (vp * pagasCount) }).eq('id', card.id);
     }
 
-    res.json({ ok: true, parcela_grupo: grupoParcela, criadas: inseridas?.length || n });
+    const divisaoResultado = inseridas?.[0]?.id
+      ? await dividirDepoisDeCriar(grupoId, { ...rows[0], id: inseridas[0].id }, req.body?.divisao)
+      : null;
+    res.json({ ok: true, parcela_grupo: grupoParcela, criadas: inseridas?.length || n, divisao_resultado: divisaoResultado || undefined });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 

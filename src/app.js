@@ -106,6 +106,7 @@ app.use('/api/previstos',    require('./routes/previstos'));
 app.use('/api/investimentos',require('./routes/investimentos'));
 app.use('/api/metas',        require('./routes/metas'));
 app.use('/api/dividas',      require('./routes/dividas'));
+app.use('/api/divisoes',     require('./routes/divisoes'));
 app.use('/api/recorrencias', require('./routes/recorrencias'));
 app.use('/api/widget',       require('./routes/widget'));
 app.use('/api/grow',         require('./routes/grow'));

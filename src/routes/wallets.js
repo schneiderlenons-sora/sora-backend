@@ -438,6 +438,9 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
         valor:     parseFloat(p.valor),
         descricao: (p.descricao || '').toString().trim().slice(0, 40),
         externa:   !!p.externa,
+        // Parte de quem dividiu a compra (migration 206): o pagamento por fora
+        // também conta como o acerto dela nesta fatura.
+        acerto_pessoa: p.externa && p.acerto_pessoa ? String(p.acerto_pessoa).trim().slice(0, 60) : null,
       }))
       // externo entra mesmo sem wallet_id; conta real precisa do wallet_id.
       .filter(p => p.valor > 0 && (p.externa || p.wallet_id));
@@ -484,6 +487,22 @@ router.post('/fatura/pagar', auth, exigirPermissao('admin', 'escrita'), async (r
           valor: totalPago, transacao_id: debitos[0]?.tx?.id || null,
         });
       } catch { /* tolerante: migration 096 pode não ter rodado */ }
+    }
+
+    // Acerto da divisão (migration 206): a parte que a outra pessoa pagou por
+    // fora fica registrada como paga por ela nesta fatura. Tolerante: sem a 206
+    // o pagamento vale igual, só sem o registro.
+    const acertos = itens
+      .map((it, i) => ({ it, tx: debitos[i]?.tx }))
+      .filter(({ it, tx }) => it.acerto_pessoa && tx?.id)
+      .map(({ it, tx }) => ({
+        grupo_id: grupoId, cartao_id, competencia, pessoa: it.acerto_pessoa,
+        pessoa_chave: require('../services/divisaoCompra').chavePessoa(it.acerto_pessoa),
+        valor: it.valor, forma: 'fatura', transacao_id: tx.id, criado_por: req.userId || null,
+      }));
+    if (cartao_id && acertos.length) {
+      const { error: eAc } = await supabase.from('divisoes_acertos').insert(acertos);
+      if (eAc) console.warn('[fatura/pagar] acerto da divisão não gravou:', eAc.message);
     }
 
     // Retorna `debito` (1º) pra retrocompat + `debitos` (todos) pro split.
