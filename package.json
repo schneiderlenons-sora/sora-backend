@@ -138,7 +138,8 @@
     "eval:espaco-drive": "node evals/espacoDrive.eval.js",
     "eval:aniversarios": "node evals/aniversarios.eval.js",
     "eval:humor": "node evals/humorRegistro.eval.js",
-    "eval:divisao-compra": "node evals/divisaoCompra.eval.js"
+    "eval:divisao-compra": "node evals/divisaoCompra.eval.js",
+    "eval:texto-entrada": "node evals/textoEntrada.eval.js"
   },
   "engines": {
     "node": ">=20.0.0"

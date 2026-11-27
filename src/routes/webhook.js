@@ -1,4 +1,5 @@
 const express  = require('express');
+const { limparInvisiveis } = require('../services/textoEntrada');
 const router   = express.Router();
 const supabase = require('../db/supabase');
 const { enviarTexto, enviarMenu, enviarLink, enviarBotaoLink, enviarImagem } = require('../services/mensageiro');
@@ -246,6 +247,10 @@ let lastTrace = [];
 const getLastTrace = () => lastTrace;
 
 async function processarMensagem({ phone, mensagem, imageUrl, legendaImg, docInfo }) {
+  // Caracteres invisíveis de formatação (marca de rastreio em link do wa.me,
+  // texto colado) quebravam o leitor local — ver services/textoEntrada.js.
+  mensagem = limparInvisiveis(mensagem);
+  legendaImg = limparInvisiveis(legendaImg);
   if (!mensagem || !phone) return;
   const TR = (x) => lastTrace.push(`${x} @${new Date().toISOString().slice(11,19)}`);
   lastTrace = [`in "${String(mensagem).slice(0, 25)}"`];

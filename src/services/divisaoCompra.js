@@ -32,7 +32,7 @@ function normalizarPessoa(nome) {
 
 /** "Mesma pessoa" = mesma chave: sem acento, caixa nem pontuação. */
 function chavePessoa(nome) {
-  return String(nome ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+  return String(nome ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036F]/g, '')
     .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
