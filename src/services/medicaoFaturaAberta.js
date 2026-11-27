@@ -19,43 +19,11 @@
 // faturadas) cuja marca é a competência; compra soma, crédito abate, e o
 // PAGAMENTO fica fora (ele quita a fatura anterior — doc da Celcoin).
 // =============================================================================
-const { ehPagamentoFaturaCat } = require('./valorFatura');
+// A regra da marcação mora em ./marcaDoBanco (a mesma que o sync usa na fatura
+// conferida) — a medição não tem cópia própria.
+const { ehPagamentoDeFatura, somaPelaMarcaDoBanco } = require('./marcaDoBanco');
 
 const cent = (v) => Math.round((Number(v) || 0) * 100) / 100;
-
-// Pagamento da fatura gravado com outra categoria (regra do cliente, "Outros",
-// o "PAGTO.BOLETO" da Caixa) — medido em 27/11/2026: 19 linhas em 5 grupos.
-const RE_PAGAMENTO = /pagamento\s+(da\s+|de\s+)?fatura|pagamento\s+recebido|obrigado\s+pelo\s+pagamento|pagamento\s+(com\s+saldo|on\s*-?\s*line|debito\s+automatico)|\bpagto\b|\bpgto\b/i;
-
-function semAcento(s) {
-  return String(s || '').normalize('NFD').replace(/[\u0300-\u036F]/g, '');
-}
-
-/** A linha é o PAGAMENTO de uma fatura (e não um estorno/crédito)? */
-function ehPagamentoDeFatura(t) {
-  if (!t || t.tipo !== 'Recebimento') return false;
-  return ehPagamentoFaturaCat(t.categoria) || RE_PAGAMENTO.test(semAcento(t.observacao));
-}
-
-/**
- * Fatura da `competencia` pela marcação do EMISSOR.
- * @param {Array<{tipo, valor, valor_moeda?, categoria?, observacao?, of_bill_id?, of_bill_forecast?}>} linhas
- * @returns {{ valor: number, linhas: number }}
- */
-function somaPelaMarcaDoBanco(linhas, competencia) {
-  let soma = 0, n = 0;
-  for (const t of linhas || []) {
-    if (!t || t.of_bill_id) continue;                         // já faturada: é de outra fatura
-    if (String(t.of_bill_forecast || '').slice(0, 7) !== competencia) continue;
-    // Na moeda do CARTÃO, como `valorNaFatura` (o total publicado é nela).
-    const v = Math.abs(Number(t.valor_moeda ?? t.valor) || 0);
-    if (t.tipo === 'Gasto') { soma += v; n++; continue; }
-    if (t.tipo !== 'Recebimento') continue;
-    if (ehPagamentoDeFatura(t)) continue;                     // quita a anterior
-    soma -= v; n++;                                           // estorno / crédito
-  }
-  return { valor: cent(soma), linhas: n };
-}
 
 /**
  * Compara os retratos com as faturas publicadas.

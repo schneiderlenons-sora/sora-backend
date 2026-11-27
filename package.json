@@ -48,6 +48,7 @@
     "eval:agentes": "node evals/agentes.eval.js",
     "eval:parcelas-previstas": "node evals/parcelasPrevistas.eval.js",
     "eval:medicao-fatura": "node evals/medicaoFaturaAberta.eval.js",
+    "eval:fatura-conferida": "node evals/faturaConferida.eval.js",
     "eval:fatura-vista": "node evals/faturaVista.eval.js",
     "eval:caixinhas": "node evals/caixinhas.eval.js",
     "eval:resgate": "node evals/resgateInvestimento.eval.js",

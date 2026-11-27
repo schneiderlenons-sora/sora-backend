@@ -40,6 +40,7 @@ const { cicloPorCompetencia, competenciaAtual, hojeSP } = require('./cicloFatura
 const { valorNaFatura } = require('./valorFatura');
 const { registrarPagamentosDoOF } = require('./faturaRollover');
 const { gravarParcelasPrevistas } = require('./parcelasPrevistas');
+const { faturaConferidaPeloLimite, usadosDoLimite } = require('./marcaDoBanco');
 const { salvarFaturas } = require('./faturasBanco');
 const { planejarDedupReprocesso } = require('./dedupReprocesso');
 const { nomeDaContaOf, conexaoEmpresarial } = require('./nomeContaOf');
@@ -3543,6 +3544,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
         // reconstruindo o número pela soma das transações importadas. Guardar
         // tira o valor da fatura do terreno da reconstrução (ver faturasBanco.js).
         let faturasSalvas = 0;
+        let faturaConferida = null;
         try {
           const { data: w } = await supabase.from('wallets')
             .select('*')                       // '*': colunas novas (114) podem não existir
@@ -3562,6 +3564,29 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
               .eq('grupo_id', grupoId).eq('carteira_nome', w.nome).gt('parcela_total', 1);
             parcelasProjetadas = await gravarParcelasPrevistas(
               grupoId, w, parcelamentos, hoje, normalizadas, jaGravadas || []);
+
+            // ⭐ FATURA ABERTA CONFERIDA PELO LIMITE (services/marcaDoBanco.js).
+            // Quando a marcação de fatura do EMISSOR (aberta + o que ele marcou
+            // pra depois) bate AO CENTAVO com o limite usado que o banco informa,
+            // a fatura aberta é a da marcação — é o caso do Mercado Pago (o
+            // `unbilled_amount` da Polp vem 0) e do Nubank com mais de uma linha
+            // de limite. Sem a coincidência, NADA muda. Lê o BANCO DE DADOS, não
+            // o lote: parcela de compra antiga (fora dos 90 dias) também conta.
+            // Interruptor: OF_FATURA_CONFERIDA=0.
+            if (process.env.OF_FATURA_CONFERIDA !== '0' && w.dia_fechamento) {
+              const comp = competenciaAtual(w, hoje);
+              const { data: abertas, error: eAb } = await supabase.from('transacoes')
+                .select('tipo, valor, valor_moeda, categoria, observacao, of_bill_id, of_bill_forecast')
+                .eq('grupo_id', grupoId).eq('carteira_nome', w.nome)
+                .is('of_bill_id', null).gte('of_bill_forecast', comp);
+              const conf = eAb ? null : faturaConferidaPeloLimite({
+                linhas: abertas || [], competencia: comp, usados: usadosDoLimite(raw.limits, money),
+              });
+              if (conf && Math.abs(-Number(w.saldo) - conf.valor) > 0.01) {
+                const { error: eSaldo } = await supabase.from('wallets').update({ saldo: -conf.valor }).eq('id', w.id);
+                if (!eSaldo) faturaConferida = conf;
+              }
+            }
           }
         } catch { /* ignora */ }
 
@@ -3571,6 +3596,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
           txs: txs.length, novas,
           pagamentos_fatura: pagamentosRegistrados || undefined,
           parcelas_previstas: parcelasProjetadas || undefined,
+          fatura_conferida: faturaConferida || undefined,
           // ⚠️ Observabilidade da redistribuição. Sem estes três campos, "a
           // fatura continua errada depois do sync" vira adivinhação: não dá pra
           // saber se a API não devolveu plano, se devolveu e nada casou, ou se
