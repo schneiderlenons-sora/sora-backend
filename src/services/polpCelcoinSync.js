@@ -41,7 +41,7 @@ const { valorNaFatura } = require('./valorFatura');
 const { registrarPagamentosDoOF } = require('./faturaRollover');
 const { gravarParcelasPrevistas } = require('./parcelasPrevistas');
 const { faturaConferidaPeloLimite, usadosDoLimite } = require('./marcaDoBanco');
-const { salvarFaturas } = require('./faturasBanco');
+const { salvarFaturas, faturasDoCartao, competenciaDoSimulado } = require('./faturasBanco');
 const { planejarDedupReprocesso } = require('./dedupReprocesso');
 const { nomeDaContaOf, conexaoEmpresarial } = require('./nomeContaOf');
 const { espelharDoConsentimento } = require('./espelhoContaEmpresa');
@@ -3583,7 +3583,12 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
             // o lote: parcela de compra antiga (fora dos 90 dias) também conta.
             // Interruptor: OF_FATURA_CONFERIDA=0.
             if (process.env.OF_FATURA_CONFERIDA !== '0' && w.dia_fechamento) {
-              const comp = competenciaAtual(w, hoje);
+              // ⚠️ A MESMA fatura em que a tela mostra o saldo: a SEGUINTE à
+              // última publicada (`faturaVista` → `competenciaDoSimulado`), NÃO
+              // a "atual". Entre o fechamento e o vencimento a "atual" é a fatura
+              // já FECHADA — calcular por ela gravaria o valor da fechada no
+              // lugar do da aberta.
+              const comp = competenciaDoSimulado(w, await faturasDoCartao(w.id)) || competenciaAtual(w, hoje);
               const { data: abertas, error: eAb } = await supabase.from('transacoes')
                 .select('tipo, valor, valor_moeda, categoria, observacao, of_bill_id, of_bill_forecast')
                 .eq('grupo_id', grupoId).eq('carteira_nome', w.nome)

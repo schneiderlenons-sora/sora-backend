@@ -66,6 +66,15 @@ const i = fonte.indexOf('FATURA ABERTA CONFERIDA PELO LIMITE');
 const bloco = fonte.slice(i, i + 2200);
 eq(i > 0 && fonte.indexOf('parcelasProjetadas = await gravarParcelasPrevistas(') < i, true, '§5 roda depois das parcelas previstas (transações já gravadas)');
 eq(/process\.env\.OF_FATURA_CONFERIDA !== '0'/.test(bloco), true, '§5 tem interruptor (OF_FATURA_CONFERIDA=0)');
+// ⚠️ Caso real (27/11/2026, primeira versão): calculada pela competência "atual",
+// um Itaú entre o fechamento e o vencimento recebeu o valor da fatura FECHADA
+// (222,54) no lugar do da aberta. A tela mostra o saldo na fatura SEGUINTE à
+// última publicada — a regra tem de usar a MESMA.
+eq(/const comp = competenciaDoSimulado\(w, await faturasDoCartao\(w\.id\)\) \|\| competenciaAtual\(w, hoje\);/.test(bloco), true,
+  '§5 usa a MESMA competência em que a tela mostra o saldo (a do simulado)');
+const vista = fs.readFileSync(path.join(__dirname, '../src/services/faturaVista.js'), 'utf8');
+eq(/competencia === \(competenciaDoSimulado\(cartao, faturas\) \|\| competenciaAtual\(cartao\)\)/.test(vista), true,
+  '§5 …e é essa a competência que o faturaVista usa pro saldo (se mudar lá, mudar aqui)');
 eq(/\.eq\('grupo_id', grupoId\)\.eq\('carteira_nome', w\.nome\)\s*\.is\('of_bill_id', null\)\.gte\('of_bill_forecast', comp\)/.test(bloco), true,
   '§5 lê do BANCO DE DADOS as linhas do PRÓPRIO cartão, sem fatura, da competência atual em diante');
 eq(/usadosDoLimite\(raw\.limits, money\)/.test(bloco), true, '§5 confere contra os limites crus do cartão');
