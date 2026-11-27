@@ -353,11 +353,85 @@ console.log('── 6. compra na janela fechamento→vencimento ──');
 }
 console.log('  ok');
 
-// ── Resultado ────────────────────────────────────────────────────────────
-console.log('');
-if (falhas.length) {
-  console.error(`✗ ${falhas.length} falha(s):`);
-  falhas.forEach((f) => console.error('  ·', f));
-  process.exit(1);
+// ── §7. COMPRA ANTIGA: a parcela JÁ GRAVADA não é projetada de novo ──────
+// Caso real (PicPay, 27/11/2026): AIRBNB 6x e DEYSEBEATR 12x compradas em
+// agosto. O sync só pede ao banco o que tem DATA DE COMPRA nos últimos 90 dias,
+// e o emissor manda toda parcela com a data da compra — então elas não vinham
+// no lote e a projeção contava de novo a 4/6 e a 4/12 que já estavam gravadas:
+// a fatura de dezembro saía R$ 532,71 maior. Roda o `gravarParcelasPrevistas`
+// REAL com um banco falso (só a escrita da projeção).
+async function secao7() {
+  console.log('§7 compra antiga: a parcela já gravada não é projetada de novo');
+  const gravadas = [];
+  const caminho = require.resolve('../src/db/supabase');
+  const original = require.cache[caminho];
+  require.cache[caminho] = { id: caminho, filename: caminho, loaded: true, exports: {
+    from: () => ({
+      delete: () => ({ eq: async () => ({ error: null }) }),
+      insert: async (rows) => { gravadas.push(...rows); return { error: null }; },
+    }),
+  } };
+  try {
+    const { gravarParcelasPrevistas } = require('../src/services/parcelasPrevistas');
+    const PIC = { id: 'pic', dia_fechamento: 4, dia_vencimento: 10 };
+    const HOJE_PIC = '2026-11-27';
+    const planos = [
+      { description: 'AIRBNB * HMJ9YPARC', amount: 425.59, totalInstallments: 6, paidInstallments: 6,
+        purchasedAt: '2026-08-22T19:00:00.000000Z', occurrences: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'] },
+      { description: 'MP *DEYSEBEATRPARC', amount: 107.12, totalInstallments: 12, paidInstallments: 4,
+        purchasedAt: '2026-08-24T17:21:29.000000Z', occurrences: ['d1', 'd2', 'd3', 'd4'] },
+    ];
+    // O que já está em `transacoes` (o sync redistribuiu por mês).
+    const noBanco = [
+      ...[3, 4, 5, 6].map((n) => ({ valor: 425.59, parcela_num: n, parcela_total: 6,
+        observacao: `AIRBNB * HMJ9YPARC0${n}/06`, data: `2026-${String(7 + n).padStart(2, '0')}-22T12:00:00+00:00`.replace('2026-13', '2027-01') })),
+      ...[3, 4].map((n) => ({ valor: 107.08, parcela_num: n, parcela_total: 12,
+        observacao: `MP *DEYSEBEATRPARC0${n}/12`, data: `2026-${String(7 + n).padStart(2, '0')}-24T12:00:00+00:00` })),
+    ];
+    const chave = (r) => `${r.competencia} ${r.parcela_num}/${r.parcela_total}`;
+
+    await gravarParcelasPrevistas('g', PIC, planos, HOJE_PIC, []);
+    const antes = gravadas.splice(0).map(chave);
+    ok(antes.includes('2026-12 4/6') && antes.includes('2026-12 4/12'),
+      'prova do defeito: só com o lote, a 4/6 e a 4/12 de dezembro eram projetadas');
+
+    await gravarParcelasPrevistas('g', PIC, planos, HOJE_PIC, [], noBanco);
+    const depois = gravadas.splice(0).map(chave);
+    eq(depois.filter((k) => /\/6$/.test(k)).length, 0, 'nenhuma parcela do AIRBNB é projetada (4, 5 e 6 já estão gravadas)');
+    ok(!depois.includes('2026-12 4/12'), 'a 4/12 de dezembro já está gravada: não é projetada');
+    eq(depois.filter((k) => /\/12$/.test(k)).length, 8, 'as 8 parcelas da DEYSEBEATR que ainda não existem (5 a 12) seguem projetadas');
+    ok(depois.includes('2027-01 5/12'), 'a 5/12 vai pra janeiro');
+
+    // Gravada com valor bem diferente NÃO é a mesma parcela.
+    await gravarParcelasPrevistas('g', PIC, planos, HOJE_PIC, [],
+      [{ valor: 300, parcela_num: 4, parcela_total: 12, observacao: 'OUTRA LOJA 04/12', data: '2026-11-20T12:00:00+00:00' }]);
+    ok(gravadas.splice(0).map(chave).includes('2026-12 4/12'), 'parcela gravada de OUTRA compra (valor diferente) não cancela a projeção');
+
+    // Sem a lista do banco (leitura falhou → []), é o comportamento de antes.
+    await gravarParcelasPrevistas('g', PIC, planos, HOJE_PIC, [], undefined);
+    eq(gravadas.splice(0).length, antes.length, 'sem as gravadas, projeta igual a antes');
+  } finally {
+    if (original) require.cache[caminho] = original; else delete require.cache[caminho];
+  }
+  console.log('  ok');
 }
-console.log('✓ parcelas previstas: todos os casos passaram');
+
+// A chamada do sync tem de passar as parcelas JÁ GRAVADAS do cartão.
+{
+  const fonte = require('fs').readFileSync(require('path').join(__dirname, '../src/services/polpCelcoinSync.js'), 'utf8');
+  ok(/gravarParcelasPrevistas\(\s*grupoId, w, parcelamentos, hoje, normalizadas, jaGravadas \|\| \[\]\)/.test(fonte),
+    'o sync passa as parcelas já gravadas pra conferência');
+  ok(/from\('transacoes'\)[\s\S]{0,200}\.eq\('carteira_nome', w\.nome\)\.gt\('parcela_total', 1\)/.test(fonte),
+    'e elas são lidas do PRÓPRIO cartão (nome da carteira) e só parceladas');
+}
+
+// ── Resultado ────────────────────────────────────────────────────────────
+secao7().catch((e) => falhas.push('§7 quebrou: ' + e.message)).then(() => {
+  console.log('');
+  if (falhas.length) {
+    console.error(`✗ ${falhas.length} falha(s):`);
+    falhas.forEach((f) => console.error('  ·', f));
+    process.exit(1);
+  }
+  console.log('✓ parcelas previstas: todos os casos passaram');
+});

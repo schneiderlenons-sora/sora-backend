@@ -3554,8 +3554,14 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
             // `normalizadas` entra pra NÃO projetar por cima do que o sync já
             // lançou: cartão que manda "N/M" tem a parcela futura redistribuída
             // como transação, e projetar de novo contaria em dobro.
+            // As parcelas que JÁ estão gravadas neste cartão: o lote só traz
+            // compra dos últimos `dias` (ver gravarParcelasPrevistas). Leitura
+            // que falha = lista vazia = o comportamento de antes.
+            const { data: jaGravadas } = await supabase.from('transacoes')
+              .select('valor, data, observacao, parcela_num, parcela_total')
+              .eq('grupo_id', grupoId).eq('carteira_nome', w.nome).gt('parcela_total', 1);
             parcelasProjetadas = await gravarParcelasPrevistas(
-              grupoId, w, parcelamentos, hoje, normalizadas);
+              grupoId, w, parcelamentos, hoje, normalizadas, jaGravadas || []);
           }
         } catch { /* ignora */ }
 

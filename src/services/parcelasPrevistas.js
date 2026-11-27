@@ -303,7 +303,7 @@ function daCompetencia(previstas, competencia) {
  *
  * @returns {Promise<number>} quantas parcelas ficaram projetadas
  */
-async function gravarParcelasPrevistas(grupoId, cartao, parcelamentos, hoje, txsDoCartao) {
+async function gravarParcelasPrevistas(grupoId, cartao, parcelamentos, hoje, txsDoCartao, jaGravadas = []) {
   try {
     if (!grupoId || !cartao?.id) return 0;
     // ⚠️ `null` = A LEITURA FALHOU (ver listarParcelamentos estrito). Reescrever
@@ -342,8 +342,17 @@ async function gravarParcelasPrevistas(grupoId, cartao, parcelamentos, hoje, txs
     const supabase = require('../db/supabase');
     // Fora as que o sync já lançou como transação (ver jaEhTransacao) — senão a
     // mesma parcela contaria duas vezes em cartão que manda "N/M".
+    //
+    // ⚠️ O LOTE DA API NÃO BASTA: o sync pede só o que tem DATA DE COMPRA nos
+    // últimos 90 dias, e o emissor manda TODA parcela com a data da compra.
+    // Compra parcelada mais velha que isso some do lote, a parcela JÁ GRAVADA
+    // não era vista e a projeção a contava de novo. Medido em 27/11/2026: 786
+    // linhas (R$ 104.974) em 28 grupos, 132 delas na fatura em aberto.
+    // `jaGravadas` (as parcelas do cartão que já estão em `transacoes`) entram
+    // SÓ na conferência — o `porId` acima continua só com o lote.
+    const conferir = [...(txsDoCartao || []), ...(jaGravadas || [])];
     const linhas = projetar(comData, cartao, hoje)
-      .filter((l) => !jaEhTransacao(l, txsDoCartao, cartao));
+      .filter((l) => !jaEhTransacao(l, conferir, cartao));
 
     const { error: errDel } = await supabase.from('of_parcelas_previstas')
       .delete().eq('cartao_id', cartao.id);
