@@ -118,8 +118,15 @@ router.get('/ping', auth, exigirAcesso, async (req, res) => {
 // Celcoin (nov/2026): cliente via "503 Service Temporarily Unavailable" ao
 // conectar, e sem isto não dava pra separar "provedor fora" de "bug nosso".
 // `&consent=<id>` detalha um consentimento (recursos e cronograma de sync).
+// `&debug=<id>` (+ `&foco=cartoes|saldo|…`, `&cru=1`) devolve o MESMO
+// diagnóstico do /api/admin/of-debug do painel (limites, faturas publicadas,
+// simulado, candidatas da fatura) sem precisar do login de admin. Só leitura.
 router.get('/diag-polp', async (req, res) => {
   if (!process.env.API_SECRET_TOKEN || req.query.key !== process.env.API_SECRET_TOKEN) return res.sendStatus(403);
+  if (req.query.debug) {
+    req.params = { ...req.params, consentId: String(req.query.debug) };
+    return diagnosticoCelcoin(req, res);
+  }
   const celcoin = require('../services/polpCelcoin');
   const limpo = (s) => String(s || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
   const medir = async (fn) => {
