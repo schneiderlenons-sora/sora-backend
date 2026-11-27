@@ -128,6 +128,14 @@ router.get('/diag-polp', async (req, res) => {
     return diagnosticoCelcoin(req, res);
   }
   const celcoin = require('../services/polpCelcoin');
+  // `&txs=<id do cartão na Celcoin>`: as transações CRUAS do cartão (com
+  // bill_id, bill_post_date e bill_forecast_date), que o of-debug não lista.
+  if (req.query.txs) {
+    try {
+      const lista = await celcoin.listarTransacoesCartao(String(req.query.txs), { max: 5 });
+      return res.json({ total: lista.length, transacoes: lista });
+    } catch (e) { return res.status(502).json({ erro: e.message }); }
+  }
   const limpo = (s) => String(s || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
   const medir = async (fn) => {
     const i = Date.now();
