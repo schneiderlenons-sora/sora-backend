@@ -25,6 +25,7 @@ const EMAILS_TESTE = [
 // como agradecimento. A regra dos outros não muda.
 const CONTAS_LIBERADAS = [
   'efe5c528-0720-45d0-97e5-be23deb212cd', // sugeriu os widgets (nov/2026)
+  '9747f0cf-e46b-4115-8219-78baf9b03947', // era assinante mensal, foi pro vitalício (dono, 27/11/2026)
 ];
 
 const PLANOS_ASSINATURA = ['basico', 'premium', 'platinum'];
