@@ -2577,6 +2577,11 @@ async function backfillBillPostDate(grupoId, normalizadas) {
  */
 function patchReconciliacaoParcela(atual, t) {
   if (!atual || !t || !t.data) return null;
+  // ⚠️ DATA TRAVADA (migration 208): linha corrigida à mão a partir do dado do
+  // próprio banco (ex.: parcelas de compra ESTORNADA que o banco cobrou todas
+  // de uma vez — o deslocamento por `charge_identificator` as espalharia de
+  // novo pelos meses seguintes). Nada desta linha é reescrito aqui.
+  if (atual.data_travada === true) return null;
   if (ymd(atual.data) !== ymd(t.data)) {
     return {
       data: t.data,
@@ -2629,7 +2634,11 @@ async function reconciliarParcelas(grupoId, normalizadas) {
   if (!linhas.length) return 0;
   let mapa;
   try {
-    mapa = await linhasPorOfTxId(grupoId, linhas.map((t) => t.externalId), 'id, data, pago');
+    // `data_travada` é da migration 208. Sem ela a 1ª leitura falha e a 2ª
+    // segue exatamente como antes (nenhuma linha travada).
+    const ids = linhas.map((t) => t.externalId);
+    try { mapa = await linhasPorOfTxId(grupoId, ids, 'id, data, pago, data_travada'); }
+    catch { mapa = await linhasPorOfTxId(grupoId, ids, 'id, data, pago'); }
   } catch { return 0; }                         // leitura falhou: nada a reconciliar agora
   for (const t of linhas) {
     try {

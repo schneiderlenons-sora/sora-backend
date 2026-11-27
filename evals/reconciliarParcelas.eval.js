@@ -176,6 +176,32 @@ console.log('── 6. o sync vira a parcela pra paga quando o dia chega ──'
 }
 console.log('  ok');
 
+// ── 7. DATA TRAVADA (migration 208) ──────────────────────────────────────
+// Caso real (PicPay, 27/11/2026): compra de 6x ESTORNADA; o banco cobrou as
+// parcelas 3–6 de uma vez em 24/09 (fatura de outubro). As linhas foram
+// corrigidas pra 24/09 e travadas — o deslocamento por `charge_identificator`
+// não pode espalhá-las de novo por nov/dez/jan quando a compra voltar num lote
+// (o "Atualizar" lê 180 dias).
+console.log('── 7. linha com data travada não é reescrita ──');
+{
+  const P = S.patchReconciliacaoParcela;
+  const prosed = S.normalizeTxCartao(PAYLOAD[6], '2026-09-14');           // o sync quer 03/09, paga
+  eq(P({ data: '2026-08-03T22:31:55+00:00', pago: false, data_travada: true }, prosed), null,
+    'travada: nem a data, nem o pago, nem o marcador mudam');
+  const solta = P({ data: '2026-08-03T22:31:55+00:00', pago: false, data_travada: false }, prosed);
+  eq(solta && String(solta.data).slice(0, 10), '2026-09-03', 'data_travada = false segue a regra de sempre');
+  const semColuna = P({ data: '2026-08-03T22:31:55+00:00', pago: false }, prosed);
+  eq(semColuna && String(semColuna.data).slice(0, 10), '2026-09-03', 'sem a coluna (antes da 208) segue a regra de sempre');
+
+  // A leitura pede a coluna e, se ela não existir, repete SEM ela.
+  const fonte = require('fs').readFileSync(require('path').join(__dirname, '../src/services/polpCelcoinSync.js'), 'utf8').replace(/\r\n/g, '\n');
+  const ini = fonte.indexOf('async function reconciliarParcelas(');
+  const corpo = fonte.slice(ini, ini + 1200);
+  eq(/try \{ mapa = await linhasPorOfTxId\(grupoId, ids, 'id, data, pago, data_travada'\); \}\s*catch \{ mapa = await linhasPorOfTxId\(grupoId, ids, 'id, data, pago'\); \}/.test(corpo), true,
+    'lê data_travada e, sem a migration, cai na leitura de antes');
+}
+console.log('  ok');
+
 console.log('');
 if (falhas.length) {
   console.log(`✗ ${falhas.length} falha(s):`);
