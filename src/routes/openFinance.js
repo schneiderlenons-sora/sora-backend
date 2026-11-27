@@ -17,6 +17,7 @@ const polp     = require('../services/polp');   // trilho Pluggy (usado no /debu
 // Dispatcher dos dois trilhos (Pluggy v1 × Celcoin v2). Nas rotas que operam
 // sobre uma conexão existente, o provider vem do BANCO — nunca do cliente.
 const providers = require('../services/openFinanceProvider');
+const { erroDeSyncParaCliente } = require('../services/erroDeSyncOF');
 
 /** Trilho pedido na requisição (?provider= ou body.provider). Default: Pluggy. */
 function provDaReq(req) {
@@ -315,7 +316,10 @@ router.post('/conectar', auth, exigirAcesso, exigirConfigurado, exigirPermissao(
     try {
       const morta = typeof p.recriarConexao === 'function'
         ? await tentativaMorta(req.userId, rotulo, p.provider) : null;
-      if (morta) {
+      // O nosso status pode estar atrasado: só recria o que o PROVEDOR confirma
+      // que não está autorizado (recriar um AUTHORISED revoga a conexão).
+      const leitura = morta ? await providers.lerParaRenovar(p, morta.external_id) : null;
+      if (morta && leitura.ok && !leitura.viva) {
         const nova = await p.recriarConexao(morta.external_id, {});
         await supabase.from('of_conexoes').update({
           status: String(nova.status || 'awaiting_authorization').toLowerCase(),
@@ -566,6 +570,9 @@ router.get('/conexoes', auth, async (req, res) => {
       cobertura,
       conexoes: (data || []).map((c) => ({
         ...c,
+        // O texto técnico fica no banco (admin e diagnóstico); o cliente lê em
+        // português o que aconteceu.
+        ultimo_erro: erroDeSyncParaCliente(c.ultimo_erro, c.status),
         outro_grupo: !!(c.grupo_id && c.grupo_id !== grupoId),
         grupo_nome: nomes[c.grupo_id] || null,
         contas_vinculadas:  vinculos[c.external_id]?.contas  || 0,
@@ -624,18 +631,26 @@ router.post('/conexoes/:externalId/reautorizar', auth, exigirAcesso,
         });
       }
 
-      const atual = await p.getConexao(req.params.externalId).catch(() => null);
-
       // ⚠️ CONEXÃO VIVA NÃO SE RENOVA: a doc diz que recriar um AUTORISED
-      // REVOGA o consentimento atual. Aqui isso apagaria uma conexão boa.
-      const st = String((atual && atual.status) || '').toUpperCase();
-      if (st === 'AUTHORISED' || st === 'UPDATED') {
-        return res.json({ jaAutorizada: true, status: st, urlToAuthenticate: null, provider: p.provider });
+      // REVOGA o consentimento atual. Aqui isso apagaria uma conexão boa — e
+      // sem conseguir LER o status, nada é recriado.
+      const leitura = await providers.lerParaRenovar(p, req.params.externalId);
+      if (!leitura.ok) {
+        return leitura.motivo === 'inexistente'
+          ? res.status(404).json({ erro: 'Essa autorização não existe mais. Desconecte este banco e conecte de novo.' })
+          : res.status(503).json({ erro: 'A ligação com o banco está instável agora. Sua conexão continua como está — tente de novo em alguns minutos.' });
+      }
+      const atual = leitura.atual;
+      if (leitura.viva) {
+        return res.json({
+          jaAutorizada: true, status: String(atual.status).toUpperCase(),
+          urlToAuthenticate: null, provider: p.provider,
+        });
       }
 
       // URL recém-emitida ainda serve — e não recriar aqui é o que impede
       // clique duplo de virar consentimento duplicado (custo).
-      if (atual && !p.precisaRenovar(atual)) {
+      if (!p.precisaRenovar(atual)) {
         return res.json({
           urlToAuthenticate: atual.url_to_authenticate || atual.urlToAuthenticate || null,
           status: atual.status || null, renovada: false, provider: p.provider,

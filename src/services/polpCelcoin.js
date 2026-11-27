@@ -43,6 +43,20 @@ class CelcoinError extends Error {
   }
 }
 
+// Falha DO PROVEDOR (500/502/503/504 ou rede): passa sozinha, e não diz nada
+// sobre o consentimento nem sobre o que o banco tem. Só LEITURA é repetida —
+// repetir um POST poderia criar um consentimento (cobrado) em dobro.
+// (array mutável: o eval zera as esperas)
+const ESPERAS_INSTABILIDADE = [1000, 3000];
+const espera = (ms) => new Promise((res) => setTimeout(res, ms));
+
+/** O erro é instabilidade do provedor (e não recusa, nem "não existe")? */
+function ehInstabilidade(e) {
+  if (!e || e.name !== 'CelcoinError') return false;
+  if (!e.status) return !!e.path;              // sem status e com caminho = rede
+  return e.status >= 500 || e.status === 429;
+}
+
 async function api(path, { method = 'GET', body, tentativa = 0 } = {}) {
   if (!configurado()) {
     throw new CelcoinError('Celcoin não configurado (faltam POLP_CELCOIN_CLIENT_ID / POLP_CELCOIN_CLIENT_SECRET).');
@@ -60,13 +74,22 @@ async function api(path, { method = 'GET', body, tentativa = 0 } = {}) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (e) {
+    if (method === 'GET' && tentativa < ESPERAS_INSTABILIDADE.length) {
+      await espera(ESPERAS_INSTABILIDADE[tentativa]);
+      return api(path, { method, body, tentativa: tentativa + 1 });
+    }
     throw new CelcoinError(`Celcoin ${method} ${path} → rede: ${e.message}`, { path });
+  }
+
+  if (r.status >= 500 && method === 'GET' && tentativa < ESPERAS_INSTABILIDADE.length) {
+    await espera(ESPERAS_INSTABILIDADE[tentativa]);
+    return api(path, { method, body, tentativa: tentativa + 1 });
   }
 
   if (r.status === 429 && tentativa < 2) {
     // Rate limit (30 req/min nos show). Respeita Retry-After e tenta de novo.
-    const espera = Math.min(Number(r.headers.get('retry-after')) || 5, 30);
-    await new Promise((res) => setTimeout(res, espera * 1000));
+    const segundos = Math.min(Number(r.headers.get('retry-after')) || 5, 30);
+    await espera(segundos * 1000);
     return api(path, { method, body, tentativa: tentativa + 1 });
   }
 
@@ -323,10 +346,10 @@ async function listarTransacoesConta(accountId, { fromDate, toDate, max = 20 } =
 // ⚠️ Não confundir com investimento: a doc avisa que este endpoint "não inclui
 // reservas atreladas a investimentos do CPF/CNPJ" (essas vêm pelas APIs de
 // Investimentos) — então não há risco de contar a mesma coisa duas vezes.
+// ⚠️ A FALHA SOBE. Devolver [] aqui fazia a reconciliação APAGAR as caixinhas
+// do cliente numa instabilidade do provedor ("não respondeu" ≠ "não tem").
 async function listarSaldosReservados(accountId, { max = 5 } = {}) {
-  try {
-    return await paginado(`/accounts/${encodeURIComponent(accountId)}/reserved-balances`, { max });
-  } catch (e) { console.warn('[celcoin] reserved-balances:', e.message); return []; }
+  return paginado(`/accounts/${encodeURIComponent(accountId)}/reserved-balances`, { max });
 }
 
 // ── Cartões (entidade SEPARADA no v2) ───────────────────────────────────────
@@ -427,6 +450,7 @@ async function alertas() {
 module.exports = {
   listarResources,
   PROVIDER, PRODUTOS_ESSENCIAIS, FAMILIAS_INVESTIMENTO, CelcoinError, ehCombinacaoInvalida,
+  ehInstabilidade, ESPERAS_INSTABILIDADE,
   configurado, api, paginado,
   listarInstituicoes,
   criarConsentimento, getConsentimento, revogarConsentimento, listarConsentimentos, syncSchedules,

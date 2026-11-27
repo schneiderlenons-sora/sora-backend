@@ -66,6 +66,25 @@ function ehConexaoViva(status) {
   return STATUS_VIVO.has(String(status || '').toLowerCase());
 }
 /**
+ * LÊ o consentimento antes de renovar. ⚠️ Recriar um consentimento AUTORISED
+ * faz a Polp REVOGAR o atual — então "não consegui ler" NUNCA pode virar "pode
+ * recriar". Com o provedor instável o status vinha desconhecido e o botão
+ * "Autorizar" recriaria uma conexão que estava funcionando.
+ *
+ * @returns { ok: true, atual, viva } | { ok: false, motivo: 'instavel'|'inexistente' }
+ */
+async function lerParaRenovar(p, externalId) {
+  let atual;
+  try { atual = await p.getConexao(externalId); }
+  catch (e) {
+    return { ok: false, motivo: e && (e.status === 404 || e.status === 403) ? 'inexistente' : 'instavel' };
+  }
+  const st = String((atual && atual.status) || '').toUpperCase();
+  if (!st) return { ok: false, motivo: 'instavel' };
+  return { ok: true, atual, viva: st === 'AUTHORISED' || st === 'UPDATED' };
+}
+
+/**
  * Qual tentativa MORTA dá pra reaproveitar neste banco — ou nenhuma.
  *
  * ⚠️ A REGRA É "TODAS MORTAS", NÃO "ALGUMA MORTA", e a diferença importa.
@@ -148,5 +167,5 @@ async function paraConexao(externalId, grupoId) {
 
 module.exports = {
   PLUGGY, CELCOIN, providerPadrao, normalizarProvider, para, paraConexao,
-  ehConexaoViva, STATUS_VIVO, escolherTentativaMorta,
+  ehConexaoViva, STATUS_VIVO, escolherTentativaMorta, lerParaRenovar,
 };

@@ -3306,6 +3306,10 @@ async function reconciliarCaixinhas(grupoId, ofContaId, idsVistos) {
 
 // ── Orquestração ────────────────────────────────────────────────────────────
 
+const repetidor = require('./repetirSyncOF').criarRepetidor({
+  sincronizar: (id) => sincronizarConsentimento(id, { dias: 90 }),
+});
+
 /**
  * Sincroniza um consentimento inteiro. Cada bloco é tolerante: falha numa parte
  * não derruba o resto (e o motivo vai no relatório).
@@ -3373,6 +3377,20 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     };
   }
 
+  // LISTA que o provedor não entregou (500/rede, já repetida pelo cliente): as
+  // outras partes seguem, nada é tratado como "não existe" e a conexão NÃO vira
+  // erro. Relato de 27/11/2026: um 500 na lista de cartões abortava o sync
+  // inteiro e o cliente lia "Erro no login". Recusa (4xx) segue abortando.
+  const falhasDoProvedor = [];
+  const listaOuFalha = async (parte, ler) => {
+    try { return await ler(); }
+    catch (e) {
+      if (!celcoin.ehInstabilidade(e)) throw e;
+      falhasDoProvedor.push({ parte, erro: String(e.message).trim() });
+      return [];
+    }
+  };
+
   try {
     let novasTx = 0;
 
@@ -3382,7 +3400,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     }
 
     // 2. CONTAS → wallet + transações
-    for (const raw of await celcoin.listarContas(consentId)) {
+    for (const raw of await listaOuFalha('contas', () => celcoin.listarContas(consentId))) {
       try {
         const n = normalizeConta(raw, conexao.instituicao);
         const walletNome = await upsertWallet(grupoId, userId, n, n.saldo, consentId, { empresarial });
@@ -3434,7 +3452,7 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     }
 
     // 3. CARTÕES → wallet 'Crédito' + fatura (datas reais!) + transações
-    for (const raw of await celcoin.listarCartoes(consentId)) {
+    for (const raw of await listaOuFalha('cartoes', () => celcoin.listarCartoes(consentId))) {
       try {
         const bills = await celcoin.listarFaturas(raw.id);
         const n = normalizeCartao(raw, bills, hoje, conexao.instituicao);
@@ -3724,9 +3742,22 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
       }
     }
 
-    await supabase.from('of_conexoes').update({
+    // Sincronização INCOMPLETA: `ultima_sync` não anda (ela afirma que veio
+    // tudo) e o motivo fica gravado. Consentimento confirmado como autorizado
+    // segue "updated" — marcar erro ofereceria "Autorizar" numa conexão boa e
+    // deixaria o /conectar tratá-la como tentativa morta (recriar REVOGA). Sem
+    // essa confirmação, o status não é mexido.
+    const incompleto = falhasDoProvedor.length > 0;
+    if (incompleto) relatorio.falhas = falhasDoProvedor;
+    await supabase.from('of_conexoes').update(incompleto ? {
+      ...(status === 'AUTHORISED' ? { status: 'updated' } : {}),
+      ultimo_erro: falhasDoProvedor.map((f) => f.erro).join(' | ').slice(0, 300),
+    } : {
       status: 'updated', ultima_sync: new Date().toISOString(), ultimo_erro: null,
     }).eq('id', conexao.id);
+    // O próximo webhook pode demorar horas: tenta de novo por conta própria.
+    if (incompleto) repetidor.falhou(String(consentId));
+    else repetidor.deuCerto(String(consentId));
 
     // ── O QUE O BANCO DE FATO LIBEROU (migration 175) ──────────────────────
     //
@@ -3745,7 +3776,8 @@ async function sincronizarConsentimento(consentId, { dias = 90 } = {}) {
     // dispara o webhook de hora em hora por conexão: consultar sempre seriam
     // ~1.000 chamadas/dia pra confirmar o óbvio em quem já recebe o cartão.
     // Aqui ela roda no único caso em que a resposta muda alguma coisa.
-    if (!relatorio.cartoes.length) {
+    // ⚠️ Lista de cartões que FALHOU não é "nenhum cartão veio".
+    if (!relatorio.cartoes.length && !falhasDoProvedor.some((f) => f.parte === 'cartoes')) {
       try {
         const rs = await celcoin.listarResources(consentId);
         const enxuto = (Array.isArray(rs) ? rs : []).map((r) => ({ type: r.type, status: r.status }));
