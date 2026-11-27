@@ -2499,6 +2499,31 @@ cron.schedule('*/30 * * * *', async () => {
 }, { noOverlap: true });
 console.log('   • A cada 30 min (9h–22h) — aniversários e datas comemorativas');
 
+// ─────────────────────────────────────────────────────────────────
+// JOB 1V — MEDIÇÃO da fatura em aberto (migration 207) — 23h30 de SP
+//
+// Só MEDE (nada na tela lê): por cartão do Open Finance com conexão viva,
+// grava o valor que a tela mostra e o que a marcação de fatura do EMISSOR
+// daria (services/medicaoFaturaAberta.js, eval:medicao-fatura). Quando o banco
+// publica a fatura, /api/open-finance/diag-medicao compara os dois com o total
+// publicado, por banco. Agendado a cada 30 min e filtrado pelo relógio de SP
+// (o servidor roda em UTC); a 2ª passada no mesmo dia só regrava o retrato
+// (unique cartão+competência+dia). Sem a 207 não grava nada.
+// ─────────────────────────────────────────────────────────────────
+cron.schedule('*/30 * * * *', async () => {
+  const sp = agoraSP();
+  if (sp.minutos < 23 * 60 + 30) return;
+  try {
+    const r = await require('../services/medicaoFaturaAberta').fotografar({
+      supabase, hoje: sp.dataStr, faturasDoGrupo: require('../services/faturasDoGrupo').faturasDoGrupo,
+    });
+    console.log('📏 Medição da fatura em aberto:', JSON.stringify(r));
+  } catch (e) {
+    console.log('📏 Medição da fatura em aberto falhou:', e.message);
+  }
+}, { noOverlap: true });
+console.log('   • Todo dia 23:30 — medição da fatura em aberto (Open Finance)');
+
 // A linha que diz, no log do Render, se ESTE servidor manda lembrete. Na troca
 // de região é por ela (e pelo `crons` do /health) que se confere qual dos dois
 // está com os crons — nunca os dois.

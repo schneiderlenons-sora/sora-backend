@@ -111,6 +111,25 @@ router.get('/ping', auth, exigirAcesso, async (req, res) => {
   }
 });
 
+// GET /api/open-finance/diag-medicao?key=<API_SECRET_TOKEN> — MEDIÇÃO da fatura
+// em aberto (migration 207, services/medicaoFaturaAberta.js): pra cada fatura
+// já publicada pelo banco, o último retrato antes do fechamento × o total
+// publicado, por banco — a Sora de hoje contra a marcação de fatura do emissor.
+// `&fotografar=1` tira o retrato do dia na hora (o JOB 1V faz isso às 23h30);
+// só grava na tabela da medição. Nada na tela lê isto.
+router.get('/diag-medicao', async (req, res) => {
+  if (!process.env.API_SECRET_TOKEN || req.query.key !== process.env.API_SECRET_TOKEN) return res.sendStatus(403);
+  const M = require('../services/medicaoFaturaAberta');
+  try {
+    if (req.query.fotografar === '1') {
+      const { hojeSP } = require('../services/cicloFatura');
+      const { faturasDoGrupo } = require('../services/faturasDoGrupo');
+      return res.json(await M.fotografar({ supabase, hoje: hojeSP(), faturasDoGrupo }));
+    }
+    return res.json(await M.relatorio({ supabase }));
+  } catch (e) { return res.status(500).json({ erro: e.message }); }
+});
+
 // GET /api/open-finance/diag-polp?key=<API_SECRET_TOKEN> — mede DE DENTRO do
 // Render (só aqui existem as credenciais da Polp) se a Polp/Celcoin responde e
 // em que estado estão os consentimentos das conexões PARADAS. SÓ LEITURA: não
