@@ -1,11 +1,22 @@
 # https://polp.com.br/docs/celcoin/consents/create
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
-POST/consents
-Criar Consentimento
-Inicia um novo consentimento Open Finance por período indeterminado (válido até revogação). Após a criação, redirecione o usuário para url_to_authenticate para autorização no banco. Com avoidDuplicates=true, pode reutilizar um consent ativo existente.
+POST/consentsLEGADA
+Criar Consentimento (v2)
+Comportamento legado de POST /api/v2/consents: é o que acontece sem o header x-consent-version (ou com x-consent-version: 2). Para novas integrações, envie x-consent-version: 3 na mesma rota (Criar Consentimento v3), que impede duplicados, reaproveita consentimentos rejeitados/expirados/revogados ou com link já aberto e entrega um link de autorização de uso único. Inicia um novo consentimento Open Finance por período indeterminado (válido até revogação). Após a criação, redirecione o usuário para url_to_authenticate para autorização no banco. Com avoidDuplicates=true, pode reutilizar um consent ativo existente.
 Observações
+Uma rota, dois comportamentos
+POST /api/v2/consents (e /api/v2/sandbox/consents) cria consentimentos v2 e v3. Quem decide é o header x-consent-version, enviado só na criação.
+Header x-consent-version Comportamento
+3 Criar Consentimento (v3, NOVO): impede duplicados (409), reaproveita o mesmo consentimento e entrega um link de autorização de uso único. version = 3. Recomendado para todas as integrações.
+Ausente ou 2 Criar Consentimento (v2, LEGADA): criação legada com avoidDuplicates e URL direta da instituição. version = 2. É o padrão hoje.
+Qualquer outro valor HTTP 422.
+Outras observações
+Comportamento LEGADO: continua funcionando (é o padrão sem o header), mas não recebe as novas regras. Prefira enviar x-consent-version: 3 — veja Criar Consentimento (v3) em /docs/celcoin/v3/consents/create.
+Quando a v2 for desativada, o padrão sem header passa a ser 3. A rota não muda: integrações que já enviam x-consent-version: 3 não precisam alterar nada.
+Consentimentos criados aqui têm version = 2: url_to_authenticate é a URL direta da instituição (sem link de uso único). DELETE /api/v2/consents/{consent} revoga sem excluir (status REJECTED na v2); para reconectar, use POST /api/v2/consents/{consent}/recreate ou POST /api/v2/consents com x-consent-version: 3 (o consentimento passa a ser v3).
+Pendente sem conclusão também expira na v2: AWAITING_AUTHORIZATION há mais de 1 hora desde last_status_updated_at vira EXPIRED (error.code AUTHORIZATION_TIMEOUT). Com avoidDuplicates, um consentimento expirado não é devolvido — um novo é criado.
 Retorna HTTP 201 em caso de sucesso.
 A instituição deve estar com status OPERATIONAL.
 Instituição PERSONAL: enviar somente o CPF.
@@ -15,6 +26,7 @@ Com avoidDuplicates=true, a comparação de documents é exata (objeto JSON comp
 Para renovar a autorização do mesmo registro local (EXPIRED, REJECTED ou AUTHORISED) sem criar outro consent na Polp nem reprocessar contas, use POST /consents/{consent}/recreate.
 O consentimento não expira automaticamente: permanece ativo por período indeterminado até ser revogado via DELETE /consents/{consent}, pelo usuário no banco ou pela instituição.
 Veja a seção Produtos do consentimento abaixo para os valores atuais, o legado e as regras de agrupamento/normalização.
+Para testar sem plano e com dados fictícios, use o ambiente Sandbox (POST /api/v2/sandbox/consents; o header x-consent-version funciona igual) — veja a seção Sandbox abaixo.
 Request Body
 Field Type Description
 institution_id string ID da instituição (obtido em GET /institutions). Obrigatório.
@@ -22,25 +34,42 @@ cpf string CPF do titular (PERSONAL/BOTH) ou do operador/representante (BUSINESS
 cnpj string | null CNPJ da empresa. Obrigatório em BUSINESS; opcional em BOTH para conexão empresarial; proibido em PERSONAL.
 cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Opcional.
 products string[] Produtos Open Finance solicitados. Use os valores atuais (ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE). Valores legado ainda são aceitos e normalizados — veja a seção Produtos do consentimento.
-avoidDuplicates boolean Se true, evita criar consent duplicado: busca por institution_id + documents iguais (objeto inteiro, ex.: {"cpf":"..."} ≠ {"cpf":"...","cnpj":"..."}). Com status AUTHORISED ou AWAITING_AUTHORIZATION, retorna o consent existente; com EXPIRED (ou outros status), permite criar um novo. Opcional; padrão false.
+avoidDuplicates boolean Se true, evita criar consent duplicado: busca por institution_id + documents iguais (objeto inteiro, ex.: {"cpf":"..."} ≠ {"cpf":"...","cnpj":"..."}). Com status AUTHORISED ou AWAITING_AUTHORIZATION, retorna o consent existente (somente consentimentos v2); com EXPIRED (ou outros status), permite criar um novo. Opcional; padrão false. Só vale na criação v2 — é ignorado com x-consent-version: 3.
+redirectUrl string | null URL de redirecionamento personalizada para este consentimento, usada após a autorização no banco. Precisa ser uma URL http(s) válida — deep links (ex.: myapp://callback) são recusados com 422; para abrir um app, use uma página do seu domínio que redirecione para o deep link (ou Universal Links/App Links). Disponível apenas para contas com plano Pro ou Ultra; caso contrário é ignorada. Se omitida (ou em planos sem acesso), usa a URL configurada na conta ou a padrão da Polp.
 Response Fields
 Field Type Description
 id string Identificador único do consentimento.
 institution_id string ID da instituição financeira vinculada (mesmo valor de GET /institutions).
+version integer Versão da API que gerencia o consentimento. Enum: ConsentVersion. 2: criado pelo POST /api/v2/consents sem o header x-consent-version (legado). 3: criado (ou reaproveitado) pelo POST /api/v2/consents com x-consent-version: 3 — usa link de autorização de uso único e o status AUTHORIZATION_STARTED. Define o comportamento de PATCH, recreate e DELETE. DELETE /api/v2/consents/{consent} revoga sem excluir: v2 vira REJECTED e v3 vira REVOKED.
 cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Campo aberto para correlacionar o consentimento ao seu usuário.
-status string Status Open Finance. Enum: ConsentStatus.
+status string Status da autorização. Enum: ConsentStatus. Os valores possíveis dependem de version (AUTHORIZATION_STARTED e REVOKED só na v3). Em REJECTED, EXPIRED ou REVOKED os dados do consentimento ficam bloqueados (403/404) e, após 6 dias sem reaproveitamento, são excluídos — veja a página Status do Consentimento (/docs/celcoin/consent-status).
 status_label string Rótulo traduzido do status.
+last_status_updated_at string | null Quando o status mudou pela última vez (ISO 8601). Consentimentos em AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED há mais de 1 hora desde essa data passam para EXPIRED automaticamente. Também é a referência do prazo de 6 dias para excluir os dados de consentimentos REJECTED, EXPIRED ou REVOKED.
 execution_status string | null Status da importação e do enriquecimento. Enum: ConsentExecutionStatus. AWAITING_RESOURCES: a instituição ainda não enviou os dados — a Polp retenta a cada 10 minutos. SUCCESS: resources importados. PARTIAL_SUCCESS: os dados principais já estão disponíveis, mas houve falha pontual ao gerar categoria ou counterparty (veja flags). Pode continuar usando o consentimento; a Polp retenta o enriquecimento e, quando concluir, volta para SUCCESS.
 execution_status_label string | null Rótulo traduzido do execution_status.
 flags string[] Indicadores de enriquecimento pendente. Enum: ConsentFlag. Array vazio quando não há pendência. ERROR_PROCESSING_CATEGORIES: falha ao gerar categoria. ERROR_PROCESSING_COUNTERPARTIES: falha ao gerar counterparty. PARTIALLY_UNAVAILABLE_RESOURCES: ao menos um recurso do consentimento está com status diferente de AVAILABLE, enquanto outros permanecem disponíveis. Não bloqueia o uso dos dados; a Polp retenta e remove a flag quando o processamento concluir.
 flags_label string[] Rótulos traduzidos das flags.
 products string[] Produtos Open Finance do consentimento. Enum: ConsentProduct. Valores atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Em consents antigos, products pode ainda conter valores legado (LOAN, FUND, …).
 products_label string[] Rótulos traduzidos dos produtos (incluindo nomes legado quando ainda gravados no banco).
-url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco.
+url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco. Em consentimentos v3 é um link curto da Polp de uso único (https://<api>/c/{token}) que redireciona para a instituição.
 url_to_authenticate_expires_at string | null Expiração da URL de autenticação (ISO 8601).
 error object | null Detalhes de erro, se houver.
 created_at string Data de criação (ISO 8601).
 updated_at string Data de atualização (ISO 8601).
+Sandbox Criar consentimento sandbox
+Para testar a integração sem plano, sem cobrança e com dados fictícios, crie o consentimento em POST /api/v2/sandbox/consents, com as mesmas credenciais (x-api-client e x-api-secret). Basta trocar a rota — o body é o mesmo e não existe parâmetro extra.
+POST /api/v2/sandbox/consents → consentimento sandbox
+POST /api/v2/consents → consentimento realRegra Comportamento
+Rota O ambiente é definido só pela rota: POST /api/v2/sandbox/consents cria consentimento sandbox e POST /api/v2/consents cria consentimento real. Não há parâmetro no body para isso.
+Body Os mesmos campos da criação real: institution_id, cpf/cnpj, products, cliente_user_id, avoidDuplicates e redirectUrl.
+Versão O header x-consent-version funciona igual: sem ele (ou com 2), criação legada v2; com x-consent-version: 3, regras da v3 (recomendado).
+Instituição Qualquer instituição de GET /institutions. Não precisa estar OPERATIONAL, mas as regras de CPF/CNPJ por institution.type continuam valendo.
+Plano e cobrança Não exige plano ativo, não é bloqueado por fatura em atraso e nunca é cobrado.
+Autorização Não há tela do banco: o consentimento já volta com status AUTHORISED. url_to_authenticate aponta direto para a sua URL de redirecionamento.
+avoidDuplicates Só reaproveita consentimentos sandbox. Um consentimento real nunca é devolvido pela rota /sandbox (e vice-versa).
+Dados Fictícios, gerados pela Polp só para os products enviados. Ficam disponíveis em instantes e disparam os mesmos webhooks de produção.
+Consulta Consulte o consentimento e seus recursos sempre pelo prefixo /api/v2/sandbox. Pela base de produção eles respondem 404.
+Veja os dados gerados por produto, a atualização dos dados e os webhooks na página Sandbox.
 Produtos do consentimento
 O Open Finance exige agrupamentos atômicos de permissões. Por isso crédito e investimento não são mais pedidos produto a produto: use os valores CREDIT_OPERATIONS e INVESTMENTS.
 Se products for omitido, a API solicita os cinco valores da tabela atual.
@@ -76,9 +105,15 @@ BOTH
 ConsentStatus → status
 Value Label
 AWAITING_AUTHORIZATION Aguardando autorização
+AUTHORIZATION_STARTED Autorização iniciada
 AUTHORISED Autorizado
 REJECTED Rejeitado
 EXPIRED Expirado
+REVOKED Revogado
+ConsentVersion → version
+Value Label
+2 v2 (legado): criado por POST /consents sem o header x-consent-version
+3 v3: criado ou reaproveitado por POST /consents com o header x-consent-version: 3
 ConsentExecutionStatus → execution_status
 Value Label
 AWAITING_RESOURCES Aguardando recursos
@@ -105,5 +140,11 @@ Request BodyCOPY
 }
 JSON Response
 { ... }
+cURL — SandboxCOPY
+curl -X POST https://api.polp.com.br/api/v2/sandbox/consents \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789" \
+-H "Content-Type: application/json" \
+-d '{ "institution_id": "550e8400-e29b-41d4-a716-446655440000", "cpf": "12345678900", "products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT"] }'
 © 2024 Polp Technologies Inc.
 PrivacyTermsStatus

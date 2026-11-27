@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/loans/show
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/loans/{loan}
@@ -13,6 +13,7 @@ Ao receber *.transactions, liste as transações do recurso indicado em resource
 Use o show apenas pontualmente — quando precisar do recurso completo (reconciliação, debugging, etc.).
 Campos de contract estão na raiz. O objeto contract é legado — preferir os campos na raiz.
 contract, warranties, scheduled_instalments e payments podem ser null se ainda não sincronizados.
+Se o consentimento do recurso estiver REJECTED, EXPIRED ou REVOKED (v2 e v3), esta rota retorna HTTP 404: os dados ficam bloqueados até o consentimento receber uma nova autorização — e, após 6 dias sem reaproveitamento, são excluídos. Veja /docs/celcoin/consent-status.
 Response Fields
 Field Type Description
 id string Identificador único do empréstimo.

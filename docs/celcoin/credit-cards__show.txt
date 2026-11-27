@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/credit-cards/show
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/credit-cards/{creditCard}
@@ -14,6 +14,7 @@ Use o show apenas pontualmente — quando precisar do recurso completo (reconcil
 payment_methods está na raiz. O objeto identification é legado — preferir os campos na raiz.
 identification e limits podem ser null se ainda não sincronizados.
 unbilled_amount (em cada limits[]): soma do brazilian_amount das transações com bill_id null e bill_post_date posterior a bill_closing_date + 1 mês, filtradas pelo identification_number do limite. Null se o cartão não tiver faturas com data de fechamento.
+Se o consentimento do recurso estiver REJECTED, EXPIRED ou REVOKED (v2 e v3), esta rota retorna HTTP 404: os dados ficam bloqueados até o consentimento receber uma nova autorização — e, após 6 dias sem reaproveitamento, são excluídos. Veja /docs/celcoin/consent-status.
 Response Fields
 Field Type Description
 id string Identificador único do cartão.
@@ -81,11 +82,11 @@ Array de limites do cartão. Cada item representa uma linha de crédito e inclui
 Field Type Description
 consolidation_type string Enum: CreditCardConsolidationType.
 credit_line_limit_type string Enum: CreditCardLineLimitType.
-identification_number string Número de identificação do cartão.
+identification_number string | null Número de identificação do cartão. Null quando a instituição não informa.
 is_limit_flexible boolean Indica se o limite é flexível.
-used_amount object Valor utilizado { amount, currency }.
-limit_amount object Limite total { amount, currency }.
-available_amount object Limite disponível { amount, currency }.
+used_amount object | null Valor utilizado { amount, currency }. Null quando a instituição não informa o valor.
+limit_amount object | null Limite total { amount, currency }. Null quando a instituição não informa o valor.
+available_amount object | null Limite disponível { amount, currency }. Null quando a instituição não informa o valor.
 unbilled_amount object | null Lançamentos em aberto deste identification_number com bill_post_date posterior a bill_closing_date + 1 mês. Formato { amount: number, currency: string }. Null quando o cartão não tem faturas com data de fechamento.
 line_name string Enum: CreditCardLineName.
 customized_limit_amount object | null Limite customizado { amount, currency }.

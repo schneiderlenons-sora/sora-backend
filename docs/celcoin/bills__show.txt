@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/bills/show
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/bills/{bill}
@@ -11,6 +11,7 @@ Não faça polling nesta rota. O fluxo ideal é orientado a webhooks.
 Ao receber um evento de recurso (ex.: accounts, credit_cards), busque pelo index paginado do consentimento com query_parameters (ex.: GET /consents/{consent}/accounts?{query_parameters}).
 Ao receber *.transactions, liste as transações do recurso indicado em resource/resource_id com query_parameters.
 Use o show apenas pontualmente — quando precisar do recurso completo (reconciliação, debugging, etc.).
+Se o consentimento do recurso estiver REJECTED, EXPIRED ou REVOKED (v2 e v3), esta rota retorna HTTP 404: os dados ficam bloqueados até o consentimento receber uma nova autorização — e, após 6 dias sem reaproveitamento, são excluídos. Veja /docs/celcoin/consent-status.
 Response Fields
 Field Type Description
 id string Identificador único da fatura.

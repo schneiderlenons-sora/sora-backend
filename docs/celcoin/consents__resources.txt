@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/consents/resources
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/consents/{consent}/resources
@@ -8,13 +8,14 @@ Consulta a Celcoin em tempo real e lista os recursos Open Finance do consentimen
 Atenção aos status
 TEMPORARILY_UNAVAILABLENão indica erro permanente: o recurso pode voltar a AVAILABLE. Não interprete como encerramento. Implemente retry ou polling antes de comunicar indisponibilidade ao usuário. UNAVAILABLE sim indica encerramento.
 PENDING_AUTHORISATIONEm alçadas duplas, para contas com mais de um titular, todos devem autorizar o consentimento. Recursos neste status só transitam para AVAILABLE após todos os co-titulares autorizarem.
-AUTHORISEDA rota só funciona para consentimentos neste status (a permission RESOURCES_READ já é solicitada na criação). Tentativas com AWAITING_AUTHORIZATION, REJECTED, EXPIRED ou consentimento revogado retornam erro.
+AUTHORISEDA rota só funciona para consentimentos neste status (a permission RESOURCES_READ já é solicitada na criação). REJECTED, EXPIRED e REVOKED retornam HTTP 403 (reason CONSENT_INACTIVE); pendentes (AWAITING_AUTHORIZATION, AUTHORIZATION_STARTED) retornam erro.
 Observações
 A cada chamada a Polp consulta a Celcoin em tempo real e devolve o UUID local da Polp em resource_id, quando o recurso já existe na base.
 O resourceId da Celcoin não aparece na resposta. Use resource_id nas rotas da Polp (GET /accounts/{id}, GET /credit-cards/{id}, GET /loans/{id}, etc.).
 resource_id é null quando o recurso ainda não foi persistido, ou quando o tipo não tem modelo local: EXCHANGE, UNARRANGED_ACCOUNT_OVERDRAFT e INVOICE_FINANCING.
 Correspondência por type: ACCOUNT → accounts; CREDIT_CARD_ACCOUNT → credit-cards; LOAN → loans; FINANCING → financings; BANK_FIXED_INCOME → bank-fixed-incomes; CREDIT_FIXED_INCOME → credit-fixed-incomes; VARIABLE_INCOME → variable-incomes; TREASURE_TITLE → treasure-titles; FUND → funds.
 Não é paginação por cursor: a resposta é { "data": [ ... ] } com a lista completa.
+Consentimento REJECTED, EXPIRED ou REVOKED (v2 e v3): os dados ficam bloqueados e esta rota retorna HTTP 403 (reason CONSENT_INACTIVE). Eles voltam a ficar acessíveis quando o consentimento recebe uma nova autorização (POST /api/v2/consents com x-consent-version: 3 ou POST /api/v2/consents/{consent}/recreate). Após 6 dias nesses status sem reaproveitamento, os dados são excluídos e só voltam com uma nova importação, do zero, depois da nova autorização. Veja /docs/celcoin/consent-status.
 Response Fields
 Field Type Description
 type string Tipo do recurso Open Finance. Enum: ResourceType.

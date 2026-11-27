@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/consents/treasure-titles
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/consents/{consent}/treasure-titles
@@ -10,6 +10,7 @@ Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados junto
 balance é carregado via eager loading e pode ser null se ainda não sincronizado.
 Campos de product passam a existir na raiz (versão atual). O objeto product aninhado é legado — preferir os campos na raiz, incluindo remuneration.
 product (legado) pode retornar null se o Product Identification ainda não foi sincronizado.
+Consentimento REJECTED, EXPIRED ou REVOKED (v2 e v3): os dados ficam bloqueados e esta rota retorna HTTP 403 (reason CONSENT_INACTIVE). Eles voltam a ficar acessíveis quando o consentimento recebe uma nova autorização (POST /api/v2/consents com x-consent-version: 3 ou POST /api/v2/consents/{consent}/recreate). Após 6 dias nesses status sem reaproveitamento, os dados são excluídos e só voltam com uma nova importação, do zero, depois da nova autorização. Veja /docs/celcoin/consent-status.
 Query Parameters
 Field Type Description
 cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 15 itens por página.
@@ -233,6 +234,12 @@ JSON Response
 "per_page": 15,
 "next_cursor": null,
 "prev_cursor": null
+}
+JSON Response — 403 (consentimento inativo)
+{
+"message": "Consentimento REVOKED: os dados deste consentimento não estão mais disponíveis.",
+"reason": "CONSENT_INACTIVE",
+"status": "REVOKED"
 }
 © 2024 Polp Technologies Inc.
 PrivacyTermsStatus

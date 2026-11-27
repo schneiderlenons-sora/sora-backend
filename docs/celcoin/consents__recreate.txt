@@ -1,36 +1,43 @@
 # https://polp.com.br/docs/celcoin/consents/recreate
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
-POST/consents/{consent}/recreate
-Recriar Consentimento
-Gera um novo consentimento na Celcoin e emite uma nova URL de autorização para o registro local. O id da Polp, instituição, documentos, cliente_user_id e recursos já sincronizados permanecem. Opcionalmente altera products.
+POST/consents/{consent}/recreateLEGADA
+Recriar Consentimento (v2)
+Somente para consentimentos v2 (campo version = 2). Para consentimentos v3, use POST /api/v2/consents com o header x-consent-version: 3, que reaproveita o mesmo consentimento e emite o link de uso único. Gera um novo consentimento na Celcoin e emite uma nova URL de autorização para o registro local. O id da Polp, instituição, documentos, cliente_user_id e recursos já sincronizados permanecem. Opcionalmente altera products.
 Observações
-Rota de ação (POST), não PUT/PATCH. Só products pode ser enviado no body — instituição, CPF/CNPJ, cliente_user_id e demais campos não mudam.
+Só funciona para consentimentos com version = 2. Consentimentos v3 recebem HTTP 422 — para eles, chame POST /api/v2/consents com x-consent-version: 3: o consentimento é reaproveitado (mesmo id e dados) com um link novo.
+Na v3, para trocar os products de um consentimento AUTHORISED, use PATCH /api/v2/consents/{consent} (Atualizar Consentimento).
+Rota de ação (POST), não PUT/PATCH. Apenas products e redirectUrl podem ser enviados no body — instituição, CPF/CNPJ, cliente_user_id e demais campos não mudam.
 Retorna HTTP 200 com o mesmo consentimento. Redirecione o usuário para a nova url_to_authenticate.
 status AUTHORISED: a Polp revoga o consentimento atual na Celcoin e só então cria o novo. Se a revogação remota já tiver ocorrido (404), o fluxo segue.
 Demais status (AWAITING_AUTHORIZATION, REJECTED, EXPIRED): o novo consentimento é criado por cima, sem revogar o anterior na Celcoin.
-Após a recriação, status volta para AWAITING_AUTHORIZATION, error é limpo, execution_status é zerado e url_to_authenticate_expires_at é renovada (1 hora).
+Após a recriação, status volta para AWAITING_AUTHORIZATION, error é limpo, execution_status é zerado e url_to_authenticate_expires_at é renovada (1 hora). Se o consentimento estava REJECTED ou EXPIRED (ex.: revogado com DELETE /api/v2/consents/{consent}, que deixa o v2 em REJECTED), os dados já importados voltam a ficar acessíveis.
+Retenção: se o consentimento ficou mais de 6 dias em REJECTED ou EXPIRED, os dados já foram excluídos. Nesse caso, eles são importados de novo, do zero, depois que o cliente autorizar.
 Não use POST /consents para “reconectar” o mesmo cliente: isso criaria outro registro na Polp. Recriar mantém o id local.
+Cobrança: recriar mantém o mesmo ciclo de cobrança (billing_cycle) — a nova autorização não gera cobrança extra no mês.
 O consentimento precisa ter CPF em documents. Sem CPF, a API responde 422.
 Veja a seção Produtos do consentimento abaixo para os valores atuais, o legado e as regras de agrupamento/normalização.
 Request Body
 Field Type Description
 products string[] Produtos Open Finance a solicitar no novo consentimento. Opcional; se omitido, reutiliza os products já gravados. Valores atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Valores legado ainda são aceitos e normalizados — veja a seção Produtos do consentimento.
+redirectUrl string | null URL de redirecionamento personalizada para este consentimento, usada após a autorização no banco. Precisa ser uma URL http(s) válida — deep links (ex.: myapp://callback) são recusados com 422; para abrir um app, use uma página do seu domínio que redirecione para o deep link (ou Universal Links/App Links). Disponível apenas para contas com plano Pro ou Ultra; caso contrário é ignorada. Se omitida (ou em planos sem acesso), usa a URL configurada na conta ou a padrão da Polp.
 Response Fields
 Field Type Description
 id string Identificador único do consentimento.
 institution_id string ID da instituição financeira vinculada (mesmo valor de GET /institutions).
+version integer Versão da API que gerencia o consentimento. Enum: ConsentVersion. 2: criado pelo POST /api/v2/consents sem o header x-consent-version (legado). 3: criado (ou reaproveitado) pelo POST /api/v2/consents com x-consent-version: 3 — usa link de autorização de uso único e o status AUTHORIZATION_STARTED. Define o comportamento de PATCH, recreate e DELETE. DELETE /api/v2/consents/{consent} revoga sem excluir: v2 vira REJECTED e v3 vira REVOKED.
 cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Campo aberto para correlacionar o consentimento ao seu usuário.
-status string Status Open Finance. Enum: ConsentStatus.
+status string Status da autorização. Enum: ConsentStatus. Os valores possíveis dependem de version (AUTHORIZATION_STARTED e REVOKED só na v3). Em REJECTED, EXPIRED ou REVOKED os dados do consentimento ficam bloqueados (403/404) e, após 6 dias sem reaproveitamento, são excluídos — veja a página Status do Consentimento (/docs/celcoin/consent-status).
 status_label string Rótulo traduzido do status.
+last_status_updated_at string | null Quando o status mudou pela última vez (ISO 8601). Consentimentos em AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED há mais de 1 hora desde essa data passam para EXPIRED automaticamente. Também é a referência do prazo de 6 dias para excluir os dados de consentimentos REJECTED, EXPIRED ou REVOKED.
 execution_status string | null Status da importação e do enriquecimento. Enum: ConsentExecutionStatus. AWAITING_RESOURCES: a instituição ainda não enviou os dados — a Polp retenta a cada 10 minutos. SUCCESS: resources importados. PARTIAL_SUCCESS: os dados principais já estão disponíveis, mas houve falha pontual ao gerar categoria ou counterparty (veja flags). Pode continuar usando o consentimento; a Polp retenta o enriquecimento e, quando concluir, volta para SUCCESS.
 execution_status_label string | null Rótulo traduzido do execution_status.
 flags string[] Indicadores de enriquecimento pendente. Enum: ConsentFlag. Array vazio quando não há pendência. ERROR_PROCESSING_CATEGORIES: falha ao gerar categoria. ERROR_PROCESSING_COUNTERPARTIES: falha ao gerar counterparty. PARTIALLY_UNAVAILABLE_RESOURCES: ao menos um recurso do consentimento está com status diferente de AVAILABLE, enquanto outros permanecem disponíveis. Não bloqueia o uso dos dados; a Polp retenta e remove a flag quando o processamento concluir.
 flags_label string[] Rótulos traduzidos das flags.
 products string[] Produtos Open Finance do consentimento. Enum: ConsentProduct. Valores atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Em consents antigos, products pode ainda conter valores legado (LOAN, FUND, …).
 products_label string[] Rótulos traduzidos dos produtos (incluindo nomes legado quando ainda gravados no banco).
-url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco.
+url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco. Em consentimentos v3 é um link curto da Polp de uso único (https://<api>/c/{token}) que redireciona para a instituição.
 url_to_authenticate_expires_at string | null Expiração da URL de autenticação (ISO 8601).
 error object | null Detalhes de erro, se houver.
 created_at string Data de criação (ISO 8601).
@@ -65,9 +72,15 @@ Enums Relacionados
 ConsentStatus → status
 Value Label
 AWAITING_AUTHORIZATION Aguardando autorização
+AUTHORIZATION_STARTED Autorização iniciada
 AUTHORISED Autorizado
 REJECTED Rejeitado
 EXPIRED Expirado
+REVOKED Revogado
+ConsentVersion → version
+Value Label
+2 v2 (legado): criado por POST /consents sem o header x-consent-version
+3 v3: criado ou reaproveitado por POST /consents com o header x-consent-version: 3
 ConsentExecutionStatus → execution_status
 Value Label
 AWAITING_RESOURCES Aguardando recursos
@@ -106,5 +119,11 @@ Request BodyCOPY
 }
 JSON Response
 { ... }
+JSON Response — 422 (consentimento v3)
+{
+"message": "O recreate só funciona para consentimentos v2. Para consentimentos v3, use POST /api/v2/consents com o header x-consent-version: 3, que reaproveita o mesmo consentimento.",
+"errors": {
+"consent": ["O recreate só funciona para consentimentos v2. Para consentimentos v3, use POST /api/v2/consents com o header x-consent-version: 3, que reaproveita o mesmo consentimento."]
+}
 © 2024 Polp Technologies Inc.
 PrivacyTermsStatus

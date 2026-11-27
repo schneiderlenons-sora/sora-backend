@@ -49,3 +49,10 @@ https://polp.com.br/docs/celcoin/variable-incomes/show
 https://polp.com.br/docs/celcoin/variable-incomes/transactions
 https://polp.com.br/docs/celcoin/webhooks
 https://polp.com.br/docs/celcoin/webhooks/events
+https://polp.com.br/docs/celcoin/consent-version
+https://polp.com.br/docs/celcoin/consent-status
+https://polp.com.br/docs/celcoin/sandbox
+https://polp.com.br/docs/celcoin/termos
+https://polp.com.br/docs/celcoin/v3/consents/create
+https://polp.com.br/docs/celcoin/v3/consents/update
+https://polp.com.br/docs/celcoin/accounts/balance-sync

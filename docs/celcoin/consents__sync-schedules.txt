@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/consents/sync-schedules
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/consents/{consent}/sync-schedules
@@ -11,6 +11,7 @@ Contas e cartões incluem *.identification (Account Identification / Credit Card
 Empréstimos incluem loan.contract (Contract Identification) por contractId.
 resource_id contém o ID do recurso sincronizado (conta, cartão, investimento, etc.) quando aplicável.
 A faixa e o intervalo de cada resource seguem o plano — veja Frequência de Atualização na documentação.
+Consentimento REJECTED, EXPIRED ou REVOKED (v2 e v3): os dados ficam bloqueados e esta rota retorna HTTP 403 (reason CONSENT_INACTIVE). Eles voltam a ficar acessíveis quando o consentimento recebe uma nova autorização (POST /api/v2/consents com x-consent-version: 3 ou POST /api/v2/consents/{consent}/recreate). Após 6 dias nesses status sem reaproveitamento, os dados são excluídos e só voltam com uma nova importação, do zero, depois da nova autorização. Veja /docs/celcoin/consent-status.
 Query Parameters
 Field Type Description
 cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 50 itens por página.
@@ -28,12 +29,13 @@ account
 account.balance
 account.reserved_balances
 account.transactions
+account.transactions.backfill
 account.overdraft_limits
 credit_card
 credit_card.bills
-credit_card.bills.transactions
 credit_card.limits
 credit_card.transactions
+credit_card.transactions.backfill
 loan
 loan.warranties
 loan.scheduled_instalments
@@ -67,6 +69,12 @@ JSON Response
 "data": [ ... ],
 "links": { "first": null, "last": null, "prev": null, "next": "...?cursor=..." },
 "meta": { "path": "...", "per_page": 50, "next_cursor": "...", "prev_cursor": null }
+}
+JSON Response — 403 (consentimento inativo)
+{
+"message": "Consentimento REVOKED: os dados deste consentimento não estão mais disponíveis.",
+"reason": "CONSENT_INACTIVE",
+"status": "REVOKED"
 }
 © 2024 Polp Technologies Inc.
 PrivacyTermsStatus

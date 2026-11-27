@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/credit-cards/recurrings
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/credit-cards/{creditCard}/recurrings
@@ -10,6 +10,7 @@ Derivado localmente após o sync de transações — não é um recurso Open Fin
 Detecção determinística: agrupa por merchant normalizado (remove gateways tipo "Ifd*"), clusteriza valores por moeda (assinaturas internacionais usam o valor original, imune ao câmbio) e valida cadência mensal com no mínimo 3 meses cobrados.
 Exclui parcelamentos (charge_number > 1 ou payment_type A_PRAZO), tarifas/IOF, estornos e créditos.
 MCCs de consumo avulso (mercado, posto, estacionamento) exigem valor idêntico e cadência perfeita para evitar falsos positivos.
+Se o consentimento do recurso estiver REJECTED, EXPIRED ou REVOKED (v2 e v3), esta rota retorna HTTP 404: os dados ficam bloqueados até o consentimento receber uma nova autorização — e, após 6 dias sem reaproveitamento, são excluídos. Veja /docs/celcoin/consent-status.
 Query Parameters
 Field Type Description
 cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 50 itens por página.

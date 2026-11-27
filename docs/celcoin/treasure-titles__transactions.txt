@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/treasure-titles/transactions
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/treasure-titles/{treasureTitle}/transactions
@@ -7,6 +7,7 @@ Transações — Tesouro Direto
 Lista movimentações de um título do Tesouro.
 Observações
 Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
+Se o consentimento do recurso estiver REJECTED, EXPIRED ou REVOKED (v2 e v3), esta rota retorna HTTP 404: os dados ficam bloqueados até o consentimento receber uma nova autorização — e, após 6 dias sem reaproveitamento, são excluídos. Veja /docs/celcoin/consent-status.
 Query Parameters
 Field Type Description
 cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 500 itens por página.

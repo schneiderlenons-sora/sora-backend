@@ -1,10 +1,52 @@
 # https://polp.com.br/docs/celcoin/changelog
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 ← Celcoin v2
 Changelog
 Mudanças relevantes na API Open Finance sob demanda (Celcoin v2): novos campos, enums, flags e correções de comportamento. Ordenado do mais recente para o mais antigo.
+2026-11-14Novidade
+Consentimentos v3 pelo header x-consent-version
+Envie o header x-consent-version: 3 no POST /api/v2/consents para usar a nova versão. Melhorias: evita gastar o limite operacional à toa (não cria consentimentos duplicados para o mesmo titular e reaproveita o mesmo consentimento, com id e dados, ao reconectar); dá mais controle sobre o fluxo de status (AUTHORIZATION_STARTED quando o cliente abre o link, REVOKED ao revogar, expiração automática); e o link de autorização passa a ser de uso único, sem risco de ser aberto várias vezes. Também há o novo PATCH /api/v2/consents/{consent} para trocar os products de um consentimento autorizado. Sem o header nada muda. Veja /docs/celcoin/consent-version.
+2026-11-14Breaking change
+Dados bloqueados em consentimentos REJECTED, EXPIRED e REVOKED
+Vale para v2 e v3, na API, no MCP e no dashboard: com o consentimento REJECTED, EXPIRED ou REVOKED, só o próprio consentimento continua acessível. As rotas de dados do consentimento (GET /consents/{consent}/accounts, /credit-cards, /loans, /financings, investimentos, /resources e /sync-schedules) retornam HTTP 403 com reason CONSENT_INACTIVE; as rotas diretas (GET /accounts/{account}, /credit-cards/{creditCard}, /bills/{bill}, transações, recorrências, parcelamentos, caixinhas e POST /accounts/{account}/balance/sync) retornam 404. Os dados ficam guardados por até 6 dias para uma possível reconexão — que os devolve sem nova importação e sem gastar o limite operacional — e depois são excluídos.
+2026-11-14Novidade
+Expiração automática de consentimentos pendentes
+Vale para v2 e v3: consentimentos em AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED há mais de 1 hora desde a última troca de status passam para EXPIRED (error.code AUTHORIZATION_TIMEOUT), com webhook consents. Novo campo last_status_updated_at no consentimento. Em consentimentos v3, a recusa manual do titular na instituição (CUSTOMER_MANUALLY_REJECTED) vira REVOKED.
+2026-11-14Correção
+Sincronização dentro da cota mensal em qualquer mês
+O intervalo das sincronizações automáticas passa a ser calculado sobre 31 dias, e não mais 30, para nenhum mês civil passar da cota do Open Finance (ex.: transações a cada 3h06, saldo a cada 1h47). Uma etapa que falha não é mais repetida a cada 30 minutos: espera o intervalo normal do recurso quando a instituição respondeu, ou de 30 minutos a 24 horas quando a instituição recusou a chamada. Veja /docs/celcoin/operational-limits.
+2026-10-30Novidade
+Sincronização do saldo da conta sob demanda
+Novo POST /accounts/{account}/balance/sync: consulta o saldo na instituição na hora e retorna a conta com o balance atualizado. Por padrão, a próxima sincronização automática do saldo é adiada como se tivesse acabado de rodar; envie skipScheduleUpdate = true para manter o cronograma como está.
+2026-10-14Correção
+Parcelamentos do cartão não duplicam mais a mesma compra
+GET /credit-cards/{creditCard}/installments: a instituição envia a 1ª parcela com o horário real da compra e as seguintes com horário padronizado, e cada parcela virava um parcelamento separado (ex.: uma compra em 3x aparecia como dois itens "1 de 3"). O agrupamento passou a usar a data da compra (dia, no fuso de Brasília), então as parcelas da mesma compra voltam a ficar num único item com todas as occurrences. purchasedAt também vinha 3 horas adiantado e foi corrigido. Os parcelamentos são recalculados na próxima sincronização de cada cartão.
+2026-10-14Correção
+Transações do cartão mais estáveis no fechamento da fatura
+Melhoramos o tratamento das transações do cartão quando a fatura fecha: o lançamento continua com o mesmo id antes e depois do fechamento, sem duplicar. Compras iguais feitas no mesmo dia passam a aparecer corretamente como transações separadas.
+2026-10-14Breaking change
+paidInstallments sai dos parcelamentos do cartão
+GET /credit-cards/{creditCard}/installments não retorna mais o campo paidInstallments. Se sua integração lê esse campo, trate-o como ausente; totalInstallments e occurrences continuam disponíveis.
+2026-10-02Breaking change
+website_url e logo_url saem do counterparty
+O objeto counterparty das transações (GET /accounts/{account}/transactions e GET /credit-cards/{creditCard}/transactions) não retorna mais website_url nem logo_url. A identificação automática de site e logo associava marcas incorretas a algumas contrapartes e foi removida; o objeto passa a ser { name, alias, tax_id }. Se sua integração lê esses campos, trate-os como ausentes.
+2026-09-26Novidade
+Novo ambiente Sandbox
+Todas as rotas da API v2 agora também existem com o prefixo /sandbox (ex.: POST /api/v2/sandbox/consents), usando a mesma API key e sem exigir plano ativo nem cobrança. O consentimento sandbox já nasce AUTHORISED, não se conecta à instituição e recebe dados fictícios para cada product informado (contas, cartões e faturas, empréstimos, financiamentos e investimentos), com até 50 transações por conta e por cartão. Participa do ciclo normal de sincronização e dispara os mesmos webhooks de produção. Os ambientes são isolados: /api/v2/... só acessa consentimentos reais e /api/v2/sandbox/... só os sandbox — o do outro ambiente responde 404. O ambiente é definido só pela rota, sem parâmetro no body nem campo extra na resposta. Veja a página Sandbox em Getting Started.
+2026-09-22Breaking change
+Parcelamentos do cartão passam a ser só de débito
+GET /credit-cards/{creditCard}/installments passa a considerar apenas transações de débito (credit_debit_type = DEBITO) como parcelamento. O campo amount deixa de poder vir negativo — sempre positivo.
+2026-09-22Breaking change
+completed_authorised_payment_type sai das transações da conta
+GET /accounts/{account}/transactions: o campo completed_authorised_payment_type não é mais retornado. A sincronização passou a considerar apenas transações já efetivadas (TRANSACAO_EFETIVADA), tornando o campo redundante.
+2026-09-17Novidade
+Campo redirectUrl também na recriação de consent
+POST /consents/{consent}/recreate ganhou o mesmo campo opcional redirectUrl: string | null já disponível em POST /consents, seguindo as mesmas regras: disponível apenas para contas com plano Pro ou Ultra, ignorado em outros planos, e com fallback para a URL configurada na conta ou a padrão da Polp quando omitido.
+2026-09-16Novidade
+Novo campo redirectUrl na criação de consent
+POST de criação de consent ganhou o campo opcional redirectUrl: string | null, uma URL de redirecionamento personalizada usada após a autorização no banco. Disponível apenas para contas com plano Pro ou Ultra; em outros planos o campo é ignorado. Se omitido (ou sem acesso pelo plano), usa a URL configurada na conta ou a padrão da Polp.
 2026-08-28Novidade
 Nova rota GET /consents/{consent}/resources
 Lista os recursos Open Finance do consentimento consultando a Celcoin em tempo real. Cada item traz type, status e resource_id com o UUID local da Polp (conta, cartão, empréstimo, financiamento ou investimento). O resourceId da Celcoin nunca é exposto; se o recurso ainda não existir na base (ou o tipo não tiver modelo local, como EXCHANGE), resource_id vem null. A rota não é paginada por cursor: devolve a lista completa em data[].

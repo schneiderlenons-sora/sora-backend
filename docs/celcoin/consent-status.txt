@@ -1,0 +1,102 @@
+# https://polp.com.br/docs/celcoin/consent-status
+# baixado em 2026-11-27
+
+ownload Bruno Collection
+← Celcoin
+Status do Consentimento
+O campo status mostra em que ponto está a autorização do titular. Os status possíveis dependem da versão do consentimento (campo version, escolhido na criação pelo header x-consent-version): a v3 acrescenta AUTHORIZATION_STARTED e REVOKED. DELETE /api/v2/consents/{consent} revoga sem excluir: o consentimento v3 vira REVOKED e o v2 vira REJECTED.
+lockREJECTED, EXPIRED e REVOKED bloqueiam os dados — e, após 6 dias, eles são excluídos
+Vale para v2 e v3, na API, no MCP e no dashboard: sem um consentimento ativo, nenhum dado além do próprio consentimento fica disponível.
+Rotas de dados do consentimento (GET /consents/{consent}/accounts, /credit-cards, /loans, /financings, investimentos, /resources e /sync-schedules) retornam HTTP 403 com reason CONSENT_INACTIVE e o status atual.
+Rotas diretas de recursos (GET /accounts/{account}, /credit-cards/{creditCard}, /bills/{bill}, /loans/{loan}, investimentos, transações, recorrências, parcelamentos, caixinhas e POST /accounts/{account}/balance/sync) retornam 404.
+Continuam liberados: GET /consents, GET /consents/{consent} e as ações (revogar, recriar, atualizar e criar/reaproveitar).
+Uma nova autorização (POST /api/v2/consents com x-consent-version: 3 ou POST /api/v2/consents/{consent}/recreate) devolve o acesso: com o status de volta em AWAITING_AUTHORIZATION, os dados já importados ficam acessíveis de novo.
+Retenção: depois de 6 dias em REJECTED, EXPIRED ou REVOKED sem reaproveitamento (contados de last_status_updated_at), os dados importados são excluídos. O consentimento continua em GET /consents/{consent}. Se ele for reaproveitado ou recriado e autorizado de novo, os dados são importados do zero.
+HTTP 403 — rotas de dados do consentimento
+{
+"message": "Consentimento REVOKED: os dados deste consentimento não estão mais disponíveis.",
+"reason": "CONSENT_INACTIVE",
+"status": "REVOKED"
+}
+Status por versão
+Status Rótulo v2 v3
+AWAITING_AUTHORIZATION Aguardando autorização check check
+AUTHORIZATION_STARTED Autorização iniciada remove check
+AUTHORISED Autorizado check check
+REJECTED Rejeitado check check
+EXPIRED Expirado check check
+REVOKED Revogado remove check
+Consentimentos v3
+NOVO
+Criados ou reaproveitados por POST /api/v2/consents com x-consent-version: 3 (version = 3). Usam link de autorização de uso único e o status AUTHORIZATION_STARTED.
+Status Quando acontece Dados Próximo passo
+AWAITING_AUTHORIZATION
+Aguardando autorização
+Consentimento criado ou reaproveitado por POST /api/v2/consents com x-consent-version: 3. url_to_authenticate é o link de uso único da Polp, válido por 1 hora e ainda não aberto. Nada sincronizado ainda. Num consentimento reaproveitado, os dados já importados voltam a ficar acessíveis. Envie o url_to_authenticate ao cliente. Enquanto o link valer, um novo POST /api/v2/consents com x-consent-version: 3 para o mesmo titular responde 409 (AUTHORIZATION_LINK_ACTIVE).
+AUTHORIZATION_STARTED
+Autorização iniciada
+só v3 O cliente abriu o link de uso único e foi redirecionado para a instituição. O link não abre de novo. Nada sincronizado ainda. Aguarde o webhook consents com AUTHORISED. Um novo POST /api/v2/consents com x-consent-version: 3 reaproveita o consentimento com um link novo — e a autorização em andamento deixa de valer.
+AUTHORISED
+Autorizado
+O titular autorizou na instituição. A Polp inicia a importação (acompanhe execution_status). Dados importados e sincronizados conforme o plano. Consuma os dados via webhooks. Um novo POST /api/v2/consents com x-consent-version: 3 responde 409 (CONSENT_ALREADY_AUTHORISED). Para trocar os products, PATCH /api/v2/consents/{consent}; para encerrar, DELETE /api/v2/consents/{consent} (revoga sem excluir).
+REJECTED
+Rejeitado
+A instituição ou o titular recusou a autorização (exceto a recusa manual do titular, que vira REVOKED), ou a instituição falhou ao renovar o acesso (FALHA_FLUXO_REFRESH_TOKEN). O motivo vem em error. Para de sincronizar e os dados ficam bloqueados: 403 (CONSENT_INACTIVE) nas rotas de dados do consentimento e 404 nas rotas diretas de recursos. Após 6 dias sem reaproveitamento, os dados são excluídos; uma nova autorização depois disso importa tudo do zero. POST /api/v2/consents com x-consent-version: 3 reaproveita o mesmo consentimento (mesmo id e dados) com uma nova autorização e devolve o acesso aos dados.
+EXPIRED
+Expirado
+A autorização não foi concluída em 1 hora desde a última mudança de status (AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED; error.code AUTHORIZATION_TIMEOUT), ou a instituição deixou de reconhecer o consentimento (CONSENTIMENTO_NAO_AUTORIZADO). Para de sincronizar e os dados ficam bloqueados: 403 (CONSENT_INACTIVE) nas rotas de dados do consentimento e 404 nas rotas diretas de recursos. Após 6 dias sem reaproveitamento, os dados são excluídos; uma nova autorização depois disso importa tudo do zero. POST /api/v2/consents com x-consent-version: 3 reaproveita o mesmo consentimento com uma nova autorização e devolve o acesso aos dados.
+REVOKED
+Revogado
+só v3 Revogado pelo parceiro (DELETE /api/v2/consents/{consent}) ou recusado manualmente pelo titular na instituição (rejection.reason.code CUSTOMER_MANUALLY_REJECTED). Só existe na v3: um consentimento v2 revogado vira REJECTED. Para de sincronizar e os dados ficam bloqueados: 403 (CONSENT_INACTIVE) nas rotas de dados do consentimento e 404 nas rotas diretas de recursos. Após 6 dias sem reaproveitamento, os dados são excluídos; uma nova autorização depois disso importa tudo do zero. A Polp não altera mais o status. POST /api/v2/consents com x-consent-version: 3 reaproveita o consentimento (mesmo id) com uma nova autorização e devolve o acesso aos dados.
+Ciclo de vida — v3
+— →AWAITING_AUTHORIZATIONPOST /api/v2/consents com x-consent-version: 3 (cria ou reaproveita)
+AWAITING_AUTHORIZATION →AUTHORIZATION_STARTEDCliente abre o link de uso único
+AWAITING_AUTHORIZATION · AUTHORIZATION_STARTED →AUTHORISEDTitular autoriza na instituição
+AWAITING_AUTHORIZATION · AUTHORIZATION_STARTED →EXPIRED1 hora sem concluir a autorização
+Qualquer status, exceto REVOKED →REJECTED · EXPIREDRecusa, falha de renovação ou consentimento não reconhecido pela instituição
+AUTHORISED · AWAITING_AUTHORIZATION · AUTHORIZATION_STARTED →REVOKEDDELETE /api/v2/consents/{consent} ou recusa manual do titular
+AUTHORIZATION_STARTED · REJECTED · EXPIRED · REVOKED →AWAITING_AUTHORIZATIONNovo POST /api/v2/consents com x-consent-version: 3 (mesmo id)
+AUTHORISED →AWAITING_AUTHORIZATIONPATCH /api/v2/consents/{consent} (nova autorização, mesmo id)
+Excluído pela Polp →AWAITING_AUTHORIZATIONNovo POST /api/v2/consents com x-consent-version: 3 restaura um consentimento excluído pela Polp (exclusão interna de conta), com o mesmo id e dados, que passa a ser v3
+blockRevogar não exclui
+DELETE /api/v2/consents/{consent} (a única rota de revogação) revoga na instituição e muda o consentimento v3 para REVOKED — só se estiver AUTHORISED, AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED; nos demais status responde 422 — e nunca exclui o consentimento. Ele continua em GET /consents/{consent}, mas os dados ficam bloqueados (403/404) e, após 6 dias sem reaproveitamento, são excluídos. Um novo POST /api/v2/consents com x-consent-version: 3 reaproveita o consentimento: dentro dos 6 dias, os dados voltam na hora; depois, são importados do zero quando o cliente autorizar.
+Consentimentos v2
+LEGADA
+Criados por POST /api/v2/consents sem o header x-consent-version (ou com x-consent-version: 2) (version = 2). url_to_authenticate é a URL direta da instituição; não há AUTHORIZATION_STARTED nem REVOKED: a revogação pelo parceiro (DELETE /api/v2/consents/{consent}) deixa o consentimento REJECTED.
+Status Quando acontece Dados Próximo passo
+AWAITING_AUTHORIZATION
+Aguardando autorização
+Consentimento criado por POST /api/v2/consents ou recriado por POST /consents/{consent}/recreate. url_to_authenticate é a URL da instituição, válida por 1 hora. Nada sincronizado ainda. Num consentimento recriado, os dados já importados voltam a ficar acessíveis. Envie o url_to_authenticate ao cliente e aguarde o webhook consents.
+AUTHORISED
+Autorizado
+O titular autorizou na instituição. A Polp inicia a importação (acompanhe execution_status). No sandbox, o consentimento já nasce assim. Dados importados e sincronizados conforme o plano. Consuma os dados via webhooks. Para encerrar, DELETE /api/v2/consents/{consent} (revoga sem excluir; status REJECTED).
+REJECTED
+Rejeitado
+Revogado pelo parceiro (DELETE /api/v2/consents/{consent}; error = { "rejectedBy": "API-POLP", "reason": { "code": "CUSTOMER_MANUALLY_REJECTED" } }, status final), a instituição ou o titular recusou a autorização (inclusive a recusa manual do titular), ou a instituição falhou ao renovar o acesso (FALHA_FLUXO_REFRESH_TOKEN). O motivo vem em error. Para de sincronizar e os dados ficam bloqueados: 403 (CONSENT_INACTIVE) nas rotas de dados do consentimento e 404 nas rotas diretas de recursos. Após 6 dias sem reaproveitamento, os dados são excluídos; uma nova autorização depois disso importa tudo do zero. POST /consents/{consent}/recreate gera uma nova autorização mantendo o id e os dados, e devolve o acesso a eles. POST /api/v2/consents com x-consent-version: 3 também reaproveita o consentimento (ele passa a ser v3). DELETE /api/v2/consents/{consent} responde 422 (já não pode ser revogado).
+EXPIRED
+Expirado
+A autorização não foi concluída em 1 hora desde a última mudança de status (error.code AUTHORIZATION_TIMEOUT), ou a instituição deixou de reconhecer o consentimento (CONSENTIMENTO_NAO_AUTORIZADO). Para de sincronizar e os dados ficam bloqueados: 403 (CONSENT_INACTIVE) nas rotas de dados do consentimento e 404 nas rotas diretas de recursos. Após 6 dias sem reaproveitamento, os dados são excluídos; uma nova autorização depois disso importa tudo do zero. POST /consents/{consent}/recreate gera uma nova autorização mantendo o id e os dados, e devolve o acesso a eles.
+Ciclo de vida — v2
+— →AWAITING_AUTHORIZATIONPOST /api/v2/consents (sem o header x-consent-version ou com x-consent-version: 2)
+AWAITING_AUTHORIZATION →AUTHORISEDTitular autoriza na instituição
+AWAITING_AUTHORIZATION →EXPIRED1 hora sem concluir a autorização
+Qualquer status →REJECTED · EXPIREDRecusa, falha de renovação ou consentimento não reconhecido pela instituição
+AUTHORISED · AWAITING_AUTHORIZATION →REJECTEDDELETE /api/v2/consents/{consent} (revoga sem excluir)
+Qualquer status →AWAITING_AUTHORIZATIONPOST /consents/{consent}/recreate (mesmo id)
+REJECTED · EXPIRED →AWAITING_AUTHORIZATION (v3)POST /api/v2/consents com x-consent-version: 3 reaproveita o consentimento (mesmo id), que passa a ser v3
+blockRevogar não exclui
+DELETE /api/v2/consents/{consent} revoga na instituição e muda o consentimento v2 para REJECTED — só se estiver AUTHORISED ou AWAITING_AUTHORIZATION; nos demais status responde 422 — e nunca exclui o consentimento. Ele continua em GET /consents/{consent}, mas os dados ficam bloqueados (403/404) e, após 6 dias sem reaproveitamento, são excluídos. POST /api/v2/consents/{consent}/recreate ou POST /api/v2/consents com x-consent-version: 3 geram uma nova autorização: dentro dos 6 dias, os dados voltam na hora; depois, são importados do zero quando o cliente autorizar.
+Vale para as duas versões
+Toda mudança de status dispara o webhook consents. A criação, o reaproveitamento e a atualização (v3) e o recreate (v2) não disparam: a resposta da própria chamada já traz o status. Exceção: no sandbox o consentimento é autorizado na hora, então essas chamadas disparam consents com AUTHORISED.
+Ler consentimentos e dados é igual nas duas versões e fica na v2: GET /api/v2/consents, GET /api/v2/consents/{consent} e as rotas de contas, cartões, transações etc.
+REJECTED, EXPIRED e REVOKED bloqueiam os dados nas duas versões: 403 (CONSENT_INACTIVE) nas rotas de dados do consentimento e 404 nas rotas diretas de recursos. AUTHORISED e os status pendentes mantêm o acesso.
+Retenção nas duas versões: 6 dias depois de entrar em REJECTED, EXPIRED ou REVOKED (last_status_updated_at), sem reaproveitamento, os dados importados são excluídos. O consentimento continua consultável; uma nova autorização importa os dados do zero.
+A versão é escolhida na criação pelo header x-consent-version (3 = v3; ausente ou 2 = v2; padrão hoje: 2). Atualizar, recriar e revogar seguem o campo version do consentimento.
+last_status_updated_at informa quando o status mudou pela última vez; é a referência do prazo de 1 hora para AWAITING_AUTHORIZATION e AUTHORIZATION_STARTED virarem EXPIRED. A verificação roda a cada ~30 minutos.
+Se a instituição confirmar a autorização depois de um REJECTED ou EXPIRED, o status passa para AUTHORISED — exceto REVOKED, que é final.
+status descreve a autorização; execution_status descreve a importação dos dados (AWAITING_RESOURCES, SUCCESS, PARTIAL_SUCCESS) e é preenchido a partir de AUTHORISED.
+A versão do consentimento está no campo version. Um consentimento v2 reaproveitado por POST /api/v2/consents com x-consent-version: 3 passa a ser v3.
+Sandbox: o consentimento já nasce AUTHORISED, nas duas versões.
+Valores e rótulos também estão na Referência de Enums (ConsentStatus e ConsentVersion).
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

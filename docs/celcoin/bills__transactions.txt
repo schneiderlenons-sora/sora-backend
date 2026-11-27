@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/bills/transactions
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/bills/{bill}/transactions
@@ -8,7 +8,9 @@ Lista transações lançadas em uma fatura específica.
 Observações
 Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
 bill_forecast_date pode vir null aqui para lançamentos que a Polp só sincronizou por esta rota (fatura já fechada), sem antes passar pela sincronização geral de /credit-cards/{creditCard}/transactions.
+O lançamento mantém o mesmo id que tinha em /credit-cards/{creditCard}/transactions antes de a fatura fechar.
 transaction_type pode ser null em caso extremo em que o Banco Central não envia o campo.
+Se o consentimento do recurso estiver REJECTED, EXPIRED ou REVOKED (v2 e v3), esta rota retorna HTTP 404: os dados ficam bloqueados até o consentimento receber uma nova autorização — e, após 6 dias sem reaproveitamento, são excluídos. Veja /docs/celcoin/consent-status.
 Query Parameters
 Field Type Description
 cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 500 itens por página.
@@ -22,7 +24,7 @@ Response Fields
 Field Type Description
 id string Identificador único da transação.
 credit_card_id string ID do cartão.
-identification_number string Número de identificação do cartão.
+identification_number string | null Número de identificação do cartão. Null quando a instituição não informa.
 transaction_name string Descrição da transação.
 credit_debit_type string Enum: CreditDebitIndicator.
 transaction_type string | null Enum: CreditCardTransactionType. Pode ser null em caso extremo em que o Banco Central não envia o tipo da transação.
@@ -41,7 +43,7 @@ other_credits_additional_info string | null Informação adicional de outros cr�
 charge_identificator integer | null Número da parcela atual (1..N). Usado com charge_number para agrupar parcelamentos.
 charge_number integer | null Quantidade total de parcelas. Quando preenchido (> 1), a transação entra em installments (não em recurrings).
 payee_mcc integer | null MCC do estabelecimento.
-counterparty object | null Contraparte enriquecida { name, alias, tax_id, website_url, logo_url }.
+counterparty object | null Contraparte enriquecida { name, alias, tax_id }.
 category_ref string | null Categoria da transação na Polp Taxonomy. Enum: TransactionCategory.
 created_at string Data de criação (ISO 8601).
 updated_at string Data de atualização (ISO 8601).
@@ -64,16 +66,12 @@ Field Type Description
 name string | null Razão social / nome oficial.
 alias string | null Nome fantasia.
 tax_id string | null CNPJ (somente dígitos).
-website_url string | null Site do estabelecimento.
-logo_url string | null URL do logotipo.
 Exemplo
 counterpartyCOPY
 {
 "name": "NETFLIX ENTRETENIMENTO BRASIL LTDA.",
 "alias": "Netflix",
-"tax_id": "13487809000140",
-"website_url": "https://www.netflix.com",
-"logo_url": "https://img.logo.dev/netflix.com"
+"tax_id": "13487809000140"
 }
 Enums Relacionados
 CreditCardTransactionType → transaction_type

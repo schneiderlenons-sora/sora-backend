@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/accounts/transactions
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/accounts/{account}/transactions
@@ -8,6 +8,7 @@ Lista transações de uma conta bancária. Contrapartes (counterparty) são enri
 Observações
 Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados juntos, a API combina com OR: retorna registros criados OU atualizados na janela (não exige as duas condições ao mesmo tempo).
 counterparty pode chegar null na primeira resposta — o enrichment roda em job separado quando partie_cnpj_cpf é CNPJ (14 dígitos).
+Se o consentimento do recurso estiver REJECTED, EXPIRED ou REVOKED (v2 e v3), esta rota retorna HTTP 404: os dados ficam bloqueados até o consentimento receber uma nova autorização — e, após 6 dias sem reaproveitamento, são excluídos. Veja /docs/celcoin/consent-status.
 Query Parameters
 Field Type Description
 cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 500 itens por página.
@@ -24,7 +25,6 @@ account_id string ID da conta.
 transaction_name string Descrição da transação.
 transaction_date_time string Data/hora da transação (ISO 8601).
 type string Tipo da transação. Enum: AccountTransactionType.
-completed_authorised_payment_type string Indicador de efetivação. Enum: CompletedAuthorisedPaymentIndicator.
 credit_debit_type string Crédito ou débito. Enum: CreditDebitIndicator.
 transaction_amount object Valor { amount, currency }.
 type_additional_info string | null Informação adicional sobre o tipo.
@@ -35,7 +35,7 @@ partie_compe_code string | null Código COMPE da contraparte.
 partie_number string | null Número da conta da contraparte.
 partie_check_digit string | null Dígito verificador da contraparte.
 partie_person_type string | null Tipo de pessoa da contraparte. Enum: PartiePersonType.
-counterparty object | null Contraparte enriquecida { name, alias, tax_id, website_url, logo_url }.
+counterparty object | null Contraparte enriquecida { name, alias, tax_id }.
 category_ref string | null Categoria da transação na Polp Taxonomy. Enum: TransactionCategory.
 created_at string Data de criação (ISO 8601).
 updated_at string Data de atualização (ISO 8601).
@@ -58,16 +58,12 @@ Field Type Description
 name string | null Razão social / nome oficial.
 alias string | null Nome fantasia.
 tax_id string | null CNPJ (somente dígitos).
-website_url string | null Site do estabelecimento.
-logo_url string | null URL do logotipo.
 Exemplo
 counterpartyCOPY
 {
 "name": "NETFLIX ENTRETENIMENTO BRASIL LTDA.",
 "alias": "Netflix",
-"tax_id": "13487809000140",
-"website_url": "https://www.netflix.com",
-"logo_url": "https://img.logo.dev/netflix.com"
+"tax_id": "13487809000140"
 }
 Enums Relacionados
 AccountTransactionType → type
@@ -92,11 +88,6 @@ RESGATE_APLIC_FINANCEIRA
 OPERACAO_CREDITO
 TRANSFERENCIA_SALDO_RESERVADO
 OUTROS
-CompletedAuthorisedPaymentIndicator → completed_authorised_payment_type
-Value
-TRANSACAO_EFETIVADA
-LANCAMENTO_FUTURO
-TRANSACAO_PROCESSANDO
 CreditDebitIndicator → credit_debit_type
 Value
 CREDITO

@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/mcp
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 Polp Docs | Celcoin — MCP
 Open finance expand_more badge
@@ -12,8 +12,8 @@ update
 Recorrência
 Identificação automática de padrões recorrentes.
 storefront
-CNPJ Enriquecido
-Consulta e enriquecimento de CNPJ nas transações.
+Transações enriquecidas
+Contraparte identificada em cada transação: nome, fantasia e CNPJ.
 hub
 MCP Server
 Dados bancários direto no seu agente de IA.
@@ -67,9 +67,9 @@ Open Finance enriquecido para o seu produto.
 Explorar casos de uso arrow_forward
 Desenvolvedores expand_more
 account_balance
-Celcoin
+Open Finance
 chevron_right
-API v2 — Open Finance via Celcoin.
+API v2 — contas, cartões, empréstimos e investimentos.
 menu_book
 Referência da API
 Consentimentos, contas, cartões e investimentos.
@@ -83,27 +83,29 @@ API v1 — boletos via Débito Direto Autorizado.
 menu_book
 Referência da API
 Cadastros DDA, boletos e webhooks.
-PreçosContatoMídia
+PreçosContatoMídia Mais expand_more
+sellPreçosmailContatonewspaperMídia
 Acessar Painel menu
-menu API MCP
-Celcoin Pluggy DDA
+menuMenu
+API MCP
+Open Finance Open Finance (legado) DDA
 MCP v2.0.0-celcoin
 Getting Started
-info Introductionsettings Configurationswap_horiz Paginationbuild All Tools
+infoIntroductionsettingsConfigurationswap_horizPaginationbuildAll Tools
 Catálogo
-menu_book list-institutionsmenu_book list-categories
+menu_booklist-institutionsmenu_booklist-categories
 Consentimentos
-verified_user list-consentsverified_user create-consentverified_user show-consentverified_user delete-consentverified_user list-consent-sync-schedulesverified_user list-consent-resources
+verified_userlist-consentsverified_usercreate-consentverified_usershow-consentverified_userdelete-consentverified_userlist-consent-sync-schedulesverified_userlist-consent-resources
 Por consentimento
-folder_open list-consent-accountsfolder_open list-consent-credit-cardsfolder_open list-consent-loansfolder_open list-consent-financingsfolder_open list-consent-bank-fixed-incomesfolder_open list-consent-credit-fixed-incomesfolder_open list-consent-fundsfolder_open list-consent-treasure-titlesfolder_open list-consent-variable-incomes
+folder_openlist-consent-accountsfolder_openlist-consent-credit-cardsfolder_openlist-consent-loansfolder_openlist-consent-financingsfolder_openlist-consent-bank-fixed-incomesfolder_openlist-consent-credit-fixed-incomesfolder_openlist-consent-fundsfolder_openlist-consent-treasure-titlesfolder_openlist-consent-variable-incomes
 Detalhes
-search show-accountsearch show-credit-cardsearch show-billsearch show-loansearch show-financingsearch show-bank-fixed-incomesearch show-credit-fixed-incomesearch show-fundsearch show-treasure-titlesearch show-variable-income
+searchshow-accountsearchshow-credit-cardsearchshow-billsearchshow-loansearchshow-financingsearchshow-bank-fixed-incomesearchshow-credit-fixed-incomesearchshow-fundsearchshow-treasure-titlesearchshow-variable-income
 Transações
-receipt_long list-account-transactionsreceipt_long list-credit-card-transactionsreceipt_long list-credit-card-recurringsreceipt_long list-credit-card-installmentsreceipt_long list-credit-card-billsreceipt_long list-bill-transactionsreceipt_long list-bank-fixed-income-transactionsreceipt_long list-credit-fixed-income-transactionsreceipt_long list-fund-transactionsreceipt_long list-treasure-title-transactionsreceipt_long list-variable-income-transactions
+receipt_longlist-account-transactionsreceipt_longlist-credit-card-transactionsreceipt_longlist-credit-card-recurringsreceipt_longlist-credit-card-installmentsreceipt_longlist-credit-card-billsreceipt_longlist-bill-transactionsreceipt_longlist-bank-fixed-income-transactionsreceipt_longlist-credit-fixed-income-transactionsreceipt_longlist-fund-transactionsreceipt_longlist-treasure-title-transactionsreceipt_longlist-variable-income-transactions
 ← Provedores /Celcoin v2 · MCP
 MCP 0.1.038 tools
 Model Context Protocol
-Servidor MCP que expõe a API v2 (Celcoin Open Finance) via Model Context Protocol. O fluxo principal é gerenciar consentimentos e consultar contas, cartões (incluindo recorrências e parcelamentos), empréstimos, financiamentos e investimentos vinculados. Listagens usam paginação por cursor (per_page + cursor), igual à API REST.
+Servidor MCP que expõe a API v2 (Celcoin Open Finance) via Model Context Protocol. O fluxo principal é gerenciar consentimentos e consultar contas, cartões (incluindo recorrências e parcelamentos), empréstimos, financiamentos e investimentos vinculados. Listagens usam paginação por cursor (per_page + cursor), igual à API REST. Consentimentos REJECTED, EXPIRED ou REVOKED não expõem dados: as tools de dados retornam erro e só o próprio consentimento continua acessível.
 Endpoint
 O servidor Open Finance Celcoin Server é servido via Streamable HTTP na rota abaixo. Requer plano Pro.
 https://api.polp.com.br/mcp/open-finance-celcoin
@@ -143,8 +145,8 @@ Parâmetros
 Field Type Description
 per_page integer (default: 15) Quantidade de itens por página (1-100).
 cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
-create-consentwritePOST /consents
-Cria um novo consentimento Open Finance (Celcoin) para uma instituição, com CPF/CNPJ, produtos opcionais e avoidDuplicates para reutilizar consents ativos com a mesma institution_id e documents.
+create-consentwritePOST /api/v2/consents (sem x-consent-version, legado)
+Cria um consentimento v2 (legado; equivale a POST /api/v2/consents sem o header x-consent-version — sem as regras da v3 nem link de uso único) para uma instituição, com CPF/CNPJ, produtos opcionais e avoidDuplicates para reutilizar consents ativos com a mesma institution_id e documents.
 Parâmetros
 Field Type Description
 institution_id * string (uuid) UUID da instituição (obtido em list-institutions).
@@ -152,33 +154,33 @@ cpf string CPF do titular (PERSONAL/BOTH) ou do operador/representante (BUSINESS
 cnpj string CNPJ da empresa. Obrigatório em BUSINESS; opcional em BOTH; proibido em PERSONAL.
 cliente_user_id string Identificador externo do cliente (email, UUID, ID interno, etc.).
 products string[] Produtos Open Finance. Atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Legado (LOAN, FUND, VARIABLE_INCOME, …) ainda aceito, mas normalizado na gravação.
-avoidDuplicates boolean Se true, reutiliza consent AUTHORISED/AWAITING_AUTHORIZATION com a mesma institution_id e documents (objeto inteiro); EXPIRED permite criar novo.
+avoidDuplicates boolean Se true, reutiliza consent v2 AUTHORISED/AWAITING_AUTHORIZATION com a mesma institution_id e documents (objeto inteiro); EXPIRED permite criar novo.
 show-consentreadGET /consents/{id}
 Retorna os detalhes de um consentimento Open Finance pelo seu UUID (inclui institution_id).
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
-delete-consentwriteDELETE /consents/{id}
-Revoga e remove um consentimento Open Finance (Celcoin).
+delete-consentwriteDELETE /api/v2/consents/{id}
+Revoga um consentimento Open Finance (Celcoin), de qualquer versão: revoga na instituição e muda o status para REJECTED (v2) ou REVOKED (v3). Só para AUTHORISED, AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED (nos demais status, erro). Não exclui o consentimento — ele continua consultável, mas os dados deixam de ser acessíveis até uma nova autorização e são excluídos após 6 dias sem reaproveitamento.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
 list-consent-sync-schedulesreadGET /consents/{id}/sync-schedules
-Lista os agendamentos de sincronização de um consentimento, ordenados por próxima sincronização.
+Lista os agendamentos de sincronização de um consentimento, ordenados por próxima sincronização. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
 per_page integer (default: 50) Quantidade de itens por página (1-50).
 cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
 list-consent-resourcesreadGET /consents/{id}/resources
-Consulta a Celcoin em tempo real e lista os recursos Open Finance do consentimento. resource_id é o UUID local da Polp (nunca o ID da Celcoin); null se ainda não persistido ou se o tipo não tem modelo local.
+Consulta a Celcoin em tempo real e lista os recursos Open Finance do consentimento. resource_id é o UUID local da Polp (nunca o ID da Celcoin); null se ainda não persistido ou se o tipo não tem modelo local. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
 folder_openPor consentimento
 (9)
 list-consent-accountsreadGET /consents/{id}/accounts
-Lista as contas vinculadas a um consentimento, com identificação, saldo e limite de cheque especial.
+Lista as contas vinculadas a um consentimento, com identificação, saldo e limite de cheque especial. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
@@ -189,7 +191,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-consent-credit-cardsreadGET /consents/{id}/credit-cards
-Lista os cartões de crédito vinculados a um consentimento, com identificação, limites e unbilled_amount em cada limite.
+Lista os cartões de crédito vinculados a um consentimento, com identificação, limites e unbilled_amount em cada limite. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
@@ -200,7 +202,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-consent-loansreadGET /consents/{id}/loans
-Lista os empréstimos vinculados a um consentimento, com contrato, garantias, parcelas e pagamentos.
+Lista os empréstimos vinculados a um consentimento, com contrato, garantias, parcelas e pagamentos. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
@@ -211,7 +213,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-consent-financingsreadGET /consents/{id}/financings
-Lista os financiamentos vinculados a um consentimento, com contrato, garantias, parcelas e pagamentos.
+Lista os financiamentos vinculados a um consentimento, com contrato, garantias, parcelas e pagamentos. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
@@ -222,7 +224,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-consent-bank-fixed-incomesreadGET /consents/{id}/bank-fixed-incomes
-Lista os investimentos de renda fixa bancária vinculados a um consentimento.
+Lista os investimentos de renda fixa bancária vinculados a um consentimento. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
@@ -233,7 +235,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-consent-credit-fixed-incomesreadGET /consents/{id}/credit-fixed-incomes
-Lista os investimentos de renda fixa de crédito vinculados a um consentimento.
+Lista os investimentos de renda fixa de crédito vinculados a um consentimento. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
@@ -244,7 +246,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-consent-fundsreadGET /consents/{id}/funds
-Lista os fundos de investimento vinculados a um consentimento.
+Lista os fundos de investimento vinculados a um consentimento. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
@@ -255,7 +257,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-consent-treasure-titlesreadGET /consents/{id}/treasure-titles
-Lista os títulos do tesouro vinculados a um consentimento.
+Lista os títulos do tesouro vinculados a um consentimento. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
@@ -266,7 +268,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-consent-variable-incomesreadGET /consents/{id}/variable-incomes
-Lista os investimentos de renda variável vinculados a um consentimento.
+Lista os investimentos de renda variável vinculados a um consentimento. Consentimento REJECTED, EXPIRED ou REVOKED retorna erro (403, reason CONSENT_INACTIVE): os dados ficam bloqueados até uma nova autorização.
 Parâmetros
 Field Type Description
 consent_id * string (uuid) UUID do consentimento.
@@ -279,59 +281,59 @@ toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 searchDetalhes
 (10)
 show-accountreadGET /accounts/{id}
-Retorna os detalhes de uma conta, com identificação, saldo e limite de cheque especial.
+Retorna os detalhes de uma conta, com identificação, saldo e limite de cheque especial. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 account_id * string ID da conta.
 show-credit-cardreadGET /credit-cards/{id}
-Retorna os detalhes de um cartão de crédito, com identificação, limites e unbilled_amount em cada limite.
+Retorna os detalhes de um cartão de crédito, com identificação, limites e unbilled_amount em cada limite. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 credit_card_id * string ID do cartão de crédito.
 show-billreadGET /bills/{id}
-Retorna os detalhes de uma fatura de cartão de crédito.
+Retorna os detalhes de uma fatura de cartão de crédito. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 bill_id * string ID da fatura.
 show-loanreadGET /loans/{id}
-Retorna os detalhes de um empréstimo, com contrato, garantias, parcelas e pagamentos.
+Retorna os detalhes de um empréstimo, com contrato, garantias, parcelas e pagamentos. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 loan_id * string ID do empréstimo.
 show-financingreadGET /financings/{id}
-Retorna os detalhes de um financiamento, com contrato, garantias, parcelas e pagamentos.
+Retorna os detalhes de um financiamento, com contrato, garantias, parcelas e pagamentos. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 financing_id * string ID do financiamento.
 show-bank-fixed-incomereadGET /bank-fixed-incomes/{id}
-Retorna os detalhes de um investimento de renda fixa bancária, com produto e saldo.
+Retorna os detalhes de um investimento de renda fixa bancária, com produto e saldo. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 bank_fixed_income_id * string ID do investimento.
 show-credit-fixed-incomereadGET /credit-fixed-incomes/{id}
-Retorna os detalhes de um investimento de renda fixa de crédito, com produto e saldo.
+Retorna os detalhes de um investimento de renda fixa de crédito, com produto e saldo. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 credit_fixed_income_id * string ID do investimento.
 show-fundreadGET /funds/{id}
-Retorna os detalhes de um fundo de investimento, com produto e saldo.
+Retorna os detalhes de um fundo de investimento, com produto e saldo. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 fund_id * string ID do fundo.
 show-treasure-titlereadGET /treasure-titles/{id}
-Retorna os detalhes de um título do tesouro, com produto e saldo.
+Retorna os detalhes de um título do tesouro, com produto e saldo. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 treasure_title_id * string ID do título.
 show-variable-incomereadGET /variable-incomes/{id}
-Retorna os detalhes de um investimento de renda variável, com produto e saldo.
+Retorna os detalhes de um investimento de renda variável, com produto e saldo. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 variable_income_id * string ID do investimento.
 receipt_longTransações
 (11)
 list-account-transactionsreadGET /accounts/{id}/transactions
-Lista as transações de uma conta, com filtros de data e paginação por cursor.
+Lista as transações de uma conta, com filtros de data e paginação por cursor. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 account_id * string ID da conta.
@@ -344,7 +346,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-credit-card-transactionsreadGET /credit-cards/{id}/transactions
-Lista as transações de um cartão de crédito, com filtros de data e paginação por cursor.
+Lista as transações de um cartão de crédito, com filtros de data e paginação por cursor. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 credit_card_id * string ID do cartão de crédito.
@@ -357,21 +359,21 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-credit-card-recurringsreadGET /credit-cards/{id}/recurrings
-Lista recorrências detectadas nas transações de um cartão (assinaturas sem parcelamento).
+Lista recorrências detectadas nas transações de um cartão (assinaturas sem parcelamento). Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 credit_card_id * string ID do cartão de crédito.
 per_page integer (default: 50) Quantidade de itens por página (1-50).
 cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
 list-credit-card-installmentsreadGET /credit-cards/{id}/installments
-Lista parcelamentos detectados nas transações de um cartão via charge_identificator e charge_number.
+Lista parcelamentos detectados nas transações de um cartão via charge_identificator e charge_number. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 credit_card_id * string ID do cartão de crédito.
 per_page integer (default: 50) Quantidade de itens por página (1-50).
 cursor string Cursor de paginação. Use o next_cursor da resposta anterior para avançar.
 list-credit-card-billsreadGET /credit-cards/{id}/bills
-Lista as faturas de um cartão de crédito, ordenadas pela data de vencimento mais recente.
+Lista as faturas de um cartão de crédito, ordenadas pela data de vencimento mais recente. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 credit_card_id * string ID do cartão de crédito.
@@ -382,7 +384,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-bill-transactionsreadGET /bills/{id}/transactions
-Lista as transações de uma fatura de cartão de crédito, com filtros de data e paginação por cursor.
+Lista as transações de uma fatura de cartão de crédito, com filtros de data e paginação por cursor. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 bill_id * string ID da fatura.
@@ -395,7 +397,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-bank-fixed-income-transactionsreadGET /bank-fixed-incomes/{id}/transactions
-Lista as transações de um investimento de renda fixa bancária, com filtros de data e paginação por cursor.
+Lista as transações de um investimento de renda fixa bancária, com filtros de data e paginação por cursor. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 bank_fixed_income_id * string ID do investimento de renda fixa bancária.
@@ -408,7 +410,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-credit-fixed-income-transactionsreadGET /credit-fixed-incomes/{id}/transactions
-Lista as transações de um investimento de renda fixa de crédito, com filtros de data e paginação por cursor.
+Lista as transações de um investimento de renda fixa de crédito, com filtros de data e paginação por cursor. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 credit_fixed_income_id * string ID do investimento de renda fixa de crédito.
@@ -421,7 +423,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-fund-transactionsreadGET /funds/{id}/transactions
-Lista as transações de um fundo de investimento, com filtros de data e paginação por cursor.
+Lista as transações de um fundo de investimento, com filtros de data e paginação por cursor. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 fund_id * string ID do fundo.
@@ -434,7 +436,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-treasure-title-transactionsreadGET /treasure-titles/{id}/transactions
-Lista as transações de um título do tesouro, com filtros de data e paginação por cursor.
+Lista as transações de um título do tesouro, com filtros de data e paginação por cursor. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 treasure_title_id * string ID do título do tesouro.
@@ -447,7 +449,7 @@ toCreatedAt string Filtrar por created_at final (ISO 8601).
 fromUpdatedAt string Filtrar por updated_at inicial (ISO 8601).
 toUpdatedAt string Filtrar por updated_at final (ISO 8601).
 list-variable-income-transactionsreadGET /variable-incomes/{id}/transactions
-Lista as transações de um investimento de renda variável, com filtros de data e paginação por cursor.
+Lista as transações de um investimento de renda variável, com filtros de data e paginação por cursor. Se o consentimento estiver REJECTED, EXPIRED ou REVOKED, retorna erro (404): os dados ficam bloqueados.
 Parâmetros
 Field Type Description
 variable_income_id * string ID do investimento de renda variável.

@@ -1,0 +1,209 @@
+# https://polp.com.br/docs/celcoin/v3/consents/create
+# baixado em 2026-11-27
+
+ownload Bruno Collection
+POST/consentsNOVO
+Criar Consentimento
+POST /api/v2/consents com o header x-consent-version: 3: cria (ou reaproveita) um consentimento Open Finance v3, com regras anti-duplicidade e link de autorização de uso único. É a mesma rota da criação legada (v2) — sem o header, o comportamento é o legado.
+Envie também este header
+x-consent-version: 3Escolhe a versão do consentimento criado. 3: regras v3 (esta página). Sem o header ou 2: criação legada (v2). Qualquer outro valor: HTTP 422. Envie sempre — quando a v2 for desativada, o padrão passa a ser 3 e quem já envia o header não muda nada.
+Como funciona o x-consent-version →
+Observações
+Como escolher a versão
+tuneA versão é escolhida pelo header x-consent-version na criação: POST /api/v2/consents com x-consent-version: 3 cria um consentimento v3. Sem o header (ou com x-consent-version: 2), a criação é a legada (v2). Qualquer outro valor responde HTTP 422.
+tuneHoje o padrão sem header é 2. Quando a v2 for desativada, o padrão passa a ser 3 — a rota continua POST /api/v2/consents, e quem já envia x-consent-version: 3 não precisa mudar nada. Recomendamos enviar o header sempre.
+tuneO header só vale na criação. Atualizar (PATCH /api/v2/consents/{consent}), recriar (POST /api/v2/consents/{consent}/recreate) e revogar (DELETE /api/v2/consents/{consent}) decidem pelo campo version do consentimento, não pelo header.
+tuneSandbox: POST /api/v2/sandbox/consents aceita o mesmo header.
+Uma rota, dois comportamentos
+POST /api/v2/consents (e /api/v2/sandbox/consents) cria consentimentos v2 e v3. Quem decide é o header x-consent-version, enviado só na criação.
+Header x-consent-version Comportamento
+3 Criar Consentimento (v3, NOVO): impede duplicados (409), reaproveita o mesmo consentimento e entrega um link de autorização de uso único. version = 3. Recomendado para todas as integrações.
+Ausente ou 2 Criar Consentimento (v2, LEGADA): criação legada com avoidDuplicates e URL direta da instituição. version = 2. É o padrão hoje.
+Qualquer outro valor HTTP 422.
+Por que usar a v3
+verifiedPreserva os limites operacionais: cada criação de consentimento importa o histórico e consome a cota mensal do CPF/CNPJ na instituição. A v3 bloqueia duplicados (409) e reaproveita o mesmo consentimento — mesmo id e dados — em vez de criar outro registro concorrendo pela mesma cota.
+verifiedMais controle sobre cada consentimento: status que mostram exatamente o que aconteceu (AUTHORIZATION_STARTED quando o cliente abre o link, REVOKED quando é revogado), last_status_updated_at e expiração automática de autorizações abandonadas.
+verifiedRespostas explícitas: conflitos voltam com 409 e um reason (CONSENT_ALREADY_AUTHORISED, AUTHORIZATION_LINK_ACTIVE…), em vez de criar um consentimento a mais em silêncio.
+verifiedLink de autorização seguro: url_to_authenticate é de uso único e expira em 1 hora — o link não é reaproveitado nem aberto por engano depois.
+verifiedCiclo de vida completo e previsível: criar e atualizar (PATCH) são rotas separadas, cada uma com regras claras de status. Revogar (DELETE /api/v2/consents/{consent}, para v2 e v3) não exclui: o consentimento continua consultável e pode ser reaproveitado.
+O que acontece ao criar
+A busca considera o mesmo usuário da API, a mesma institution_id, os mesmos documents (objeto completo: {"cpf"} é diferente de {"cpf","cnpj"}) e o mesmo ambiente (produção x sandbox). Consentimentos excluídos pela Polp (exclusão interna de conta — nenhuma rota da API exclui consentimentos) também entram na busca, mas nunca bloqueiam.
+Consentimento existente Resposta
+AUTHORISED 409 — reason CONSENT_ALREADY_AUTHORISED. Use o consentimento existente (consent_id).
+AWAITING_AUTHORIZATION com link gerado há menos de 1 hora (ainda não aberto) 409 — reason AUTHORIZATION_LINK_ACTIVE. available_at indica quando será possível gerar outro.
+AUTHORIZATION_STARTED (link já aberto), REJECTED, EXPIRED, REVOKED ou AWAITING_AUTHORIZATION com link vencido 200 — reaproveita o mesmo consentimento (mesmo id e dados já sincronizados) e gera uma nova autorização com um novo link. Os dados que estavam bloqueados (REJECTED, EXPIRED, REVOKED) voltam a ficar acessíveis — ou, se já foram excluídos (mais de 6 dias nesses status), são importados de novo, do zero, depois da autorização.
+Nenhum reaproveitável, mas há um excluído pela Polp 200 — restaura o excluído mais recente (mesmo id e dados já importados), que passa a ser v3, e gera uma nova autorização.
+Nenhum 201 — cria um consentimento novo.
+Outra criação em andamento para o mesmo titular 409 — reason CONSENT_CREATION_IN_PROGRESS. Tente de novo em instantes.
+Link de autorização de uso único
+linkurl_to_authenticate é um link curto da Polp (https://api.polp.com.br/c/{token}), não a URL da instituição.
+linkNo primeiro acesso, o status passa para AUTHORIZATION_STARTED, você recebe o webhook consents e o cliente é redirecionado para a instituição.
+linkDepois do primeiro acesso, após 1 hora (url_to_authenticate_expires_at) ou se o link foi substituído, o cliente vê a página "link não disponível" (HTTP 410).
+linkPré-visualizações de link (WhatsApp, Telegram, Slack, iMessage…) não consomem o link. Antivírus de e-mail que abrem links como um navegador podem consumi-lo — prefira enviar por mensagem/SMS ou abrir direto no seu app.
+linkCada nova autorização gerada para o consentimento invalida o link anterior que ainda não foi usado.
+Outras observações
+Retorna HTTP 201 quando cria e HTTP 200 quando reaproveita um consentimento anterior.
+AUTHORIZATION_STARTED não bloqueia: o link de uso único já foi aberto, então uma nova chamada reaproveita o consentimento e gera um link novo. Se o cliente ainda estava autorizando no banco pelo link anterior, essa autorização deixa de valer — ele precisa usar o link novo. Evite reenviar o POST enquanto o cliente autoriza; acompanhe pelo webhook consents.
+Se a criação falhar (ex.: erro da instituição), nada é gravado na Polp: corrija e repita a chamada.
+Consentimentos excluídos pela Polp (exclusão interna de conta; nenhuma rota da API exclui consentimentos) são restaurados: se não houver consentimento para reaproveitar, o excluído mais recente do mesmo titular volta a existir (mesmo id, agora v3), com os dados que já tinham sido importados visíveis de novo na API. Se ele estava AUTHORISED, passa por REVOKED antes da nova autorização.
+Retenção: dados de consentimentos REJECTED, EXPIRED ou REVOKED são excluídos após 6 dias sem reaproveitamento (contados de last_status_updated_at). O consentimento continua existindo. Ao reaproveitá-lo depois disso, os dados são importados de novo, do zero, quando o cliente autorizar.
+No reaproveitamento dentro desse prazo, o id da Polp e os recursos já sincronizados são mantidos — não há importação do zero. Como o status volta para AWAITING_AUTHORIZATION, os dados já importados voltam a ficar acessíveis na hora, antes mesmo da nova autorização. products, redirectUrl e cliente_user_id do body valem para a nova autorização, status volta para AWAITING_AUTHORIZATION, error é limpo e version passa a ser 3.
+Cobrança: reaproveitar ou restaurar (HTTP 200) abre um novo ciclo de cobrança (billing_cycle) — quando o cliente autorizar, o consentimento é cobrado como um consentimento novo, mesmo que já tenha sido cobrado no mesmo mês. Para trocar os products de um consentimento AUTHORISED sem nova cobrança, use PATCH /api/v2/consents/{consent}.
+Pendente sem conclusão expira sozinho: AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED há mais de 1 hora desde last_status_updated_at vira EXPIRED (error.code AUTHORIZATION_TIMEOUT). A verificação roda a cada ~30 minutos.
+Se o titular recusar o consentimento na instituição (rejection.reason.code CUSTOMER_MANUALLY_REJECTED), o status vira REVOKED (somente v3; na v2 fica REJECTED).
+A instituição deve estar com status OPERATIONAL. Regras de documentos: PERSONAL só CPF; BUSINESS CPF + CNPJ; BOTH CPF ou CPF + CNPJ.
+avoidDuplicates é ignorado com x-consent-version: 3: a deduplicação é sempre aplicada.
+Todas as rotas ficam em /api/v2 (e /api/v2/sandbox no sandbox): listar e obter consentimentos, consultar os dados (contas, cartões, transações…), atualizar (PATCH /api/v2/consents/{consent}) e revogar (DELETE /api/v2/consents/{consent}, para v2 e v3). O header x-consent-version só muda a criação.
+A busca considera consentimentos de qualquer versão: o consent_id de um 409 pode ser de um consentimento v2. Nesse caso o PATCH responde 422 — use POST /api/v2/consents/{consent}/recreate, ou revogue com DELETE /api/v2/consents/{consent} (o v2 fica REJECTED) e chame de novo POST /api/v2/consents com x-consent-version: 3, que o reaproveita como v3.
+Sandbox: POST /api/v2/sandbox/consents com x-consent-version: 3 segue as mesmas regras, mas o consentimento é autorizado na hora e não há link de uso único (url_to_authenticate é o redirectUrl).
+Request Body
+Field Type Description
+institution_id string ID da instituição (obtido em GET /institutions). Obrigatório.
+cpf string CPF do titular (PERSONAL/BOTH) ou do operador/representante (BUSINESS). Consulte institution.type.
+cnpj string | null CNPJ da empresa. Obrigatório em BUSINESS; opcional em BOTH para conexão empresarial; proibido em PERSONAL.
+cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Opcional. No reaproveitamento, substitui o valor anterior quando enviado.
+products string[] Produtos Open Finance solicitados. Valores atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Se omitido, solicita todos. Valores legado ainda são aceitos e normalizados.
+redirectUrl string | null URL http(s) para onde o cliente volta após autorizar no banco. Disponível apenas para contas com plano Pro ou Ultra; caso contrário é ignorada. Se omitida, usa a URL configurada na conta ou a padrão da Polp.
+Response Fields
+Field Type Description
+id string Identificador único do consentimento.
+institution_id string ID da instituição financeira vinculada (mesmo valor de GET /institutions).
+version integer Versão da API que gerencia o consentimento. Enum: ConsentVersion. 2: criado pelo POST /api/v2/consents sem o header x-consent-version (legado). 3: criado (ou reaproveitado) pelo POST /api/v2/consents com x-consent-version: 3 — usa link de autorização de uso único e o status AUTHORIZATION_STARTED. Define o comportamento de PATCH, recreate e DELETE. DELETE /api/v2/consents/{consent} revoga sem excluir: v2 vira REJECTED e v3 vira REVOKED.
+cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Campo aberto para correlacionar o consentimento ao seu usuário.
+status string Status da autorização. Enum: ConsentStatus. Os valores possíveis dependem de version (AUTHORIZATION_STARTED e REVOKED só na v3). Em REJECTED, EXPIRED ou REVOKED os dados do consentimento ficam bloqueados (403/404) e, após 6 dias sem reaproveitamento, são excluídos — veja a página Status do Consentimento (/docs/celcoin/consent-status).
+status_label string Rótulo traduzido do status.
+last_status_updated_at string | null Quando o status mudou pela última vez (ISO 8601). Consentimentos em AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED há mais de 1 hora desde essa data passam para EXPIRED automaticamente. Também é a referência do prazo de 6 dias para excluir os dados de consentimentos REJECTED, EXPIRED ou REVOKED.
+execution_status string | null Status da importação e do enriquecimento. Enum: ConsentExecutionStatus. AWAITING_RESOURCES: a instituição ainda não enviou os dados — a Polp retenta a cada 10 minutos. SUCCESS: resources importados. PARTIAL_SUCCESS: os dados principais já estão disponíveis, mas houve falha pontual ao gerar categoria ou counterparty (veja flags). Pode continuar usando o consentimento; a Polp retenta o enriquecimento e, quando concluir, volta para SUCCESS.
+execution_status_label string | null Rótulo traduzido do execution_status.
+flags string[] Indicadores de enriquecimento pendente. Enum: ConsentFlag. Array vazio quando não há pendência. ERROR_PROCESSING_CATEGORIES: falha ao gerar categoria. ERROR_PROCESSING_COUNTERPARTIES: falha ao gerar counterparty. PARTIALLY_UNAVAILABLE_RESOURCES: ao menos um recurso do consentimento está com status diferente de AVAILABLE, enquanto outros permanecem disponíveis. Não bloqueia o uso dos dados; a Polp retenta e remove a flag quando o processamento concluir.
+flags_label string[] Rótulos traduzidos das flags.
+products string[] Produtos Open Finance do consentimento. Enum: ConsentProduct. Valores atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Em consents antigos, products pode ainda conter valores legado (LOAN, FUND, …).
+products_label string[] Rótulos traduzidos dos produtos (incluindo nomes legado quando ainda gravados no banco).
+url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco. Em consentimentos v3 é um link curto da Polp de uso único (https://<api>/c/{token}) que redireciona para a instituição.
+url_to_authenticate_expires_at string | null Expiração da URL de autenticação (ISO 8601).
+error object | null Detalhes de erro, se houver.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+Produtos do consentimento
+O Open Finance exige agrupamentos atômicos de permissões. Por isso crédito e investimento não são mais pedidos produto a produto: use os valores CREDIT_OPERATIONS e INVESTMENTS.
+Se products for omitido, a API solicita os cinco valores da tabela atual.
+Exemplo de normalização: ["ACCOUNT", "CREDIT_CARD_ACCOUNT", "VARIABLE_INCOME"] é gravado como ["ACCOUNT", "CREDIT_CARD_ACCOUNT", "INVESTMENTS"].
+Valores atuais recomendados no POST /consents
+Value Label Agrupamento / cobre
+ACCOUNT Conta de depósito à vista, poupança ou pagamento pré-paga Contas (saldo, limites e extratos)
+CREDIT_CARD_ACCOUNT Conta de pagamento pós-paga (Cartão de Crédito) Cartão (limites, transações e faturas)
+CREDIT_OPERATIONS Operações de Crédito Empréstimos, financiamentos, cheque especial e invoice financings
+INVESTMENTS Investimentos Renda fixa bancária/crédito, fundos, renda variável e tesouro
+EXCHANGE Câmbio Operações de câmbio
+Valores legado ainda aceitos no body, normalizados na gravação
+Mantidos por compatibilidade. Continuam válidos no request, mas a API converte para o agrupamento atual antes de persistir e de montar as permissions Open Finance.
+Crédito → normaliza para CREDIT_OPERATIONS
+Value legado Label Gravado como
+LOAN Empréstimo CREDIT_OPERATIONS
+FINANCING Financiamento CREDIT_OPERATIONS
+UNARRANGED_ACCOUNT_OVERDRAFT Cheque Especial / Adiantamento a depositantes CREDIT_OPERATIONS
+INVOICE_FINANCING Financiamento de Fatura / Direitos creditórios descontados CREDIT_OPERATIONS
+Investimento → normaliza para INVESTMENTS
+Value legado Label Gravado como
+BANK_FIXED_INCOME Renda Fixa Bancária INVESTMENTS
+CREDIT_FIXED_INCOME Renda Fixa Crédito INVESTMENTS
+VARIABLE_INCOME Renda Variável INVESTMENTS
+TREASURE_TITLE Título do Tesouro Direto INVESTMENTS
+FUND Fundo de Investimento INVESTMENTS
+Enums Relacionados
+InstitutionType → institution.type
+Value
+PERSONAL
+BUSINESS
+BOTH
+ConsentStatus → status
+Value Label
+AWAITING_AUTHORIZATION Aguardando autorização
+AUTHORIZATION_STARTED Autorização iniciada
+AUTHORISED Autorizado
+REJECTED Rejeitado
+EXPIRED Expirado
+REVOKED Revogado
+ConsentVersion → version
+Value Label
+2 v2 (legado): criado por POST /consents sem o header x-consent-version
+3 v3: criado ou reaproveitado por POST /consents com o header x-consent-version: 3
+ConsentExecutionStatus → execution_status
+Value Label
+AWAITING_RESOURCES Aguardando recursos
+SUCCESS Sucesso
+PARTIAL_SUCCESS Sucesso parcial
+ConsentFlag → flags
+Value Label
+ERROR_PROCESSING_CATEGORIES Erro ao processar categorias
+ERROR_PROCESSING_COUNTERPARTIES Erro ao processar counterparties
+PARTIALLY_UNAVAILABLE_RESOURCES Alguns recursos indisponíveis
+ConsentProduct → products
+Value Label
+ACCOUNT Conta de depósito à vista, poupança ou pagamento pré-paga
+CREDIT_CARD_ACCOUNT Conta de pagamento pós-paga (Cartão de Crédito)
+CREDIT_OPERATIONS Operações de Crédito (agrupamento atual)
+INVESTMENTS Investimentos (agrupamento atual)
+EXCHANGE Câmbio
+LOAN Empréstimo — legado (normalizado para CREDIT_OPERATIONS)
+FINANCING Financiamento — legado (normalizado para CREDIT_OPERATIONS)
+UNARRANGED_ACCOUNT_OVERDRAFT Cheque Especial / Adiantamento a depositantes — legado (normalizado para CREDIT_OPERATIONS)
+INVOICE_FINANCING Financiamento de Fatura / Direitos creditórios descontados — legado (normalizado para CREDIT_OPERATIONS)
+BANK_FIXED_INCOME Renda Fixa Bancária — legado (normalizado para INVESTMENTS)
+CREDIT_FIXED_INCOME Renda Fixa Crédito — legado (normalizado para INVESTMENTS)
+VARIABLE_INCOME Renda Variável — legado (normalizado para INVESTMENTS)
+TREASURE_TITLE Título do Tesouro Direto — legado (normalizado para INVESTMENTS)
+FUND Fundo de Investimento — legado (normalizado para INVESTMENTS)
+cURL RequestCOPY
+curl -X POST https://api.polp.com.br/api/v2/consents \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789" \
+-H "x-consent-version: 3" \
+-H "Content-Type: application/json" \
+-d '{ "institution_id": "550e8400-e29b-41d4-a716-446655440000", "cpf": "12345678900", "cliente_user_id": "[email&#160;protected]", "products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT"] }'
+Request BodyCOPY
+{
+"institution_id": "550e8400-e29b-41d4-a716-446655440000",
+"cpf": "12345678900",
+"cliente_user_id": "[email&#160;protected]",
+"products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT"]
+}
+JSON Response
+{
+"data": {
+"id": "9b2f7c1e-4a3d-4c8b-9f0e-2d1a6b5c4e3f",
+"institution_id": "550e8400-e29b-41d4-a716-446655440000",
+"version": 3,
+"cliente_user_id": "[email&#160;protected]",
+"status": "AWAITING_AUTHORIZATION",
+"status_label": "Aguardando autorização",
+"last_status_updated_at": "2026-11-13T15:00:00.000000Z",
+"execution_status": null,
+"execution_status_label": null,
+"flags": [],
+"flags_label": [],
+"products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT"],
+"products_label": ["Conta de depósito à vista, poupança ou pagamento pré-paga", "Conta de pagamento pós-paga (Cartão de Crédito)"],
+"url_to_authenticate": "https://api.polp.com.br/c/Xk3fP9qLm2Zt7RwB4nVc8YhJ1sDe6GaQ",
+"url_to_authenticate_expires_at": "2026-11-13T16:00:00.000000Z",
+"error": null,
+"created_at": "2026-11-13T15:00:00.000000Z",
+"updated_at": "2026-11-13T15:00:00.000000Z"
+}
+JSON Response — 409
+{
+"message": "Já existe um link de autorização gerado há menos de 1 hora para este CPF/CNPJ nesta instituição.",
+"reason": "AUTHORIZATION_LINK_ACTIVE",
+"consent_id": "9b2f7c1e-4a3d-4c8b-9f0e-2d1a6b5c4e3f",
+"status": "AWAITING_AUTHORIZATION",
+"available_at": "2026-11-13T13:00:00-03:00"
+}
+cURL — SandboxCOPY
+curl -X POST https://api.polp.com.br/api/v2/sandbox/consents \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789" \
+-H "x-consent-version: 3" \
+-H "Content-Type: application/json" \
+-d '{ "institution_id": "550e8400-e29b-41d4-a716-446655440000", "cpf": "12345678900", "products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT"] }'
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

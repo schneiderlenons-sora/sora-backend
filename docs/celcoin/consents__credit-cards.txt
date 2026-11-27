@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/consents/credit-cards
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/consents/{consent}/credit-cards
@@ -10,6 +10,7 @@ Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados junto
 payment_methods está na raiz. O objeto identification é legado — preferir os campos na raiz.
 identification e limits são carregados via eager loading. identification pode ser null se ainda não sincronizado.
 unbilled_amount (em cada limits[]): soma do brazilian_amount das transações com bill_id null e bill_post_date posterior a bill_closing_date + 1 mês, filtradas pelo identification_number do limite. Null se o cartão não tiver faturas com data de fechamento.
+Consentimento REJECTED, EXPIRED ou REVOKED (v2 e v3): os dados ficam bloqueados e esta rota retorna HTTP 403 (reason CONSENT_INACTIVE). Eles voltam a ficar acessíveis quando o consentimento recebe uma nova autorização (POST /api/v2/consents com x-consent-version: 3 ou POST /api/v2/consents/{consent}/recreate). Após 6 dias nesses status sem reaproveitamento, os dados são excluídos e só voltam com uma nova importação, do zero, depois da nova autorização. Veja /docs/celcoin/consent-status.
 Query Parameters
 Field Type Description
 cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 15 itens por página.
@@ -84,11 +85,11 @@ Array de limites do cartão. Cada item representa uma linha de crédito e inclui
 Field Type Description
 consolidation_type string Enum: CreditCardConsolidationType.
 credit_line_limit_type string Enum: CreditCardLineLimitType.
-identification_number string Número de identificação do cartão.
+identification_number string | null Número de identificação do cartão. Null quando a instituição não informa.
 is_limit_flexible boolean Indica se o limite é flexível.
-used_amount object Valor utilizado { amount, currency }.
-limit_amount object Limite total { amount, currency }.
-available_amount object Limite disponível { amount, currency }.
+used_amount object | null Valor utilizado { amount, currency }. Null quando a instituição não informa o valor.
+limit_amount object | null Limite total { amount, currency }. Null quando a instituição não informa o valor.
+available_amount object | null Limite disponível { amount, currency }. Null quando a instituição não informa o valor.
 unbilled_amount object | null Lançamentos em aberto deste identification_number com bill_post_date posterior a bill_closing_date + 1 mês. Formato { amount: number, currency: string }. Null quando o cartão não tem faturas com data de fechamento.
 line_name string Enum: CreditCardLineName.
 customized_limit_amount object | null Limite customizado { amount, currency }.
@@ -252,6 +253,12 @@ JSON Response
 "per_page": 15,
 "next_cursor": null,
 "prev_cursor": null
+}
+JSON Response — 403 (consentimento inativo)
+{
+"message": "Consentimento REVOKED: os dados deste consentimento não estão mais disponíveis.",
+"reason": "CONSENT_INACTIVE",
+"status": "REVOKED"
 }
 © 2024 Polp Technologies Inc.
 PrivacyTermsStatus

@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/webhooks/events
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 Webhooks/Events
@@ -33,7 +33,7 @@ financings resource consents GET /consents/{resource_id}/financings?{query_param
 Eventos de recurso
 consents
 Consentimentos sincronizados
-Consentimento Open Finance atualizado (ex.: status AUTHORISED, REJECTED, EXPIRED). Sem query_parameters — use o show.
+Consentimento Open Finance atualizado (ex.: status AUTHORIZATION_STARTED, AUTHORISED, REJECTED, EXPIRED, REVOKED). Sem query_parameters — use o show.
 GET /consents/{resource_id}
 accounts
 Contas sincronizadas

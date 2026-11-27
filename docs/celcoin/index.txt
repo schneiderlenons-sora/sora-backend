@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 ← Provedores /Celcoin v2
@@ -10,16 +10,26 @@ Breaking change · resposta dos recursos
 Os campos de identification, contract e product passam a existir também na raiz do recurso (versão atual). Os objetos aninhados continuam disponíveis como legado por compatibilidade — prefira os campos na raiz em integrações novas. Campos de listagem brand_name / company_cnpj foram removidos; use institution do consentimento.
 Base URL
 https://api.polp.com.br/api/v2
+verified Crie consentimentos v3 com o header x-consent-version: 3
+A v3 preserva os limites operacionais: bloqueia consentimentos duplicados e reaproveita o mesmo consentimento (mesmo id e dados) em vez de criar outro registro consumindo a cota do CPF/CNPJ. Também dá mais controle sobre o que está acontecendo em cada consentimento: link de autorização de uso único, status que mostram cada etapa (AUTHORIZATION_STARTED, REVOKED), conflitos explícitos (409 com reason) e rotas separadas para criar e atualizar. Revogar (v2 e v3) é DELETE /api/v2/consents/{consent}, que nunca exclui o consentimento. A criação v2 continua funcionando como legada. Em consentimentos REJECTED, EXPIRED ou REVOKED os dados ficam bloqueados (403/404) até uma nova autorização e, após 6 dias sem reaproveitamento, são excluídos. Ver status por versão.
+Como escolher a versão
+Para criar consentimentos v3, envie este header no POST /api/v2/consents:
+x-consent-version: 3Exemplos em cURL, JavaScript, PHP e Python →
+Todas as rotas ficam em /api/v2 — não existe uma base separada para a v3. A versão é escolhida na criação pelo header x-consent-version.
+POST /api/v2/consents com x-consent-version: 3 cria (ou reaproveita) um consentimento v3 (Criar Consentimento). Sem o header, ou com x-consent-version: 2, a criação é a legada v2 (Criar Consentimento v2). Qualquer outro valor responde 422.
+Hoje o padrão sem header é 2. Quando a v2 for desativada, o padrão passa a ser 3 e a rota não muda: quem já envia x-consent-version: 3 não precisa alterar nada. Recomendamos enviar o header sempre.
+O header só vale na criação. Atualizar, recriar e revogar decidem pelo campo version do consentimento.
 Fluxo de Integração
 GET /institutions — listar bancos disponíveis (público)
-POST /consents — criar consentimento com institution_id e produtos
-Redirecionar usuário para url_to_authenticate
+POST /api/v2/consents com o header x-consent-version: 3 — criar consentimento com institution_id e produtos (impede duplicados e reaproveita AUTHORIZATION_STARTED/REJECTED/EXPIRED/REVOKED). Ver rota
+Enviar ao cliente o url_to_authenticate — link de uso único, válido por 1 hora
 Aguardar status: AUTHORISED
 Consultar o status dos recursos em GET /consents/{consent}/resources (ver rota) — resource_id é o UUID local da Polp
 Consultar dados via /consents/{consent}/accounts, etc.
 Receber eventos de recurso (accounts, credit_cards, …) e *.transactions via webhooks
-POST /consents/{consent}/recreate — recriar na Celcoin sem novo registro local (EXPIRED, REJECTED ou para renovar autorização). Ver rota
-DELETE /consents/{consent} — revogar o consentimento (fim do acesso)
+POST /consents/{consent}/recreate — só consentimentos v2: recriar na Celcoin sem novo registro local (EXPIRED, REJECTED ou para renovar autorização). Na v3, use POST /api/v2/consents com x-consent-version: 3. Ver rota
+PATCH /api/v2/consents/{consent} — trocar os produtos de um consentimento AUTHORISED (nova autorização, mesmo id). Ver rota
+DELETE /api/v2/consents/{consent} — revogar o consentimento (fim do acesso, sem excluir; v3 vira REVOKED e v2 vira REJECTED; os dados ficam bloqueados e são excluídos após 6 dias sem reaproveitamento). Para reconectar, POST /api/v2/consents com x-consent-version: 3 reaproveita o mesmo consentimento. Ver rota
 O consentimento não tem data de expiração fixa: vale por período indeterminado até a revogação. A periodicidade de cada recurso sincronizado depende do plano contratado. Ver frequência de atualização por recurso.
 execution_status · flags
 O consentimento retorna execution_status e flags em GET /consents e GET /consents/{consent}.
@@ -27,7 +37,7 @@ PARTIAL_SUCCESS significa que os dados principais já estão disponíveis, mas h
 A Polp retenta o enriquecimento e a sincronização de recursos automaticamente. Quando concluir, as flags saem, execution_status volta para SUCCESS e um webhook de transações é enviado.
 Cartões · Recorrências · Parcelas · Contrapartes
 Após o sync de transações do cartão, a API deriva recorrências (assinaturas, sem charge_number) e parcelamentos (agrupados por descrição + total de parcelas + valor). Em Open Finance: charge_identificator é a parcela atual e charge_number o total.
-counterparty nas transações de conta e cartão traz { name, alias, tax_id, website_url, logo_url } e é preenchido assincronamente (CNPJ na conta; nome do estabelecimento no cartão). Pode vir null na primeira consulta.
+counterparty nas transações de conta e cartão traz { name, alias, tax_id } e é preenchido assincronamente (CNPJ na conta; nome do estabelecimento no cartão). Pode vir null na primeira consulta.
 Investimentos
 Renda Fixa Bancária
 CDB, RDB, LCI, LCA

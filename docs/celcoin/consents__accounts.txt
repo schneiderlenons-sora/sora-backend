@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/consents/accounts
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/consents/{consent}/accounts
@@ -10,6 +10,7 @@ Quando fromCreatedAt/toCreatedAt e fromUpdatedAt/toUpdatedAt são enviados junto
 Campos de identification (subtype, currency, etc.) estão na raiz. O objeto identification é legado.
 identification, balance e overdraft_limit são carregados via eager loading e podem ser null se ainda não sincronizados.
 Se balance.has_reserved_balance = true, liste as caixinhas em GET /accounts/{account}/reserved-balances.
+Consentimento REJECTED, EXPIRED ou REVOKED (v2 e v3): os dados ficam bloqueados e esta rota retorna HTTP 403 (reason CONSENT_INACTIVE). Eles voltam a ficar acessíveis quando o consentimento recebe uma nova autorização (POST /api/v2/consents com x-consent-version: 3 ou POST /api/v2/consents/{consent}/recreate). Após 6 dias nesses status sem reaproveitamento, os dados são excluídos e só voltam com uma nova importação, do zero, depois da nova autorização. Veja /docs/celcoin/consent-status.
 Query Parameters
 Field Type Description
 cursor string Cursor de paginação (cursor-based). Use o next_cursor da resposta anterior para avançar. 15 itens por página.
@@ -203,6 +204,12 @@ JSON Response
 "per_page": 15,
 "next_cursor": null,
 "prev_cursor": null
+}
+JSON Response — 403 (consentimento inativo)
+{
+"message": "Consentimento REVOKED: os dados deste consentimento não estão mais disponíveis.",
+"reason": "CONSENT_INACTIVE",
+"status": "REVOKED"
 }
 © 2024 Polp Technologies Inc.
 PrivacyTermsStatus

@@ -1,0 +1,89 @@
+# https://polp.com.br/docs/celcoin/sandbox
+# baixado em 2026-11-27
+
+ownload Bruno Collection
+← Celcoin v2
+Sandbox
+Ambiente para desenvolver e testar sua integração com dados fictícios, sem plano ativo e sem cobrança. Nenhuma conexão é feita com a instituição: a Polp gera os dados de cada produto e executa o mesmo fluxo de sincronização e de webhooks de um consentimento real.
+Base URL
+Todas as rotas da API v2 existem com o prefixo /sandbox, com os mesmos parâmetros, filtros e respostas. Use as mesmas credenciais (x-api-client e x-api-secret) — veja Autenticação.
+https://api.polp.com.br/api/v2/sandbox Exemplos: POST /api/v2/sandbox/consents, GET /api/v2/sandbox/consents/{'{consent}'}/accounts, GET /api/v2/sandbox/credit-cards/{'{creditCard}'}/bills. GET /api/v2/institutions é público e serve para os dois ambientes.
+Ambientes isolados
+/api/v2/... só lista e acessa consentimentos reais — e as contas, cartões, faturas, transações, operações de crédito e investimentos deles.
+/api/v2/sandbox/... só lista e acessa consentimentos sandbox e os recursos deles.
+Um recurso do outro ambiente responde 404.
+O ambiente de um consentimento é o da rota pela qual você o consulta — a resposta não traz campo extra. No Dashboard, a lista de consentimentos mostra o ambiente de cada um.
+Criar um consentimento sandbox
+Use POST /api/v2/sandbox/consents com o mesmo body de Criar Consentimento (institution_id, cpf/cnpj, products, cliente_user_id, avoidDuplicates, redirectUrl).
+A instituição não precisa estar OPERATIONAL, mas as regras de CPF/CNPJ por institution.type continuam valendo.
+A resposta (HTTP 201) já vem com status = AUTHORISED e execution_status = SUCCESS. Contas, cartões, operações de crédito e investimentos ficam disponíveis em instantes, conforme a importação é processada.
+url_to_authenticate aponta direto para a sua URL de redirecionamento, então o mesmo fluxo de front-end funciona sem tela do banco.
+Com avoidDuplicates=true, só consentimentos sandbox são reaproveitados.
+O ambiente é definido só pela rota — não há parâmetro no body. POST /api/v2/consents sempre cria consentimento real.
+Para a v3, envie o header x-consent-version: 3 em POST /api/v2/sandbox/consents, como no exemplo ao lado (Criar Consentimento v3). Sem o header, a criação é a legada (v2). Responde 201 ao criar e 200 ao reaproveitar. As regras da v3 valem só entre consentimentos sandbox: como o sandbox já nasce AUTHORISED, uma segunda chamada para o mesmo CPF/CNPJ e instituição responde 409 CONSENT_ALREADY_AUTHORISED. Não há link de uso único no sandbox. Para testar o ciclo completo, revogue com DELETE /api/v2/sandbox/consents/{'{consent}'} (Revogar Consentimento; status REVOKED na v3 ou REJECTED na v2, dados bloqueados, o consentimento não é excluído) e reaproveite com um novo POST /api/v2/sandbox/consents com x-consent-version: 3.
+Dados gerados por produto
+Product Recursos Conteúdo
+ACCOUNT 2 contas Identificação, saldo, limite de cheque especial, saldos reservados e até 50 transações mais recentes (salário, PIX, boletos, contas de consumo, compras no débito…).
+CREDIT_CARD_ACCOUNT 2 cartões Identificação, limites, faturas fechadas e até 50 transações mais recentes, incluindo compras parceladas e assinaturas recorrentes. O total de cada fatura bate com as transações vinculadas a ela.
+CREDIT_OPERATIONS 1 empréstimo e 1 financiamento Contrato, taxas, tarifas, encargos, garantias, parcelas e pagamentos coerentes com uma tabela Price.
+INVESTMENTS 2 renda fixa bancária, 1 renda fixa crédito, 2 fundos, 1 título do tesouro, 3 renda variável Produto, posição atualizada e movimentações (aplicações, cupons, aportes mensais, compras com nota de corretagem e dividendos).
+EXCHANGE 1 recurso Aparece em GET /consents/{consent}/resources, sem dados de câmbio (a API não expõe câmbio).
+Só os products enviados no consentimento são gerados. Transações recebem categoria e counterparty como em produção.
+Atualização dos dados
+O consentimento sandbox participa do ciclo normal de sincronização, com as mesmas frequências de atualização (consulte em GET /api/v2/sandbox/consents/{'{consent}'}/sync-schedules).
+Os dados são determinísticos: o mesmo consentimento sempre gera os mesmos ids e valores, então sincronizações repetidas não duplicam registros.
+Saldos mudam uma vez por dia e novas transações e faturas surgem com o passar dos dias.
+Cada conta e cada cartão expõe no máximo as 50 transações mais recentes. As que já foram importadas permanecem na API enquanto o consentimento estiver ativo.
+O consentimento permanece AUTHORISED até ser revogado com DELETE /api/v2/sandbox/consents/{'{consent}'} (vira REVOKED, sem excluir). POST /api/v2/sandbox/consents/{'{consent}'}/recreate gera um novo conjunto de recursos fictícios.
+Webhooks
+Os webhooks ativos da conta (provider Celcoin) recebem os mesmos eventos e o mesmo payload de produção: consents, accounts, accounts.transactions, credit_cards, bills, loans, financings e os eventos de investimentos — veja Eventos.
+Ao receber um evento de um consentimento sandbox, consulte os dados pela base /api/v2/sandbox — pela base de produção o resource_id responde 404.
+GET https://api.polp.com.br/api/v2/sandbox/consents/{resource_id}/accounts?{query_parameters}
+Produção x Sandbox
+Produção Sandbox
+Base URL https://api.polp.com.br/api/v2 https://api.polp.com.br/api/v2/sandbox
+Plano ativo Obrigatório Não exigido
+Fatura em atraso Bloqueia o acesso (402) Não bloqueia
+Cobrança Consentimento autorizado é cobrado Nunca é cobrado
+Autorização Usuário autoriza no banco via url_to_authenticate Consentimento já nasce AUTHORISED
+Instituição Precisa estar OPERATIONAL Qualquer instituição de GET /institutions
+Dados Reais, vindos da instituição Fictícios, gerados pela Polp
+Webhooks Disparados Disparados (mesmos eventos e payload)
+cURL — Criar consentimento sandboxCOPY
+curl -X POST https://api.polp.com.br/api/v2/sandbox/consents \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789" \
+-H "x-consent-version: 3" \
+-H "Content-Type: application/json" \
+-d '{
+"institution_id": "550e8400-e29b-41d4-a716-446655440000",
+"cpf": "12345678900",
+"cliente_user_id": "[email&#160;protected]",
+"products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT", "CREDIT_OPERATIONS", "INVESTMENTS"]
+}'
+201 — Consentimento sandbox
+{
+"data": {
+"id": "01a0df6f-a471-73a0-9009-70d85f757bab",
+"institution_id": "550e8400-e29b-41d4-a716-446655440000",
+"version": 3,
+"cliente_user_id": "[email&#160;protected]",
+"status": "AUTHORISED",
+"status_label": "Autorizado",
+"execution_status": "SUCCESS",
+"execution_status_label": "Sucesso",
+"flags": [],
+"products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT", "CREDIT_OPERATIONS", "INVESTMENTS"],
+"url_to_authenticate": "https://www.polp.com.br/openfinance-consent-success-celcoin",
+"error": null
+}
+cURL — Transações de uma conta sandboxCOPY
+curl https://api.polp.com.br/api/v2/sandbox/accounts/{account}/transactions \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789"
+404 — Recurso do outro ambiente
+// HTTP 404
+GET /api/v2/consents/{consent-sandbox}
+GET /api/v2/sandbox/consents/{consent-real}
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

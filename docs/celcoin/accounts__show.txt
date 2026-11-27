@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/accounts/show
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/accounts/{account}
@@ -14,6 +14,7 @@ Use o show apenas pontualmente — quando precisar do recurso completo (reconcil
 Campos de identification (subtype, currency, etc.) estão na raiz. O objeto identification é legado.
 identification, balance e overdraft_limit podem ser null se ainda não sincronizados.
 Se balance.has_reserved_balance = true, liste as caixinhas em GET /accounts/{account}/reserved-balances.
+Se o consentimento do recurso estiver REJECTED, EXPIRED ou REVOKED (v2 e v3), esta rota retorna HTTP 404: os dados ficam bloqueados até o consentimento receber uma nova autorização — e, após 6 dias sem reaproveitamento, são excluídos. Veja /docs/celcoin/consent-status.
 Response Fields
 Field Type Description
 id string Identificador único da conta.

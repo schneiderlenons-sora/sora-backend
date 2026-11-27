@@ -1,15 +1,20 @@
 # https://polp.com.br/docs/celcoin/rate-limits
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 ← Celcoin v2
 Rate Limits
 Limites de requisição aplicados nas rotas da API Celcoin v2 (https://api.polp.com.br/api/v2). Rotas sem throttle explícito não entram nesta lista.
 Como funciona
-Os limites são por janela de 1 minuto.
-Na maioria das rotas, a chave é o usuário autenticado (via API Key) ou o IP se não houver usuário.
-Ao exceder o limite, a API responde 429 Too Many Requests.
+Toda rota autenticada passa primeiro pelo limite global por cliente (abaixo) e, em seguida, pelo limite específico da rota, quando houver um mais restritivo.
+A chave do cliente é o header x-api-client ou, na ausência dele, o usuário autenticado (via API Key) ou o IP.
+Ao exceder qualquer um dos limites, a API responde 429 Too Many Requests.
 Prefira webhooks em vez de polling em endpoints de show.
+Limite global (partner-api)
+Aplicado a todas as rotas autenticadas de Celcoin v2, independente do limite específico de cada endpoint.
+Janela Limite Escopo
+Por segundo 10 req/s Por cliente (x-api-client, usuário ou IP)
+Por minuto 240 req/min Por cliente (x-api-client, usuário ou IP)
 Show de consentimento
 Consulta de um consentimento específico. 240 req/minPor usuário autenticado (ou IP)
 Método Rota Limite Escopo
@@ -18,6 +23,7 @@ Show de recursos
 Endpoints de detalhe (show) de recursos individuais. 30 req/minPor usuário autenticado (ou IP)
 Método Rota Limite Escopo
 GET /accounts/{account} 30 req/min Por usuário autenticado (ou IP)
+POST /accounts/{account}/balance/sync 30 req/min Por usuário autenticado (ou IP)
 GET /credit-cards/{creditCard} 30 req/min Por usuário autenticado (ou IP)
 GET /bills/{bill} 30 req/min Por usuário autenticado (ou IP)
 GET /loans/{loan} 30 req/min Por usuário autenticado (ou IP)

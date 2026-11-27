@@ -1,18 +1,113 @@
 # https://polp.com.br/docs/celcoin/consents/destroy
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 DELETE/consents/{consent}
 Revogar Consentimento
-Revoga um consentimento Open Finance ativo, encerrando o acesso aos dados. O consentimento é por período indeterminado até esta revogação (ou revogação pelo usuário/instituição).
+Revoga o consentimento na instituição, sem excluí-lo. É a única rota de revogação da API e vale para v2 e v3; o status final depende do campo version do consentimento: v2 vira REJECTED e v3 vira REVOKED. Só revoga consentimentos AUTHORISED, AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED; nos demais status responde HTTP 422. O consentimento continua em GET /consents/{consent}, mas a Polp para de sincronizar, os dados ficam bloqueados e, após 6 dias sem reaproveitamento, são excluídos.
+Observações
+Status depois da revogação
+Decidido pelo campo version do consentimento — o header x-consent-version não muda nada nesta rota.
+Status atual v2 (version = 2) v3 (version = 3)
+AUTHORISED REJECTED — a revogação na instituição precisa dar certo; se falhar, a API retorna erro e o status não muda. REVOKED — idem.
+AWAITING_AUTHORIZATION · AUTHORIZATION_STARTED REJECTED — a revogação na instituição é feita quando possível. REVOKED — idem.
+REJECTED · EXPIRED · REVOKED HTTP 422 — não pode ser revogado. HTTP 422 — não pode ser revogado.
+Outras observações
+Retorna HTTP 200 com o consentimento em data (status REJECTED na v2, REVOKED na v3) e, na raiz, "message": "Consentimento revogado." (mantido por compatibilidade). Dispara o webhook consents.
+Na v2, para diferenciar da recusa na instituição, o error do consentimento revogado pelo parceiro fica { "rejectedBy": "API-POLP", "reason": { "code": "CUSTOMER_MANUALLY_REJECTED" } }. Esse status é final: a sincronização com a instituição não o altera. Ao reconectar (recreate ou POST /consents com x-consent-version: 3), error é limpo.
+Mesma rota para v2 e v3 — não existe outra rota de revogação. Sandbox: DELETE /api/v2/sandbox/consents/{consent}.
+Só consentimentos AUTHORISED, AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED podem ser revogados. REJECTED, EXPIRED e REVOKED (inclusive revogar duas vezes) respondem HTTP 422: { "message": "Somente consentimentos AUTHORISED, AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED podem ser revogados. Status atual: EXPIRED.", "errors": { "consent": ["…"] } }.
+Revogar não exclui o consentimento: ele continua em GET /consents e GET /consents/{consent}.
+Depois de revogar, os dados ficam bloqueados: GET /consents/{consent}/accounts, /credit-cards, /loans etc. retornam HTTP 403 (reason CONSENT_INACTIVE) e as rotas diretas (GET /accounts/{account}, transações, faturas…) retornam 404.
+Retenção: 6 dias depois da revogação (contados de last_status_updated_at), se o consentimento não for reaproveitado, os dados importados (contas, cartões, transações, investimentos…) são excluídos. O consentimento continua consultável.
+Para reconectar o mesmo titular, chame POST /api/v2/consents com x-consent-version: 3: o consentimento é reaproveitado (mesmo id) e passa a ser v3. Para consentimentos v2, também é possível usar POST /api/v2/consents/{consent}/recreate. Dentro dos 6 dias, os dados já importados voltam a ficar acessíveis; depois, são importados de novo, do zero, quando o cliente autorizar.
 Response Fields
 Field Type Description
-message string Mensagem de confirmação: "Consentimento revogado."
+id string Identificador único do consentimento.
+institution_id string ID da instituição financeira vinculada (mesmo valor de GET /institutions).
+version integer Versão da API que gerencia o consentimento. Enum: ConsentVersion. 2: criado pelo POST /api/v2/consents sem o header x-consent-version (legado). 3: criado (ou reaproveitado) pelo POST /api/v2/consents com x-consent-version: 3 — usa link de autorização de uso único e o status AUTHORIZATION_STARTED. Define o comportamento de PATCH, recreate e DELETE. DELETE /api/v2/consents/{consent} revoga sem excluir: v2 vira REJECTED e v3 vira REVOKED.
+cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Campo aberto para correlacionar o consentimento ao seu usuário.
+status string Status da autorização. Enum: ConsentStatus. Os valores possíveis dependem de version (AUTHORIZATION_STARTED e REVOKED só na v3). Em REJECTED, EXPIRED ou REVOKED os dados do consentimento ficam bloqueados (403/404) e, após 6 dias sem reaproveitamento, são excluídos — veja a página Status do Consentimento (/docs/celcoin/consent-status).
+status_label string Rótulo traduzido do status.
+last_status_updated_at string | null Quando o status mudou pela última vez (ISO 8601). Consentimentos em AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED há mais de 1 hora desde essa data passam para EXPIRED automaticamente. Também é a referência do prazo de 6 dias para excluir os dados de consentimentos REJECTED, EXPIRED ou REVOKED.
+execution_status string | null Status da importação e do enriquecimento. Enum: ConsentExecutionStatus. AWAITING_RESOURCES: a instituição ainda não enviou os dados — a Polp retenta a cada 10 minutos. SUCCESS: resources importados. PARTIAL_SUCCESS: os dados principais já estão disponíveis, mas houve falha pontual ao gerar categoria ou counterparty (veja flags). Pode continuar usando o consentimento; a Polp retenta o enriquecimento e, quando concluir, volta para SUCCESS.
+execution_status_label string | null Rótulo traduzido do execution_status.
+flags string[] Indicadores de enriquecimento pendente. Enum: ConsentFlag. Array vazio quando não há pendência. ERROR_PROCESSING_CATEGORIES: falha ao gerar categoria. ERROR_PROCESSING_COUNTERPARTIES: falha ao gerar counterparty. PARTIALLY_UNAVAILABLE_RESOURCES: ao menos um recurso do consentimento está com status diferente de AVAILABLE, enquanto outros permanecem disponíveis. Não bloqueia o uso dos dados; a Polp retenta e remove a flag quando o processamento concluir.
+flags_label string[] Rótulos traduzidos das flags.
+products string[] Produtos Open Finance do consentimento. Enum: ConsentProduct. Valores atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Em consents antigos, products pode ainda conter valores legado (LOAN, FUND, …).
+products_label string[] Rótulos traduzidos dos produtos (incluindo nomes legado quando ainda gravados no banco).
+url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco. Em consentimentos v3 é um link curto da Polp de uso único (https://<api>/c/{token}) que redireciona para a instituição.
+url_to_authenticate_expires_at string | null Expiração da URL de autenticação (ISO 8601).
+error object | null Detalhes de erro, se houver.
+created_at string Data de criação (ISO 8601).
+updated_at string Data de atualização (ISO 8601).
+message string Campo na raiz da resposta (fora de data), mantido por compatibilidade: "Consentimento revogado."
+Enums Relacionados
+ConsentStatus → status
+Value Label
+AWAITING_AUTHORIZATION Aguardando autorização
+AUTHORIZATION_STARTED Autorização iniciada
+AUTHORISED Autorizado
+REJECTED Rejeitado
+EXPIRED Expirado
+REVOKED Revogado
+ConsentVersion → version
+Value Label
+2 v2 (legado): criado por POST /consents sem o header x-consent-version
+3 v3: criado ou reaproveitado por POST /consents com o header x-consent-version: 3
+ConsentExecutionStatus → execution_status
+Value Label
+AWAITING_RESOURCES Aguardando recursos
+SUCCESS Sucesso
+PARTIAL_SUCCESS Sucesso parcial
+ConsentFlag → flags
+Value Label
+ERROR_PROCESSING_CATEGORIES Erro ao processar categorias
+ERROR_PROCESSING_COUNTERPARTIES Erro ao processar counterparties
+PARTIALLY_UNAVAILABLE_RESOURCES Alguns recursos indisponíveis
+ConsentProduct → products
+Value Label
+ACCOUNT Conta de depósito à vista, poupança ou pagamento pré-paga
+CREDIT_CARD_ACCOUNT Conta de pagamento pós-paga (Cartão de Crédito)
+CREDIT_OPERATIONS Operações de Crédito (agrupamento atual)
+INVESTMENTS Investimentos (agrupamento atual)
+EXCHANGE Câmbio
+LOAN Empréstimo — legado (normalizado para CREDIT_OPERATIONS)
+FINANCING Financiamento — legado (normalizado para CREDIT_OPERATIONS)
+UNARRANGED_ACCOUNT_OVERDRAFT Cheque Especial / Adiantamento a depositantes — legado (normalizado para CREDIT_OPERATIONS)
+INVOICE_FINANCING Financiamento de Fatura / Direitos creditórios descontados — legado (normalizado para CREDIT_OPERATIONS)
+BANK_FIXED_INCOME Renda Fixa Bancária — legado (normalizado para INVESTMENTS)
+CREDIT_FIXED_INCOME Renda Fixa Crédito — legado (normalizado para INVESTMENTS)
+VARIABLE_INCOME Renda Variável — legado (normalizado para INVESTMENTS)
+TREASURE_TITLE Título do Tesouro Direto — legado (normalizado para INVESTMENTS)
+FUND Fundo de Investimento — legado (normalizado para INVESTMENTS)
 cURL RequestCOPY
 curl -X DELETE https://api.polp.com.br/api/v2/consents/{consent} \
 -H "x-api-client: client_abc123" \
 -H "x-api-secret: secret_xyz789"
 JSON Response
-{ "message": "Consentimento revogado." }
+{
+"data": {
+"id": "9b2f7c1e-4a3d-4c8b-9f0e-2d1a6b5c4e3f",
+"institution_id": "550e8400-e29b-41d4-a716-446655440000",
+"version": 3,
+"cliente_user_id": "[email&#160;protected]",
+"status": "REVOKED",
+"status_label": "Revogado",
+"last_status_updated_at": "2026-11-13T15:00:00.000000Z",
+"execution_status": null,
+"execution_status_label": null,
+"flags": [],
+"flags_label": [],
+"products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT"],
+"products_label": ["Conta de depósito à vista, poupança ou pagamento pré-paga", "Conta de pagamento pós-paga (Cartão de Crédito)"],
+"url_to_authenticate": "https://api.polp.com.br/c/Xk3fP9qLm2Zt7RwB4nVc8YhJ1sDe6GaQ",
+"url_to_authenticate_expires_at": "2026-11-13T16:00:00.000000Z",
+"error": null,
+"created_at": "2026-11-13T15:00:00.000000Z",
+"updated_at": "2026-11-13T15:00:00.000000Z"
+},
+"message": "Consentimento revogado."
+}
 © 2024 Polp Technologies Inc.
 PrivacyTermsStatus

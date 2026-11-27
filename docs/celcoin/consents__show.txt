@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/consents/show
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/consents/{consent}
@@ -15,16 +15,18 @@ Response Fields
 Field Type Description
 id string Identificador único do consentimento.
 institution_id string ID da instituição financeira vinculada (mesmo valor de GET /institutions).
+version integer Versão da API que gerencia o consentimento. Enum: ConsentVersion. 2: criado pelo POST /api/v2/consents sem o header x-consent-version (legado). 3: criado (ou reaproveitado) pelo POST /api/v2/consents com x-consent-version: 3 — usa link de autorização de uso único e o status AUTHORIZATION_STARTED. Define o comportamento de PATCH, recreate e DELETE. DELETE /api/v2/consents/{consent} revoga sem excluir: v2 vira REJECTED e v3 vira REVOKED.
 cliente_user_id string | null Identificador externo do cliente (email, UUID, ID interno, etc.). Campo aberto para correlacionar o consentimento ao seu usuário.
-status string Status Open Finance. Enum: ConsentStatus.
+status string Status da autorização. Enum: ConsentStatus. Os valores possíveis dependem de version (AUTHORIZATION_STARTED e REVOKED só na v3). Em REJECTED, EXPIRED ou REVOKED os dados do consentimento ficam bloqueados (403/404) e, após 6 dias sem reaproveitamento, são excluídos — veja a página Status do Consentimento (/docs/celcoin/consent-status).
 status_label string Rótulo traduzido do status.
+last_status_updated_at string | null Quando o status mudou pela última vez (ISO 8601). Consentimentos em AWAITING_AUTHORIZATION ou AUTHORIZATION_STARTED há mais de 1 hora desde essa data passam para EXPIRED automaticamente. Também é a referência do prazo de 6 dias para excluir os dados de consentimentos REJECTED, EXPIRED ou REVOKED.
 execution_status string | null Status da importação e do enriquecimento. Enum: ConsentExecutionStatus. AWAITING_RESOURCES: a instituição ainda não enviou os dados — a Polp retenta a cada 10 minutos. SUCCESS: resources importados. PARTIAL_SUCCESS: os dados principais já estão disponíveis, mas houve falha pontual ao gerar categoria ou counterparty (veja flags). Pode continuar usando o consentimento; a Polp retenta o enriquecimento e, quando concluir, volta para SUCCESS.
 execution_status_label string | null Rótulo traduzido do execution_status.
 flags string[] Indicadores de enriquecimento pendente. Enum: ConsentFlag. Array vazio quando não há pendência. ERROR_PROCESSING_CATEGORIES: falha ao gerar categoria. ERROR_PROCESSING_COUNTERPARTIES: falha ao gerar counterparty. PARTIALLY_UNAVAILABLE_RESOURCES: ao menos um recurso do consentimento está com status diferente de AVAILABLE, enquanto outros permanecem disponíveis. Não bloqueia o uso dos dados; a Polp retenta e remove a flag quando o processamento concluir.
 flags_label string[] Rótulos traduzidos das flags.
 products string[] Produtos Open Finance do consentimento. Enum: ConsentProduct. Valores atuais: ACCOUNT, CREDIT_CARD_ACCOUNT, CREDIT_OPERATIONS, INVESTMENTS, EXCHANGE. Em consents antigos, products pode ainda conter valores legado (LOAN, FUND, …).
 products_label string[] Rótulos traduzidos dos produtos (incluindo nomes legado quando ainda gravados no banco).
-url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco.
+url_to_authenticate string | null URL para o usuário autorizar o consentimento no banco. Em consentimentos v3 é um link curto da Polp de uso único (https://<api>/c/{token}) que redireciona para a instituição.
 url_to_authenticate_expires_at string | null Expiração da URL de autenticação (ISO 8601).
 error object | null Detalhes de erro, se houver.
 created_at string Data de criação (ISO 8601).
@@ -33,9 +35,15 @@ Enums Relacionados
 ConsentStatus → status
 Value Label
 AWAITING_AUTHORIZATION Aguardando autorização
+AUTHORIZATION_STARTED Autorização iniciada
 AUTHORISED Autorizado
 REJECTED Rejeitado
 EXPIRED Expirado
+REVOKED Revogado
+ConsentVersion → version
+Value Label
+2 v2 (legado): criado por POST /consents sem o header x-consent-version
+3 v3: criado ou reaproveitado por POST /consents com o header x-consent-version: 3
 ConsentExecutionStatus → execution_status
 Value Label
 AWAITING_RESOURCES Aguardando recursos

@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/bank-fixed-incomes/show
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 GET/bank-fixed-incomes/{bankFixedIncome}
@@ -14,6 +14,7 @@ Use o show apenas pontualmente — quando precisar do recurso completo (reconcil
 balance é carregado via eager loading e pode ser null se ainda não sincronizado.
 Campos de product passam a existir na raiz (versão atual). O objeto product aninhado é legado — preferir os campos na raiz, incluindo remuneration.
 product (legado) pode retornar null se o Product Identification ainda não foi sincronizado.
+Se o consentimento do recurso estiver REJECTED, EXPIRED ou REVOKED (v2 e v3), esta rota retorna HTTP 404: os dados ficam bloqueados até o consentimento receber uma nova autorização — e, após 6 dias sem reaproveitamento, são excluídos. Veja /docs/celcoin/consent-status.
 Response Fields
 Field Type Description
 id string Identificador único do investimento.

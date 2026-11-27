@@ -1,0 +1,172 @@
+# https://polp.com.br/docs/celcoin/termos
+# baixado em 2026-11-27
+
+ownload Bruno Collection
+← Celcoin v2 /Open Finance · Requisitos de layout
+Manual do Conector
+Tutorial detalhado das regras do Banco Central e da LGPD que a jornada de consentimento do Open Finance precisa cumprir quando a interface é construída pelo próprio cliente, via API da Polp.
+Documento de referência para clientes
+Em razão de obrigações previstas na LGPD e na regulação do Banco Central, o layout preparado pelo cliente precisa atender aos requisitos abaixo. A ausência de um item marcado como Obrigatório bloqueia a homologação da jornada.
+Como ler este documento
+Obrigatórioexigido pela regulação. A ausência bloqueia a homologação da jornada.
+Opcionalrecomendação de boas práticas; melhora conversão e reduz erro do usuário.
+Texto fixocopy que não pode ser alterada, apenas posicionada e estilizada. As únicas exceções são os trechos indicados: o nome do botão no Disclaimer #2 e as categorias no Disclaimer #3.
+Provedor = Celcoinnos textos fixos, o provedor é sempre a Celcoin, parceira regulada responsável pela conexão com o Open Finance.
+A jornada em cinco etapas
+Toda jornada de compartilhamento de dados percorre a mesma sequência. Cada etapa tem requisitos próprios, detalhados nas seções seguintes.
+01Landing page
+Disclaimer #1
+02Seleção da instituição
+Busca e hierarquia
+03Confirmação dos dados
+Categorias, finalidade, prazo
+04Redirecionamento
+Aviso de segurança
+05Gestão e revogação
+Área do usuário
+Guia em vídeo
+Animação com as regras do Banco Central aplicadas à jornada de consentimento, na prática.
+Seu navegador não reproduz vídeo. Baixar o vídeo. download Baixar Animação Regras Bacen.mp4
+01 · Landing page
+Primeira tela da jornada: explica ao usuário o que vai acontecer e coleta o aceite dos termos. O Disclaimer #1 aparece aqui na íntegra, sem cortes, sem reescrita e sem ficar escondido atrás de botões.
+Disclaimer #1 · texto fixo · alterações não permitidas
+“Ao continuar, você declara que concorda com os Termos de Uso e que leu e compreendeu a Norma de Privacidade Externa da Celcoin, em conformidade com as diretrizes de Compliance e Regulatório.”
+Links do disclaimer obrigatório
+Cada documento citado no texto precisa ser um link funcional para o documento da Celcoin correspondente:
+Trecho no disclaimer Link
+Termos de Uso Termos de Uso Celcoin
+Norma de Privacidade Externa Norma de Privacidade Externa — 2026, v6.0 (PDF)
+Compliance e Regulatório Compliance e Regulatório Celcoin
+O texto fica visível na própria tela — nada de modal, tooltip ou segunda página.
+O clique no botão de avanço já vale como aceite. O checkbox é opcional.
+Contraste mínimo de 4,5:1 e tamanho de fonte legível: o disclaimer não pode virar letra miúda.
+02 · Seleção da instituição
+Get Institutions List
+2.1 Mensagem de contexto obrigatório
+A tela precisa deixar explícito que a instituição escolhida é a origem dos dados que serão compartilhados.
+Texto recomendado
+“Selecione a conta de onde quer compartilhar seus dados”
+2.2 Hierarquia Instituição → Organização → Organização-pai
+Cada instituição retornada pela API Get Institutions List é subordinada a uma Organização, que pode ou não estar subordinada a uma Organização-pai. Use os campos organizationName e parentOrganizationName para montar essa relação no seu índice de busca.
+parentOrganizationNameOrganização-pai
+Conglomerado. Buscar por ele traz tudo abaixo.
+organizationNameOrganização
+Buscar por ela traz suas instituições.
+nameInstituição
+Só este valor aparece no resultado.
+2.3 Regras da ferramenta de busca obrigatório
+Cenário Comportamento esperado
+Exibição do resultado A lista mostra apenas instituições (campo name). Organizações e Organizações-pai são critério de busca, nunca item de resultado.
+Acentuação A busca deve ser insensível a acentos. Normalize a entrada e o índice (ex.: NFD + remoção de diacríticos) antes de comparar.
+Nome da instituição Exibe a instituição correspondente. Se o nome de uma instituição estiver contido no nome de outra, ambas aparecem — ex.: buscar “Itau” retorna Itaú e Itaú Unibanco.
+Nome da Organização Exibe todas as instituições atreladas àquela Organização.
+Nome da Organização-pai Exibe todas as instituições ligadas diretamente à Organização-pai e também as das Organizações subordinadas a ela.
+Opcional · manutenção
+Quando is_outage = true no retorno da API, a instituição está em manutenção. Recomenda-se sinalizar visualmente (item esmaecido, selo “Instabilidade” ou bloqueio da seleção) para evitar que o usuário inicie uma jornada que vai falhar.
+03 · Confirmação dos dados
+Etapa mais regulada da jornada. É o momento em que o usuário verifica quais dados serão compartilhados, para quê e por quanto tempo, e então autoriza. Seis blocos precisam existir nesta etapa.
+3.1 Identificação do usuário obrigatório
+Campo de inserção de CPF.
+Campo de inserção de dado de contato (telefone ou e-mail).
+Disclaimer #2 · texto fixo, exceto o nome do botão
+“Ao clicar em Continuar, você autoriza a Celcoin Instituição de Pagamento Ltda. a acessar informações disponíveis no Open Finance de acordo com os Termos de Uso apresentados nas telas anteriores. Você poderá revogar o compartilhamento através do Portal.”
+O botão que leva ao banco não precisa se chamar “Continuar”. Se usar outro nome (ex.: “Conectar banco”), troque o trecho destacado para que o disclaimer cite exatamente o texto do botão da sua interface.
+Onde fica o Portal?
+O Portal é a URL da sua própria plataforma, onde fica a opção de revogar o consentimento. Não é um site da Celcoin nem o console da Polp: é a área em que o seu usuário vê os consentimentos dele e cancela quando quiser. Os requisitos estão na etapa 05 · Gestão e revogação.
+Opcional · CPF e contato já cadastrados
+Se você já tem o CPF e um dado de contato (telefone ou e-mail) do usuário no seu sistema, os campos podem ficar fora da tela. Envie o cpf na criação do consentimento (Create a Consent) e vincule o usuário do seu sistema pelo campo cliente_user_id.
+A API não recebe telefone nem e-mail: o dado de contato fica guardado apenas no seu sistema.
+3.2 Categorias de dados — nomes visíveis obrigatório
+O nome das categorias deve ser exibido na tela principal da jornada, sem recursos de ocultamento. Exiba apenas as categorias que você solicita no campo products do Create a Consent — se pedir só ACCOUNT e CREDIT_CARD_ACCOUNT, mostre só “Dados da conta” e “Cartão de crédito”. Sem products, o consentimento pede as cinco categorias.
+Categoria exibida products Permissões do Open Finance solicitadas
+Dados da conta ACCOUNT ACCOUNTS_READACCOUNTS_BALANCES_READACCOUNTS_OVERDRAFT_LIMITS_READACCOUNTS_TRANSACTIONS_READRESOURCES_READ
+Cartão de crédito CREDIT_CARD_ACCOUNT CREDIT_CARDS_ACCOUNTS_READCREDIT_CARDS_ACCOUNTS_LIMITS_READCREDIT_CARDS_ACCOUNTS_BILLS_READCREDIT_CARDS_ACCOUNTS_BILLS_TRANSACTIONS_READCREDIT_CARDS_ACCOUNTS_TRANSACTIONS_READRESOURCES_READ
+Operações de Crédito CREDIT_OPERATIONS LOANS_READLOANS_WARRANTIES_READLOANS_SCHEDULED_INSTALMENTS_READLOANS_PAYMENTS_READFINANCINGS_READFINANCINGS_WARRANTIES_READFINANCINGS_SCHEDULED_INSTALMENTS_READFINANCINGS_PAYMENTS_READUNARRANGED_ACCOUNTS_OVERDRAFT_READUNARRANGED_ACCOUNTS_OVERDRAFT_WARRANTIES_READUNARRANGED_ACCOUNTS_OVERDRAFT_SCHEDULED_INSTALMENTS_READUNARRANGED_ACCOUNTS_OVERDRAFT_PAYMENTS_READINVOICE_FINANCINGS_READINVOICE_FINANCINGS_WARRANTIES_READINVOICE_FINANCINGS_SCHEDULED_INSTALMENTS_READINVOICE_FINANCINGS_PAYMENTS_READRESOURCES_READ
+Dados de investimento INVESTMENTS BANK_FIXED_INCOMES_READCREDIT_FIXED_INCOMES_READFUNDS_READVARIABLE_INCOMES_READTREASURE_TITLES_READRESOURCES_READ
+Operações de Câmbio EXCHANGE EXCHANGES_READRESOURCES_READ
+3.3 Descrição detalhada por categoria obrigatório
+A descrição de cada categoria exibida deve incluir todos os itens abaixo — aqui é permitido usar recursos de ocultamento, como dropdown, “Ver mais” ou páginas secundárias. Descreva só as categorias que você solicita.
+Dados de Investimentos
+Identificação do produto, informações de remuneração, data de emissão, vencimento, aquisição, data fim da carência, saldo bloqueado, líquido e bruto, quantidade de títulos, preço unitário, impostos provisionados, multa e mora, indexadores, código ISIN, Classificação ANBIMA, Classe e Subclasse de Contratos de renda fixa, renda variável, tesouro direto e fundos de investimentos.
+Dados de Operações de Câmbio
+Identificação da operação, data do fechamento do contrato de câmbio, data em que a operação (compra ou venda) está prevista para ser liquidada, valor da taxa de câmbio aplicada ao contrato, valor do saldo da operação a liquidar, percentual do valor concedido ao cliente antecipadamente, natureza fato do fechamento da operação, relação de vínculo entre o Cliente e o Pagador/Recebedor no Exterior.
+Dados da Conta
+Informações da conta, saldo disponível, saldo bloqueado, outros saldos, limite utilizado, limite contratado de cheque especial, detalhes da transação.
+Dados de Operação de Crédito
+Dados do contrato, data da contratação, data do recebimento do crédito, valor do crédito, data de vencimento, datas de pagamento das parcelas, período recorrente dos pagamentos, datas de vencimento de cada parcela, data de vencimento da primeira parcela, saldo devedor, prazo total, prazo remanescente, quantidade de prestações, prestações, taxas de juros, Custo Efetivo Total, sistema de amortização, tarifas, sigla identificadora da tarifa, valor da tarifa, moeda, data da cobrança de tarifa, encargos, garantias, número do documento da instituição consignante.
+Dados de Cartões de Crédito
+Informações do cartão, informações sobre o limite do cartão, limite total, limite utilizado, limite disponível, limite por tipo de crédito, identificação de transação, valor da transação, datas, identificação do estabelecimento, bandeira do cartão, informações da fatura, encargos e formas de pagamento.
+3.4 Disclaimer #3 — novas operações obrigatório
+Deve ser incluído em algum local da etapa de confirmação, na tela principal ou em telas secundárias. O texto é fixo, mas as categorias citadas devem refletir apenas as que você solicita no consentimento:
+Disclaimer #3 · products = INVESTMENTS, EXCHANGE e CREDIT_OPERATIONS
+“Caso sejam criadas novas operações de Investimentos, Câmbio ou Crédito, os recursos serão automaticamente inclusos no compartilhamento de dados”
+Disclaimer #3 · products = ACCOUNT e CREDIT_CARD_ACCOUNT
+“Caso sejam criadas novas operações de Dados da conta ou Cartão de crédito, os recursos serão automaticamente inclusos no compartilhamento de dados”
+3.5 Finalidade do compartilhamento obrigatório
+Deve existir a seção “Finalidade do Compartilhamento” (recursos de ocultamento são permitidos), com a lista completa de finalidades:
+Verificação antifraude e validação de identidade e cadastro
+Agregação e gestão de dados pessoais
+Avaliação de risco, inclusive de crédito
+Avaliação de perfil e de padrões de consumo do usuário
+Desenvolvimento, atualização, otimização e implementação de medidas de prevenção e segurança
+Desenvolvimento de estudos, pesquisas, campanhas, serviços e produtos
+Cumprimento de obrigações legais
+Comunicação com o usuário
+Proteção dos direitos do usuário
+3.6 Prazo do compartilhamento obrigatório
+O prazo do compartilhamento precisa estar visível na confirmação. Hoje a API cria consentimentos apenas por prazo indeterminado: exiba somente a opção disponível.
+check_circlePrazo indeterminado — até você cancelar
+schedule12 meses — até [data de vencimento]Em breve
+A opção de 12 meses será disponibilizada futuramente. Quando estiver disponível, a ferramenta de seleção de prazo deverá oferecer as duas opções.
+04 · Redirecionamento
+O usuário deve ser informado de que o redirecionamento para a instituição está em andamento e que ocorrerá com segurança. O texto obrigatoriamente deve mencionar “segurança”.
+Texto recomendado
+“Você será redirecionado pela Celcoin com a segurança do Open Finance.”
+O usuário deve ser informado sobre os próximos passos a partir do redirecionamento:
+Redirecionamento da Celcoin para a [Nome da Instituição]
+Autenticação na [Nome da Instituição]
+Redirecionamento da instituição transmissora para a Celcoin
+A etapa de redirecionamento não deve solicitar nenhuma ação adicional além da confirmação do redirecionamento — tem apenas caráter informativo.
+Permitido · etapas 03 e 04 na mesma tela
+A confirmação dos dados e o aviso de redirecionamento podem ficar na mesma tela, com um único botão, desde que todas as informações das duas etapas estejam claras para o usuário antes do clique.
+Opcional · iOS 18+
+Para dispositivos Apple com iOS 18 ou superior, se o app da instituição estiver em modo oculto, o redirecionamento falha. Pode-se adicionar um aviso na tela de redirecionamento para usuários Apple:
+Texto recomendado
+“Antes de ir para o banco, certifique-se de que o aplicativo está instalado e não está no modo ‘Ocultar e exigir Face ID’.”
+05 · Gestão e revogação
+O Disclaimer #2 promete ao usuário que ele poderá revogar o compartilhamento pelo Portal — a área da sua plataforma com a opção de revogar o consentimento. Sem ela, essa promessa não se cumpre. A área é obrigatória e precisa atender aos requisitos abaixo.
+Identificação do usuário
+O cliente deve passar por algum processo de validação de identidade. O login em área restrita a usuários cadastrados é suficiente.
+Localização da Área de Gestão
+A Área de Gestão dos consentimentos deve estar localizada no primeiro nível do menu principal.
+Revogação a qualquer momento
+O usuário deve conseguir revogar seus consentimentos por conta própria, a qualquer momento, direto no seu site ou app — sem depender de atendimento ou de pedido ao suporte.
+Histórico de consentimentos
+A Área de Gestão deve conter uma lista com todos os consentimentos do usuário, incluindo autorizados, pendentes e cancelados (rejeitados, revogados ou expirados).
+Detalhes do consentimento
+Cada consentimento deve ter a sua própria tela de detalhes contendo, no mínimo:
+Prazo do consentimento.
+Finalidade do compartilhamento, de acordo com a lista de finalidades da etapa 03.
+As categorias de dados compartilhadas pelo usuário, obtidas a partir do campo products do consentimento (GET /consents ou GET /consents/{consent}). A tabela da etapa 03 relaciona cada product à sua categoria.
+De onde vêm as categorias
+Use o campo products (e o products_label) do consentimento e converta cada valor para o nome da categoria pela tabela da etapa 03, que também lista as permissões do Open Finance solicitadas por categoria.
+Revogação do consentimento
+Deve ser disponibilizada funcionalidade para revogar o consentimento, usando a rota de revogação da API.
+Ao iniciar o processo de revogação, o usuário deve ser avisado de que a revogação irá interromper o compartilhamento de dados.
+Após o processo de revogação, os detalhes do consentimento devem continuar disponíveis no histórico de compartilhamentos, tendo apenas seu status e data de vencimento atualizados.
+Reconexão do consentimento
+Ao reconectar pelo Recreate a Consent (POST /consents/{consent}/recreate):
+Mesmas categorias: não é preciso apresentar os disclaimers de novo. O usuário pode ir direto para o banco.
+Categorias diferentes: se o products mudar (ex.: de só ACCOUNT para ACCOUNT e CREDIT_CARD_ACCOUNT), apresente a jornada de novo — disclaimers e confirmação dos dados — refletindo as categorias solicitadas.
+Próximas etapas
+O que fazer quando terminar?
+Basta seguir os requisitos deste manual. A jornada pode ser auditada a qualquer momento, por isso precisa continuar em conformidade enquanto a integração estiver ativa.
+Acesse o console da Polp.
+Preencha o formulário de conformidade.
+Leia e aceite os termos.
+Capturas de tela
+Não é preciso enviar capturas da jornada agora. Elas podem ser solicitadas durante uma auditoria. Em breve, o painel terá uma área para enviar esses prints.
+Conexões ativas
+Enquanto você ajusta a interface, os consentimentos já autorizados continuam funcionando normalmente.
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

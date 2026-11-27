@@ -1,5 +1,5 @@
 # https://polp.com.br/docs/celcoin/operational-limits
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 ← Celcoin v2
@@ -7,40 +7,86 @@ Limites Operacionais
 O ecossistema do Open Finance Brasil possui limites operacionais regulatórios que devem ser respeitados ao se consumir os dados de um CPF/CNPJ de uma instituição específica.
 warning Reconectar a mesma conta não “reseta” o limite
 Se você conectar várias vezes a mesma conta com o mesmo CPF/CNPJ na mesma instituição, cada sincronização consome o limite operacional do mês. Ao atingir o teto, os dados não serão atualizados até a virada do próximo mês. Prefira reutilizar o consentimento existente em vez de criar novos para o mesmo cliente.
-Como a contabilização funciona
-A contabilização dos acessos é realizada por:
-I.mês
-II.endpoint
-III.objeto mais granular referenciado na chamada (consentimento/recurso/produto)
-IV.cliente (CPF ou CNPJ)
-Diferente dos rate limits da API Polp (requisições por minuto), estes limites são regulatórios do Open Finance e valem na rede, por CPF/CNPJ e instituição transmissora.
-Resumo consolidado
-Categoria Menor limite Maior limite
-Accounts 4 420
-Credit Cards 4 240
-Funds 4 120
-Bank Fixed Incomes 4 120
-Credit Fixed Incomes 4 120
-Treasure Titles 4 120
-Variable Incomes 4 30
-Empréstimo 8 120
-Financiamento 8 30
-Adiantamento a Depositantes 8 30
-Direitos Creditórios Descontados 8 30
-Câmbio (DC) 8 30
-Recomendações de consumo
-Atualização frequente
-Saldos
-Limites
-Transações correntes
-Atualização moderada
-Listagem de contas
-Listagem de investimentos
-Faturas
-Atualização restrita
-Detalhes de recursos
-Históricos completos
-Dados cadastrais
-Preferencialmente use cache e persistência local.
+Orientação
+A cota é contada por CPF/CNPJ + instituição, não por consentimento. Siga estas regras para não estourar o limite do mês e manter os dados do seu cliente atualizados.
+01 Crie o consentimento uma única vez por cliente e instituição
+Cada POST /consents dispara a importação inicial do histórico (contas, cartões, transações, investimentos…), e essa importação consome a cota mensal do CPF/CNPJ naquela instituição. Criar o consentimento várias vezes para o mesmo cliente queima a cota a cada criação — ao atingir o teto, os dados não são atualizados até a virada do mês. Guarde o id do consentimento e reutilize-o. O POST /consents com x-consent-version: 3 já impede duplicados e reaproveita consentimentos rejeitados/expirados/revogados ou com link já aberto; na criação legada (v2, sem o header), envie avoidDuplicates: true na criação.
+02 Para alterar produtos (permissões), atualize o consentimento em vez de criar outro
+Os produtos de um consentimento só mudam com uma nova autorização no banco. Em vez de criar outro consentimento, chame POST /consents/{'{consent}'}/recreate com o novo products. O id da Polp e os recursos já sincronizados são mantidos — não há um segundo registro concorrendo pela mesma cota. O recreate também é o caminho para reconectar um consentimento EXPIRED ou REJECTED. O recreate só vale para consentimentos v2: na v3, use PATCH /consents/{'{consent}'} para trocar os products de um consentimento AUTHORISED, e POST /consents com x-consent-version: 3 para reconectar os demais.
+03 A Polp atualiza os dados automaticamente — você não precisa forçar
+Depois de autorizado, a Polp agenda cada recurso para sincronizar no intervalo que cabe na cota mensal (veja a coluna Atualização na tabela abaixo). Esse agendamento existe justamente para evitar que o limite estoure antes do fim do mês. Para ser avisado quando houver dados novos, use os webhooks em vez de consultar a API em loop.
+04 Consentimentos duplicados deixam a atualização mais lenta
+Se existirem dois consentimentos para o mesmo CPF/CNPJ na mesma instituição, a cota passa a ser dividida entre eles. Para não atingir o teto, a Polp espaça as sincronizações: um recurso que atualizaria a cada 2 horas passa a atualizar a cada 4 horas — e assim por diante, proporcionalmente ao número de consentimentos. Se você tem duplicados, revogue os excedentes com DELETE /api/v2/consents/{'{consent}'} (vale para v2 e v3) e mantenha apenas um.
+05 O sync manual de saldo usa a cota do recurso de saldo
+POST /accounts/{'{account}'}/balance/sync consulta a instituição em tempo real e consome a mesma cota mensal de account.balance usada pela sincronização automática. Com skipScheduleUpdate: false (padrão), a chamada substitui a próxima sincronização automática e não aumenta o consumo; com true, cada chamada é uma consulta extra. Use apenas quando o usuário pedir o saldo mais recente — nunca para polling.
+Faça
+Um consentimento por cliente + instituição
+Rotas v3: PATCH para trocar produtos, POST para reconectar (v2: recreate)
+Deixe a Polp sincronizar e escute os webhooks
+Balance sync só sob demanda do usuário
+Evite
+Criar um novo consentimento a cada login/reconexão
+Criar outro consentimento só para mudar produtos
+Manter consentimentos duplicados ativos
+Chamar balance sync em loop ou agendado
+Como funciona
+Cada recurso usa o enum ConsentSyncResource e uma faixa máxima do Open Finance.
+A Polp agenda o sync no máximo permitido pela faixa — as taxas abaixo são a frequência efetiva aproximada.
+Consulte o cronograma por consentimento em GET /consents/{'{consent}'}/sync-schedules (API v2).
+Limites por recurso
+Limite mensal é o teto regulatório do Open Finance — quando o recurso cobre mais de um endpoint, vale o menor (passe o mouse no recurso para ver os endpoints).
+Atualização é o intervalo mínimo entre sincronizações da Polp: 31 dias (o mês mais longo) divididos pela cota mensal do recurso. Assim nenhum mês civil passa da cota, mesmo os de 31 dias.
+Contas (Accounts)
+Recurso Chave Limite mensal Atualização
+Conta account 4 a cada 7 dias e 18h4×/mês
+Saldo da conta account.balance 420 a cada 1h47420×/mês
+Transações da conta account.transactions 240 a cada 3h06240×/mês
+Limite de cheque especial account.overdraft_limits 420 a cada 1h47420×/mês
+Cartões de Crédito
+Recurso Chave Limite mensal Atualização
+Cartão de crédito credit_card 4 a cada 7 dias e 18h4×/mês
+Faturas do cartão credit_card.bills 30 a cada 2 dias e 2h15×/mês
+Limites do cartão credit_card.limits 240 a cada 3h06240×/mês
+Transações do cartão credit_card.transactions 240 a cada 3h06240×/mês
+Investimentos
+Fundos de Investimento
+Recurso Chave Limite mensal Atualização
+Listagem — fundos fund 4 a cada 7 dias e 18h4×/mês
+Saldo — fundos fund.balances 120 a cada 6h12120×/mês
+Transações — fundos fund.transactions 120 a cada 6h12120×/mês
+Renda Fixa Bancária
+Recurso Chave Limite mensal Atualização
+Listagem — renda fixa bancária bank_fixed_income 4 a cada 7 dias e 18h4×/mês
+Saldo — renda fixa bancária bank_fixed_income.balances 120 a cada 6h12120×/mês
+Transações — renda fixa bancária bank_fixed_income.transactions 120 a cada 6h12120×/mês
+Renda Fixa de Crédito
+Recurso Chave Limite mensal Atualização
+Listagem — renda fixa crédito credit_fixed_income 4 a cada 7 dias e 18h4×/mês
+Saldo — renda fixa crédito credit_fixed_income.balances 120 a cada 6h12120×/mês
+Transações — renda fixa crédito credit_fixed_income.transactions 120 a cada 6h12120×/mês
+Títulos do Tesouro
+Recurso Chave Limite mensal Atualização
+Listagem — tesouro direto treasure_title 4 a cada 7 dias e 18h4×/mês
+Saldo — tesouro direto treasure_title.balances 120 a cada 6h12120×/mês
+Transações — tesouro direto treasure_title.transactions 120 a cada 6h12120×/mês
+Renda Variável
+Recurso Chave Limite mensal Atualização
+Listagem — renda variável variable_income 4 a cada 7 dias e 18h4×/mês
+Saldo — renda variável variable_income.balances 30 a cada 1 dia e 1h30×/mês
+Transações — renda variável variable_income.transactions 30 a cada 1 dia e 1h30×/mês
+Notas de corretagem variable_income.broker_notes 30 a cada 1 dia e 1h30×/mês
+Operações de Crédito
+Empréstimo
+Recurso Chave Limite mensal Atualização
+Empréstimo loan 30 a cada 3 dias e 21h8×/mês
+Garantias do empréstimo loan.warranties 8 a cada 3 dias e 21h8×/mês
+Parcelas programadas loan.scheduled_instalments 30 a cada 1 dia e 1h30×/mês
+Pagamentos do empréstimo loan.payments 120 a cada 1 dia e 1h30×/mês
+Financiamento
+Recurso Chave Limite mensal Atualização
+Financiamento financing 8 a cada 3 dias e 21h8×/mês
+Garantias do financiamento financing.warranties 8 a cada 3 dias e 21h8×/mês
+Parcelas programadas financing.scheduled_instalments 30 a cada 1 dia e 1h30×/mês
+Pagamentos do financiamento financing.payments 30 a cada 1 dia e 1h30×/mês
 © 2024 Polp Technologies Inc.
 PrivacyTermsStatus

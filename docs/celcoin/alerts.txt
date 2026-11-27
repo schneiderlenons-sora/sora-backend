@@ -1,36 +1,74 @@
 # https://polp.com.br/docs/celcoin/alerts
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 ← Celcoin v2
 GET /alerts
+GET /alerts/{id}
 Alertas de Status
-Retorna notícias e incidentes operacionais da plataforma Polp. Use este endpoint para exibir comunicados no dashboard ou aplicativo.
-public Endpoint público — não exige headers x-api-client nem x-api-secret.
+Retorna notícias e incidentes operacionais da plataforma Polp, com severidade, status e o acompanhamento (linha do tempo de atualizações) de cada incidente. Use estes endpoints para exibir comunicados no dashboard ou aplicativo.
+public Endpoints públicos — não exigem headers x-api-client nem x-api-secret.
 Disponível em /api/v1/alerts (prefixo v1 da plataforma), independentemente da base URL /api/v2 usada pelos demais endpoints Celcoin.
 Base URL
 https://api.polp.com.br/api/v1/alerts
 Comportamento
-Retorna alertas ativos, ordenados do mais recente ao mais antigo.
+Ordenação: alertas ativos primeiro, depois por severidade (do mais grave ao mais leve) e, por fim, do mais recente ao mais antigo.
+A listagem também pode incluir alertas resolvidos; use active=1 para receber só os ativos.
+Para exibir um banner apenas em incidentes graves, combine active=1&min_severity=high.
+updates vem do mais recente ao mais antigo. Um novo item (ou um novo updated_at) indica que o alerta mudou — útil para reexibir um aviso já dispensado.
 Quando não há alertas, a resposta é { "data": [] }.
+GET /alerts/{id} retorna { "data": { ... } } com o mesmo formato de item da listagem, ou 404 se o alerta não existir.
 Gerenciados em /admin/alerts.
-type: news ou incident.
-provider: pluggy, celcoin ou both.
-Query Params
+Query Params — GET /alerts
 Field Type Description
 provider string Filtra por provedor. Aceita pluggy, celcoin ou both. Quando pluggy/celcoin, também retorna alertas both.
 type string Filtra por tipo: news ou incident.
+severity string Filtra por uma severidade exata: critical, high, medium ou low.
+min_severity string Retorna a severidade informada e as superiores. Ex.: high retorna high e critical.
+active integer Use 1 para retornar apenas alertas ainda não resolvidos.
+limit integer Quantidade máxima de alertas retornados.
+Path Params — GET /alerts/{id}
+Field Type Description
+id integer Identificador do alerta (campo id da listagem).
 Response Fields
 Field Type Description
 id integer Identificador do alerta.
+title string | null Título curto do alerta. Quando nulo, use a primeira linha de content.
 content string Mensagem do alerta. Suporta Markdown leve (negrito, itálico, código e links).
 type string Tipo do comunicado: news (notícia) ou incident (incidente).
+severity string Severidade: critical, high, medium ou low.
+severity_label string Rótulo da severidade em pt-BR (Crítico, Alto, Médio, Baixo).
+status string | null Estágio do incidente: investigating, identified, monitoring ou resolved. Normalmente nulo para news.
+status_label string | null Rótulo do status em pt-BR (Investigando, Identificado, Monitorando, Resolvido).
 provider string Escopo do alerta: pluggy, celcoin ou both.
+is_active boolean true enquanto o alerta não foi resolvido.
+started_at string | null Início do incidente/comunicado em ISO 8601.
+resolved_at string | null Momento da resolução em ISO 8601. Nulo enquanto ativo.
 created_at string Data de criação em ISO 8601.
 updated_at string Data da última atualização em ISO 8601.
+updates array Acompanhamento do alerta, do mais recente ao mais antigo. Vazio quando não há atualizações.
+Response Fields — updates[]
+Field Type Description
+updates[].id integer Identificador da atualização.
+updates[].status string | null Status do alerta registrado nesta atualização (mesmos valores de status).
+updates[].status_label string | null Rótulo do status em pt-BR.
+updates[].body string Texto da atualização em Markdown leve.
+updates[].created_at string Data da atualização em ISO 8601.
 Tipos de alerta
 type Uso
 incident Incidente em andamento — indisponibilidade, degradação ou impacto operacional.
 news Notícia / aviso — manutenção programada, mudança de comportamento ou comunicado geral.
+Severidades
+severity Rótulo Uso
+critical Crítico Indisponibilidade ampla ou perda de dados em andamento. Exija atenção imediata.
+high Alto Degradação relevante de um fluxo (ex.: sincronizações falhando para parte das instituições).
+medium Médio Impacto parcial ou intermitente, com contorno disponível.
+low Baixo Aviso informativo, manutenção programada ou impacto mínimo.
+Status de incidente
+status Rótulo Uso
+investigating Investigando Problema reportado; causa ainda em análise.
+identified Identificado Causa identificada; correção em andamento.
+monitoring Monitorando Correção aplicada; acompanhando a estabilidade.
+resolved Resolvido Incidente encerrado (is_active = false e resolved_at preenchido).
 © 2024 Polp Technologies Inc.
 PrivacyTermsStatus

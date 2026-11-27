@@ -1,0 +1,78 @@
+# https://polp.com.br/docs/celcoin/consent-version
+# baixado em 2026-11-27
+
+ownload Bruno Collection
+← Celcoin
+Versão do Consentimento
+A versão do consentimento é escolhida por um header HTTP, enviado só na criação. A URL é a mesma para todas as versões.
+Em uma linha
+Para criar consentimentos da versão nova (v3), envie o header x-consent-version: 3 no POST /api/v2/consents, junto com x-api-client e x-api-secret.
+x-api-client: client_abc123
+x-api-secret: secret_xyz789
+x-consent-version: 3
+Valores do header
+x-consent-version Resultado no POST /api/v2/consents
+3 recomendado Cria (ou reaproveita) um consentimento v3: regras anti-duplicidade (409), link de autorização de uso único, PATCH para atualizar, status REVOKED ao revogar.
+2 ou sem o header Cria um consentimento v2 (legado): url_to_authenticate direto da instituição, avoidDuplicates, recreate, status REJECTED ao revogar.
+qualquer outro valor HTTP 422 — versão inválida.
+Exemplos
+cURLCOPY
+curl -X POST https://api.polp.com.br/api/v2/consents \
+-H "x-api-client: client_abc123" \
+-H "x-api-secret: secret_xyz789" \
+-H "x-consent-version: 3" \
+-H "Content-Type: application/json" \
+-d '{ "institution_id": "550e8400-e29b-41d4-a716-446655440000", "cpf": "12345678900", "products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT"] }'
+JavaScript (fetch)COPY
+const response = await fetch('https://api.polp.com.br/api/v2/consents', {
+method: 'POST',
+headers: {
+'x-api-client': process.env.POLP_CLIENT_ID,
+'x-api-secret': process.env.POLP_CLIENT_SECRET,
+'x-consent-version': '3',
+'Content-Type': 'application/json',
+},
+body: JSON.stringify({
+institution_id: '550e8400-e29b-41d4-a716-446655440000',
+cpf: '12345678900',
+products: ['ACCOUNT', 'CREDIT_CARD_ACCOUNT'],
+}),
+})
+PHP (Laravel Http)COPY
+$response = Http::withHeaders([
+'x-api-client' => env('POLP_CLIENT_ID'),
+'x-api-secret' => env('POLP_CLIENT_SECRET'),
+'x-consent-version' => '3',
+])->post('https://api.polp.com.br/api/v2/consents', [
+'institution_id' => '550e8400-e29b-41d4-a716-446655440000',
+'cpf' => '12345678900',
+'products' => ['ACCOUNT', 'CREDIT_CARD_ACCOUNT'],
+]);
+Python (requests)COPY
+response = requests.post(
+"https://api.polp.com.br/api/v2/consents",
+headers={
+"x-api-client": os.environ["POLP_CLIENT_ID"],
+"x-api-secret": os.environ["POLP_CLIENT_SECRET"],
+"x-consent-version": "3",
+},
+json={
+"institution_id": "550e8400-e29b-41d4-a716-446655440000",
+"cpf": "12345678900",
+"products": ["ACCOUNT", "CREDIT_CARD_ACCOUNT"],
+},
+)
+Postman/Bruno: na requisição Create Consent, aba Headers, adicione x-consent-version com o valor 3 (a coleção da Polp já vem com ele). Sandbox: mesma coisa em POST /api/v2/sandbox/consents.
+Em quais rotas o header vale
+Rota Usa o header? O que decide
+POST /api/v2/consents Sim — é aqui que a versão é escolhida Header 3 → v3; sem header ou 2 → v2.
+PATCH /api/v2/consents/{consent} Não Só consentimentos v3 (version = 3).
+POST /api/v2/consents/{consent}/recreate Não Só consentimentos v2 (version = 2).
+DELETE /api/v2/consents/{consent} Não v2 → REJECTED; v3 → REVOKED.
+GET (consentimentos, contas, cartões, transações…) Não Iguais nas duas versões.
+Depois de criado, o consentimento guarda a versão no campo version (2 ou 3). As outras rotas usam esse campo — enviar o header nelas não muda nada. Um consentimento v2 reaproveitado por um POST com x-consent-version: 3 passa a ser v3.
+Por que um header e não uma URL nova?
+Hoje, sem o header, vale a v2. Quando a v2 for desligada, o padrão passa a ser a v3 — quem já envia x-consent-version: 3 não precisa mudar nada, nem a URL. Por isso recomendamos enviar o header em toda criação a partir de agora.
+Detalhes da criação v3: Criar Consentimento · Status por versão
+© 2024 Polp Technologies Inc.
+PrivacyTermsStatus

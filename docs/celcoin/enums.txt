@@ -1,12 +1,20 @@
 # https://polp.com.br/docs/celcoin/enums
-# baixado em 2026-09-02
+# baixado em 2026-11-27
 
 ownload Bruno Collection
 ← Celcoin v2
 Referência de Enums
 Todos os valores enumerados retornados pela API v2 Celcoin, agrupados por domínio. Valores são serializados como strings nos responses JSON.
-73 enums · 10 grupos
+75 enums · 10 grupos
 Consent
+ConsentAuthorizationAction
+Value Label
+CREATED Conectado
+REUSED Reconectado
+RESTORED Reconectado após exclusão
+RECREATED Autorização renovada
+UPDATED Permissões atualizadas
+BACKFILLED Conectado
 ConsentExecutionStatus
 Value Label
 AWAITING_RESOURCES Aguardando recursos
@@ -36,13 +44,17 @@ FUND Fundo de Investimento — legado (normalizado para INVESTMENTS)
 ConsentStatus
 Value Label
 AWAITING_AUTHORIZATION Aguardando autorização
+AUTHORIZATION_STARTED Autorização iniciada
 AUTHORISED Autorizado
 REJECTED Rejeitado
 EXPIRED Expirado
+REVOKED Revogado
 ConsentSyncFrequency
 Value
+monthly_1
 monthly_4
 monthly_8
+monthly_15
 monthly_30
 monthly_120
 monthly_240
@@ -53,12 +65,13 @@ account
 account.balance
 account.reserved_balances
 account.transactions
+account.transactions.backfill
 account.overdraft_limits
 credit_card
 credit_card.bills
-credit_card.bills.transactions
 credit_card.limits
 credit_card.transactions
+credit_card.transactions.backfill
 loan
 loan.warranties
 loan.scheduled_instalments
@@ -83,6 +96,10 @@ variable_income
 variable_income.balances
 variable_income.transactions
 variable_income.broker_notes
+ConsentVersion
+Value Label
+2 v2 (legado): criado por POST /consents sem o header x-consent-version
+3 v3: criado ou reaproveitado por POST /consents com o header x-consent-version: 3
 Institution
 InstitutionStatus
 Value
@@ -641,6 +658,7 @@ Shared
 CelcoinErrorCode
 Value
 FALHA_FLUXO_REFRESH_TOKEN
+CONSENTIMENTO_NAO_AUTORIZADO
 CreditDebitIndicator
 Value
 CREDITO
