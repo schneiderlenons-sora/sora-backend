@@ -12,6 +12,7 @@
     "eval:crons-ativos": "node evals/cronsAtivos.eval.js",
     "eval:em-paralelo": "node evals/emParalelo.eval.js",
     "eval:celcoin": "node evals/celcoinSync.eval.js",
+    "eval:tarefa-hora": "node evals/tarefaHora.eval.js",
     "eval:instabilidade-of": "node evals/instabilidadeOF.eval.js",
     "eval:conta-pj": "node evals/contaPj.eval.js",
     "eval:espelho-empresa": "node evals/espelhoContaEmpresa.eval.js",

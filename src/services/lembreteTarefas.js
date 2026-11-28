@@ -74,6 +74,7 @@ function tarefasDoLembrete({ tarefas, hojeStr, limite = LIMITE_PADRAO }) {
       dias,
       peso: peso(dias),
       situacao: situacaoDe(dias),
+      hora: dias === null ? null : (t.hora || null),
       // `prioridade` é texto livre na tabela; serve só de desempate.
       prioridade: String(t.prioridade || '').toLowerCase(),
       criadoEm: t.created_at || '',
@@ -85,6 +86,10 @@ function tarefasDoLembrete({ tarefas, hojeStr, limite = LIMITE_PADRAO }) {
     if (a.peso !== b.peso) return a.peso - b.peso;
     // Dentro do mesmo grupo: a data mais próxima primeiro.
     if (a.dias !== null && b.dias !== null && a.dias !== b.dias) return a.dias - b.dias;
+    // No mesmo dia, quem tem horário vem antes, na ordem do relógio.
+    const ha = a.hora || '99:99';
+    const hb = b.hora || '99:99';
+    if (ha !== hb) return ha.localeCompare(hb);
     const pa = PRIO[a.prioridade] ?? 1;
     const pb = PRIO[b.prioridade] ?? 1;
     if (pa !== pb) return pa - pb;
@@ -103,7 +108,7 @@ function tarefasDoLembrete({ tarefas, hojeStr, limite = LIMITE_PADRAO }) {
 
 /** Uma linha da mensagem: "• Ligar pro gastro — atrasada 2 dias". */
 function linhaDaTarefa(t) {
-  return `• ${t.titulo}${t.situacao ? ` — ${t.situacao}` : ''}`;
+  return `• ${t.titulo}${t.situacao ? ` — ${t.situacao}` : ''}${t.hora ? ` às ${t.hora}` : ''}`;
 }
 
 /**

@@ -1051,9 +1051,9 @@ cron.schedule('*/15 * * * *', async () => {
 
     // ⚠️ `user_id`, nunca `grupo_id`: tarefa é privada mesmo em gestão
     // compartilhada (ver "Privacidade do Grow em grupos" no CLAUDE.md).
-    const { data: tarefas } = await supabase.from('tarefas')
-      .select('id, titulo, concluida, data_vencimento, prioridade, created_at')
-      .eq('user_id', u.id).eq('concluida', false);
+    const { data: tarefas } = await require('../services/tarefaHora').lerComHora(
+      (colunas) => supabase.from('tarefas').select(colunas).eq('user_id', u.id).eq('concluida', false),
+      'id, titulo, concluida, data_vencimento, prioridade, created_at');
 
     const resumo = tarefasDoLembrete({ tarefas: tarefas || [], hojeStr: sp.dataStr });
     if (resumo.total === 0) continue; // nada em aberto — não enche o saco

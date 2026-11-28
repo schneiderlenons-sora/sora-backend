@@ -382,6 +382,9 @@ router.delete('/rotina/:id', auth, requireGrow, async (req, res) => {
 });
 
 // ─── TAREFAS ─────────────────────────────────────────────────────────
+const { camposDePrazo, faltaColunaHora } = require('../services/tarefaHora');
+const AVISO_HORA = 'O horário da tarefa ainda está sendo liberado. Salve sem horário por enquanto.';
+const hojeDeSP = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 router.get('/tarefas/:phone', auth, requireGrow, async (req, res) => {
   try {
     const { concluida, projeto_id, prioridade } = req.query;
@@ -397,13 +400,19 @@ router.get('/tarefas/:phone', auth, requireGrow, async (req, res) => {
 
 router.post('/tarefas', auth, requireGrow, async (req, res) => {
   try {
-    const { titulo, descricao, prioridade, data_vencimento, recorrente,
+    const { titulo, descricao, prioridade, recorrente,
             frequencia_recorrencia, categoria, projeto_id, tags, status_kanban } = req.body;
     if (!titulo?.trim()) return res.status(400).json({ erro: 'Titulo obrigatorio' });
-    const { data } = await supabase.from('tarefas').insert({
+    // Prazo + horário opcional (migration 210). Sem horário, a coluna nem vai
+    // no insert: criar tarefa funciona antes e depois da migration.
+    const prazo = camposDePrazo(req.body, { criando: true, hoje: hojeDeSP() });
+    if (prazo.erro) return res.status(400).json({ erro: prazo.erro });
+    const { hora, data_vencimento } = prazo.campos;
+    const { data, error } = await supabase.from('tarefas').insert({
       grupo_id: req.userRow.grupo_ativo, user_id: req.userRow.id, titulo: titulo.trim(), descricao,
       prioridade: prioridade || 'media',
       data_vencimento: data_vencimento || null,
+      ...(hora ? { hora } : {}),
       recorrente: !!recorrente,
       // ⚠️ Frequência só existe quando é recorrente. Pendurada numa tarefa
       // avulsa, a tela mostraria "toda semana" em algo que acontece uma vez.
@@ -415,6 +424,10 @@ router.post('/tarefas', auth, requireGrow, async (req, res) => {
       tags: tags || null, status_kanban: status_kanban || 'a_fazer',
       criado_por: req.userRow.id,
     }).select().single();
+    if (error) {
+      if (faltaColunaHora(error)) return res.status(503).json({ erro: AVISO_HORA });
+      throw new Error(error.message);
+    }
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -430,18 +443,34 @@ router.put('/tarefas/:id', auth, requireGrow, async (req, res) => {
                      'recorrente','frequencia_recorrencia','categoria','projeto_id','tags','status_kanban'];
     const patch = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+    const prazo = camposDePrazo(req.body, { criando: false, hoje: hojeDeSP() });
+    if (prazo.erro) return res.status(400).json({ erro: prazo.erro });
+    Object.assign(patch, prazo.campos);
     if ('concluida' in req.body && req.body.concluida === true) patch.status_kanban = 'concluida';
     // Desligar a recorrência tem de limpar a frequência junto — senão fica um
     // "semanal" órfão que reaparece se alguém religar o toggle.
     if (patch.recorrente === false) patch.frequencia_recorrencia = null;
-    const { data } = await supabase.from('tarefas').update(patch).eq('id', req.params.id).select().single();
+    // ⚠️ Só a PRÓPRIA tarefa: antes bastava o id.
+    const gravar = (p) => supabase.from('tarefas').update(p)
+      .eq('id', req.params.id).eq('user_id', req.userRow.id).select().maybeSingle();
+    let { data, error } = await gravar(patch);
+    // Sem a migration 210: tirar o horário não precisa da coluna; pôr, sim.
+    if (error && faltaColunaHora(error)) {
+      if (patch.hora) return res.status(503).json({ erro: AVISO_HORA });
+      delete patch.hora;
+      ({ data, error } = await gravar(patch));
+    }
+    if (error) throw new Error(error.message);
+    if (!data) return res.status(404).json({ erro: 'Tarefa não encontrada.' });
     res.json(data);
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 router.delete('/tarefas/:id', auth, requireGrow, async (req, res) => {
   try {
-    await supabase.from('tarefas').delete().eq('id', req.params.id);
+    const { error } = await supabase.from('tarefas').delete()
+      .eq('id', req.params.id).eq('user_id', req.userRow.id);
+    if (error) throw new Error(error.message);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ erro: err.message }); }
 });

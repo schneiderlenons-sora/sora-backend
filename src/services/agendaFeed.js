@@ -9,6 +9,7 @@
 // demais. Só `compromisso` é editável; o resto é read-only (deeplink).
 // =====================================================================
 const supabase = require('../db/supabase');
+const { lerComHora } = require('./tarefaHora');
 
 function isoLocal(d) {
   const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
@@ -311,17 +312,18 @@ async function montarFeed(grupoId, deStr, ateStr, opts = {}) {
   fontes.push(async () => { const eventos = []; try {
     if (userId) {
       const CORES_PRI = { urgente: '#ef4444', alta: '#f97316', media: '#eab308', baixa: '#22c55e' };
-      const { data } = await supabase.from('tarefas')
-        .select('id, titulo, prioridade, data_vencimento, projeto_id, projetos(nome, cor, icone)')
+      const { data } = await lerComHora((colunas) => supabase.from('tarefas')
+        .select(colunas)
         .eq('user_id', userId)
         .eq('concluida', false)
         .not('data_vencimento', 'is', null)
-        .gte('data_vencimento', deStr).lte('data_vencimento', ateStr);
+        .gte('data_vencimento', deStr).lte('data_vencimento', ateStr),
+      'id, titulo, prioridade, data_vencimento, projeto_id, projetos(nome, cor, icone)');
       for (const t of data || []) {
         eventos.push({
           id: `tar-${t.id}`, source: 'tarefa',
           titulo: `Tarefa: ${t.titulo}`,
-          data: String(t.data_vencimento).slice(0, 10), hora: null,
+          data: String(t.data_vencimento).slice(0, 10), hora: t.hora || null,
           cor: CORES_PRI[t.prioridade] || CORES_PRI.media,
           deeplink: '/grow/tarefas', editavel: false,
           raw: { prioridade: t.prioridade, projeto: t.projetos?.nome || null },
