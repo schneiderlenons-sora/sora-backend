@@ -126,6 +126,20 @@ console.log('── 4. Cartões ──');
   eq(k.map((x) => x.sub), ['Fechada · vence 21/11', 'Fecha em 13 dias · vence 08/12', 'Fechada · vence 25/11'], 'texto de cada cartão');
   eq(k[1].atraso_txt, 'R$ 120,00 em atraso', 'atraso do Inter');
   eq(k[2].valor_txt, 'US$ 100,00', 'cartão em dólar mostra a moeda DELE');
+  // ── Valor que não cabia no widget Android (só aparecia "R$") ──
+  const J = String.fromCharCode(0x2060);
+  const deValor = (restante, moeda = 'BRL') => montarResumo({ ...base(), faturas: [{ cartao_id: 'v', nome: 'N', moeda, restante, venc: '2026-12-21', ultimo: '2026-12-14', fim: '2026-12-14', fechada: false, atrasadas: [] }] }, { agora: AGORA }).cartoes[0];
+  // Cópia da regra do CartaoWidget.java instalado (build 15).
+  const spNoApp = (v) => (v.length <= 11 ? 26 : v.length === 12 ? 23 : v.length === 13 ? 21 : 19);
+  for (const [valor, visivel] of [[178.15, 'R$ 178,15'], [858.09, 'R$ 858,09']]) {
+    eq([deValor(valor).valor_txt, spNoApp(deValor(valor).valor_txt)], [visivel, 26], 'valor curto segue igual e grande');
+  }
+  for (const [valor, visivel] of [[1291.24, 'R$ 1.291,24'], [3516.81, 'R$ 3.516,81'], [12345.67, 'R$ 12.345,67'], [123456.78, 'R$ 123.456,78'], [1234567.89, 'R$ 1.234.567,89']]) {
+    const t = deValor(valor).valor_txt;
+    eq([t.split(J).join(''), spNoApp(t)], [visivel, 19], 'valor longo: mesmo número, fonte menor no app instalado');
+    eq([t.length >= 14, t.startsWith(visivel), t.slice(visivel.length).split(J).join('')], [true, true, ''], 'só caractere invisível, e só no fim');
+  }
+  eq(deValor(1291.24).valor, 1291.24, 'o número não muda');
   const pulo = montarResumo({ ...base(), faturas: [{ cartao_id: 'c9', nome: 'C6', moeda: 'BRL', restante: 0, quitada: true, fechada: true, venc: '2026-11-15', ultimo: '2026-11-05', proxima: { restante: 432.1, venc: '2026-12-15' }, atrasadas: [] }] }, { agora: AGORA }).cartoes[0];
   eq([pulo.valor, pulo.sub], [432.1, 'Vence 15/12'], 'fechou e foi paga → mostra a seguinte (mesma regra da tela de cartões)');
 }

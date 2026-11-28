@@ -29,7 +29,16 @@ const FORMATO = 1;
 // ⚠️ Suba quando um TEXTO do retrato mudar. Ele entra no ETag: sem isso o
 // aparelho manda o ETag antigo, recebe 304 e fica com o texto velho até o dado
 // da conta mudar. (2 = Livre diz se quem manda é o limite ou o caixa, nov/2026.)
-const TEXTOS = 2;
+// (3 = valor da fatura que não cabia no widget Android.)
+const TEXTOS = 3;
+
+// ⚠️ ANDROID ATÉ O BUILD 15: o widget do cartão escolhe a fonte pela QUANTIDADE
+// de caracteres (até 11 → grande). "R$ 1.291,24" não cabia, o Android quebrava
+// a linha no espaço e a tela mostrava só "R$". Preenchendo com um caractere
+// INVISÍVEL e sem quebra (U+2060) até 14, o app instalado usa a fonte menor.
+// No iPhone e no app novo (que mede a largura) não muda nada na tela.
+const SEM_LARGURA = String.fromCharCode(0x2060);
+const paraCaber = (txt) => (txt.length >= 11 ? txt.padEnd(14, SEM_LARGURA) : txt);
 const cent = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const LETRAS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
@@ -264,7 +273,7 @@ function cartoes({ faturas, hoje }) {
     const somaAtraso = cent((f.atrasadas || []).reduce((s, a) => s + (Number(a.restante) || 0), 0));
     return {
       id: f.cartao_id, nome: f.nome,
-      valor: cent(valor), valor_txt: fmtC(valor || 0),
+      valor: cent(valor), valor_txt: paraCaber(fmtC(valor || 0)),
       sub,
       atraso_txt: somaAtraso > 0.009 ? `${fmtC(somaAtraso)} em atraso` : '',
     };
